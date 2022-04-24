@@ -112,16 +112,17 @@ type stmtSummaryByDigestElement struct {
 	beginTime int64
 	endTime   int64
 	// basic
-	sampleSQL   string
-	charset     string
-	collation   string
-	prevSQL     string
-	samplePlan  string
-	planHint    string
-	indexNames  []string
-	execCount   int64
-	sumErrors   int
-	sumWarnings int
+	sampleSQL        string
+	charset          string
+	collation        string
+	prevSQL          string
+	samplePlan       string
+	sampleVisualPlan string
+	planHint         string
+	indexNames       []string
+	execCount        int64
+	sumErrors        int
+	sumWarnings      int
 	// latency
 	sumLatency        time.Duration
 	maxLatency        time.Duration
@@ -211,33 +212,34 @@ type stmtSummaryByDigestElement struct {
 
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
-	SchemaName     string
-	OriginalSQL    string
-	Charset        string
-	Collation      string
-	NormalizedSQL  string
-	Digest         string
-	PrevSQL        string
-	PrevSQLDigest  string
-	PlanGenerator  func() (string, string)
-	PlanDigest     string
-	PlanDigestGen  func() string
-	User           string
-	TotalLatency   time.Duration
-	ParseLatency   time.Duration
-	CompileLatency time.Duration
-	StmtCtx        *stmtctx.StatementContext
-	CopTasks       *stmtctx.CopTasksDetails
-	ExecDetail     *execdetails.ExecDetails
-	MemMax         int64
-	DiskMax        int64
-	StartTime      time.Time
-	IsInternal     bool
-	Succeed        bool
-	PlanInCache    bool
-	PlanInBinding  bool
-	ExecRetryCount uint
-	ExecRetryTime  time.Duration
+	SchemaName      string
+	OriginalSQL     string
+	Charset         string
+	Collation       string
+	NormalizedSQL   string
+	Digest          string
+	PrevSQL         string
+	PrevSQLDigest   string
+	PlanGenerator   func() (string, string)
+	VisualGenerator func() string
+	PlanDigest      string
+	PlanDigestGen   func() string
+	User            string
+	TotalLatency    time.Duration
+	ParseLatency    time.Duration
+	CompileLatency  time.Duration
+	StmtCtx         *stmtctx.StatementContext
+	CopTasks        *stmtctx.CopTasksDetails
+	ExecDetail      *execdetails.ExecDetails
+	MemMax          int64
+	DiskMax         int64
+	StartTime       time.Time
+	IsInternal      bool
+	Succeed         bool
+	PlanInCache     bool
+	PlanInBinding   bool
+	ExecRetryCount  uint
+	ExecRetryTime   time.Duration
 	execdetails.StmtExecDetails
 	ResultRows      int64
 	TiKVExecDetails util.ExecDetails
@@ -602,6 +604,13 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 	if len(samplePlan) > maxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}
+	visual := ""
+	if sei.VisualGenerator != nil {
+		visual = sei.VisualGenerator()
+		if len(visual) > maxEncodedPlanSizeInBytes {
+			visual = plancodec.PlanDiscardedEncoded
+		}
+	}
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
 		sampleSQL: formatSQL(sei.OriginalSQL),
@@ -610,19 +619,20 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
-		samplePlan:    samplePlan,
-		planHint:      planHint,
-		indexNames:    sei.StmtCtx.IndexNames,
-		minLatency:    sei.TotalLatency,
-		firstSeen:     sei.StartTime,
-		lastSeen:      sei.StartTime,
-		backoffTypes:  make(map[string]int),
-		authUsers:     make(map[string]struct{}),
-		planInCache:   false,
-		planCacheHits: 0,
-		planInBinding: false,
-		prepared:      sei.Prepared,
-		minResultRows: math.MaxInt64,
+		samplePlan:       samplePlan,
+		sampleVisualPlan: visual,
+		planHint:         planHint,
+		indexNames:       sei.StmtCtx.IndexNames,
+		minLatency:       sei.TotalLatency,
+		firstSeen:        sei.StartTime,
+		lastSeen:         sei.StartTime,
+		backoffTypes:     make(map[string]int),
+		authUsers:        make(map[string]struct{}),
+		planInCache:      false,
+		planCacheHits:    0,
+		planInBinding:    false,
+		prepared:         sei.Prepared,
+		minResultRows:    math.MaxInt64,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement

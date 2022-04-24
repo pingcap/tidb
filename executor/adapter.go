@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"math"
 	"runtime/trace"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/golang/snappy"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -1040,6 +1042,18 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+
+	visualPlan := ""
+	if variable.GenerateVisualPlan.Load() {
+		explained := plannercore.ExplainPhysicalPlan(a.Plan, a.Ctx)
+		visual := plannercore.VisualDataFromExplainedPlan(a.Ctx, explained)
+		proto, err := visual.Marshal()
+		if err != nil {
+			proto = nil
+		}
+		visualPlan = base64.StdEncoding.EncodeToString(snappy.Encode(nil, proto))
+	}
+
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
@@ -1058,6 +1072,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		Succ:              succ,
 		Plan:              getPlanTree(a.Ctx, a.Plan),
 		PlanDigest:        planDigest.String(),
+		VisualPlan:        visualPlan,
 		Prepared:          a.isPreparedStmt,
 		HasMoreResults:    hasMoreResults,
 		PlanFromCache:     sessVars.FoundInPlanCache,
@@ -1230,6 +1245,22 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	planGenerator := func() (string, string) {
 		return getEncodedPlan(a.Ctx, a.Plan, !sessVars.InRestrictedSQL)
 	}
+	var visualGen func() string
+	if variable.GenerateVisualPlan.Load() {
+		visualGen = func() string {
+			explained := plannercore.ExplainPhysicalPlan(a.Plan, a.Ctx)
+			visual := plannercore.VisualDataFromExplainedPlan(a.Ctx, explained)
+			if visual == nil {
+				return ""
+			}
+			proto, err := visual.Marshal()
+			if err != nil {
+				return ""
+			}
+			visualPlan := base64.StdEncoding.EncodeToString(snappy.Encode(nil, proto))
+			return visualPlan
+		}
+	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
 	// is enough to distinguish different plans in this case.
@@ -1279,6 +1310,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		PrevSQL:         prevSQL,
 		PrevSQLDigest:   prevSQLDigest,
 		PlanGenerator:   planGenerator,
+		VisualGenerator: visualGen,
 		PlanDigest:      planDigest,
 		PlanDigestGen:   planDigestGen,
 		User:            userString,

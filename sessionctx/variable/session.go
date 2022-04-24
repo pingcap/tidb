@@ -2001,6 +2001,8 @@ const (
 	SlowLogPlan = "Plan"
 	// SlowLogPlanDigest is used to record the query plan digest.
 	SlowLogPlanDigest = "Plan_digest"
+	// SlowLogVisualPlan XXX
+	SlowLogVisualPlan = "Visual_plan"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
@@ -2029,6 +2031,8 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 )
 
+var GenerateVisualPlan atomic2.Bool
+
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
@@ -2054,6 +2058,7 @@ type SlowQueryLogItems struct {
 	PrevStmt          string
 	Plan              string
 	PlanDigest        string
+	VisualPlan        string
 	RewriteInfo       RewritePhaseInfo
 	KVTotal           time.Duration
 	PDTotal           time.Duration
@@ -2236,6 +2241,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if len(logItems.PlanDigest) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
+	}
+	if len(logItems.VisualPlan) != 0 {
+		writeSlowLogItem(&buf, SlowLogVisualPlan, logItems.VisualPlan)
 	}
 
 	if logItems.PrevStmt != "" {

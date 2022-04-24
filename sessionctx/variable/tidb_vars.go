@@ -626,6 +626,8 @@ const (
 
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
+
+	TiDBGenerateVisualPlan = "tidb_generate_visual_plan"
 )
 
 // TiDB vars that have only global scope
@@ -828,6 +830,7 @@ const (
 	DefRCReadCheckTS                      = false
 	DefTiDBRemoveOrderbyInSubquery        = false
 	DefTiDBReadStaleness                  = 0
+	DefTiDBGenerateVisualPlan             = false
 )
 
 // Process global variables.

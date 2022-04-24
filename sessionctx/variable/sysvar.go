@@ -1391,6 +1391,10 @@ var defaultSysVars = []*SysVar{
 		s.RemoveOrderbyInSubquery = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBGenerateVisualPlan, Value: BoolToOnOff(DefTiDBGenerateVisualPlan), Hidden: true, Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		GenerateVisualPlan.Store(TiDBOptOn(val))
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

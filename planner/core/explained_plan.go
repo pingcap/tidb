@@ -1,3 +1,17 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package core
 
 import (
@@ -9,17 +23,19 @@ import (
 )
 
 type ExplainedPhysicalPlan struct {
-	Main []*ExplainedPhysicalOperator
-	CTEs [][]*ExplainedPhysicalOperator
+	Main ExplainedTree
+	CTEs []ExplainedTree
 
 	ctesToExplain []*PhysicalCTE
 
-	// We'll need to get runtime stats from the session.
+	// We'll need the session to get the runtime stats.
 	explainCtx sessionctx.Context
 }
 
-type ExplainedPhysicalOperator struct {
-	// A reference to the original operator. May be useful when the information below is insufficient.
+type ExplainedTree []*ExplainedOperator
+
+type ExplainedOperator struct {
+	// A reference to the original operator. It will be useful when the information below is insufficient.
 	Origin Plan
 
 	// ID, position and classification
@@ -30,7 +46,7 @@ type ExplainedPhysicalOperator struct {
 	IsRoot            bool
 	StoreType         kv.StoreType
 	// ReqType is only meaningful when IsRoot is false.
-	ReqType readReqType
+	ReqType ReadReqType
 
 	// Basic operator information
 	StatsInfoAvailable bool
@@ -76,19 +92,19 @@ func (d DriverSide) String() string {
 	return ""
 }
 
-type additionalInfo struct {
+type operatorCtx struct {
 	depth       uint64
 	driverSide  DriverSide
 	isRoot      bool
 	storeType   kv.StoreType
-	reqType     readReqType
+	reqType     ReadReqType
 	indent      string
 	isLastChild bool
 }
 
 func ExplainPhysicalPlan(p Plan, sctx sessionctx.Context) *ExplainedPhysicalPlan {
 	res := &ExplainedPhysicalPlan{explainCtx: sctx}
-	initInfo := &additionalInfo{
+	initInfo := &operatorCtx{
 		depth:       0,
 		driverSide:  Empty,
 		isRoot:      true,
@@ -96,43 +112,27 @@ func ExplainPhysicalPlan(p Plan, sctx sessionctx.Context) *ExplainedPhysicalPlan
 		indent:      "",
 		isLastChild: true,
 	}
-	res.explainRecursively(p, initInfo)
+	res.Main = res.explainRecursively(p, initInfo, nil)
 
-	explainedCTEPlan := make(map[int]struct{})
+	explainedCTEPlan := make(map[int]struct{}, len(res.ctesToExplain))
 	for _, cte := range res.ctesToExplain {
 		cteDef := (*CTEDefinition)(cte)
 		if _, ok := explainedCTEPlan[cteDef.CTE.IDForStorage]; ok {
 			continue
 		}
-		explained := res.explainSingle(cteDef, initInfo)
-		if explained != nil {
-			res.Main = append(res.Main, explained)
-		}
-		childInfo := &additionalInfo{
-			depth:       initInfo.depth + 1,
-			driverSide:  SeedPart,
-			isRoot:      true,
-			storeType:   kv.TiDB,
-			indent:      texttree.Indent4Child(initInfo.indent, initInfo.isLastChild),
-			isLastChild: cteDef.RecurPlan == nil,
-		}
-		res.explainRecursively(cteDef.SeedPlan, childInfo)
-		if cteDef.RecurPlan != nil {
-			childInfo.driverSide = RecursivePart
-			childInfo.isLastChild = true
-			res.explainRecursively(cteDef.RecurPlan, childInfo)
-		}
+		cteExplained := res.explainCTERecursively(cteDef, initInfo, nil)
+		res.CTEs = append(res.CTEs, cteExplained)
 		explainedCTEPlan[cteDef.CTE.IDForStorage] = struct{}{}
 	}
 	return res
 }
 
-func (f *ExplainedPhysicalPlan) explainSingle(p Plan, info *additionalInfo) *ExplainedPhysicalOperator {
+func (f *ExplainedPhysicalPlan) explainSingle(p Plan, info *operatorCtx) *ExplainedOperator {
 	rawId := p.ExplainID().String()
 	if rawId == "_0" {
 		return nil
 	}
-	res := &ExplainedPhysicalOperator{
+	res := &ExplainedOperator{
 		Origin:            p,
 		ExplainID:         rawId,
 		TextTreeExplainID: texttree.PrettyIdentifier(rawId+info.driverSide.String(), info.indent, info.isLastChild),
@@ -178,13 +178,13 @@ func (f *ExplainedPhysicalPlan) explainSingle(p Plan, info *additionalInfo) *Exp
 }
 
 // Note that info should not be modified in this method.
-func (f *ExplainedPhysicalPlan) explainRecursively(p Plan, info *additionalInfo) {
+func (f *ExplainedPhysicalPlan) explainRecursively(p Plan, info *operatorCtx, target ExplainedTree) ExplainedTree {
 	explained := f.explainSingle(p, info)
 	if explained != nil {
-		f.Main = append(f.Main, explained)
+		target = append(target, explained)
 	}
 
-	childInfo := &additionalInfo{
+	childInfo := &operatorCtx{
 		depth:  info.depth + 1,
 		indent: texttree.Indent4Child(info.indent, info.isLastChild),
 	}
@@ -229,7 +229,7 @@ func (f *ExplainedPhysicalPlan) explainRecursively(p Plan, info *additionalInfo)
 			childInfo.storeType = info.storeType
 			childInfo.driverSide = driverSideInfo[i]
 			childInfo.isLastChild = i == len(physPlan.Children())-1
-			f.explainRecursively(physPlan.Children()[i], childInfo)
+			target = f.explainRecursively(physPlan.Children()[i], childInfo, target)
 		}
 	}
 
@@ -242,24 +242,24 @@ func (f *ExplainedPhysicalPlan) explainRecursively(p Plan, info *additionalInfo)
 		childInfo.reqType = plan.ReadReqType
 		childInfo.driverSide = Empty
 		childInfo.isLastChild = true
-		f.explainRecursively(plan.tablePlan, childInfo)
+		target = f.explainRecursively(plan.tablePlan, childInfo, target)
 	case *PhysicalIndexReader:
 		childInfo.isRoot = false
 		childInfo.reqType = Cop
 		childInfo.storeType = kv.TiKV
 		childInfo.driverSide = Empty
 		childInfo.isLastChild = true
-		f.explainRecursively(plan.indexPlan, childInfo)
+		target = f.explainRecursively(plan.indexPlan, childInfo, target)
 	case *PhysicalIndexLookUpReader:
 		childInfo.isRoot = false
 		childInfo.reqType = Cop
 		childInfo.storeType = kv.TiKV
 		childInfo.driverSide = BuildSide
 		childInfo.isLastChild = false
-		f.explainRecursively(plan.indexPlan, childInfo)
+		target = f.explainRecursively(plan.indexPlan, childInfo, target)
 		childInfo.driverSide = ProbeSide
 		childInfo.isLastChild = true
-		f.explainRecursively(plan.tablePlan, childInfo)
+		target = f.explainRecursively(plan.tablePlan, childInfo, target)
 	case *PhysicalIndexMergeReader:
 		childInfo.isRoot = false
 		childInfo.reqType = Cop
@@ -267,16 +267,16 @@ func (f *ExplainedPhysicalPlan) explainRecursively(p Plan, info *additionalInfo)
 		for _, pchild := range plan.partialPlans {
 			childInfo.driverSide = BuildSide
 			childInfo.isLastChild = false
-			f.explainRecursively(pchild, childInfo)
+			target = f.explainRecursively(pchild, childInfo, target)
 		}
 		childInfo.driverSide = ProbeSide
 		childInfo.isLastChild = true
-		f.explainRecursively(plan.tablePlan, childInfo)
+		target = f.explainRecursively(plan.tablePlan, childInfo, target)
 	case *PhysicalShuffleReceiverStub:
 		childInfo.isRoot = true
 		childInfo.driverSide = Empty
 		childInfo.isLastChild = true
-		f.explainRecursively(plan.DataSource, childInfo)
+		target = f.explainRecursively(plan.DataSource, childInfo, target)
 	case *PhysicalCTE:
 		f.ctesToExplain = append(f.ctesToExplain, plan)
 	case *Insert:
@@ -284,21 +284,21 @@ func (f *ExplainedPhysicalPlan) explainRecursively(p Plan, info *additionalInfo)
 			childInfo.isRoot = true
 			childInfo.driverSide = Empty
 			childInfo.isLastChild = true
-			f.explainRecursively(plan.SelectPlan, childInfo)
+			target = f.explainRecursively(plan.SelectPlan, childInfo, target)
 		}
 	case *Update:
 		if plan.SelectPlan != nil {
 			childInfo.isRoot = true
 			childInfo.driverSide = Empty
 			childInfo.isLastChild = true
-			f.explainRecursively(plan.SelectPlan, childInfo)
+			target = f.explainRecursively(plan.SelectPlan, childInfo, target)
 		}
 	case *Delete:
 		if plan.SelectPlan != nil {
 			childInfo.isRoot = true
 			childInfo.driverSide = Empty
 			childInfo.isLastChild = true
-			f.explainRecursively(plan.SelectPlan, childInfo)
+			target = f.explainRecursively(plan.SelectPlan, childInfo, target)
 		}
 	case *Execute:
 		if plan.Plan != nil {
@@ -306,8 +306,30 @@ func (f *ExplainedPhysicalPlan) explainRecursively(p Plan, info *additionalInfo)
 			childInfo.indent = info.indent
 			childInfo.driverSide = Empty
 			childInfo.isLastChild = true
-			f.explainRecursively(plan.Plan, childInfo)
+			target = f.explainRecursively(plan.Plan, childInfo, target)
 		}
 	}
-	return
+	return target
+}
+
+func (f *ExplainedPhysicalPlan) explainCTERecursively(cteDef *CTEDefinition, info *operatorCtx, target ExplainedTree) ExplainedTree {
+	explained := f.explainSingle(cteDef, info)
+	if explained != nil {
+		target = append(target, explained)
+	}
+	childInfo := &operatorCtx{
+		depth:       info.depth + 1,
+		driverSide:  SeedPart,
+		isRoot:      true,
+		storeType:   kv.TiDB,
+		indent:      texttree.Indent4Child(info.indent, info.isLastChild),
+		isLastChild: cteDef.RecurPlan == nil,
+	}
+	target = f.explainRecursively(cteDef.SeedPlan, childInfo, target)
+	if cteDef.RecurPlan != nil {
+		childInfo.driverSide = RecursivePart
+		childInfo.isLastChild = true
+		target = f.explainRecursively(cteDef.RecurPlan, childInfo, target)
+	}
+	return target
 }

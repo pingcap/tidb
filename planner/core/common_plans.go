@@ -1307,19 +1307,8 @@ func (e *Explain) RenderResult() error {
 	case types.ExplainFormatVisual:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
 			explained := ExplainPhysicalPlan(physicalPlan, e.ctx)
-			s := make([]*tipb.VisualData, len(explained.Main))
-			for i, op := range explained.Main {
-				singleVisData := visualDataFromExplainedOperator(op)
-				s[i] = singleVisData
-				for j := i - 1; j >= 0; j-- {
-					if explained.Main[j].Depth == op.Depth-1 {
-						s[j].Children = append(s[j].Children, singleVisData)
-						break
-					}
-				}
-			}
-			mainTree := s[0]
-			proto, err := mainTree.Marshal()
+			visual := VisualDataFromExplainedPlan(e.ctx, explained)
+			proto, err := visual.Marshal()
 			if err != nil {
 				return err
 			}
@@ -1332,18 +1321,47 @@ func (e *Explain) RenderResult() error {
 	return nil
 }
 
-func visualDataFromExplainedOperator(op *ExplainedPhysicalOperator) *tipb.VisualData {
-	res := &tipb.VisualData{
-		Name:            op.ExplainID,
-		Cost:            op.EstCost,
-		EstRows:         op.EstRows,
-		ActRows:         uint64(op.ActRows),
-		AccessTable:     "",
-		AccessIndex:     "",
-		AccessPartition: "",
-		TimeUs:          0,
-		RunAt:           op.StoreType.Name(),
+func VisualDataFromExplainedPlan(explainCtx sessionctx.Context, explained *ExplainedPhysicalPlan) *tipb.VisualData {
+	if len(explained.Main) == 0 {
+		return nil
 	}
+	res := &tipb.VisualData{}
+	for _, op := range explained.Main {
+		if op.RootStats != nil || op.CopStats != nil {
+			res.WithRuntimeStats = true
+		}
+	}
+	res.Main = visualOpTreeFromExplainedOps(explainCtx, explained.Main)
+	for _, explainedCTE := range explained.CTEs {
+		res.Ctes = append(res.Ctes, visualOpTreeFromExplainedOps(explainCtx, explainedCTE))
+	}
+	return res
+}
+
+func visualOpTreeFromExplainedOps(explainCtx sessionctx.Context, ops ExplainedTree) *tipb.VisualOperator {
+	s := make([]*tipb.VisualOperator, len(ops))
+	for i, op := range ops {
+		singleVisData := visualOpFromExplainedOp(explainCtx, op)
+		s[i] = singleVisData
+		for j := i - 1; j >= 0; j-- {
+			if ops[j].Depth == op.Depth-1 {
+				s[j].Children = append(s[j].Children, singleVisData)
+				break
+			}
+		}
+	}
+	return s[0]
+}
+
+func visualOpFromExplainedOp(explainCtx sessionctx.Context, op *ExplainedOperator) *tipb.VisualOperator {
+	res := &tipb.VisualOperator{
+		Name:    op.ExplainID,
+		Cost:    op.EstCost,
+		EstRows: op.EstRows,
+		ActRows: uint64(op.ActRows),
+		RunAt:   op.StoreType.Name(),
+	}
+	// Get TimeUs
 	if op.RootStats != nil {
 		if basicStats := op.RootStats.MergeBasicStats(); basicStats != nil {
 			res.TimeUs = float64(time.Duration(basicStats.GetTime()).Microseconds())
@@ -1357,15 +1375,98 @@ func visualDataFromExplainedOperator(op *ExplainedPhysicalOperator) *tipb.Visual
 			res.TimeUs = float64(totalTime.Microseconds())
 		}
 	}
-	switch op.(type) {
-	case *PointGetPlan:
-	case *BatchPointGetPlan:
+	// Get AccessXXX
+	switch p := op.Origin.(type) {
 	case *PhysicalTableScan:
+		// Similar logic to (*PhysicalTableScan).AccessObject()
+		tblName := p.Table.Name.O
+		if p.TableAsName != nil && p.TableAsName.O != "" {
+			tblName = p.TableAsName.O
+		}
+		res.AccessTable = tblName
+		if p.isPartition {
+			if pi := p.Table.GetPartitionInfo(); pi != nil {
+				res.AccessPartition = pi.GetNameByID(p.physicalTableID)
+			}
+		}
 	case *PhysicalIndexScan:
+		tblName := p.Table.Name.O
+		if p.TableAsName != nil && p.TableAsName.O != "" {
+			tblName = p.TableAsName.O
+		}
+		res.AccessTable = tblName
+		if p.isPartition {
+			if pi := p.Table.GetPartitionInfo(); pi != nil {
+				res.AccessPartition = pi.GetNameByID(p.physicalTableID)
+			}
+		}
+		if len(p.Index.Columns) > 0 {
+			res.AccessIndex = p.Index.Name.O
+		}
+	case *PhysicalMemTable:
+		res.AccessTable = p.Table.Name.O
+	case *PointGetPlan:
+		res.AccessTable = p.TblInfo.Name.O
+		if p.PartitionInfo != nil {
+			res.AccessPartition = p.PartitionInfo.Name.O
+		}
+		res.AccessIndex = p.IndexInfo.Name.O
+	case *BatchPointGetPlan:
+		res.AccessTable = p.TblInfo.Name.O
+		res.AccessIndex = p.IndexInfo.Name.O
 	case *PhysicalTableReader:
+		if !explainCtx.GetSessionVars().UseDynamicPartitionPrune() {
+			break
+		}
+		if len(p.PartitionInfos) == 0 {
+			ts := p.TablePlans[0].(*PhysicalTableScan)
+			res.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
+			break
+		}
+		if len(p.PartitionInfos) == 1 {
+			tsAndPartInfo := p.PartitionInfos[0]
+			res.AccessPartition, _ = getDynamicAccessPartition(explainCtx, tsAndPartInfo.tableScan.Table, &tsAndPartInfo.partitionInfo)
+			break
+		}
+		containsPartitionTable := false
+		for _, info := range p.PartitionInfos {
+			if info.tableScan.Table.GetPartitionInfo() != nil {
+				containsPartitionTable = true
+				break
+			}
+		}
+		if !containsPartitionTable {
+			break
+		}
+		var buffer bytes.Buffer
+		for index, info := range p.PartitionInfos {
+			if index > 0 {
+				buffer.WriteString(", ")
+			}
+
+			tblName := info.tableScan.Table.Name.O
+			if info.tableScan.TableAsName != nil && info.tableScan.TableAsName.O != "" {
+				tblName = info.tableScan.TableAsName.O
+			}
+
+			if info.tableScan.Table.GetPartitionInfo() == nil {
+				buffer.WriteString("table")
+			} else {
+				partition, _ := getDynamicAccessPartition(explainCtx, info.tableScan.Table, &info.partitionInfo)
+				buffer.WriteString(partition)
+			}
+			buffer.WriteString(" of " + tblName)
+			res.AccessPartition = buffer.String()
+		}
 	case *PhysicalIndexReader:
+		is := p.IndexPlans[0].(*PhysicalIndexScan)
+		res.AccessPartition, _ = getDynamicAccessPartition(explainCtx, is.Table, &p.PartitionInfo)
 	case *PhysicalIndexLookUpReader:
+		ts := p.TablePlans[0].(*PhysicalTableScan)
+		res.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
 	case *PhysicalIndexMergeReader:
+		ts := p.TablePlans[0].(*PhysicalTableScan)
+		res.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
 	}
 	return res
 }
