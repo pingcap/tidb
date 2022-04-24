@@ -940,3 +940,87 @@ func (s *testSuite3) TestSetCurrentUserPwd(c *C) {
 	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
 	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
 }
+<<<<<<< HEAD
+=======
+
+func TestShowGrantsAfterDropRole(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER u29473")
+	defer tk.MustExec("DROP USER IF EXISTS u29473")
+
+	tk.MustExec("CREATE ROLE r29473")
+	tk.MustExec("GRANT r29473 TO u29473")
+	tk.MustExec("GRANT CREATE USER ON *.* TO u29473")
+
+	tk.Session().Auth(&auth.UserIdentity{Username: "u29473", Hostname: "%"}, nil, nil)
+	tk.MustExec("SET ROLE r29473")
+	tk.MustExec("DROP ROLE r29473")
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CREATE USER ON *.* TO 'u29473'@'%'"))
+}
+
+func TestDropRoleAfterRevoke(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	// issue 29781
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+
+	tk.MustExec("create role r1, r2, r3;")
+	defer tk.MustExec("drop role if exists r1, r2, r3;")
+	tk.MustExec("grant r1,r2,r3 to current_user();")
+	tk.MustExec("set role all;")
+	tk.MustExec("revoke r1, r3 from root;")
+	tk.MustExec("drop role r1;")
+}
+
+func TestUserWithSetNames(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set names gbk;")
+
+	tk.MustExec("drop user if exists '\xd2\xbb'@'localhost';")
+	tk.MustExec("create user '\xd2\xbb'@'localhost' IDENTIFIED BY '\xd2\xbb';")
+
+	result := tk.MustQuery("SELECT authentication_string FROM mysql.User WHERE User='\xd2\xbb' and Host='localhost';")
+	result.Check(testkit.Rows(auth.EncodePassword("一")))
+
+	tk.MustExec("ALTER USER '\xd2\xbb'@'localhost' IDENTIFIED BY '\xd2\xbb\xd2\xbb';")
+	result = tk.MustQuery("SELECT authentication_string FROM mysql.User WHERE User='\xd2\xbb' and Host='localhost';")
+	result.Check(testkit.Rows(auth.EncodePassword("一一")))
+
+	tk.MustExec("RENAME USER '\xd2\xbb'@'localhost' to '\xd2\xbb'")
+
+	tk.MustExec("drop user '\xd2\xbb';")
+}
+
+func TestStatementsCauseImplicitCommit(t *testing.T) {
+	// Test some of the implicit commit statements.
+	// See https://dev.mysql.com/doc/refman/5.7/en/implicit-commit.html
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table ic (id int primary key)")
+
+	cases := []string{
+		"create table xx (id int)",
+		"create user 'xx'@'127.0.0.1'",
+		"grant SELECT on test.ic to 'xx'@'127.0.0.1'",
+		"flush privileges",
+		"analyze table ic",
+	}
+	for i, sql := range cases {
+		tk.MustExec("begin")
+		tk.MustExec("insert into ic values (?)", i)
+		tk.MustExec(sql)
+		tk.MustQuery("select * from ic where id = ?", i).Check(testkit.Rows(strconv.FormatInt(int64(i), 10)))
+		// Clean up data
+		tk.MustExec("delete from ic")
+	}
+}
+>>>>>>> d3a02f416... executor: flush statement should trigger implicit commit (#34134)
