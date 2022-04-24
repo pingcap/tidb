@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -186,6 +185,8 @@ func (p *LogicalJoin) ExtractFD() *fd.FDSet {
 	switch p.JoinType {
 	case InnerJoin:
 		return p.extractFDForInnerJoin(nil)
+	case LeftOuterJoin, RightOuterJoin:
+		return p.extractFDForOuterJoin(nil)
 	case SemiJoin:
 		return p.extractFDForSemiJoin(nil)
 	default:
@@ -238,8 +239,8 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 		fds.HashCodeToUniqueID = rightFD.HashCodeToUniqueID
 	} else {
 		for k, v := range rightFD.HashCodeToUniqueID {
+			// If there's same constant in the different subquery, we might go into this IF branch.
 			if _, ok := fds.HashCodeToUniqueID[k]; ok {
-				logutil.BgLogger().Warn("Error occurred while maintaining functional dependency")
 				continue
 			}
 			fds.HashCodeToUniqueID[k] = v
@@ -249,6 +250,100 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 		fds.GroupByCols.Insert(i)
 	}
 	fds.HasAggBuilt = fds.HasAggBuilt || rightFD.HasAggBuilt
+	p.fdSet = fds
+	return fds
+}
+
+func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expression) *fd.FDSet {
+	outerFD, innerFD := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	innerCondition := p.RightConditions
+	outerCondition := p.LeftConditions
+	outerCols, innerCols := fd.NewFastIntSet(), fd.NewFastIntSet()
+	for _, col := range p.children[0].Schema().Columns {
+		outerCols.Insert(int(col.UniqueID))
+	}
+	for _, col := range p.children[1].Schema().Columns {
+		innerCols.Insert(int(col.UniqueID))
+	}
+	if p.JoinType == RightOuterJoin {
+		innerFD, outerFD = outerFD, innerFD
+		innerCondition = p.LeftConditions
+		outerCondition = p.RightConditions
+		innerCols, outerCols = outerCols, innerCols
+	}
+
+	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
+	allConds := append(eqCondSlice, p.OtherConditions...)
+	allConds = append(allConds, innerCondition...)
+	allConds = append(allConds, outerCondition...)
+	allConds = append(allConds, filtersFromApply...)
+	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
+
+	filterFD := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+
+	constUniqueIDs := extractConstantCols(allConds, p.SCtx(), filterFD)
+
+	equivUniqueIDs := extractEquivalenceCols(allConds, p.SCtx(), filterFD)
+
+	filterFD.AddConstants(constUniqueIDs)
+	equivOuterUniqueIDs := fd.NewFastIntSet()
+	equivAcrossNum := 0
+	for _, equiv := range equivUniqueIDs {
+		filterFD.AddEquivalence(equiv[0], equiv[1])
+		if equiv[0].SubsetOf(outerCols) && equiv[1].SubsetOf(innerCols) {
+			equivOuterUniqueIDs.UnionWith(equiv[0])
+			equivAcrossNum++
+			continue
+		}
+		if equiv[0].SubsetOf(innerCols) && equiv[1].SubsetOf(outerCols) {
+			equivOuterUniqueIDs.UnionWith(equiv[1])
+			equivAcrossNum++
+		}
+	}
+	filterFD.MakeNotNull(notNullColsFromFilters)
+
+	// pre-perceive the filters for the convenience judgement of 3.3.1.
+	var opt fd.ArgOpts
+	if equivAcrossNum > 0 {
+		// find the equivalence FD across left and right cols.
+		var outConditionCols []*expression.Column
+		if len(outerCondition) != 0 {
+			outConditionCols = append(outConditionCols, expression.ExtractColumnsFromExpressions(nil, outerCondition, nil)...)
+		}
+		if len(p.OtherConditions) != 0 {
+			// other condition may contain right side cols, it doesn't affect the judgement of intersection of non-left-equiv cols.
+			outConditionCols = append(outConditionCols, expression.ExtractColumnsFromExpressions(nil, p.OtherConditions, nil)...)
+		}
+		outerConditionUniqueIDs := fd.NewFastIntSet()
+		for _, col := range outConditionCols {
+			outerConditionUniqueIDs.Insert(int(col.UniqueID))
+		}
+		// judge whether left filters is on non-left-equiv cols.
+		if outerConditionUniqueIDs.Intersects(outerCols.Difference(equivOuterUniqueIDs)) {
+			opt.SkipFDRule331 = true
+		}
+	} else {
+		// if there is none across equivalence condition, skip rule 3.3.1.
+		opt.SkipFDRule331 = true
+	}
+
+	opt.OnlyInnerFilter = len(eqCondSlice) == 0 && len(outerCondition) == 0
+	if opt.OnlyInnerFilter {
+		// if one of the inner condition is constant false, the inner side are all null, left make constant all of that.
+		for _, one := range innerCondition {
+			if c, ok := one.(*expression.Constant); ok && c.DeferredExpr == nil && c.ParamMarker == nil {
+				if isTrue, err := c.Value.ToBool(p.ctx.GetSessionVars().StmtCtx); err == nil {
+					if isTrue == 0 {
+						// c is false
+						opt.InnerIsFalse = true
+					}
+				}
+			}
+		}
+	}
+
+	fds := outerFD
+	fds.MakeOuterJoin(innerFD, filterFD, outerCols, innerCols, &opt)
 	p.fdSet = fds
 	return fds
 }
@@ -472,28 +567,6 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	fds.MakeNotNull(notnullColsUniqueIDs)
 	// select max(a) from t group by b, we should project both `a` & `b` to maintain the FD down here, even if select-fields only contain `a`.
 	fds.ProjectCols(outputColsUniqueIDs.Union(fds.GroupByCols))
-
-	if fds.GroupByCols.Only1Zero() {
-		// maxOneRow is delayed from agg's ExtractFD logic since some details listed in it.
-		projectionUniqueIDs := fd.NewFastIntSet()
-		for _, expr := range p.Exprs {
-			switch x := expr.(type) {
-			case *expression.Column:
-				projectionUniqueIDs.Insert(int(x.UniqueID))
-			case *expression.ScalarFunction:
-				scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
-				if !ok {
-					logutil.BgLogger().Warn("Error occurred while maintaining the functional dependency")
-					continue
-				}
-				projectionUniqueIDs.Insert(scalarUniqueID)
-			}
-		}
-		fds.MaxOneRow(projectionUniqueIDs)
-	}
-	// for select * from view (include agg), outer projection don't have to check select list with the inner group-by flag.
-	fds.HasAggBuilt = false
-
 	// just trace it down in every operator for test checking.
 	p.fdSet = fds
 	return fds
@@ -874,7 +947,7 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	// join's schema will miss t2.a while join.full schema has. since selection
 	// itself doesn't contain schema, extracting schema should tell them apart.
 	var columns []*expression.Column
-	if join, ok := p.children[0].(*LogicalJoin); ok {
+	if join, ok := p.children[0].(*LogicalJoin); ok && join.fullSchema != nil {
 		columns = join.fullSchema.Columns
 	} else {
 		columns = p.Schema().Columns
@@ -971,6 +1044,8 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 	switch la.JoinType {
 	case InnerJoin:
 		return la.extractFDForInnerJoin(eqCond)
+	case LeftOuterJoin, RightOuterJoin:
+		return la.extractFDForOuterJoin(eqCond)
 	case SemiJoin:
 		return la.extractFDForSemiJoin(eqCond)
 	default:
