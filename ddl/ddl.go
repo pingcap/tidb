@@ -689,22 +689,6 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-// MayNeedReorg indicates that this job may need to reorganize the data.
-func MayNeedReorg(job *model.Job) bool {
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		return true
-	case model.ActionModifyColumn:
-		if len(job.CtxVars) > 0 {
-			needReorg, ok := job.CtxVars[0].(bool)
-			return ok && needReorg
-		}
-		return false
-	default:
-		return false
-	}
-}
-
 func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	// If the workers don't run, we needn't notify workers.
 	if !RunWorker {
@@ -712,7 +696,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	}
 	if variable.AllowConcurrencyDDL.Load() {
 		key := ""
-		if MayNeedReorg(job) {
+		if job.MayNeedReorg() {
 			key = addingDDLJobReorg
 		} else {
 			key = addingDDLJobGeneral
@@ -724,7 +708,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 		}
 	} else {
 		var worker *worker
-		if MayNeedReorg(job) {
+		if job.MayNeedReorg() {
 			worker = d.workers[addIdxWorker]
 		} else {
 			worker = d.workers[generalWorker]
@@ -1073,7 +1057,7 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 		if job.IsRollingback() || job.IsRollbackDone() {
 			continue
 		}
-		if !admin.IsJobRollbackable(job) {
+		if !job.IsRollbackable() {
 			errs[i] = admin.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
 			continue
 		}
