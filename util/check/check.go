@@ -105,8 +105,7 @@ func Do(ctx context.Context, checkers []Checker) (*Results, error) {
 	go func() {
 		defer wg.Done()
 		for {
-			select {
-			case result := <-resultCh:
+			for result := range resultCh {
 				switch result.State {
 				case StateSuccess:
 					successful++

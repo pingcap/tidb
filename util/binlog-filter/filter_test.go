@@ -118,6 +118,7 @@ func TestFilter(t *testing.T) {
 
 	// mismatched
 	action, err := filter.Filter("xxx_a", "", InsertEvent, "")
+	require.NoError(t, err)
 	require.Equal(t, Do, action)
 
 	// invalid rule

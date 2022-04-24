@@ -16,37 +16,28 @@ package diff
 
 import (
 	"context"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/importer"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testChunkSuite{})
-
-type testChunkSuite struct{}
-
-type chunkTestCase struct {
-	chunk        *ChunkRange
-	chunkCnt     int64
-	expectChunks []*ChunkRange
-}
-
-func (*testChunkSuite) TestSplitRange(c *C) {
+func TestSplitRange(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	conn, err := createConn()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer conn.Close()
 
 	_, err = conn.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS `test`")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = conn.ExecContext(ctx, "DROP TABLE IF EXISTS `test`.`test_chunk`")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	createTableSQL := `CREATE TABLE test.test_chunk (
 		a date NOT NULL,
@@ -74,7 +65,7 @@ func (*testChunkSuite) TestSplitRange(c *C) {
 	_, _ = conn.ExecContext(ctx, "ANALYZE TABLE `test`.`test_chunk`")
 
 	tableInfo, err := dbutil.GetTableInfo(ctx, conn, "test", "test_chunk")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tableInstance := &TableInstance{
 		Conn:   conn,
@@ -85,22 +76,22 @@ func (*testChunkSuite) TestSplitRange(c *C) {
 
 	// split chunks
 	fields, err := getSplitFields(tableInstance.info, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	chunks, err := getChunksForTable(tableInstance, fields, 100, "TRUE", "", false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// get data count from every chunk, and the sum of them should equal to the table's count.
 	chunkDataCount := 0
 	for _, chunk := range chunks {
 		conditions, args := chunk.toString("")
 		count, err := dbutil.GetRowCount(ctx, tableInstance.Conn, tableInstance.Schema, tableInstance.Table, conditions, stringSliceToInterfaceSlice(args))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		chunkDataCount += int(count)
 	}
-	c.Assert(chunkDataCount, Equals, dataCount)
+	require.Equal(t, dataCount, chunkDataCount)
 }
 
-func (*testChunkSuite) TestChunkUpdate(c *C) {
+func TestChunkUpdate(t *testing.T) {
 	chunk := &ChunkRange{
 		Bounds: []*Bound{
 			{
@@ -142,18 +133,18 @@ func (*testChunkSuite) TestChunkUpdate(c *C) {
 	for _, cs := range testCases {
 		newChunk := chunk.copyAndUpdate(cs.boundArgs[0], cs.boundArgs[1], cs.boundArgs[2], true, true)
 		conditions, args := newChunk.toString("")
-		c.Assert(conditions, Equals, cs.expectStr)
-		c.Assert(args, DeepEquals, cs.expectArgs)
+		require.Equal(t, cs.expectStr, conditions)
+		require.Equal(t, cs.expectArgs, args)
 	}
 
 	// the origin chunk is not changed
 	conditions, args := chunk.toString("")
-	c.Assert(conditions, Equals, "((`a` > ?) OR (`a` = ? AND `b` > ?)) AND ((`a` < ?) OR (`a` = ? AND `b` <= ?))")
+	require.Equal(t, "((`a` > ?) OR (`a` = ? AND `b` > ?)) AND ((`a` < ?) OR (`a` = ? AND `b` <= ?))", conditions)
 	expectArgs := []string{"1", "1", "3", "2", "2", "4"}
-	c.Assert(args, DeepEquals, expectArgs)
+	require.Equal(t, expectArgs, args)
 }
 
-func (*testChunkSuite) TestChunkToString(c *C) {
+func TestChunkToString(t *testing.T) {
 	chunk := &ChunkRange{
 		Bounds: []*Bound{
 			{
@@ -179,33 +170,33 @@ func (*testChunkSuite) TestChunkToString(c *C) {
 	}
 
 	conditions, args := chunk.toString("")
-	c.Assert(conditions, Equals, "((`a` > ?) OR (`a` = ? AND `b` > ?) OR (`a` = ? AND `b` = ? AND `c` > ?)) AND ((`a` < ?) OR (`a` = ? AND `b` < ?) OR (`a` = ? AND `b` = ? AND `c` <= ?))")
+	require.Equal(t, "((`a` > ?) OR (`a` = ? AND `b` > ?) OR (`a` = ? AND `b` = ? AND `c` > ?)) AND ((`a` < ?) OR (`a` = ? AND `b` < ?) OR (`a` = ? AND `b` = ? AND `c` <= ?))", conditions)
 	expectArgs := []string{"1", "1", "3", "1", "3", "5", "2", "2", "4", "2", "4", "6"}
 	for i, arg := range args {
-		c.Assert(arg, Equals, expectArgs[i])
+		require.Equal(t, expectArgs[i], arg)
 	}
 
 	conditions, args = chunk.toString("latin1")
-	c.Assert(conditions, Equals, "((`a` COLLATE 'latin1' > ?) OR (`a` = ? AND `b` COLLATE 'latin1' > ?) OR (`a` = ? AND `b` = ? AND `c` COLLATE 'latin1' > ?)) AND ((`a` COLLATE 'latin1' < ?) OR (`a` = ? AND `b` COLLATE 'latin1' < ?) OR (`a` = ? AND `b` = ? AND `c` COLLATE 'latin1' <= ?))")
+	require.Equal(t, "((`a` COLLATE 'latin1' > ?) OR (`a` = ? AND `b` COLLATE 'latin1' > ?) OR (`a` = ? AND `b` = ? AND `c` COLLATE 'latin1' > ?)) AND ((`a` COLLATE 'latin1' < ?) OR (`a` = ? AND `b` COLLATE 'latin1' < ?) OR (`a` = ? AND `b` = ? AND `c` COLLATE 'latin1' <= ?))", conditions)
 	expectArgs = []string{"1", "1", "3", "1", "3", "5", "2", "2", "4", "2", "4", "6"}
 	for i, arg := range args {
-		c.Assert(arg, Equals, expectArgs[i])
+		require.Equal(t, expectArgs[i], arg)
 	}
 }
 
-func (*testChunkSuite) TestRangeLimit(c *C) {
+func TestRangeLimit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	conn, err := createConn()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer conn.Close()
 
 	_, err = conn.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS `test`")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = conn.ExecContext(ctx, "DROP TABLE IF EXISTS `test`.`test_range`")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	createTableSQL := `CREATE TABLE test.test_range (
 		a int NOT NULL,
@@ -234,7 +225,7 @@ func (*testChunkSuite) TestRangeLimit(c *C) {
 	_, _ = conn.ExecContext(ctx, "ANALYZE TABLE `test`.`test_range`")
 
 	tableInfo, err := dbutil.GetTableInfo(ctx, conn, "test", "test_range")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tableInstance := &TableInstance{
 		Conn:   conn,
@@ -243,20 +234,20 @@ func (*testChunkSuite) TestRangeLimit(c *C) {
 		info:   tableInfo,
 	}
 
-	c.Assert(createCheckpointTable(ctx, conn), IsNil)
+	require.Nil(t, createCheckpointTable(ctx, conn))
 	chunks, err := SplitChunks(ctx, tableInstance, "a,d", "a > 7", 1, "", false, conn)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer conn.ExecContext(ctx, "DROP DATABASE sync_diff_inspector")
 	// a > 7 and chunkSize = 1 should return 2 chunk
-	c.Assert(chunks, HasLen, 2)
+	require.Len(t, chunks, 2)
 	count := 0
 
 	for _, chunk := range chunks {
 		rows, _, err := getChunkRows(ctx, conn, "test", "test_range", tableInfo, chunk.Where, util.StringsToInterfaces(chunk.Args), "")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		for rows.Next() {
 			count++
 		}
 	}
-	c.Assert(count, Equals, 2)
+	require.Equal(t, 2, count)
 }

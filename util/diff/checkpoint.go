@@ -159,7 +159,7 @@ func initChunks(ctx context.Context, db *sql.DB, instanceID, schema, table strin
 
 // getChunk gets chunk info from table `chunk` by chunkID
 func getChunk(ctx context.Context, db *sql.DB, instanceID, schema, table string, chunkID int) (*ChunkRange, error) {
-	query := fmt.Sprintf("SELECT `chunk_str` FROM `%s`.`%s` WHERE `instance_id` = ? AND `schema` = ? AND `table` = ? AND `chunk_id` = ? limit 1", checkpointSchemaName, chunkTableName)
+	query := fmt.Sprintf("SELECT `chunk_str` FROM `%s`.`%s` WHERE `instance_id` = ? AND `schema` = ? AND `table` = ? AND `chunk_id` = ? limit 1", checkpointSchemaName, chunkTableName) // nolint:gosec
 	rows, err := db.QueryContext(ctx, query, instanceID, schema, table, chunkID)
 	if err != nil {
 		return nil, err
@@ -192,7 +192,7 @@ func getChunk(ctx context.Context, db *sql.DB, instanceID, schema, table string,
 func loadChunks(ctx context.Context, db *sql.DB, instanceID, schema, table string) ([]*ChunkRange, error) {
 	chunks := make([]*ChunkRange, 0, 100)
 
-	query := fmt.Sprintf("SELECT `chunk_str` FROM `%s`.`%s` WHERE `instance_id` = ? AND `schema` = ? AND `table` = ?", checkpointSchemaName, chunkTableName)
+	query := fmt.Sprintf("SELECT `chunk_str` FROM `%s`.`%s` WHERE `instance_id` = ? AND `schema` = ? AND `table` = ?", checkpointSchemaName, chunkTableName) // nolint:gosec
 	rows, err := db.QueryContext(ctx, query, instanceID, schema, table)
 	if err != nil {
 		return nil, err
@@ -220,8 +220,7 @@ func loadChunks(ctx context.Context, db *sql.DB, instanceID, schema, table strin
 
 // getTableSummary returns a table's total chunk num, check success chunk num, check failed chunk num, check ignore chunk num and the state
 func getTableSummary(ctx context.Context, db *sql.DB, schema, table string) (total int64, success int64, failed int64, ignore int64, state string, err error) {
-	query := fmt.Sprintf("SELECT `chunk_num`, `check_success_num`, `check_failed_num`, `check_ignore_num`, `state` FROM `%s`.`%s` WHERE `schema` = ? AND `table` = ? LIMIT 1",
-		checkpointSchemaName, summaryTableName)
+	query := fmt.Sprintf("SELECT `chunk_num`, `check_success_num`, `check_failed_num`, `check_ignore_num`, `state` FROM `%s`.`%s` WHERE `schema` = ? AND `table` = ? LIMIT 1", checkpointSchemaName, summaryTableName) //nolint:gosec
 	rows, err := db.QueryContext(ctx, query, schema, table)
 	if err != nil {
 		return 0, 0, 0, 0, "", errors.Trace(err)
@@ -395,7 +394,7 @@ func dropCheckpoint(ctx context.Context, db *sql.DB) error {
 
 // loadFromCheckPoint returns true if we should use the history checkpoint
 func loadFromCheckPoint(ctx context.Context, db *sql.DB, schema, table, configHash string) (bool, error) {
-	query := fmt.Sprintf("SELECT `state`, `config_hash` FROM `%s`.`%s` WHERE `schema` = ? AND `table` = ? LIMIT 1;", checkpointSchemaName, summaryTableName)
+	query := fmt.Sprintf("SELECT `state`, `config_hash` FROM `%s`.`%s` WHERE `schema` = ? AND `table` = ? LIMIT 1;", checkpointSchemaName, summaryTableName) // nolint:gosec
 	rows, err := db.QueryContext(ctx, query, schema, table)
 	if err != nil {
 		return false, errors.Trace(err)

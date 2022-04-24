@@ -31,14 +31,14 @@ import (
 )
 
 var (
-	equal = "="
+	equal = "=" // nolint: unused, deadcode, varcheck
 	lt    = "<"
 	lte   = "<="
 	gt    = ">"
-	gte   = ">="
+	gte   = ">=" // nolint: unused, deadcode, varcheck
 
-	bucketMode = "bucketMode"
-	normalMode = "normalMode"
+	bucketMode = "bucketMode" // nolint: unused, deadcode, varcheck
+	normalMode = "normalMode" // nolint: unused, deadcode, varcheck
 )
 
 // Bound represents a bound for a column
@@ -208,6 +208,7 @@ func (c *ChunkRange) copyAndUpdate(column, lower, upper string, updateLower, upd
 	return newChunk
 }
 
+// nolint: unused, deadcode
 type spliter interface {
 	// split splits a table's data to several chunks.
 	split(table *TableInstance, columns []*model.ColumnInfo, chunkSize int, limits string, collation string) ([]*ChunkRange, error)

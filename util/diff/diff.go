@@ -17,7 +17,7 @@ package diff
 import (
 	"container/heap"
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -79,13 +79,13 @@ type TableDiff struct {
 	// how many goroutines are created to check data
 	CheckThreadCount int `json:"-"`
 
-	// set false if want to comapre the data directly
+	// set false if want to compare the data directly
 	UseChecksum bool `json:"-"`
 
 	// set true if just want compare data by checksum, will skip select data when checksum is not equal
 	OnlyUseChecksum bool `json:"-"`
 
-	// collation config in mysql/tidb, should corresponding to charset.
+	// collation config in mysql/tidb, should correspond to charset.
 	Collation string `json:"collation"`
 
 	// ignore check table's struct
@@ -121,7 +121,7 @@ func (t *TableDiff) setConfigHash() error {
 		return errors.Trace(err)
 	}
 
-	t.configHash = fmt.Sprintf("%x", md5.Sum(jsonBytes))
+	t.configHash = fmt.Sprintf("%x", md5.Sum(jsonBytes)) // nolint:gosec
 	log.Debug("sync-diff-inspector config", zap.ByteString("config", jsonBytes), zap.String("hash", t.configHash))
 
 	return nil
@@ -350,7 +350,7 @@ func (t *TableDiff) LoadCheckpoint(ctx context.Context) ([]*ChunkRange, error) {
 		}
 	}
 
-	// clean old checkpoint infomation, and initial table summary
+	// clean old checkpoint information, and initial table summary
 	err = cleanCheckpoint(ctx1, t.CpDB, t.TargetTable.Schema, t.TargetTable.Table)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -440,7 +440,7 @@ func (t *TableDiff) checkChunkDataEqual(ctx context.Context, filterByRand bool, 
 
 	if filterByRand {
 		rand.Seed(time.Now().UnixNano())
-		r := rand.Intn(100)
+		r := rand.Intn(100) // nolint:gosec
 		if r > t.Sample {
 			chunk.State = ignoreState
 			return true, nil
@@ -561,14 +561,14 @@ func (t *TableDiff) compareRows(ctx context.Context, chunk *ChunkRange) (bool, e
 	sourceHaveData := make(map[int]bool)
 	args := util.StringsToInterfaces(chunk.Args)
 
-	targetRows, orderKeyCols, err := getChunkRows(ctx, t.TargetTable.Conn, t.TargetTable.Schema, t.TargetTable.Table, t.TargetTable.info, chunk.Where, args, t.Collation)
+	targetRows, orderKeyCols, err := getChunkRows(ctx, t.TargetTable.Conn, t.TargetTable.Schema, t.TargetTable.Table, t.TargetTable.info, chunk.Where, args, t.Collation) // nolint:rowserrcheck
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	defer targetRows.Close()
 
 	for i, sourceTable := range t.SourceTables {
-		rows, _, err := getChunkRows(ctx, sourceTable.Conn, sourceTable.Schema, sourceTable.Table, sourceTable.info, chunk.Where, args, t.Collation)
+		rows, _, err := getChunkRows(ctx, sourceTable.Conn, sourceTable.Schema, sourceTable.Table, sourceTable.info, chunk.Where, args, t.Collation) // noline:rowserrcheck
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -786,7 +786,7 @@ func (t *TableDiff) WriteSqls(ctx context.Context, writeFixSQL func(string) erro
 	return stopWriteCh
 }
 
-// UpdateSummaryInfo updaets summary infomation
+// UpdateSummaryInfo updates summary information
 func (t *TableDiff) UpdateSummaryInfo(ctx context.Context) chan bool {
 	t.wg.Add(1)
 	stopUpdateCh := make(chan bool)
@@ -990,8 +990,7 @@ func getChunkRows(ctx context.Context, db *sql.DB, schema, table string, tableIn
 		orderKeys[i] = dbutil.ColumnName(key)
 	}
 
-	query := fmt.Sprintf("SELECT /*!40001 SQL_NO_CACHE */ %s FROM %s WHERE %s ORDER BY %s%s",
-		columns, dbutil.TableName(schema, table), where, strings.Join(orderKeys, ","), collation)
+	query := fmt.Sprintf("SELECT /*!40001 SQL_NO_CACHE */ %s FROM %s WHERE %s ORDER BY %s%s", columns, dbutil.TableName(schema, table), where, strings.Join(orderKeys, ","), collation) //nolint:gosec
 
 	log.Debug("select data", zap.String("sql", query), zap.Reflect("args", args))
 	rows, err := db.QueryContext(ctx, query, args...)

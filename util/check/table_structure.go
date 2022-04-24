@@ -210,8 +210,8 @@ func (c *TablesChecker) checkAST(stmt ast.StmtNode) []*incompatibilityOption {
 	if !hasUnique {
 		options = append(options, &incompatibilityOption{
 			state:       StateFailure,
-			instruction: fmt.Sprintf("please set primary/unique key for the table"),
-			errMessage:  fmt.Sprintf("primary/unique key does not exist"),
+			instruction: "please set primary/unique key for the table",
+			errMessage:  "primary/unique key does not exist",
 		})
 	}
 
@@ -234,7 +234,7 @@ func (c *TablesChecker) checkConstraint(cst *ast.Constraint) *incompatibilityOpt
 	case ast.ConstraintForeignKey:
 		return &incompatibilityOption{
 			state:       StateWarning,
-			instruction: fmt.Sprintf("please ref document: https://docs.pingcap.com/tidb/stable/mysql-compatibility#unsupported-features"),
+			instruction: "please ref document: https://docs.pingcap.com/tidb/stable/mysql-compatibility#unsupported-features",
 			errMessage:  fmt.Sprintf("Foreign Key %s is parsed but ignored by TiDB.", cst.Name),
 		}
 	}
@@ -258,7 +258,7 @@ func (c *TablesChecker) checkTableOption(opt *ast.TableOption) *incompatibilityO
 		if cs != "binary" && !charset.ValidCharsetAndCollation(cs, "") {
 			return &incompatibilityOption{
 				state:       StateFailure,
-				instruction: fmt.Sprintf("https://docs.pingcap.com/tidb/stable/mysql-compatibility#unsupported-features"),
+				instruction: "https://docs.pingcap.com/tidb/stable/mysql-compatibility#unsupported-features",
 				errMessage:  fmt.Sprintf("unsupport charset %s", opt.StrValue),
 			}
 		}

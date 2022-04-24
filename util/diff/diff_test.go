@@ -22,25 +22,17 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/importer"
+	"github.com/stretchr/testify/require"
 )
 
-func TestClient(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testDiffSuite{})
-
-type testDiffSuite struct{}
-
-func (*testDiffSuite) TestGenerateSQLs(c *C) {
+func TestGenerateSQLs(t *testing.T) {
 	createTableSQL := "CREATE TABLE `diff_test`.`atest` (`id` int(24), `name` varchar(24), `birthday` datetime, `update_time` time, `money` decimal(20,2), `id_gen` int(11) GENERATED ALWAYS AS ((`id` + 1)) VIRTUAL, primary key(`id`, `name`))"
 	tableInfo, err := dbutil.GetTableInfoBySQL(createTableSQL, parser.New())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	rowsData := map[string]*dbutil.ColumnData{
 		"id":          {Data: []byte("1"), IsNull: false},
@@ -53,53 +45,53 @@ func (*testDiffSuite) TestGenerateSQLs(c *C) {
 
 	replaceSQL := generateDML("replace", rowsData, tableInfo, "diff_test")
 	deleteSQL := generateDML("delete", rowsData, tableInfo, "diff_test")
-	c.Assert(replaceSQL, Equals, "REPLACE INTO `diff_test`.`atest`(`id`,`name`,`birthday`,`update_time`,`money`) VALUES (1,'xxx','2018-01-01 00:00:00','10:10:10',11.1111);")
-	c.Assert(deleteSQL, Equals, "DELETE FROM `diff_test`.`atest` WHERE `id` = 1 AND `name` = 'xxx' AND `birthday` = '2018-01-01 00:00:00' AND `update_time` = '10:10:10' AND `money` = 11.1111;")
+	require.Equal(t, "REPLACE INTO `diff_test`.`atest`(`id`,`name`,`birthday`,`update_time`,`money`) VALUES (1,'xxx','2018-01-01 00:00:00','10:10:10',11.1111);", replaceSQL)
+	require.Equal(t, "DELETE FROM `diff_test`.`atest` WHERE `id` = 1 AND `name` = 'xxx' AND `birthday` = '2018-01-01 00:00:00' AND `update_time` = '10:10:10' AND `money` = 11.1111;", deleteSQL)
 
 	// test the unique key
 	createTableSQL2 := "CREATE TABLE `diff_test`.`atest` (`id` int(24), `name` varchar(24), `birthday` datetime, `update_time` time, `money` decimal(20,2), unique key(`id`, `name`))"
 	tableInfo2, err := dbutil.GetTableInfoBySQL(createTableSQL2, parser.New())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	replaceSQL = generateDML("replace", rowsData, tableInfo2, "diff_test")
 	deleteSQL = generateDML("delete", rowsData, tableInfo2, "diff_test")
-	c.Assert(replaceSQL, Equals, "REPLACE INTO `diff_test`.`atest`(`id`,`name`,`birthday`,`update_time`,`money`) VALUES (1,'xxx','2018-01-01 00:00:00','10:10:10',11.1111);")
-	c.Assert(deleteSQL, Equals, "DELETE FROM `diff_test`.`atest` WHERE `id` = 1 AND `name` = 'xxx' AND `birthday` = '2018-01-01 00:00:00' AND `update_time` = '10:10:10' AND `money` = 11.1111;")
+	require.Equal(t, "REPLACE INTO `diff_test`.`atest`(`id`,`name`,`birthday`,`update_time`,`money`) VALUES (1,'xxx','2018-01-01 00:00:00','10:10:10',11.1111);", replaceSQL)
+	require.Equal(t, "DELETE FROM `diff_test`.`atest` WHERE `id` = 1 AND `name` = 'xxx' AND `birthday` = '2018-01-01 00:00:00' AND `update_time` = '10:10:10' AND `money` = 11.1111;", deleteSQL)
 
 	// test value is nil
 	rowsData["name"] = &dbutil.ColumnData{Data: []byte(""), IsNull: true}
 	replaceSQL = generateDML("replace", rowsData, tableInfo, "diff_test")
 	deleteSQL = generateDML("delete", rowsData, tableInfo, "diff_test")
-	c.Assert(replaceSQL, Equals, "REPLACE INTO `diff_test`.`atest`(`id`,`name`,`birthday`,`update_time`,`money`) VALUES (1,NULL,'2018-01-01 00:00:00','10:10:10',11.1111);")
-	c.Assert(deleteSQL, Equals, "DELETE FROM `diff_test`.`atest` WHERE `id` = 1 AND `name` is NULL AND `birthday` = '2018-01-01 00:00:00' AND `update_time` = '10:10:10' AND `money` = 11.1111;")
+	require.Equal(t, "REPLACE INTO `diff_test`.`atest`(`id`,`name`,`birthday`,`update_time`,`money`) VALUES (1,NULL,'2018-01-01 00:00:00','10:10:10',11.1111);", replaceSQL)
+	require.Equal(t, "DELETE FROM `diff_test`.`atest` WHERE `id` = 1 AND `name` is NULL AND `birthday` = '2018-01-01 00:00:00' AND `update_time` = '10:10:10' AND `money` = 11.1111;", deleteSQL)
 
 	rowsData["id"] = &dbutil.ColumnData{Data: []byte(""), IsNull: true}
 	replaceSQL = generateDML("replace", rowsData, tableInfo, "diff_test")
 	deleteSQL = generateDML("delete", rowsData, tableInfo, "diff_test")
-	c.Assert(replaceSQL, Equals, "REPLACE INTO `diff_test`.`atest`(`id`,`name`,`birthday`,`update_time`,`money`) VALUES (NULL,NULL,'2018-01-01 00:00:00','10:10:10',11.1111);")
-	c.Assert(deleteSQL, Equals, "DELETE FROM `diff_test`.`atest` WHERE `id` is NULL AND `name` is NULL AND `birthday` = '2018-01-01 00:00:00' AND `update_time` = '10:10:10' AND `money` = 11.1111;")
+	require.Equal(t, "REPLACE INTO `diff_test`.`atest`(`id`,`name`,`birthday`,`update_time`,`money`) VALUES (NULL,NULL,'2018-01-01 00:00:00','10:10:10',11.1111);", replaceSQL)
+	require.Equal(t, "DELETE FROM `diff_test`.`atest` WHERE `id` is NULL AND `name` is NULL AND `birthday` = '2018-01-01 00:00:00' AND `update_time` = '10:10:10' AND `money` = 11.1111;", deleteSQL)
 
 	// test value with "'"
 	rowsData["name"] = &dbutil.ColumnData{Data: []byte("a'a"), IsNull: false}
 	replaceSQL = generateDML("replace", rowsData, tableInfo, "diff_test")
 	deleteSQL = generateDML("delete", rowsData, tableInfo, "diff_test")
-	c.Assert(replaceSQL, Equals, "REPLACE INTO `diff_test`.`atest`(`id`,`name`,`birthday`,`update_time`,`money`) VALUES (NULL,'a\\'a','2018-01-01 00:00:00','10:10:10',11.1111);")
-	c.Assert(deleteSQL, Equals, "DELETE FROM `diff_test`.`atest` WHERE `id` is NULL AND `name` = 'a\\'a' AND `birthday` = '2018-01-01 00:00:00' AND `update_time` = '10:10:10' AND `money` = 11.1111;")
+	require.Equal(t, "REPLACE INTO `diff_test`.`atest`(`id`,`name`,`birthday`,`update_time`,`money`) VALUES (NULL,'a\\'a','2018-01-01 00:00:00','10:10:10',11.1111);", replaceSQL)
+	require.Equal(t, "DELETE FROM `diff_test`.`atest` WHERE `id` is NULL AND `name` = 'a\\'a' AND `birthday` = '2018-01-01 00:00:00' AND `update_time` = '10:10:10' AND `money` = 11.1111;", deleteSQL)
 }
 
-func (t *testDiffSuite) TestDiff(c *C) {
+func TestDiff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel()
 
 	conn, err := createConn()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer conn.Close()
 
 	_, err = conn.ExecContext(ctx, "DROP DATABASE IF EXISTS `diff_test`")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = conn.ExecContext(ctx, "CREATE DATABASE `diff_test`")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	testStructEqual(ctx, conn, c)
+	testStructEqual(ctx, conn, t)
 	testCases := []struct {
 		sourceTables  []string
 		targetTable   string
@@ -127,11 +119,11 @@ func (t *testDiffSuite) TestDiff(c *C) {
 		},
 	}
 	for _, testCase := range testCases {
-		testDataEqual(ctx, conn, "diff_test", testCase.sourceTables, testCase.targetTable, testCase.hasEmptyTable, c)
+		testDataEqual(ctx, conn, "diff_test", testCase.sourceTables, testCase.targetTable, testCase.hasEmptyTable, t)
 	}
 }
 
-func testStructEqual(ctx context.Context, conn *sql.DB, c *C) {
+func testStructEqual(ctx context.Context, conn *sql.DB, t *testing.T) {
 	testCases := []struct {
 		createSourceTable string
 		createTargetTable string
@@ -186,31 +178,32 @@ func testStructEqual(ctx context.Context, conn *sql.DB, c *C) {
 
 	for _, testCase := range testCases {
 		_, err := conn.ExecContext(ctx, testCase.createSourceTable)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		_, err = conn.ExecContext(ctx, testCase.createTargetTable)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		sourceInfo, err := dbutil.GetTableInfoBySQL(testCase.createSourceTable, parser.New())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		targetInfo, err := dbutil.GetTableInfoBySQL(testCase.createTargetTable, parser.New())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		tableDiff := createTableDiff(conn, "diff_test", []string{sourceInfo.Name.O}, targetInfo.Name.O)
 		structEqual, _, err := tableDiff.Equal(context.Background(), func(sql string) error {
 			fmt.Println(sql)
 			return nil
 		})
-		c.Assert(structEqual, Equals, testCase.structEqual)
+		require.NoError(t, err)
+		require.Equal(t, testCase.structEqual, structEqual)
 
 		_, err = conn.ExecContext(ctx, testCase.dropSourceTable)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		_, err = conn.ExecContext(ctx, testCase.dropTargetTable)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 }
 
-func testDataEqual(ctx context.Context, conn *sql.DB, schema string, sourceTables []string, targetTable string, hasEmptyTable bool, c *C) {
+func testDataEqual(ctx context.Context, conn *sql.DB, schema string, sourceTables []string, targetTable string, hasEmptyTable bool, t *testing.T) {
 	defer func() {
 		for _, sourceTable := range sourceTables {
 			_, _ = conn.ExecContext(ctx, fmt.Sprintf("DROP TABLE %s", dbutil.TableName(schema, sourceTable)))
@@ -219,7 +212,7 @@ func testDataEqual(ctx context.Context, conn *sql.DB, schema string, sourceTable
 	}()
 
 	err := generateData(ctx, conn, dbutil.GetDBConfigFromEnv(schema), sourceTables, targetTable, hasEmptyTable)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// compare data, should be equal
 	fixSqls := make([]string, 0, 10)
@@ -230,42 +223,44 @@ func testDataEqual(ctx context.Context, conn *sql.DB, schema string, sourceTable
 
 	tableDiff := createTableDiff(conn, schema, sourceTables, targetTable)
 	structEqual, dataEqual, err := tableDiff.Equal(context.Background(), writeSqls)
-	c.Assert(err, IsNil)
-	c.Assert(structEqual, Equals, true)
-	c.Assert(dataEqual, Equals, true)
+	require.NoError(t, err)
+	require.Equal(t, true, structEqual)
+	require.Equal(t, true, dataEqual)
 
 	// update data and then compare data, dataEqual should be false
 	err = updateData(ctx, conn, targetTable)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	structEqual, dataEqual, err = tableDiff.Equal(context.Background(), writeSqls)
-	c.Assert(err, IsNil)
-	c.Assert(structEqual, Equals, true)
-	c.Assert(dataEqual, Equals, false)
+	require.NoError(t, err)
+	require.Equal(t, true, structEqual)
+	require.Equal(t, false, dataEqual)
 
 	// use fixSqls to fix data, and then compare data
 	for _, sql := range fixSqls {
 		_, err = conn.ExecContext(ctx, sql)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	structEqual, dataEqual, err = tableDiff.Equal(ctx, writeSqls)
-	c.Assert(err, IsNil)
-	c.Assert(structEqual, Equals, true)
-	c.Assert(dataEqual, Equals, true)
+	require.NoError(t, err)
+	require.Equal(t, true, structEqual)
+	require.Equal(t, true, dataEqual)
 
 	// cancel `Equal`, dataEqual will be false, and will not panic
 	ctx1, cancel1 := context.WithCancel(ctx)
 	cancelEqualFunc = cancel1
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/diff/CancelCheckChunkDataEqual", `return(2)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/util/diff/CancelCheckChunkDataEqual")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/diff/CancelCheckChunkDataEqual", `return(2)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/diff/CancelCheckChunkDataEqual"))
+	}()
 	structEqual, dataEqual, err = tableDiff.Equal(ctx1, writeSqls)
-	c.Assert(err, IsNil)
-	c.Assert(structEqual, Equals, true)
-	c.Assert(dataEqual, Equals, false)
+	require.NoError(t, err)
+	require.Equal(t, true, structEqual)
+	require.Equal(t, false, dataEqual)
 }
 
 func createTableDiff(conn *sql.DB, schema string, sourceTableNames []string, targetTableName string) *TableDiff {
-	sourceTables := []*TableInstance{}
+	sourceTables := make([]*TableInstance, len(sourceTableNames))
 	for _, table := range sourceTableNames {
 		sourceTableInstance := &TableInstance{
 			Conn:   conn,
@@ -379,7 +374,7 @@ func updateData(ctx context.Context, db *sql.DB, table string) error {
 	return nil
 }
 
-func (*testDiffSuite) TestConfigHash(c *C) {
+func TestConfigHash(t *testing.T) {
 	tbDiff := &TableDiff{
 		Range:     "a > 1",
 		ChunkSize: 1000,
@@ -390,10 +385,10 @@ func (*testDiffSuite) TestConfigHash(c *C) {
 	tbDiff.CheckThreadCount = 10
 	tbDiff.setConfigHash()
 	hash2 := tbDiff.configHash
-	c.Assert(hash1, Equals, hash2)
+	require.Equal(t, hash2, hash1)
 
 	tbDiff.Range = "b < 10"
 	tbDiff.setConfigHash()
 	hash3 := tbDiff.configHash
-	c.Assert(hash1 == hash3, Equals, false)
+	require.Equal(t, false, hash1 == hash3)
 }

@@ -26,6 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// nolint: unused, deadcode
 func equalStrings(str1, str2 []string) bool {
 	if len(str1) != len(str2) {
 		return false

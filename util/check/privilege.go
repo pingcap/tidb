@@ -210,5 +210,4 @@ func verifyPrivileges(result *Result, grants []string, expectedGrants map[mysql.
 	}
 
 	result.State = StateSuccess
-	return
 }

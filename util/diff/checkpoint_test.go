@@ -17,51 +17,50 @@ package diff
 import (
 	"context"
 	"database/sql"
+	"testing"
 	"time"
 
-	sqlmock "github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testCheckpointSuite{})
 
 type testCheckpointSuite struct{}
 
-func (s *testCheckpointSuite) TestCheckpoint(c *C) {
+func TestCheckpoint(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
+	s := &testCheckpointSuite{}
 	conn, err := createConn()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer conn.Close()
 
 	defer dropCheckpoint(ctx, conn)
-	s.testInitAndGetSummary(c, conn)
-	s.testSaveAndLoadChunk(c, conn)
-	s.testUpdateSummary(c, conn)
+	s.testInitAndGetSummary(t, conn)
+	s.testSaveAndLoadChunk(t, conn)
+	s.testUpdateSummary(t, conn)
 }
 
-func (s *testCheckpointSuite) testInitAndGetSummary(c *C, db *sql.DB) {
+func (s *testCheckpointSuite) testInitAndGetSummary(t *testing.T, db *sql.DB) {
 	err := createCheckpointTable(context.Background(), db)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, _, _, _, _, err = getTableSummary(context.Background(), db, "test", "checkpoint")
-	c.Log(err)
-	c.Assert(err, ErrorMatches, "*not found*")
+	t.Log(err)
+	require.Regexp(t, "*not found*", err.Error())
 
 	err = initTableSummary(context.Background(), db, "test", "checkpoint", "123")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	total, successNum, failedNum, ignoreNum, state, err := getTableSummary(context.Background(), db, "test", "checkpoint")
-	c.Assert(err, IsNil)
-	c.Assert(total, Equals, int64(0))
-	c.Assert(successNum, Equals, int64(0))
-	c.Assert(failedNum, Equals, int64(0))
-	c.Assert(ignoreNum, Equals, int64(0))
-	c.Assert(state, Equals, notCheckedState)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), total)
+	require.Equal(t, int64(0), successNum)
+	require.Equal(t, int64(0), failedNum)
+	require.Equal(t, int64(0), ignoreNum)
+	require.Equal(t, notCheckedState, state)
 }
 
-func (s *testCheckpointSuite) testSaveAndLoadChunk(c *C, db *sql.DB) {
+func (s *testCheckpointSuite) testSaveAndLoadChunk(t *testing.T, db *sql.DB) {
 	chunk := &ChunkRange{
 		ID:           1,
 		Bounds:       []*Bound{{Column: "a", Lower: "1"}},
@@ -70,60 +69,63 @@ func (s *testCheckpointSuite) testSaveAndLoadChunk(c *C, db *sql.DB) {
 	}
 
 	err := saveChunk(context.Background(), db, chunk.ID, "target", "test", "checkpoint", "", chunk)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	newChunk, err := getChunk(context.Background(), db, "target", "test", "checkpoint", chunk.ID)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	newChunk.updateColumnOffset()
-	c.Assert(newChunk, DeepEquals, chunk)
+	require.Equal(t, chunk, newChunk)
 
 	chunks, err := loadChunks(context.Background(), db, "target", "test", "checkpoint")
-	c.Assert(err, IsNil)
-	c.Assert(chunks, HasLen, 1)
-	c.Assert(chunks[0], DeepEquals, chunk)
+	require.NoError(t, err)
+	require.Len(t, chunks, 1)
+	require.Equal(t, chunk, chunks[0])
 }
 
-func (s *testCheckpointSuite) testUpdateSummary(c *C, db *sql.DB) {
+func (s *testCheckpointSuite) testUpdateSummary(t *testing.T, db *sql.DB) {
 	summaryInfo := newTableSummaryInfo(3)
 	summaryInfo.addSuccessNum()
 	summaryInfo.addFailedNum()
 	summaryInfo.addIgnoreNum()
 
 	err := updateTableSummary(context.Background(), db, "target", "test", "checkpoint", summaryInfo)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	total, successNum, failedNum, ignoreNum, state, err := getTableSummary(context.Background(), db, "test", "checkpoint")
-	c.Assert(err, IsNil)
-	c.Assert(total, Equals, int64(3))
-	c.Assert(successNum, Equals, int64(1))
-	c.Assert(failedNum, Equals, int64(1))
-	c.Assert(ignoreNum, Equals, int64(1))
-	c.Assert(state, Equals, failedState)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.Equal(t, int64(1), successNum)
+	require.Equal(t, int64(1), failedNum)
+	require.Equal(t, int64(1), ignoreNum)
+	require.Equal(t, failedState, state)
 }
 
-func (s *testUtilSuite) TestloadFromCheckPoint(c *C) {
+func TestloadFromCheckPoint(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	rows := sqlmock.NewRows([]string{"state", "config_hash"}).AddRow("success", "123")
 	mock.ExpectQuery("SELECT").WillReturnRows(rows)
 	useCheckpoint, err := loadFromCheckPoint(context.Background(), db, "test", "test", "123")
-	c.Assert(useCheckpoint, Equals, false)
+	require.NoError(t, err)
+	require.Equal(t, false, useCheckpoint)
 
 	rows = sqlmock.NewRows([]string{"state", "config_hash"}).AddRow("success", "123")
 	mock.ExpectQuery("SELECT").WillReturnRows(rows)
 	useCheckpoint, err = loadFromCheckPoint(context.Background(), db, "test", "test", "456")
-	c.Assert(useCheckpoint, Equals, false)
+	require.NoError(t, err)
+	require.Equal(t, false, useCheckpoint)
 
 	rows = sqlmock.NewRows([]string{"state", "config_hash"}).AddRow("failed", "123")
 	mock.ExpectQuery("SELECT").WillReturnRows(rows)
 	useCheckpoint, err = loadFromCheckPoint(context.Background(), db, "test", "test", "123")
-	c.Assert(useCheckpoint, Equals, true)
+	require.NoError(t, err)
+	require.Equal(t, true, useCheckpoint)
 }
 
-func (s *testUtilSuite) TestInitChunks(c *C) {
+func TestInitChunks(t *testing.T) {
 	db, _, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	chunks := []*ChunkRange{
 		{
@@ -143,5 +145,5 @@ func (s *testUtilSuite) TestInitChunks(c *C) {
 	// so just skip the `ExpectQuery` and check the error message
 	//mock.ExpectQuery("INSERT INTO `sync_diff_inspector`.`chunk` VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)").WithArgs(......)
 	err = initChunks(context.Background(), db, "target", "diff_test", "test", chunks)
-	c.Assert(err, ErrorMatches, ".*INSERT INTO `sync_diff_inspector`.`chunk` VALUES\\(\\?, \\?, \\?, \\?, \\?, \\?, \\?, \\?, \\?\\), \\(\\?, \\?, \\?, \\?, \\?, \\?, \\?, \\?, \\?\\).*")
+	require.Regexp(t, ".*INSERT INTO `sync_diff_inspector`.`chunk` VALUES\\(\\?, \\?, \\?, \\?, \\?, \\?, \\?, \\?, \\?\\), \\(\\?, \\?, \\?, \\?, \\?, \\?, \\?, \\?, \\?\\).*", err)
 }
