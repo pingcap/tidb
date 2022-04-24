@@ -423,6 +423,7 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
+// GetHistoryJobFromStore return all history ddl from store.
 func GetHistoryJobFromStore(sess sessionctx.Context, store kv.Storage, id int64) (*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		return GetHistoryJob(sess, nil, id)
@@ -438,6 +439,7 @@ func GetHistoryJobFromStore(sess sessionctx.Context, store kv.Storage, id int64)
 	return historyJob, errors.Trace(err)
 }
 
+// GetHistoryJob return all history ddl from.
 func GetHistoryJob(sess sessionctx.Context, t *meta.Meta, id int64) (*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		jobs, err := getJobsBySQL(sess, "tidb_history_job", fmt.Sprintf("job_id = %d", id))

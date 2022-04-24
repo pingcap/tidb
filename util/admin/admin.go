@@ -305,6 +305,7 @@ func IterAllConcurrentDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (b
 	return IterHistoryDDLJobs(sess, txn, finishFn)
 }
 
+// GetLastNHistoryDDLJobs get last n history ddl jobs.
 func GetLastNHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		return getJobsBySQL(sess, "tidb_history_job", "1 order by job_seq desc limit "+strconv.Itoa(maxNumJobs), nil)
@@ -333,6 +334,7 @@ type ConcurrentDDLLastJobIterator struct {
 	offset uint64
 }
 
+// GetLastJobs iter latest num history ddl jobs.
 func (c *ConcurrentDDLLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
 	jobs, err := getJobsBySQL(c.sess, "tidb_history_job", fmt.Sprintf("1 order by job_seq desc limit %d, %d", c.offset, num), jobs)
 	if err != nil {
