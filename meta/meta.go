@@ -401,7 +401,11 @@ func (m *Meta) CreateMySQLSchema() (int64, error) {
 		return 0, err
 	}
 	if len(dbs) != 0 {
-		return 0, nil
+		for _, db := range dbs {
+			if db.Name.L == "mysql" {
+				return db.ID, nil
+			}
+		}
 	}
 
 	id, err := m.GenGlobalID()
