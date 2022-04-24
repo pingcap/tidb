@@ -159,6 +159,11 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t use index(cd) where c < 200 order by c limit 10",
 		"select * from t use index(cd) where c = 200 order by c limit 10",
 		"select * from t use index(cd) where c = 200 and d < 200 order by c, d limit 10",
+		// union all
+		"select * from t use index(primary) union select * from t use index(primary) where a < 200",
+		"select b from t use index(primary) union select b from t use index(b) where b < 200",
+		"select b from t use index(b) where b < 400 union select b from t use index(b) where b < 200",
+		"select * from t use index(primary) union select * from t use index(b) where b < 200",
 	}
 
 	for _, q := range queries {
