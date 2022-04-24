@@ -94,20 +94,6 @@ func (s *joinReorderGreedySolver) buildPriorityMap() map[*expression.ScalarFunct
 	return priorityMap
 }
 
-func (s *joinReorderGreedySolver) merge(dest []byte, src []byte) (isChange bool) {
-	isChange = false
-	for i := range src {
-		if src[i] > 0 {
-			tmp := dest[i] | src[i]
-			if tmp != src[i] {
-				isChange = true
-			}
-			dest[i] = dest[i] | src[i]
-		}
-	}
-	return
-}
-
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) error {
 	curIndex := 0
 	for curIndex < len(s.curJoinGroup)-1 {
