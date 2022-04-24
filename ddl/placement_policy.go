@@ -61,7 +61,7 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 		}
 
 		job.SchemaID = replacePolicy.ID
-		ver, err = updateSchemaVersion(t, job)
+		ver, err = updateSchemaVersion(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -80,7 +80,7 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 		}
 		job.SchemaID = policyInfo.ID
 
-		ver, err = updateSchemaVersion(t, job)
+		ver, err = updateSchemaVersion(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -198,7 +198,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err = updateSchemaVersion(t, job)
+		ver, err = updateSchemaVersion(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -211,7 +211,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err = updateSchemaVersion(t, job)
+		ver, err = updateSchemaVersion(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -222,7 +222,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err = t.DropPolicy(policyInfo.ID); err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err = updateSchemaVersion(t, job)
+		ver, err = updateSchemaVersion(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -234,7 +234,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, errors.Trace(err)
 }
 
-func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	alterPolicy := &model.PolicyInfo{}
 	if err := job.DecodeArgs(alterPolicy); err != nil {
 		job.State = model.JobStateCancelled
@@ -259,7 +259,7 @@ func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
+	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
