@@ -709,3 +709,179 @@ func (s *testSuite3) TestRoleAtomic(c *C) {
 	result.Check(testkit.Rows("r2"))
 	tk.MustExec("drop role r2;")
 }
+<<<<<<< HEAD
+=======
+
+func TestExtendedStatsPrivileges(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create user 'u1'@'%'")
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
+	require.NoError(t, err)
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]ALTER command denied to user 'u1'@'%' for table 't'", err.Error())
+	tk.MustExec("grant alter on test.* to 'u1'@'%'")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 't'", err.Error())
+	tk.MustExec("grant select on test.* to 'u1'@'%'")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'", err.Error())
+	tk.MustExec("grant insert on mysql.stats_extended to 'u1'@'%'")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
+	require.NoError(t, err)
+
+	_, err = se.Execute(ctx, "use test")
+	require.NoError(t, err)
+	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
+	require.Error(t, err)
+	require.Equal(t, "[planner:1142]DROP STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'", err.Error())
+	tk.MustExec("grant update on mysql.stats_extended to 'u1'@'%'")
+	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
+	require.NoError(t, err)
+	tk.MustExec("drop user 'u1'@'%'")
+}
+
+func TestIssue17247(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user 'issue17247'")
+	tk.MustExec("grant CREATE USER on *.* to 'issue17247'")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil))
+	tk1.MustExec("ALTER USER USER() IDENTIFIED BY 'xxx'")
+	tk1.MustExec("ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy'")
+	tk1.MustExec("ALTER USER CURRENT_USER IDENTIFIED BY 'zzz'")
+	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk'")
+	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
+	// Wrong grammar
+	_, err := tk1.Exec("ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
+	require.Error(t, err)
+}
+
+// Close issue #23649.
+// See https://github.com/pingcap/tidb/issues/23649
+func TestIssue23649(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("DROP USER IF EXISTS issue23649;")
+	tk.MustExec("CREATE USER issue23649;")
+	_, err := tk.Exec("GRANT bogusrole to issue23649;")
+	require.Equal(t, "[executor:3523]Unknown authorization ID `bogusrole`@`%`", err.Error())
+	_, err = tk.Exec("GRANT bogusrole to nonexisting;")
+	require.Equal(t, "[executor:3523]Unknown authorization ID `bogusrole`@`%`", err.Error())
+}
+
+func TestSetCurrentUserPwd(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER issue28534;")
+	defer func() {
+		tk.MustExec("DROP USER IF EXISTS issue28534;")
+	}()
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil))
+	tk.MustExec(`SET PASSWORD FOR CURRENT_USER() = "43582eussi"`)
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
+	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
+}
+
+func TestShowGrantsAfterDropRole(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER u29473")
+	defer tk.MustExec("DROP USER IF EXISTS u29473")
+
+	tk.MustExec("CREATE ROLE r29473")
+	tk.MustExec("GRANT r29473 TO u29473")
+	tk.MustExec("GRANT CREATE USER ON *.* TO u29473")
+
+	tk.Session().Auth(&auth.UserIdentity{Username: "u29473", Hostname: "%"}, nil, nil)
+	tk.MustExec("SET ROLE r29473")
+	tk.MustExec("DROP ROLE r29473")
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CREATE USER ON *.* TO 'u29473'@'%'"))
+}
+
+func TestDropRoleAfterRevoke(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	// issue 29781
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+
+	tk.MustExec("create role r1, r2, r3;")
+	defer tk.MustExec("drop role if exists r1, r2, r3;")
+	tk.MustExec("grant r1,r2,r3 to current_user();")
+	tk.MustExec("set role all;")
+	tk.MustExec("revoke r1, r3 from root;")
+	tk.MustExec("drop role r1;")
+}
+
+func TestUserWithSetNames(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set names gbk;")
+
+	tk.MustExec("drop user if exists '\xd2\xbb'@'localhost';")
+	tk.MustExec("create user '\xd2\xbb'@'localhost' IDENTIFIED BY '\xd2\xbb';")
+
+	result := tk.MustQuery("SELECT authentication_string FROM mysql.User WHERE User='\xd2\xbb' and Host='localhost';")
+	result.Check(testkit.Rows(auth.EncodePassword("一")))
+
+	tk.MustExec("ALTER USER '\xd2\xbb'@'localhost' IDENTIFIED BY '\xd2\xbb\xd2\xbb';")
+	result = tk.MustQuery("SELECT authentication_string FROM mysql.User WHERE User='\xd2\xbb' and Host='localhost';")
+	result.Check(testkit.Rows(auth.EncodePassword("一一")))
+
+	tk.MustExec("RENAME USER '\xd2\xbb'@'localhost' to '\xd2\xbb'")
+
+	tk.MustExec("drop user '\xd2\xbb';")
+}
+
+func TestStatementsCauseImplicitCommit(t *testing.T) {
+	// Test some of the implicit commit statements.
+	// See https://dev.mysql.com/doc/refman/5.7/en/implicit-commit.html
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table ic (id int primary key)")
+
+	cases := []string{
+		"create table xx (id int)",
+		"create user 'xx'@'127.0.0.1'",
+		"grant SELECT on test.ic to 'xx'@'127.0.0.1'",
+		"flush privileges",
+		"analyze table ic",
+	}
+	for i, sql := range cases {
+		tk.MustExec("begin")
+		tk.MustExec("insert into ic values (?)", i)
+		tk.MustExec(sql)
+		tk.MustQuery("select * from ic where id = ?", i).Check(testkit.Rows(strconv.FormatInt(int64(i), 10)))
+		// Clean up data
+		tk.MustExec("delete from ic")
+	}
+}
+>>>>>>> d3a02f416... executor: flush statement should trigger implicit commit (#34134)
