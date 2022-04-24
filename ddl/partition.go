@@ -1106,7 +1106,6 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		}
 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
-
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

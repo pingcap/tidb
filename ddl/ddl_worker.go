@@ -1436,11 +1436,10 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 		}
 		diff.TableID = job.TableID
 	case model.ActionRenameTables:
-		var oldSchemaIDs []int64
-		var newSchemaIDs []int64
-		var tableNames []*model.CIStr
-		var tableIDs []int64
-		var oldSchemaNames []*model.CIStr
+		var (
+			oldSchemaIDs, newSchemaIDs, tableIDs []int64
+			tableNames, oldSchemaNames           []*model.CIStr
+		)
 		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
 		if err != nil {
 			return 0, errors.Trace(err)
