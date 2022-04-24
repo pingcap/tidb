@@ -178,12 +178,12 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType) (floa
 		return p.planCost, nil
 	}
 	p.planCost = 0
-	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	if tblScan := p.tablePlan; tblScan != nil {
 		childCost, err := tblScan.GetPlanCost(property.CopSingleReadTaskType)
 		if err != nil {
 			return 0, err
 		}
+		netFactor := getTableNetFactor(tblScan)
 		p.planCost += childCost // child's cost
 		tblStats := getTblStats(tblScan)
 		rowSize := tblStats.GetAvgRowSize(p.ctx, tblScan.Schema().Columns, false, false)
@@ -194,6 +194,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType) (floa
 		if err != nil {
 			return 0, err
 		}
+		netFactor := getTableNetFactor(idxScan)
 		p.planCost += childCost // child's cost
 		tblStats := getTblStats(idxScan)
 		rowSize := tblStats.GetAvgRowSize(p.ctx, idxScan.Schema().Columns, true, false)
