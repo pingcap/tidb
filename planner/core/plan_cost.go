@@ -201,6 +201,8 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType) (floa
 		p.planCost += idxScan.StatsCount() * rowSize * netFactor // net I/O cost
 	}
 
+	// TODO: accumulate table-side seek cost
+
 	// consider concurrency
 	copIterWorkers := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	p.planCost /= copIterWorkers
