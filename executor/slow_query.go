@@ -72,6 +72,7 @@ type slowQueryRetriever struct {
 	memTracker    *memory.Tracker
 	lastFetchSize int64
 	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -149,6 +150,7 @@ func (e *slowQueryRetriever) close() error {
 	if e.cancel != nil {
 		e.cancel()
 	}
+	e.wg.Wait()
 	return nil
 }
 
@@ -191,6 +193,7 @@ func (e *slowQueryRetriever) getPreviousFile() *os.File {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
+	defer e.wg.Done()
 	file := e.getNextFile()
 	if file == nil {
 		close(e.taskList)
@@ -423,7 +426,6 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
 	defer close(e.taskList)
-	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
 	concurrent := sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency()
@@ -462,11 +464,15 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			t := slowLogTask{}
 			t.resultCh = make(chan parsedSlowLog, 1)
 			start := offset
-			wg.Add(1)
 			ch <- 1
-			e.taskList <- t
+			select {
+			case <-ctx.Done():
+				return
+			case e.taskList <- t:
+			}
+			e.wg.Add(1)
 			go func() {
-				defer wg.Done()
+				defer e.wg.Done()
 				result, err := e.parseLog(ctx, sctx, log, start)
 				e.sendParsedSlowLogCh(t, parsedSlowLog{result, err})
 				<-ch
@@ -480,7 +486,6 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			}
 		}
 	}
-	wg.Wait()
 }
 
 func (e *slowQueryRetriever) sendParsedSlowLogCh(t slowLogTask, re parsedSlowLog) {
@@ -1091,6 +1096,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
 	e.taskList = make(chan slowLogTask, 1)
+	e.wg.Add(1)
 	go e.parseDataForSlowLog(ctx, sctx)
 }
 
