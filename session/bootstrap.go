@@ -605,13 +605,11 @@ const (
 	version86 = 86
 	// version87 adds the mysql.analyze_jobs table
 	version87 = 87
-	// version88 fixes the issue https://github.com/pingcap/tidb/issues/33650.
-	version88 = 88
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version88
+var currentBootstrapVersion int64 = version87
 
 var (
 	bootstrapVersion = []func(Session, int64){
