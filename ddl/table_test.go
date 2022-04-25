@@ -335,7 +335,8 @@ func TestRenameTables(t *testing.T) {
 	job := testRenameTables(t, ctx, d, []int64{dbInfo.ID, dbInfo.ID}, []int64{dbInfo.ID, dbInfo.ID}, []*model.CIStr{&newTblInfos[0].Name, &newTblInfos[1].Name}, []int64{tblInfos[0].ID, tblInfos[1].ID}, []*model.CIStr{&dbInfo.Name, &dbInfo.Name}, []*model.CIStr{&tblInfos[0].Name, &tblInfos[1].Name})
 
 	txn, _ := ctx.Txn(true)
-	historyJob, _ := meta.NewMeta(txn).GetHistoryDDLJob(job.ID)
+	historyJob, err := meta.NewMeta(txn).GetHistoryDDLJob(job.ID)
+	require.NoError(t, err)
 	wantTblInfos := historyJob.BinlogInfo.MultipleTableInfos
 	require.Equal(t, wantTblInfos[0].Name.L, "tt1")
 	require.Equal(t, wantTblInfos[1].Name.L, "tt2")
