@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/ddl"
 	"math"
 	"strconv"
 	"strings"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
