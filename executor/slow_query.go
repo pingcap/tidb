@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -65,12 +66,14 @@ type slowQueryRetriever struct {
 	fileLine              int
 	checker               *slowLogChecker
 	columnValueFactoryMap map[string]slowQueryColumnValueFactory
+	instanceFactory       func([]types.Datum)
 
 	taskList      chan slowLogTask
 	stats         *slowQueryRuntimeStats
 	memTracker    *memory.Tracker
 	lastFetchSize int64
 	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -94,6 +97,13 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	// initialize column value factories.
 	e.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(e.outputCols))
 	for idx, col := range e.outputCols {
+		if col.Name.O == util.ClusterTableInstanceColumnName {
+			e.instanceFactory, err = getInstanceColumnValueFactory(sctx, idx)
+			if err != nil {
+				return err
+			}
+			continue
+		}
 		factory, err := getColumnValueFactoryByName(sctx, col.Name.O, idx)
 		if err != nil {
 			return err
@@ -148,6 +158,7 @@ func (e *slowQueryRetriever) close() error {
 	if e.cancel != nil {
 		e.cancel()
 	}
+	e.wg.Wait()
 	return nil
 }
 
@@ -190,6 +201,7 @@ func (e *slowQueryRetriever) getPreviousFile() *os.File {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
+	defer e.wg.Done()
 	file := e.getNextFile()
 	if file == nil {
 		close(e.taskList)
@@ -222,6 +234,11 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx
 		}
 		if len(rows) == 0 {
 			continue
+		}
+		if e.instanceFactory != nil {
+			for i := range rows {
+				e.instanceFactory(rows[i])
+			}
 		}
 		e.lastFetchSize = calculateDatumsSize(rows)
 		return rows, nil
@@ -422,7 +439,6 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
 	defer close(e.taskList)
-	var wg util.WaitGroupWrapper
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
 	concurrent := sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency()
@@ -474,11 +490,13 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 				return
 			case e.taskList <- t:
 			}
-			wg.Run(func() {
+			e.wg.Add(1)
+			go func() {
+				defer e.wg.Done()
 				result, err := e.parseLog(ctx, sctx, log, start)
 				e.sendParsedSlowLogCh(t, parsedSlowLog{result, err})
 				<-ch
-			})
+			}()
 			offset.offset = e.fileLine
 			offset.length = 0
 			select {
@@ -488,7 +506,6 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			}
 		}
 	}
-	wg.Wait()
 }
 
 func (e *slowQueryRetriever) sendParsedSlowLogCh(t slowLogTask, re parsedSlowLog) {
@@ -769,17 +786,18 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 			row[columnIdx] = types.NewDatum(v)
 			return true, nil
 		}, nil
-	case util.ClusterTableInstanceColumnName:
-		instanceAddr, err := infoschema.GetInstanceAddr(sctx)
-		if err != nil {
-			return nil, err
-		}
-		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
-			row[columnIdx] = types.NewStringDatum(instanceAddr)
-			return true, nil
-		}, nil
 	}
 	return nil, nil
+}
+
+func getInstanceColumnValueFactory(sctx sessionctx.Context, columnIdx int) (func(row []types.Datum), error) {
+	instanceAddr, err := infoschema.GetInstanceAddr(sctx)
+	if err != nil {
+		return nil, err
+	}
+	return func(row []types.Datum) {
+		row[columnIdx] = types.NewStringDatum(instanceAddr)
+	}, nil
 }
 
 func parsePlan(planString string) string {
@@ -1099,6 +1117,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
 	e.taskList = make(chan slowLogTask, 1)
+	e.wg.Add(1)
 	go e.parseDataForSlowLog(ctx, sctx)
 }
 
