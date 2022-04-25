@@ -1087,13 +1087,15 @@ func (m *singleTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
 func (m *singleTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
 	newTasks, err := action([]taskMeta{
 		{
-			taskID:      m.taskID,
-			status:      taskMetaStatusInitial,
-			sourceBytes: m.sourceBytes,
+			taskID:       m.taskID,
+			status:       taskMetaStatusInitial,
+			sourceBytes:  m.sourceBytes,
+			clusterAvail: m.clusterAvail,
 		},
 	})
 	for _, t := range newTasks {
 		if m.taskID == t.taskID {
+			m.sourceBytes = t.sourceBytes
 			m.clusterAvail = t.clusterAvail
 		}
 	}
