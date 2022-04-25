@@ -1091,17 +1091,28 @@ func (c *Column) GetIncreaseFactor(realtimeRowCount int64) float64 {
 	return float64(realtimeRowCount) / columnCount
 }
 
-// MemoryUsage returns the total memory usage of Histogram and CMSketch in Column.
+// MemoryUsage returns the total memory usage of Histogram, CMSketch, FMSketch in Column.
 // We ignore the size of other metadata in Column
-func (c *Column) MemoryUsage() (sum int64) {
-	sum = c.Histogram.MemoryUsage()
+func (c *Column) MemoryUsage() *ColumnMemUsage {
+	var sum int64
+	columnMemUsage := &ColumnMemUsage{
+		ColumnID: c.Info.ID,
+	}
+	histogramMemUsage := c.Histogram.MemoryUsage()
+	columnMemUsage.HistogramMemUsage = histogramMemUsage
+	sum = histogramMemUsage
 	if c.CMSketch != nil {
-		sum += c.CMSketch.MemoryUsage()
+		cmSketchMemUsage := c.CMSketch.MemoryUsage()
+		columnMemUsage.CMSketchMemUsage = cmSketchMemUsage
+		sum += cmSketchMemUsage
 	}
 	if c.FMSketch != nil {
-		sum += c.FMSketch.MemoryUsage()
+		fmSketchMemUsage := c.FMSketch.MemoryUsage()
+		columnMemUsage.FMSketchMemUsage = fmSketchMemUsage
+		sum += fmSketchMemUsage
 	}
-	return
+	columnMemUsage.TotalMemUsage = sum
+	return columnMemUsage
 }
 
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
@@ -1327,12 +1338,21 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
 // We ignore the size of other metadata in Index.
-func (idx *Index) MemoryUsage() (sum int64) {
-	sum = idx.Histogram.MemoryUsage()
-	if idx.CMSketch != nil {
-		sum += idx.CMSketch.MemoryUsage()
+func (idx *Index) MemoryUsage() *IndexMemUsage {
+	var sum int64
+	indexMemUsage := &IndexMemUsage{
+		IndexID: idx.ID,
 	}
-	return
+	histMemUsage := idx.Histogram.MemoryUsage()
+	indexMemUsage.HistogramMemUsage = histMemUsage
+	sum = histMemUsage
+	if idx.CMSketch != nil {
+		cmSketchMemUsage := idx.CMSketch.MemoryUsage()
+		indexMemUsage.CMSketchMemUsage = cmSketchMemUsage
+		sum += cmSketchMemUsage
+	}
+	indexMemUsage.TotalMemUsage = sum
+	return indexMemUsage
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))

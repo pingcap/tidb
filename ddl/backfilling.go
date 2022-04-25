@@ -469,7 +469,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*backfillWorker
 	// Build reorg tasks.
 	for _, keyRange := range kvRanges {
 		endKey := keyRange.EndKey
-		endK, err := getRangeEndKey(workers[0].sessCtx.GetStore(), workers[0].priority, t, keyRange.StartKey, endKey)
+		endK, err := getRangeEndKey(w.JobContext, workers[0].sessCtx.GetStore(), workers[0].priority, t, keyRange.StartKey, endKey)
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] send range task to workers, get reverse key failed", zap.Error(err))
 		} else {
@@ -767,9 +767,12 @@ func iterateSnapshotRows(ctx *JobContext, store kv.Storage, priority int, t tabl
 }
 
 // getRegionEndKey gets the actual end key for the range of [startKey, endKey].
-func getRangeEndKey(store kv.Storage, priority int, t table.Table, startKey, endKey kv.Key) (kv.Key, error) {
+func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, t table.Table, startKey, endKey kv.Key) (kv.Key, error) {
 	snap := store.GetSnapshot(kv.MaxVersion)
 	snap.SetOption(kv.Priority, priority)
+	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
+		snap.SetOption(kv.ResourceGroupTagger, tagger)
+	}
 	it, err := snap.IterReverse(endKey.Next())
 	if err != nil {
 		return nil, errors.Trace(err)
