@@ -1028,7 +1028,8 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		return false
 	}
 	pruneMode := h.CurrentPruneMode()
-	rand.Shuffle(len(dbs), func(i, j int) {
+	rd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rd.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
 	})
 	for _, db := range dbs {
@@ -1040,7 +1041,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		// analyze job of one table fails for some reason, each time when HandleAutoAnalyze is triggered, it may always
 		// analyze the same table and fail again and again. Randomizing the order can avoid the problem.
 		// TODO: Design a priority queue to place the table which needs analyze most in the front.
-		rand.Shuffle(len(tbls), func(i, j int) {
+		rd.Shuffle(len(tbls), func(i, j int) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
 		for _, tbl := range tbls {
