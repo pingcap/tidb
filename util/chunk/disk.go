@@ -31,10 +31,9 @@ import (
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
 type ListInDisk struct {
-	fieldTypes          []*types.FieldType
-	numRowForEachChunk  []int
-	offsetsForEachChunk []int64
-	offsetsSum          int64
+	fieldTypes         []*types.FieldType
+	numRowForEachChunk []int
+	numRowPrefixSum    []int
 
 	numRowsInDisk int
 	diskTracker   *disk.Tracker // track disk usage.
@@ -157,8 +156,7 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	// Append offsets
 	offsetsOfRows := chkInDisk.getOffsetsOfRows()
 	l.numRowForEachChunk = append(l.numRowForEachChunk, len(offsetsOfRows))
-	l.offsetsForEachChunk = append(l.offsetsForEachChunk, l.offsetsSum)
-	l.offsetsSum += int64(len(offsetsOfRows))
+	l.numRowPrefixSum = append(l.numRowPrefixSum, l.numRowsInDisk)
 	n2, err := offsetsOfRows.WriteTo(l.offsetFile.getWriter())
 	l.offsetFile.offWrite += n2
 	if err != nil {
@@ -201,9 +199,9 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 }
 
 func (l *ListInDisk) getOffset(chkIdx uint32, rowIdx uint32) (int64, error) {
-	offsetInOffsetFile := l.offsetsForEachChunk[chkIdx] + int64(rowIdx)
+	offsetInOffsetFile := l.numRowPrefixSum[chkIdx] + int(rowIdx)
 	b := make([]byte, 8)
-	reader := l.offsetFile.getSelectionReader(offsetInOffsetFile * 8)
+	reader := l.offsetFile.getSelectionReader(int64(offsetInOffsetFile) * 8)
 	n, err := io.ReadFull(reader, b)
 	if err != nil {
 		return 0, err
