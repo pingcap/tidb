@@ -173,7 +173,7 @@ type DDL interface {
 	// GetID gets the ddl ID.
 	GetID() string
 	// GetTableMaxHandle gets the max row ID of a normal table or a partition.
-	GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
+	GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetHook gets the hook. It's exported for testing.
@@ -561,29 +561,13 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-// mayNeedReorg indicates that this job may need to reorganize the data.
-func mayNeedReorg(job *model.Job) bool {
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		return true
-	case model.ActionModifyColumn:
-		if len(job.CtxVars) > 0 {
-			needReorg, ok := job.CtxVars[0].(bool)
-			return ok && needReorg
-		}
-		return false
-	default:
-		return false
-	}
-}
-
 func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	// If the workers don't run, we needn't notify workers.
 	if !RunWorker {
 		return
 	}
 	var worker *worker
-	if mayNeedReorg(job) {
+	if job.MayNeedReorg() {
 		worker = d.workers[addIdxWorker]
 	} else {
 		worker = d.workers[generalWorker]
