@@ -89,7 +89,7 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	if stmt.DryRun == ast.DryRunSplitDml {
 		return buildDryRunResults(stmt.DryRun, splitStmts, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
-	return buildExecuteResults(jobs, se.GetSessionVars().BatchSize.MaxChunkSize)
+	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize)
 }
 
 func checkConstraint(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) error {
@@ -108,8 +108,8 @@ func checkConstraint(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, 
 	if sessVars.SnapshotTS != 0 {
 		return errors.New("can't do non-transactional DML when tidb_snapshot is set")
 	}
-	// TODO: return error if there are multiple tables
-	if stmt.DeleteStmt.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs == nil {
+
+	if stmt.DeleteStmt.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs.Left == nil {
 		return errors.New("table reference is nil")
 	}
 	if stmt.DeleteStmt.TableRefs.TableRefs.Right != nil {
@@ -177,9 +177,7 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 
 		// if the first job failed, there is a large chance that all jobs will fail. So return early.
 		if i == 0 && jobs[i].err != nil {
-			jobs[i].err = errors.Wrap(jobs[i].err, "Early return: error occurred in the first job. All jobs are canceled")
-			logutil.Logger(ctx).Error("Non-transactional delete, early return", zap.Error(jobs[i].err))
-			break
+			return nil, errors.Wrap(jobs[i].err, "Early return: error occurred in the first job. All jobs are canceled")
 		}
 	}
 	return splitStmts, nil
@@ -390,7 +388,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 	}
 
 	// the shard column must be indexed
-	indexed, shardColumnInfo, err := selectShardColumn(stmt, se, tableName)
+	indexed, shardColumnInfo, err := selectShardColumn(stmt, se, tableName, tableSource.AsName)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -419,7 +417,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 
 // it attempts to auto-select a shard column from handle if not specified, and fills back the corresponding info in the stmt,
 // making it transparent to following steps
-func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableName *ast.TableName) (indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
+func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableName *ast.TableName, tableAsName model.CIStr) (indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
 	tbl, err := domain.GetDomain(se).InfoSchema().TableByName(tableName.Schema, tableName.Name)
 	if err != nil {
 		return false, nil, err
@@ -453,7 +451,7 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 		}
 		stmt.ShardColumn = &ast.ColumnName{
 			Schema: tableName.Schema,
-			Table:  tableName.Name,
+			Table:  tableAsName, // so that table alias works
 			Name:   model.NewCIStr(shardColumnName),
 		}
 		return true, shardColumnInfo, nil
@@ -519,7 +517,7 @@ func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (s
 	}, nil
 }
 
-func buildExecuteResults(jobs []job, maxChunkSize int) (sqlexec.RecordSet, error) {
+func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int) (sqlexec.RecordSet, error) {
 	failedJobs := make([]job, 0)
 	for _, job := range jobs {
 		if job.err != nil {
@@ -574,13 +572,19 @@ func buildExecuteResults(jobs []job, maxChunkSize int) (sqlexec.RecordSet, error
 	}
 
 	rows := make([][]interface{}, 0, len(failedJobs))
+	var sb strings.Builder
 	for _, job := range failedJobs {
 		row := make([]interface{}, 3)
 		row[0] = job.String()
 		row[1] = job.sql
 		row[2] = job.err.Error()
 		rows = append(rows, row)
+		sb.WriteString(fmt.Sprintf("%s, %s, %s;\n", job.String(), job.sql, job.err.Error()))
 	}
+
+	// log errors here in case the output is too long. There can be thousands of errors.
+	logutil.Logger(ctx).Warn("Non-transactional delete failed",
+		zap.Int("num_failed_jobs", len(failedJobs)), zap.String("failed_jobs", sb.String()))
 
 	return &sqlexec.SimpleRecordSet{
 		ResultFields: resultFields,

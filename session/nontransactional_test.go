@@ -100,9 +100,8 @@ func TestNonTransactionalDeleteErrorMessage(t *testing.T) {
 	}
 	failpoint.Enable("github.com/pingcap/tidb/session/splitDeleteError", `return`)
 	defer failpoint.Disable("github.com/pingcap/tidb/session/splitDeleteError")
-	rows := tk.MustQuery("split on a limit 3 delete from t").Rows()
-	require.Equal(t, 1, len(rows))
-	require.Equal(t, rows[0][2].(string), "Early return: error occurred in the first job. All jobs are canceled: injected split delete error")
+	err := tk.ExecToErr("split on a limit 3 delete from t")
+	require.EqualError(t, err, "Early return: error occurred in the first job. All jobs are canceled: injected split delete error")
 }
 
 func TestNonTransactionalDeleteSplitOnTiDBRowID(t *testing.T) {
@@ -317,12 +316,6 @@ func TestNonTransactionalDeleteCheckConstraint(t *testing.T) {
 	tk.Session().GetSessionVars().BatchInsert = false
 	tk.Session().GetSessionVars().DMLBatchSize = 0
 
-	tk.MustExec("create table t1(a int, b int, key(a))")
-	tk.MustExec("insert into t1 values (1, 1)")
-	err = tk.ExecToErr("split limit 1 delete t, t1 from t, t1 where t.a = t1.a")
-	require.Error(t, err)
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
-	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("1"))
 }
 
 func TestNonTransactionalDeleteOptimizerHints(t *testing.T) {
@@ -336,4 +329,65 @@ func TestNonTransactionalDeleteOptimizerHints(t *testing.T) {
 	}
 	result := tk.MustQuery("split on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t").Rows()[0][0].(string)
 	require.Equal(t, result, "DELETE /*+ USE_INDEX(`t` )*/ FROM `test`.`t` WHERE `a` BETWEEN 0 AND 9")
+}
+
+func TestNonTransactionalDeleteMultiTables(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
+	}
+
+	tk.MustExec("create table t1(a int, b int, key(a))")
+	tk.MustExec("insert into t1 values (1, 1)")
+	err := tk.ExecToErr("split limit 1 delete t, t1 from t, t1 where t.a = t1.a")
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("1"))
+}
+
+func TestNonTransactionalDeleteAlias(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	goodSplitStmts := []string{
+		"split on test.t1.a limit 5 delete t1.* from test.t as t1",
+		"split on a limit 5 delete t1.* from test.t as t1",
+		"split on _tidb_rowid limit 5 delete from test.t as t1",
+		"split on t1._tidb_rowid limit 5 delete from test.t as t1",
+		"split on test.t1._tidb_rowid limit 5 delete from test.t as t1",
+		"split limit 5 delete from test.t as t1", // auto assigns table name to be the alias
+	}
+
+	badSplitStmts := []string{
+		"split on test.t.a limit 5 delete t1.* from test.t as t1",
+		"split on t.a limit 5 delete t1.* from test.t as t1",
+		"split on t._tidb_rowid limit 5 delete from test.t as t1",
+		"split on test.t._tidb_rowid limit 5 delete from test.t as t1",
+	}
+
+	tk.MustExec("create table test.t(a int, b int, key(a))")
+	tk.MustExec("create table test.t2(a int, b int, key(a))")
+
+	for _, sql := range goodSplitStmts {
+		for i := 0; i < 5; i++ {
+			tk.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", i, i*2))
+		}
+		tk.MustExec(sql)
+		tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("0"))
+	}
+
+	for i := 0; i < 5; i++ {
+		tk.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", i, i*2))
+	}
+	for _, sql := range badSplitStmts {
+		err := tk.ExecToErr(sql)
+		require.Error(t, err)
+		tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("5"))
+	}
 }
