@@ -178,11 +178,6 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3 join (customer1 c1 left join customer2 c2 on c1.a=1) on c3.b=1 where c2.pk in (7,9) group by c2.b;")
 	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  join (customer1 c1 left join customer2 c2 on c1.a=1) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
 	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  join (customer1 c1 left join customer2 c2 on c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
-	// outer join nested with inner join.
-	// TODO: inner side's strict FD and equiv FD can be saved.
-	//tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
-	//tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=1) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
-	//tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=1 and c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
 
 	tk.MustExec("drop view if exists customer")
 	// this left join can extend left pk to all cols.
@@ -264,4 +259,79 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	err = tk.ExecToErr("select b from t1 group by a")
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t1.b' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+}
+
+func TestOnlyFullGroupByRefactorLeftJoinCases(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists customer1")
+	tk.MustExec("drop table if exists customer2")
+	tk.MustExec("drop view if exists customer")
+	tk.MustExec("create table customer1(pk int primary key, a int);")
+	tk.MustExec("create table customer2(pk int primary key, b int, c int, unique(c));")
+	// ************************************************** NOTE 3 Lax FD ******************************************************************************//
+	// it has been covered by old cases, ignored here.
+
+	// ************************************************** NOTE 3 Strict FD ***************************************************************************//
+	// Strict functional dependencies 1: Any strict functional dependency f: {x} -> {y} that held in S continues to hold in Q.   ✔
+	tk.MustQuery("select c1.a from customer1 c1 left join customer2 c2 on c2.b = 1 group by c1.pk;")
+
+	// Strict functional dependencies 2: Any strict functional dependency f: {x} -> {y} than held in T may continue to hold in Q if ...:   ✔
+	tk.MustQuery("select c2.b from  customer1 c1 left join customer2 c2 on c2.pk > 1 group by c2.pk;")
+
+	// Strict functional dependencies 3: If predicate P can produce f: {x} -> {y}, and xy ⊆ a(T) and P(x) is null-rejected, then f holds in Q.
+	// we don't maintain strict fd from predicate. (we only maintain equivalence and constant on predicate, in this case equivalence holds in Q)
+
+	// Strict functional dependencies 4: If predicate P can produce f: {x} -> {y}, and x ⊆ a(P) ∩ S and y ⊆ T, and P(y) is null-rejected, then {a(P) ∩ S} -> {y} holds in Q.   ✔
+	// The equivalence from predicate will be downgraded to this case; besides, an equivalence cond-fd is preserved waiting for being shown again.
+	tk.MustQuery("select c1.a, c2.b from customer1 c1 left join customer2 c2 on c1.a = c2.b group by c1.a;")
+	err := tk.ExecToErr("select c1.a, c2.b from customer1 c1 left join customer2 c2 on c1.a = c2.b and c1.pk=1 group by c1.a;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1055]Expression #2 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.c2.b' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	tk.MustQuery("select c1.a, c2.b from customer1 c1 left join customer2 c2 on c1.a = c2.b and c1.pk=1 group by c1.a, c1.pk;")
+
+	// Strict functional dependencies 5: The newly-constructed tuple identifier consist of both key from S and T, {l(s) ∪ l(T)} -> {l(Q)}   ✔
+	tk.MustQuery("select * from  customer1 c1 left join customer2 c2 on c2.c > 1 group by c2.pk, c1.pk;")
+
+	// ************************************************** NOTE 3 Strict Equivalence FD ***************************************************************//
+	// Strict equivalence 1: Any strict equivalence e: {x} == {y} that held in S continues to hold in Q.   ✔
+	tk.MustQuery("select c1.pk from (select * from customer1 where pk=a) c1 left join customer2 c2 on c2.b = 1 group by c1.a;")
+
+	// Strict equivalence 2: Any strict equivalence e: {x} == {y} that held in T continues to hold in Q.   ✔
+	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+
+	// Strict equivalence 3: If there exists a lax equivalence {x} ~= {y} and xy ⊆ T, once P(x) and P(y) are null-rejected, then it can be strengthened and saved in Q. ✔
+	// we don't maintain lax equivalence.
+
+	// Strict equivalence 4: If predicate P can produce e: {x} == {y} and xy ⊆ T, then it holds in Q. ✔
+	tk.MustQuery("select c2.pk from customer1 c1 left join customer2 c2 on c2.b = c2.pk group by c2.b")
+
+	// ************************************************** NOTE 3 constant FD ************************************************************************//
+	// Constant functional dependency 1: Any constant functional dependency f: {} -> {y} that held in S continues to hold in Q.  ✔
+	tk.MustQuery("select c1.a, c2.b, count(*) from (select * from customer1 where a=1) c1 left join customer2 c2 on (c2.b=1) group by c2.b")
+
+	// Constant functional dependency 2: Any constant functional dependency f: {} -> {y} that held in T may be held as: 1 cond-fd, 2 directly null constant.
+	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=1) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+	// null is a constant as well, so here c1.a is fine, while c3.b's constant fd can't be saved.
+	err = tk.ExecToErr("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a is null) on c3.b=1 group by c2.b;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1055]Expression #2 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.c3.b' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	// null is a constant FD no matter whether append null-rows or not in inner side of left join.
+	tk.MustQuery("select c1.a, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a is null) on c3.b=1 group by c2.b;")
+	// constant fd from predicate on the inner side should be reserved even as cond-fd.
+	tk.MustQuery("select c1.a, c2.b, count(*) from (select * from customer1 where a=1) c1 left join customer2 c2 on (c2.b=1) where c2.pk in (7,9) group by c2.b")
+	// constant fd from predicate on the outer side should be reserved even as cond-fd.
+	err = tk.ExecToErr("select c1.a, c2.b, count(*) from customer1 c1 left join customer2 c2 on (c1.a=1) group by c2.b")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.c1.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	// constant fd from predicate on the outer side should be reserved even as cond-fd.
+	tk.MustQuery("select c1.a, c2.b, count(*) from customer1 c1 left join customer2 c2 on (c1.a=1) where c2.pk in (7,9) group by c2.b")
+
+	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=1 and c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+
 }

@@ -155,7 +155,7 @@ package funcdep
 // Think about adding one more row in first left join result.
 //
 //  left join on (a=c) res:
-//   a     b    c     e     e
+//   a     b    c     d     e
 //  ---------------------------
 //   1     2    1     1     1
 //   null  2  null  null  null
@@ -178,3 +178,41 @@ package funcdep
 //
 //  For a inner join, both side of the join result won't be appended with null-supplied rows, so we can simply collect
 //  the ncEdges from both join side together.
+//
+// NOTE 3.
+// Under left outer join Q = S * T on (P)
+// We say predicate P is null-rejected on x when P(x) is TRUE. P(x) eval to false or unknown whenever x is Null or P(x) can
+// guarantee x to be definite. Note: if x is a set, p(x) will evaluate to true if any x ∈ X cannot be Null. (one not null
+// can bring p(x) to true)
+//
+// Strict functional dependencies:
+// 1: Any strict functional dependency f: {x} -> {y} that held in S continues to hold in Q.
+// 2: Any strict functional dependency f: {x} -> {y} than held in T may continue to hold in Q if:
+//      the predicate P(x) is null-rejected (null-reject of determinant)
+//      there exists a strict equivalence e: X == Y that held in T (determinant and dependant are both null)
+// 3: If predicate P can produce f: {x} -> {y}, and xy ⊆ a(T) and P(x) is null-rejected, then f holds in Q.
+// 4: If predicate P can produce f: {x} -> {y}, and x ⊆ a(P) ∩ S and y ⊆ T, and P(y) is null-rejected, then {a(P) ∩ S} -> {y} holds in Q. (P(y) null-rejected is not necessary).
+// 5: The newly-constructed tuple identifier consist of both key from S and T, {l(s) ∪ l(T)} -> {l(Q)}.
+//
+// Lax functional dependencies:
+// 1: Any lax functional dependency f: {x} ~> {y} that held in S continues to hold in Q.
+// 2: Any lax functional dependency f: {x} ~> {y} that held in T continues to hold in Q.
+// 3: Any strict functional dependency f: {x} -> {y} that held in T will hold as a lax functional dependency {x} ~> {y} in Q if P(x) is NOT null-rejected.
+// 4: If predicate P would have produced either the functional dependency {x} -> {y} or {x} ~> {y} and {xy} ∩ a(T) is not empty, then {x} ~> {y} in Q.
+//
+// Strict Equivalence:
+// 1: Any strict equivalence e: {x} == {y} that held in S continues to hold in Q.
+// 2: Any strict equivalence e: {x} == {y} that held in T continues to hold in Q.
+// 3: If there exists a lax equivalence {x} ~= {y} and xy ⊆ T, once P(x) and P(y) are null-rejected, then it can be strengthened and saved in Q.
+// 4: If predicate P can produce e: {x} == {y} and xy ⊆ T, then it holds in Q.
+//
+// Constant FD:
+// In our implementation, constant FD is a special kind of strict functional dependency.
+// When discuss the inference rule of constant FD, we can utilize some rule from strict functional dependency above, adding some special consideration.
+// 1: Any constant functional dependency f: {} -> {y} that held in S continues to hold in Q.
+// 2: Any constant functional dependency f: {} -> {y} that held in T may be decomposed to multi strict FD first:
+//       1: if y1 ⊆ y and y1 are null constant (come from y1 is null), then constant FD {} -> {y1} saved.
+//       2: for other y, a cond-fd are preserved with null-constraint cols as T.
+// 3: Any constant function dependency f: {} -> {y} that produced from predicate P:
+//       1: for part of y ⊆ T, do it like what 2 says.
+//       2: for part of y ⊆ S, do it like a cond-fd with null-constraint cols as T.

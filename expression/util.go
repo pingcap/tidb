@@ -255,6 +255,11 @@ func ExtractConstantEqColumnsOrScalar(ctx sessionctx.Context, result []Expressio
 func extractConstantEqColumnsOrScalar(ctx sessionctx.Context, result []Expression, expr Expression) []Expression {
 	switch v := expr.(type) {
 	case *ScalarFunction:
+		// null is also a constant in FD theoretically.
+		if v.FuncName.L == ast.IsNull {
+			result = append(result, v.GetArgs()[0])
+			return result
+		}
 		if v.FuncName.L == ast.EQ || v.FuncName.L == ast.NullEQ {
 			args := v.GetArgs()
 			if len(args) == 2 {

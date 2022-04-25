@@ -286,47 +286,12 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 	equivUniqueIDs := extractEquivalenceCols(allConds, p.SCtx(), filterFD)
 
 	filterFD.AddConstants(constUniqueIDs)
-	equivOuterUniqueIDs := fd.NewFastIntSet()
-	equivAcrossNum := 0
 	for _, equiv := range equivUniqueIDs {
 		filterFD.AddEquivalence(equiv[0], equiv[1])
-		if equiv[0].SubsetOf(outerCols) && equiv[1].SubsetOf(innerCols) {
-			equivOuterUniqueIDs.UnionWith(equiv[0])
-			equivAcrossNum++
-			continue
-		}
-		if equiv[0].SubsetOf(innerCols) && equiv[1].SubsetOf(outerCols) {
-			equivOuterUniqueIDs.UnionWith(equiv[1])
-			equivAcrossNum++
-		}
 	}
 	filterFD.MakeNotNull(notNullColsFromFilters)
 
-	// pre-perceive the filters for the convenience judgement of 3.3.1.
 	var opt fd.ArgOpts
-	if equivAcrossNum > 0 {
-		// find the equivalence FD across left and right cols.
-		var outConditionCols []*expression.Column
-		if len(outerCondition) != 0 {
-			outConditionCols = append(outConditionCols, expression.ExtractColumnsFromExpressions(nil, outerCondition, nil)...)
-		}
-		if len(p.OtherConditions) != 0 {
-			// other condition may contain right side cols, it doesn't affect the judgement of intersection of non-left-equiv cols.
-			outConditionCols = append(outConditionCols, expression.ExtractColumnsFromExpressions(nil, p.OtherConditions, nil)...)
-		}
-		outerConditionUniqueIDs := fd.NewFastIntSet()
-		for _, col := range outConditionCols {
-			outerConditionUniqueIDs.Insert(int(col.UniqueID))
-		}
-		// judge whether left filters is on non-left-equiv cols.
-		if outerConditionUniqueIDs.Intersects(outerCols.Difference(equivOuterUniqueIDs)) {
-			opt.SkipFDRule331 = true
-		}
-	} else {
-		// if there is none across equivalence condition, skip rule 3.3.1.
-		opt.SkipFDRule331 = true
-	}
-
 	opt.OnlyInnerFilter = len(eqCondSlice) == 0 && len(outerCondition) == 0 && len(p.OtherConditions) == 0
 	if opt.OnlyInnerFilter {
 		// if one of the inner condition is constant false, the inner side are all null, left make constant all of that.

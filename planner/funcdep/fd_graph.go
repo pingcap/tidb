@@ -599,7 +599,6 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //
 // Knowledge:
 // 1: the filter condition related to the lhs column won't filter predicate-allowed rows and refuse null rows (left rows always remain)
-// 2: the filter condition related to the rhs column won't filter NULL rows, although the filter has the not-null attribute. (null-appending happened after that)
 //
 // Notification:
 // 1: the origin FD from the left side (rows-supplying) over the result of outer join filtered are preserved because
@@ -620,18 +619,42 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //
 //			If the determinant contains at least a not null column for example c here, FD like {c,d} -> {e} can survive
 //			after the left join. Because you can not find two same key, one from the origin rows and the other one from the
-//			supplied rows.
+//			supplied rows. (see NOTE 3 for more details)
+//
+//			Luckily above, condition that c is not null is originated from base inner table. So strict FD {c,d} -> {e} can
+//	 		be saved. Is there any other way to keep this FD? Yes.
+//           c    d     e
+//			----------------
+//		 	1     NULL   1
+//          NULL  NULL   1
+//
+//			Let's modify the inner like above, the condition that c is not null is no longer existed. But if the join predicate
+//          can guarantee c to be not null like (a=c and b=1 and c>0), c is guaranteed to be greater than 1, and of course to
+//          be not null. After left outer join, {c,d} -> {e} is saved as well.
 //
 //			for lax FD, the supplied rows of null values don't affect lax FD itself. So we can keep it.
 //
-//		<2> The FDSet should remove constant FD since null values may be substituted for some unmatched left rows. NULL is not a
-//			constant anymore.
+//		<2> constant FD are divided to two kind of cases.
+//          1: column = definite value; add cond-fd waiting for null-reject in the future. (not in not-null columns from inner cols and join predicate)
+//			2: column is null; add constant fd directly.
 //
-//      <3> equivalence FD should be removed since substituted null values are not equal to the other substituted null value.
+//      <3> equivalence FD should be kept. Let's say inner table with {d} == {e} as:
+//           c    d     e
+//			----------------
+//		 	 1    1     1
+//           2    NULL NULL
+//
+//          After outer join on(a=c and b=1) we get
+//			a  b  |  c     d     e
+//			------+----------------
+//		 	1  1  |  1     1     1
+//		    1  2  | NULL  NULL  NULL
+//		    2  1  | NULL  NULL  NULL
+//          No matter what inner rows are matched and whether supplied null rows are appended. the equivalence are kept. (NULL is equivalent to NULL)
 //
 // 3: the newly added FD from filters should take some consideration as below:
 //
-//	 	<1> strict/lax FD: join key filter conditions can not produce new strict/lax FD yet (knowledge: 1&2).
+//	 	<1> strict/lax FD: join key filter conditions can not produce new strict/lax FD yet (knowledge: 1), we care more about constant and equivalence.
 //
 //		<2> constant FD from the join conditions is only used for checking other FD. We cannot keep itself.
 //			a   b  |  c     d
@@ -639,7 +662,14 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //          1   1  |  1     1
 //          1   2  | NULL NULL
 //          left join with (a,b) * (c,d) on (a=c and d=1), some rhs rows will be substituted with null values, and FD on rhs
-//          {d=1} are lost.
+//          {d=1} are preserved as cond-fd waiting for one of {cd} to be null rejected.
+//
+//          a   b  |  c     d
+//          -------+---------
+//          1   1  |  1   NULL
+//          1   2  | NULL NULL
+//          left join with (a,b) * (c,d) on (a=c and d is null), some rhs rows will be substituted with null values, and FD on rhs
+//          {d is null} are naturally preserved. (the d in matched rows and appended rows are actually the same thing: null value)
 //
 //          a   b  |  c     d
 //  		-------+---------
@@ -648,7 +678,7 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //          left join with (a,b) * (c,d) on (a=c and b=1), it only gives the pass to the first matching, lhs other rows are still
 //          kept and appended with null values. So the FD on rhs {b=1} are not applicable to lhs rows.
 //
-//          above all: constant FD are lost
+//          above all: only constant FD covering inner cols are preserved as cond-fd or directly added as null-constant fd.
 //
 //		<3.1> equivalence FD: when the left join conditions only contain equivalence FD (EFD for short below) across left and right
 //			cols and no other `LEFT` condition on the (left-side cols except the cols in EFD's from) to filter the left join results. We can maintain the strict
@@ -672,12 +702,20 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //		 	1  1  |  1    NULL   1
 //		    1  2  | NULL  NULL  NULL
 //			2  1  | NULL  NULL  NULL
-//			Neg eg: left join with (a,b) * (c,d,e) on (a=c and b=c), two EFD here, where b=c can also refuse some rows joined by a=c,
+//			Neg eg: left join with (a,b) * (c,d,e) on (a=c and b=e), two EFD here, where b=c can also refuse some rows joined by a=c,
 //			consequently applying it with NULL as (1  2  | NULL  NULL  NULL), leading the same key a has different value 1/NULL. But
 //			macroscopically, we can combine {a,b} together as the strict FD's from side, so new FD {a,b} -> {c} is secured. For case
-//			of (a=c and b=ce), the FD is {a, b} -> {c, e}
+//			of (a=c and b=e), the FD is {a, b} -> {c, e}
 //
-// 			conclusion: without this kind of limited left conditions to judge the join match, we can say: FD {a} -> {c} exists.
+// 			conclusion: without this kind of limited left conditions to judge the join match, we can say: FD {a} -> {c} exists. We can
+//          conclude all above as: if predicate P can produce f: {x} -> {y}, and x ⊆ a(P) ∩ S and y ⊆ T, and P(y) is null-rejected, then
+//          {a(P) ∩ S} -> {y} holds in Q. (we think P(y) null-rejected is not necessary here)T he above cases are:
+//          1: on (a=c and b=1) --- ab on the left, c on the right , so we get {a,b} -> {c}
+//          2: on (a=c and a=2) --- a on the left, c on the right and P(c) is null-rejected, so we get {a} -> {c}
+//          3: on (a=c and b=e) --- ab on the left, ce on the right and P(ce) is null-rejected, so we get {ab} -> {c} & {ab} ->{e} = finally merged as {ab} -> {ce}
+//          4: on (a=c and b=1 and e=1) --- ab on the left, ce on the right, while only c is in the {y}, so we get {ab} -> {c}
+//
+//          In our implementation we think P(y) to be null-rejected is not necessary.
 //
 //		<3.2> equivalence FD: when the determinant and dependencies from an equivalence FD of join condition are each covering a strict
 //			FD of the left / right side. After joining, we can extend the left side strict FD's dependencies to all cols.
@@ -695,9 +733,16 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //				miss matched rows from left side are unique originally, even appended with NULL value from right side, they are still
 //				strictly determine themselves and even the all rows after left join.
 //			conclusion combined:
-//				If there is an equivalence covering both strict Key from the right and left, we can create a new strict FD: {columns of the left side of the join in the equivalence} -> {all columns after join}.
+//				If there is an equivalence covering both strict Key from the right and left, we can create a new strict FD: {columns of
+//				the left side of the join in the equivalence} -> {all columns after join}.
+//			Refactor: this case can be simplified as 3.3.1 above: if predicate P can produce f: {x} -> {y}, and x ⊆ a(P) ∩ S and y ⊆ T,
+//			and P(y) isnull-rejected, then {a(P) ∩ S} -> {y} holds in Q.
+//          1: on (a=c and b=1) --- ab on the left, c on the right , so we get {a,b} -> {c}
+//			2: since a is a key --- we get {a} -> {b}
+//			3: since c is a key --- we get {c} -> {d,e}
+//          so the closure of a is {a,b,c,d,e}, rule 3.3.2 is also a kind of 3.3.1, let's ignore it.
 //
-//		<3.3> equivalence FD: let's see equivalence FD as double-directed strict FD from join equal conditions, and we  only keep the
+//		<3.3> equivalence FD: let's see equivalence FD as double-directed strict FD from join equal conditions, and we only keep the
 //			rhs ~~> lhs.
 //			a  b  |  c     d     e
 //			------+----------------
@@ -707,7 +752,16 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //			left join with (a,b) * (c,d,e) on (a=c and b=1). From the join equivalence condition can derive a new FD {ac} == {ac}.
 //			while since there are some supplied null value in the c column, we don't guarantee {ac} == {ac} yet, so do {a} -> {c}
 //			because two same determinant key {1} can point to different dependency {1} & {NULL}. But in return, FD like {c} -> {a}
-//			are degraded to the corresponding lax one.
+//			are degraded to the corresponding lax one. (it's what's left before cond-fd {ac} == {ac} and {} -> {b} take effect again)
+//
+//      <3.4> equivalence FD: if the predicate can produce a f: {x} == {y}, and xy ⊆ inner cols, then this equivalence FD holds.
+//			a  b  |  c     d     e
+//          ------+----------------
+//          1  1  |  1    NULL   1
+//		    1  2  | NULL  NULL  NULL
+//		    2  1  | NULL  NULL  NULL
+//          left join with (a,b) * (c,d,e) on (c=e). For matched row on the right, c must be equal to e; For those null-supplied rows,
+//          null is equal to null according the strict equivalence definition. So f: {x} == {y} holds in join result.
 //
 // 4: the new formed FD {left primary key, right primary key} -> {all columns} are preserved in spite of the null-supplied rows.
 // 5: There's no join key and no filters from the outer side. The join case is a cartesian product. In this case,
@@ -727,10 +781,17 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 	for _, edge := range innerFDs.fdEdges {
 		// Rule #2.2, constant FD are removed from right side of left join.
 		if edge.isConstant() {
+			// for constant FD
+			// 1: column = definite value; add cond-fd waiting for null-reject. (not in not-null columns from inner cols and join predicate)
+			// 2: column is null; add constant fd directly.
+			constantNull := edge.to.Difference(innerFDs.NotNullCols.Union(filterFDs.NotNullCols))
+			s.AddConstants(constantNull)
+			s.AddNCFunctionalDependency(edge.from, edge.to.Difference(constantNull), innerCols, edge.strict, edge.equiv)
 			continue
 		}
-		// Rule #2.3, equivalence FD are removed from right side of left join.
+		// Rule #2.3, equivalence FD are kept from right side of left join.
 		if edge.equiv {
+			s.addEquivalence(edge.from)
 			continue
 		}
 		// Rule #2.1, lax FD can be kept after the left join.
@@ -744,9 +805,8 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 		// This is because that the outer join would generate null-extended rows. So if at least one row from the left side
 		// is not null. We can guarantee that the there's no same part between the original rows and the generated rows.
 		// So the null extended rows would not break the original functional dependency.
-		if edge.from.Intersects(innerFDs.NotNullCols) {
+		if edge.from.Intersects(innerFDs.NotNullCols.Union(filterFDs.NotNullCols)) {
 			// One of determinant are not null column, strict FD are kept.
-			// According knowledge #2, we can't take use of right filter's not null attribute.
 			s.addFunctionalDependency(edge.from, edge.to, edge.strict, edge.equiv)
 		} else {
 			// Otherwise, the strict FD are downgraded to a lax one.
@@ -754,37 +814,40 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 		}
 	}
 	s.ncEdges = append(s.ncEdges, innerFDs.ncEdges...)
-	leftCombinedFDFrom := NewFastIntSet()
-	leftCombinedFDTo := NewFastIntSet()
+
+	determinantOuterCols := filterFDs.AllCols().Intersection(outerCols)
 	for _, edge := range filterFDs.fdEdges {
 		// Rule #3.2, constant FD are removed from right side of left join.
 		if edge.isConstant() {
-			s.AddNCFunctionalDependency(edge.from, edge.to, innerCols, edge.strict, edge.equiv)
+			innerConstantCols := edge.to.Intersection(innerCols)
+			constantNull := innerConstantCols.Difference(innerFDs.NotNullCols.Union(filterFDs.NotNullCols))
+			s.AddConstants(constantNull)
+			innerConstantCols.DifferenceWith(constantNull)
+			if !innerConstantCols.IsEmpty() {
+				s.AddNCFunctionalDependency(edge.from, innerConstantCols, innerCols, edge.strict, edge.equiv)
+			}
+			outerConstantCols := edge.to.Intersection(outerCols)
+			if !outerConstantCols.IsEmpty() {
+				s.AddNCFunctionalDependency(edge.from, outerConstantCols, innerCols, edge.strict, edge.equiv)
+			}
 			continue
 		}
 		// Rule #3.3, we only keep the lax FD from right side pointing the left side.
 		if edge.equiv {
+			// Rule 3.3.4, if {x} == {y} and xy ⊆ inner cols, then this equivalence FD holds.
+			if edge.from.SubsetOf(innerCols) {
+				s.addEquivalence(edge.from)
+				continue
+			}
+
+			// Rule 3.3.1 & Rule 3.3.2
+			if edge.from.Intersects(innerCols) && edge.from.Intersects(outerCols) {
+				// when a filter produce an equivalence across inner cols and outer cols, then {a(P) ∩ S} -> {y} holds in Q.
+				s.addFunctionalDependency(determinantOuterCols, edge.from.Intersection(innerCols), true, false)
+			}
+
 			equivColsRight := edge.from.Intersection(innerCols)
 			equivColsLeft := edge.from.Intersection(outerCols)
-			// equivalence: {superset} --> {superset}, either `from` or `to` side is ok here.
-			// Rule 3.3.1
-			if !opt.SkipFDRule331 {
-				if equivColsLeft.Len() > 0 && equivColsRight.Len() > 0 {
-					leftCombinedFDFrom.UnionWith(equivColsLeft)
-					leftCombinedFDTo.UnionWith(equivColsRight)
-				}
-			}
-
-			// Rule 3.3.2
-			rightAllCols := copyRightFDSet.AllCols()
-			leftAllCols := copyLeftFDSet.AllCols()
-			coveringStrictKeyRight := rightAllCols.SubsetOf(copyRightFDSet.ClosureOfStrict(equivColsRight))
-			coveringStrictKeyLeft := leftAllCols.SubsetOf(copyLeftFDSet.closureOfStrict(equivColsLeft))
-			if coveringStrictKeyLeft && coveringStrictKeyRight {
-				// find the minimum strict Key set, and add
-				s.addFunctionalDependency(copyLeftFDSet.ReduceCols(equivColsLeft), rightAllCols.Union(leftAllCols), true, false)
-			}
-
 			// Rule 3.3.3
 			// need to break down the superset of equivalence, adding each lax FD of them.
 			laxFDFrom := equivColsRight
@@ -797,10 +860,6 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 			s.AddNCFunctionalDependency(equivColsLeft, equivColsRight, innerCols, true, true)
 		}
 		// Rule #3.1, filters won't produce any strict/lax FDs.
-	}
-	// Rule #3.3.1 combinedFD case
-	if !opt.SkipFDRule331 {
-		s.addFunctionalDependency(leftCombinedFDFrom, leftCombinedFDTo, true, false)
 	}
 
 	// Rule #4, add new FD {left key + right key} -> {all columns} if it could.
@@ -848,7 +907,6 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 
 // ArgOpts contains some arg used for FD maintenance.
 type ArgOpts struct {
-	SkipFDRule331   bool
 	OnlyInnerFilter bool
 	InnerIsFalse    bool
 }
