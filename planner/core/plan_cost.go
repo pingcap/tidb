@@ -195,7 +195,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType) (floa
 			return 0, err
 		}
 		var isIdxScan bool
-		for p := partialScan; ; p = p.Children()[0]{
+		for p := partialScan; ; p = p.Children()[0] {
 			_, isIdxScan = p.(*PhysicalIndexScan)
 			if len(p.Children()) == 0 {
 				break
