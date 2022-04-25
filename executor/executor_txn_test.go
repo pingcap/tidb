@@ -322,9 +322,9 @@ func TestTxnSavepoint(t *testing.T) {
 		{sql: "savepoint s1"},
 		{sql: "insert into t values (3, 3)"},
 		{sql: "rollback to s1"},
-		{sql: "select * from t order by id", result: []string{"1 2", "2 2"}},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
 		{sql: "commit"},
-		{sql: "select * from t order by id", result: []string{"1 2", "2 2"}},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
 	}
 	for idx, ca := range cases {
 		comment := fmt.Sprintf("idx: %v, %#v", idx, ca)
