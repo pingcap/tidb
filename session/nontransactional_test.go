@@ -18,10 +18,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestNonTransactionalDeleteSharding(t *testing.T) {
@@ -225,4 +228,112 @@ func TestNonTransactionalDeleteInvisibleIndex(t *testing.T) {
 	tk.MustExec("CREATE UNIQUE INDEX c2 ON t (a)")
 	tk.MustExec("split on a limit 10 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+}
+
+func TestNonTransactionalDeleteIgnoreSelectLimit(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=35")
+	tk.MustExec("set @@sql_select_limit=3")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
+	}
+	tk.MustExec("split on a limit 10 delete from t")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+}
+
+func TestNonTransactionalDeleteReadStaleness(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=35")
+	tk.MustExec("set @@tidb_read_staleness=-100")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
+	}
+	tk.MustExec("split on a limit 10 delete from t")
+	tk.MustExec("set @@tidb_read_staleness=0")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+}
+
+func TestNonTransactionalDeleteCheckConstraint(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+
+	// For mocked tikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	now := time.Now()
+	safePointValue := now.Format(tikvutil.GCTimeFormat)
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf("INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s') ON DUPLICATE KEY UPDATE variable_value = '%[2]s', comment = '%[3]s'", safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("set @@tidb_max_chunk_size=35")
+	tk.MustExec("set @a=now(6)")
+
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
+	}
+	tk.MustExec("set @@tidb_snapshot=@a")
+	err := tk.ExecToErr("split on a limit 10 delete from t")
+	require.Error(t, err)
+	tk.MustExec("set @@tidb_snapshot=''")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+
+	tk.MustExec("set @@tidb_read_consistency=weak")
+	err = tk.ExecToErr("split on a limit 10 delete from t")
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	tk.MustExec("set @@tidb_read_consistency=strict")
+
+	tk.MustExec("set autocommit=0")
+	err = tk.ExecToErr("split on a limit 10 delete from t")
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	tk.MustExec("set autocommit=1")
+
+	tk.MustExec("begin")
+	err = tk.ExecToErr("split on a limit 10 delete from t")
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	tk.MustExec("commit")
+
+	config.GetGlobalConfig().EnableBatchDML = true
+	tk.Session().GetSessionVars().BatchInsert = true
+	tk.Session().GetSessionVars().DMLBatchSize = 1
+	err = tk.ExecToErr("split on a limit 10 delete from t")
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	config.GetGlobalConfig().EnableBatchDML = false
+	tk.Session().GetSessionVars().BatchInsert = false
+	tk.Session().GetSessionVars().DMLBatchSize = 0
+
+	tk.MustExec("create table t1(a int, b int, key(a))")
+	tk.MustExec("insert into t1 values (1, 1)")
+	err = tk.ExecToErr("split limit 1 delete t, t1 from t, t1 where t.a = t1.a")
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("1"))
+}
+
+func TestNonTransactionalDeleteOptimizerHints(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
+	}
+	result := tk.MustQuery("split on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t").Rows()[0][0].(string)
+	require.Equal(t, result, "DELETE /*+ USE_INDEX(`t` )*/ FROM `test`.`t` WHERE `a` BETWEEN 0 AND 9")
 }

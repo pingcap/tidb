@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -45,10 +44,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -440,6 +437,8 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int)")
+
+	tkCancel := testkit.NewTestKit(t, store)
 	defer tk.MustExec("drop table t")
 	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
@@ -448,55 +447,10 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/errorMockPanic"))
-	}()
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-			jobIDs := []int64{job.ID}
-			var err error
-			var errs []error
-			if variable.AllowConcurrencyDDL.Load() {
-				errs, err = ddl.CancelConcurrencyJobs(testkit.NewTestKit(t, store).Session(), jobIDs)
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
-				if err != nil && errs[0] != nil {
-					checkErr = errors.Trace(errs[0])
-					return
-				}
-			} else {
-				hookCtx := mock.NewContext()
-				hookCtx.Store = store
-				err = hookCtx.NewTxn(context.Background())
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
-				txn, err := hookCtx.Txn(true)
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
-				errs, err = admin.CancelJobs(txn, jobIDs)
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
-				if err != nil && errs[0] != nil {
-					checkErr = errors.Trace(errs[0])
-					return
-				}
-				txn, err = hookCtx.Txn(true)
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
-				checkErr = txn.Commit(context.Background())
-			}
+			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	dom.DDL().SetHook(hook)
@@ -507,10 +461,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	require.NoError(t, checkErr)
 	require.Error(t, err)
 	errMsg := err.Error()
-	// Cancelling the job can either succeed or not, it depends on whether the cancelled job takes affect.
-	// For now, there's no way to guarantee that cancelling will always take effect.
-	// TODO: After issue #17904 is fixed, there is no need to tolerate it here.
-	require.True(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job") || strings.HasPrefix(errMsg, "[ddl:8211]DDL job rollback"))
+	require.True(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job"))
 }
 
 func TestRecoverTableByJobID(t *testing.T) {
