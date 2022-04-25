@@ -1039,7 +1039,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
 		// analyze job of one table fails for some reason, each time when HandleAutoAnalyze is triggered, it may always
 		// analyze the same table and fail again and again. Randomizing the order can avoid the problem.
-		// TODO: Design a priority queue to place the table which needs analyzing most in the front.
+		// TODO: Design a priority queue to place the table which needs analyze most in the front.
 		rand.Shuffle(len(tbls), func(i, j int) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
