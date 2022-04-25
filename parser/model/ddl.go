@@ -511,6 +511,56 @@ func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
 }
 
+// MayNeedReorg indicates that this job may need to reorganize the data.
+func (job *Job) MayNeedReorg() bool {
+	switch job.Type {
+	case ActionAddIndex, ActionAddPrimaryKey:
+		return true
+	case ActionModifyColumn:
+		if len(job.CtxVars) > 0 {
+			needReorg, ok := job.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// IsRollbackable checks whether the job can be rollback.
+func (job *Job) IsRollbackable() bool {
+	switch job.Type {
+	case ActionDropIndex, ActionDropPrimaryKey, ActionDropIndexes:
+		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
+		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
+		// know the type of index here, we consider all indices except primary index as non-rollbackable.
+		// TODO: distinguish normal index and expression index so that we can rollback `DropIndex` for normal index in WriteOnly state.
+		// TODO: make DropPrimaryKey rollbackable in WriteOnly, it need to deal with some tests.
+		if job.SchemaState == StateDeleteOnly ||
+			job.SchemaState == StateDeleteReorganization ||
+			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionDropSchema, ActionDropTable, ActionDropSequence:
+		// To simplify the rollback logic, cannot be canceled in the following states.
+		if job.SchemaState == StateWriteOnly ||
+			job.SchemaState == StateDeleteOnly {
+			return false
+		}
+	case ActionAddTablePartition:
+		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
+	case ActionDropColumn, ActionDropColumns, ActionDropTablePartition,
+		ActionRebaseAutoID, ActionShardRowID,
+		ActionTruncateTable, ActionAddForeignKey,
+		ActionDropForeignKey, ActionRenameTable,
+		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
+		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
+		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
+		return job.SchemaState == StateNone
+	}
+	return true
+}
+
 // JobState is for job state.
 type JobState byte
 
