@@ -333,7 +333,7 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
 	result := 31
 	if variable.AllowConcurrencyDDL.Load() {
-		result = result + 2 // tidb_ddl_job and tidb_ddl_reorg
+		result = result + 3 // tidb_ddl_job and tidb_ddl_reorg
 	}
 	s.Require().Len(rows, result)
 
