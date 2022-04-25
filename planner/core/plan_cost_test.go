@@ -106,6 +106,8 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select /*+ use_index_merge(t, b, cd) */ * from t where b<100 or c=100 and d<100 and mod(a, 3)=1",
 		"select /*+ use_index_merge(t, b, cd) */ * from t where (b<100 or c=100 and d<100) and mod(a, 3)=1",
 		"select /*+ use_index_merge(t, b, cd) */ * from t where b<100 or c=100 and d<100 and a<100 and mod(a, 3)=1",
+		"select /*+ use_index_merge(t, primary, b) */ * from t where a<100 or b<100",
+		"select /*+ use_index_merge(t, primary, b, cd) */ * from t where a<100 or b<100 or c=100 and d<100",
 		// selection + projection
 		"select * from t use index(primary) where a+200 < 1000",      // pushed down to table-scan
 		"select * from t use index(primary) where mod(a, 200) < 100", // not pushed down
