@@ -109,7 +109,8 @@ const (
 	// The following session variables controls the memory quota during query execution.
 
 	// TiDBMemQuotaQuery controls the memory quota of a query.
-	TiDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
+	TiDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TiDBMemQuotaApplyCache controls the memory quota of a query.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 
 	// TiDBGeneralLog is used to log every query in the server in info level.
@@ -841,6 +842,7 @@ const (
 	DefTiDBGCMaxWaitTime                         = 24 * 60 * 60
 	DefMaxAllowedPacket                   uint64 = 67108864
 	DefTiDBEnableBatchDML                        = false
+	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
 )
 
 // Process global variables.
