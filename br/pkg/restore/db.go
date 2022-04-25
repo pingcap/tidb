@@ -227,7 +227,7 @@ func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error 
 	return errors.Trace(err)
 }
 
-func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
 
 	var restoreMetaSQL string
 	var err error
@@ -239,8 +239,8 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 		if err != nil {
 			return errors.Trace(err)
 		}
-	// only table exists in ddlJobs during incremental restoration should do alter after creation.
-	case ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+	// only table exists in restored cluster during incremental restoration should do alter after creation.
+	case toBeCorrectedTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
 		if utils.NeedAutoID(table.Info) {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_increment = %d;",

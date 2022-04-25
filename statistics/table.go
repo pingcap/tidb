@@ -112,21 +112,55 @@ type HistColl struct {
 	Pseudo         bool
 }
 
+// TableMemoryUsage records tbl memory usage
+type TableMemoryUsage struct {
+	TableID         int64
+	TotalMemUsage   int64
+	ColumnsMemUsage map[int64]*ColumnMemUsage
+	IndicesMemUsage map[int64]*IndexMemUsage
+}
+
+// ColumnMemUsage records column memory usage
+type ColumnMemUsage struct {
+	ColumnID          int64
+	HistogramMemUsage int64
+	CMSketchMemUsage  int64
+	FMSketchMemUsage  int64
+	TotalMemUsage     int64
+}
+
+// IndexMemUsage records index memory usage
+type IndexMemUsage struct {
+	IndexID           int64
+	HistogramMemUsage int64
+	CMSketchMemUsage  int64
+	TotalMemUsage     int64
+}
+
 // MemoryUsage returns the total memory usage of this Table.
 // it will only calc the size of Columns and Indices stats data of table.
 // We ignore the size of other metadata in Table
-func (t *Table) MemoryUsage() (sum int64) {
+func (t *Table) MemoryUsage() *TableMemoryUsage {
+	tMemUsage := &TableMemoryUsage{
+		TableID:         t.PhysicalID,
+		ColumnsMemUsage: make(map[int64]*ColumnMemUsage),
+		IndicesMemUsage: make(map[int64]*IndexMemUsage),
+	}
 	for _, col := range t.Columns {
 		if col != nil {
-			sum += col.MemoryUsage()
+			colMemUsage := col.MemoryUsage()
+			tMemUsage.ColumnsMemUsage[colMemUsage.ColumnID] = colMemUsage
+			tMemUsage.TotalMemUsage += colMemUsage.TotalMemUsage
 		}
 	}
 	for _, index := range t.Indices {
 		if index != nil {
-			sum += index.MemoryUsage()
+			idxMemUsage := index.MemoryUsage()
+			tMemUsage.IndicesMemUsage[idxMemUsage.IndexID] = idxMemUsage
+			tMemUsage.TotalMemUsage += idxMemUsage.TotalMemUsage
 		}
 	}
-	return
+	return tMemUsage
 }
 
 // Copy copies the current table.
