@@ -257,7 +257,7 @@ func (s *GlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful bool)
 			}
 			log.Info(fmt.Sprintf("service \"%s\" stopped gracefully", name))
 			return nil
-		case <-time.After(10 * time.Second):
+		case <-time.After(60 * time.Second):
 			err = fmt.Errorf("service \"%s\" can't gracefully stop in time", name)
 			log.Info(err.Error())
 			return err
