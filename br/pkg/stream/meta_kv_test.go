@@ -84,3 +84,26 @@ func (s *testMetaKVSuite) TestWriteCFValueNoShortValue(c *C) {
 	encodedBuff := v.EncodeTo()
 	c.Assert(bytes.Equal(buff, encodedBuff), IsTrue)
 }
+
+func (s *testMetaKVSuite) TestWriteCFValueWithShortValue(c *C) {
+	var ts uint64 = 400036290571534337
+	shortValue := []byte("pingCAP")
+
+	buff := make([]byte, 0, 9)
+	buff = append(buff, byte('P'))
+	buff = codec.EncodeUvarint(buff, ts)
+	buff = append(buff, flagShortValuePrefix)
+	buff = append(buff, byte(len(shortValue)))
+	buff = append(buff, shortValue...)
+
+	v := new(RawWriteCFValue)
+	err := v.ParseFrom(buff)
+	c.Assert(err, IsNil)
+	c.Assert(v.HasShortValue(), IsTrue)
+	c.Assert(bytes.Equal(v.GetShortValue(), shortValue), IsTrue)
+	c.Assert(v.hasGCFence, IsFalse)
+	c.Assert(v.hasOverlappedRollback, IsFalse)
+
+	data := v.EncodeTo()
+	c.Assert(bytes.Equal(data, buff), IsTrue)
+}

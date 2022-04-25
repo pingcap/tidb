@@ -65,12 +65,12 @@ const (
 )
 
 var (
-	StreamStart    = "stream start"
-	StreamStop     = "stream stop"
-	StreamPause    = "stream pause"
-	StreamResume   = "stream resume"
-	StreamStatus   = "stream status"
-	StreamTruncate = "stream truncate"
+	StreamStart    = "log start"
+	StreamStop     = "log stop"
+	StreamPause    = "log pause"
+	StreamResume   = "log resume"
+	StreamStatus   = "log status"
+	StreamTruncate = "log truncate"
 
 	skipSummaryCommandList = map[string]struct{}{
 		StreamStatus:   {},
@@ -259,7 +259,7 @@ func (cfg *StreamConfig) ParseStreamCommonFromFlags(flags *pflag.FlagSet) error 
 	}
 
 	if len(cfg.TaskName) <= 0 {
-		return errors.Annotate(berrors.ErrInvalidArgument, "Miss parameters taskName")
+		return errors.Annotate(berrors.ErrInvalidArgument, "Miss parameters task-name")
 	}
 	return nil
 }
@@ -532,8 +532,7 @@ func RunStreamStart(
 	}
 	if !supportStream {
 		return errors.New("Unable to create stream task. " +
-			"please set tikv config `backup-stream.enable-streaming` to true." +
-			"and restart tikv")
+			"please set TiKV config `backup-stream.enable` to true and restart TiKVs.")
 	}
 
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
