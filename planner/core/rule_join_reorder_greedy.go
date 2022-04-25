@@ -28,6 +28,8 @@ type joinReorderGreedySolver struct {
 	joinTypes []JoinType
 	// Maintain the order for plans of the outerJoin. [a,b] indicate a must join before b
 	directedEdges []directedEdge
+	// A map maintain eqCond and eqConds which must join after the eqCond
+	priorityMap map[*expression.ScalarFunction][]*expression.ScalarFunction
 }
 
 // solve reorders the join nodes in the group based on a greedy algorithm.
@@ -58,8 +60,6 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 		tracer.appendLogicalJoinCost(node.p, cost)
 	}
 
-	s.priorityMap = s.buildPriorityMap()
-
 	// Sort plans by cost and join order
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
@@ -75,23 +75,6 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 	}
 
 	return s.makeBushyJoin(cartesianGroup), nil
-}
-
-// Build directed graph by driectedEdges
-func (s *joinReorderGreedySolver) buildPriorityMap() map[*expression.ScalarFunction]map[*expression.ScalarFunction]struct{} {
-	// 1.Init graph
-	priorityMap := make(map[*expression.ScalarFunction]map[*expression.ScalarFunction]struct{})
-	for _, edge := range s.directedEdges {
-		if !edge.isImplicit {
-			continue
-		}
-
-		if len(priorityMap[edge.toEqCond]) == 0 {
-			priorityMap[edge.toEqCond] = make(map[*expression.ScalarFunction]struct{})
-		}
-		priorityMap[edge.toEqCond][edge.fromEqCond] = struct{}{}
-	}
-	return priorityMap
 }
 
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) error {
@@ -138,11 +121,13 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		s.insertIntoCurJoinGroup(curJoinTree)
 		s.otherConds = finalRemainOthers
 		// delete from priorityMap
-		for _, edge := range finalUsedEdges {
-			for _, edgeSet := range s.priorityMap {
-				if _, ok := edgeSet[edge]; ok {
+		for _, eqCond := range finalUsedEdges {
+			for key, _ := range s.priorityMap {
+				eqConds := s.priorityMap[key]
+				deletedEqConds := s.deleteEqCond(eqConds, eqCond)
+				if len(deletedEqConds) != len(eqConds) {
+					s.priorityMap[key] = deletedEqConds
 					curIndex = 0
-					delete(edgeSet, edge)
 				}
 			}
 		}
@@ -205,10 +190,19 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 
 func (s *joinReorderGreedySolver) insertIntoCurJoinGroup(node *jrNode) {
 	insertIdx := 0
-	for insertIdx = range s.curJoinGroup {
+	for ; insertIdx < len(s.curJoinGroup); insertIdx++ {
 		if s.curJoinGroup[insertIdx].cumCost > node.cumCost {
 			break
 		}
 	}
 	s.curJoinGroup = append(s.curJoinGroup[:insertIdx], append([]*jrNode{node}, s.curJoinGroup[insertIdx:]...)...)
+}
+
+func (s *joinReorderGreedySolver) deleteEqCond(eqConds []*expression.ScalarFunction, eqCond *expression.ScalarFunction) []*expression.ScalarFunction {
+	for i := len(eqConds) - 1; i >= 0; i-- {
+		if eqConds[i] == eqCond {
+			eqConds = append(eqConds[0:i], eqConds[i+1:]...)
+		}
+	}
+	return eqConds
 }

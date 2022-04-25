@@ -600,7 +600,7 @@ Sort	2406.00	root		tpch.nation.n_name, Column#53:desc
   └─HashAgg	2406.00	root		group by:Column#67, Column#68, funcs:sum(Column#64)->Column#55, funcs:firstrow(Column#65)->tpch.nation.n_name, funcs:firstrow(Column#66)->Column#53
     └─Projection	241379546.70	root		minus(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), mul(tpch.partsupp.ps_supplycost, tpch.lineitem.l_quantity))->Column#64, tpch.nation.n_name, extract(YEAR, tpch.orders.o_orderdate)->Column#66, tpch.nation.n_name, extract(YEAR, tpch.orders.o_orderdate)->Column#68
       └─Projection	241379546.70	root		tpch.lineitem.l_quantity, tpch.lineitem.l_extendedprice, tpch.lineitem.l_discount, tpch.partsupp.ps_supplycost, tpch.orders.o_orderdate, tpch.nation.n_name
-        └─HashJoin	241379546.70	root		inner join, equal:[eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)]
+        └─HashJoin	241379546.70	root		inner join, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
           ├─TableReader(Build)	75000000.00	root		data:TableFullScan
           │ └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
           └─HashJoin(Probe)	241379546.70	root		inner join, equal:[eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey) eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey)]
@@ -1035,20 +1035,21 @@ id	estRows	task	access object	operator info
 Projection	100.00	root		tpch.customer.c_name, tpch.customer.c_custkey, tpch.orders.o_orderkey, tpch.orders.o_orderdate, tpch.orders.o_totalprice, Column#54
 └─TopN	100.00	root		tpch.orders.o_totalprice:desc, tpch.orders.o_orderdate, offset:0, count:100
   └─HashAgg	59251097.60	root		group by:tpch.customer.c_custkey, tpch.customer.c_name, tpch.orders.o_orderdate, tpch.orders.o_orderkey, tpch.orders.o_totalprice, funcs:sum(tpch.lineitem.l_quantity)->Column#54, funcs:firstrow(tpch.customer.c_custkey)->tpch.customer.c_custkey, funcs:firstrow(tpch.customer.c_name)->tpch.customer.c_name, funcs:firstrow(tpch.orders.o_orderkey)->tpch.orders.o_orderkey, funcs:firstrow(tpch.orders.o_totalprice)->tpch.orders.o_totalprice, funcs:firstrow(tpch.orders.o_orderdate)->tpch.orders.o_orderdate
-    └─HashJoin	240004648.80	root		inner join, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
-      ├─HashJoin(Build)	59251097.60	root		inner join, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
-      │ ├─Selection(Build)	59251097.60	root		gt(Column#52, 314)
-      │ │ └─HashAgg	74063872.00	root		group by:tpch.lineitem.l_orderkey, funcs:sum(Column#66)->Column#52, funcs:firstrow(tpch.lineitem.l_orderkey)->tpch.lineitem.l_orderkey
-      │ │   └─TableReader	74063872.00	root		data:HashAgg
-      │ │     └─HashAgg	74063872.00	cop[tikv]		group by:tpch.lineitem.l_orderkey, funcs:sum(tpch.lineitem.l_quantity)->Column#66
-      │ │       └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
-      │ └─HashJoin(Probe)	75000000.00	root		inner join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
-      │   ├─TableReader(Build)	7500000.00	root		data:TableFullScan
-      │   │ └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
-      │   └─TableReader(Probe)	75000000.00	root		data:TableFullScan
-      │     └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-      └─TableReader(Probe)	300005811.00	root		data:TableFullScan
-        └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
+    └─Projection	240004648.80	root		tpch.customer.c_custkey, tpch.customer.c_name, tpch.orders.o_orderkey, tpch.orders.o_totalprice, tpch.orders.o_orderdate, tpch.lineitem.l_quantity
+      └─HashJoin	240004648.80	root		inner join, equal:[eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)]
+        ├─HashJoin(Build)	59251097.60	root		inner join, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
+        │ ├─Selection(Build)	59251097.60	root		gt(Column#52, 314)
+        │ │ └─HashAgg	74063872.00	root		group by:tpch.lineitem.l_orderkey, funcs:sum(Column#66)->Column#52, funcs:firstrow(tpch.lineitem.l_orderkey)->tpch.lineitem.l_orderkey
+        │ │   └─TableReader	74063872.00	root		data:HashAgg
+        │ │     └─HashAgg	74063872.00	cop[tikv]		group by:tpch.lineitem.l_orderkey, funcs:sum(tpch.lineitem.l_quantity)->Column#66
+        │ │       └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
+        │ └─HashJoin(Probe)	75000000.00	root		inner join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
+        │   ├─TableReader(Build)	7500000.00	root		data:TableFullScan
+        │   │ └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+        │   └─TableReader(Probe)	75000000.00	root		data:TableFullScan
+        │     └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
+        └─TableReader(Probe)	300005811.00	root		data:TableFullScan
+          └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q19 Discounted Revenue Query
 The Discounted Revenue Query reports the gross discounted revenue attributed to the sale of selected parts handled

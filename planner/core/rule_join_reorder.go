@@ -32,9 +32,12 @@ import (
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
-func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression, directedEdges []directedEdge, joinTypes []JoinType) {
+func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.ScalarFunction,
+	otherConds []expression.Expression, directedEdges []directedEdge, joinTypes []JoinType,
+	priorityMap map[*expression.ScalarFunction][]*expression.ScalarFunction) {
 	join, isJoin := p.(*LogicalJoin)
 	directedEdges = make([]directedEdge, 0)
+	priorityMap = make(map[*expression.ScalarFunction][]*expression.ScalarFunction)
 	jNode := &joinNode{
 		p: p,
 	}
@@ -42,11 +45,11 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && len(join.EqualConditions) > 1) {
-		return []*joinNode{jNode}, nil, nil, directedEdges, nil
+		return []*joinNode{jNode}, nil, nil, directedEdges, nil, priorityMap
 	}
 
-	lhsGroup, lhsEqualConds, lhsOtherConds, lhsDirectedEdges, lhsJoinTypes := extractJoinGroup(join.children[0])
-	rhsGroup, rhsEqualConds, rhsOtherConds, rhsDirectedEdges, rhsJoinTypes := extractJoinGroup(join.children[1])
+	lhsGroup, lhsEqualConds, lhsOtherConds, lhsDirectedEdges, lhsJoinTypes, lPriorityMap := extractJoinGroup(join.children[0])
+	rhsGroup, rhsEqualConds, rhsOtherConds, rhsDirectedEdges, rhsJoinTypes, rPriorityMap := extractJoinGroup(join.children[1])
 
 	// Collect the order for plans of the outerJoin
 	// For example: a left join b indicate a must join before b
@@ -68,7 +71,7 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 				break
 			}
 		}
-		edge, ok := buildDirectedEdge(leftNode, rightNode, join.JoinType, eqCond, nil)
+		edge, ok := buildDirectedEdge(leftNode, rightNode, join.JoinType, eqCond)
 		if !ok {
 			continue
 		}
@@ -76,20 +79,30 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 		directedEdges = append(directedEdges, edge)
 		for idx := range lhsDirectedEdges {
 			lhsEdge := lhsDirectedEdges[idx]
-			implicitEdges, extracted := extractImplictDirectedEdges(lhsEdge, edge)
+			extractedPriorityMap, extracted := extractPriorityMap(lhsEdge, edge)
 			if !extracted {
 				continue
 			}
-			directedEdges = append(directedEdges, implicitEdges...)
+			for key, _ := range extractedPriorityMap {
+				priorityMap[key] = append(priorityMap[key], extractedPriorityMap[key]...)
+			}
 		}
 		for idx := range rhsDirectedEdges {
 			rhsEdge := rhsDirectedEdges[idx]
-			implicitEdges, extracted := extractImplictDirectedEdges(rhsEdge, edge)
+			extractedPriorityMap, extracted := extractPriorityMap(rhsEdge, edge)
 			if !extracted {
 				continue
 			}
-			directedEdges = append(directedEdges, implicitEdges...)
+			for key, _ := range extractedPriorityMap {
+				priorityMap[key] = append(priorityMap[key], extractedPriorityMap[key]...)
+			}
 		}
+	}
+	for key, _ := range lPriorityMap {
+		priorityMap[key] = append(priorityMap[key], lPriorityMap[key]...)
+	}
+	for key, _ := range rPriorityMap {
+		priorityMap[key] = append(priorityMap[key], rPriorityMap[key]...)
 	}
 	directedEdges = append(directedEdges, lhsDirectedEdges...)
 	directedEdges = append(directedEdges, rhsDirectedEdges...)
@@ -108,34 +121,31 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 	}
 	joinTypes = append(joinTypes, lhsJoinTypes...)
 	joinTypes = append(joinTypes, rhsJoinTypes...)
-	return group, eqEdges, otherConds, directedEdges, joinTypes
+	return group, eqEdges, otherConds, directedEdges, joinTypes, priorityMap
 }
 
-func buildDirectedEdge(left *joinNode, right *joinNode, joinType JoinType, fromEqCond *expression.ScalarFunction, toEqCond *expression.ScalarFunction) (directedEdge, bool) {
+func buildDirectedEdge(left *joinNode, right *joinNode, joinType JoinType, eqCond *expression.ScalarFunction) (directedEdge, bool) {
 	var edge directedEdge
 	if joinType == RightOuterJoin {
 		edge = directedEdge{
-			from:       left,
-			to:         right,
-			fromEqCond: fromEqCond,
-			toEqCond:   toEqCond,
-			directed:   true,
+			from:     left,
+			to:       right,
+			eqCond:   eqCond,
+			directed: true,
 		}
 	} else if joinType == LeftOuterJoin {
 		edge = directedEdge{
-			from:       right,
-			to:         left,
-			fromEqCond: fromEqCond,
-			toEqCond:   toEqCond,
-			directed:   true,
+			from:     right,
+			to:       left,
+			eqCond:   eqCond,
+			directed: true,
 		}
 	} else if joinType == InnerJoin {
 		edge = directedEdge{
-			from:       left,
-			to:         right,
-			fromEqCond: fromEqCond,
-			toEqCond:   toEqCond,
-			directed:   false,
+			from:     left,
+			to:       right,
+			eqCond:   eqCond,
+			directed: false,
 		}
 	} else {
 		// todo invalid join type
@@ -150,12 +160,12 @@ func buildDirectedEdge(left *joinNode, right *joinNode, joinType JoinType, fromE
 // For example `A right join B right join C`,
 // there is an implicit meaning that B must join A before C,
 // so there will be a directed edge `B->C`
-func extractImplictDirectedEdges(edge1 directedEdge, edge2 directedEdge) ([]directedEdge, bool) {
+func extractPriorityMap(edge1 directedEdge, edge2 directedEdge) (map[*expression.ScalarFunction][]*expression.ScalarFunction, bool) {
 	if !edge1.directed && !edge2.directed {
 		return nil, false
 	}
 
-	var implicitEdges []directedEdge
+	priorityMap := make(map[*expression.ScalarFunction][]*expression.ScalarFunction)
 	// Construct a directed graph of joinNode
 	joinNodeGraph := make(map[*joinNode][]*joinNode, 4)
 	mergeToGraph(edge1, joinNodeGraph)
@@ -164,24 +174,16 @@ func extractImplictDirectedEdges(edge1 directedEdge, edge2 directedEdge) ([]dire
 	endPoints, ok := getCommonImplictEndPoint(joinNodeGraph)
 
 	if !ok {
-		return implicitEdges, false
+		return priorityMap, false
 	}
 	for i := range endPoints {
 		if endPoints[i] != edge1.from && endPoints[i] != edge1.to {
 			continue
 		}
-		// Construct implicit edges
-		implicitEdges = append(implicitEdges, directedEdge{
-			fromEqCond: edge1.fromEqCond,
-			toEqCond:   edge2.fromEqCond,
-			from:       endPoints[i],
-			to:         endPoints[i^1],
-			directed:   true,
-			isImplicit: true,
-		})
-		return implicitEdges, true
+		priorityMap[edge2.eqCond] = append(priorityMap[edge2.eqCond], edge1.eqCond)
+		return priorityMap, true
 	}
-	return implicitEdges, false
+	return priorityMap, false
 }
 
 // mergeToGraph merge directed edge to construct graph
@@ -210,12 +212,10 @@ type joinReOrderSolver struct {
 }
 
 type directedEdge struct {
-	from       *joinNode
-	to         *joinNode
-	fromEqCond *expression.ScalarFunction
-	toEqCond   *expression.ScalarFunction
-	directed   bool
-	isImplicit bool
+	from     *joinNode
+	to       *joinNode
+	eqCond   *expression.ScalarFunction
+	directed bool
 }
 
 type joinNode struct {
@@ -240,7 +240,8 @@ func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	var err error
-	curJoinGroup, eqEdges, otherConds, directedEdges, joinTypes := extractJoinGroup(p)
+
+	curJoinGroup, eqEdges, otherConds, directedEdges, joinTypes, priorityMap := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i].p, err = s.optimizeRecursive(ctx, curJoinGroup[i].p, tracer)
@@ -268,6 +269,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				eqEdges:                        eqEdges,
 				joinTypes:                      joinTypes,
 				directedEdges:                  directedEdges,
+				priorityMap:                    priorityMap,
 			}
 			p, err = groupSolver.solve(curJoinGroup, tracer)
 		} else {
@@ -318,8 +320,6 @@ type baseSingleGroupJoinOrderSolver struct {
 	ctx          sessionctx.Context
 	curJoinGroup []*jrNode
 	otherConds   []expression.Expression
-	// A map maintain plan and plans which must join after the plan
-	priorityMap map[*expression.ScalarFunction]map[*expression.ScalarFunction]struct{}
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
