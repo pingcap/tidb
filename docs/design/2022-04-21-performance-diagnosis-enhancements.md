@@ -130,7 +130,7 @@ Metrics collected for external transactions only:
 - Resolve Lock(but need to be differentiated by read and write)
 - Region Cache
 
-Metrics collected together:
+Metrics collected together(can not be differentiated):
 
 - Batch System
 - gRPC
