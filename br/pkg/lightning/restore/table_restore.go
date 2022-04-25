@@ -683,13 +683,14 @@ func (tr *TableRestore) postProcess(
 		tblInfo := tr.tableInfo.Core
 		var err error
 		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
-			var maxAutoRandom uint64
+			var maxAutoRandom, autoRandomTotalBits uint64
+			autoRandomTotalBits = 64
 			autoRandomBits := tblInfo.AutoRandomBits // range from (0, 15]
 			if !tblInfo.IsAutoRandomBitColUnsigned() {
 				// if auto_random is signed, leave one extra bit
-				autoRandomBits += 1
+				autoRandomTotalBits = 63
 			}
-			maxAutoRandom = 1<<(64-autoRandomBits) - 1
+			maxAutoRandom = 1<<(autoRandomTotalBits-autoRandomBits) - 1
 			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxAutoRandom)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle

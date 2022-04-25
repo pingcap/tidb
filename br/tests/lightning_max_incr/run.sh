@@ -46,8 +46,4 @@ check_result
 # sql fail because of of duplicate key
 run_sql 'INSERT INTO db.test(b) VALUES(11);' 2>&1 | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
 check_contains 'ERROR'
-# duplicate key update
-run_sql 'INSERT INTO db.test(b) VALUES(11) ON DUPLICATE KEY UPDATE b=10000;'
-run_sql 'SELECT b FROM db.test;'
-check_contains 'b: 10000'
 cleanup
