@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -185,4 +186,33 @@ func TestCreateDatabaseError(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
 	tk.MustExec("create database db1;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId"))
+}
+
+func TestRenameViewOverDifferentSchemaError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	//init
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists test_2;")
+	tk.MustExec("drop table if exists table_1;")
+	tk.MustExec("drop view if exists view_1;")
+
+	tk.MustExec("create database test_2;")
+	tk.MustExec("create table table_1 (a int);")
+	tk.MustExec("create view view_1 as select a from table_1;")
+
+	//different schema
+	tk.MustGetErrCode("rename table test.view_1 to test_2.view_1;", errno.ErrForbidSchemaChange)
+	tk.MustGetErrMsg("rename table test.view_1 to test_2.view_1;",
+		infoschema.ErrForbidSchemaChange.GenWithStackByArgs("test", "test_2").Error(),
+	)
+	tk.MustGetErrMsg("rename table test.view_1 to test_2.view_1;",
+		"[schema:1450]Changing schema from 'test' to 'test_2' is not allowed.",
+	)
+
+	//same schema
+	tk.MustExec("rename table test.view_1 to test.view_1000;")
+
 }

@@ -17,7 +17,11 @@ package lightning
 import (
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -133,6 +137,50 @@ func (l *Lightning) GoServe() error {
 	return l.goServe(statusAddr, io.Discard)
 }
 
+// TODO: maybe handle http request using gin
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	body       string
+}
+
+func newLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
+	return &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.statusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
+}
+
+func (lrw *loggingResponseWriter) Write(d []byte) (int, error) {
+	// keep first part of the response for logging, max 1K
+	if lrw.body == "" && len(d) > 0 {
+		length := len(d)
+		if length > 1024 {
+			length = 1024
+		}
+		lrw.body = string(d[:length])
+	}
+	return lrw.ResponseWriter.Write(d)
+}
+
+func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		logger := log.L().With(zap.String("method", r.Method), zap.Stringer("url", r.URL)).
+			Begin(zapcore.InfoLevel, "process http request")
+
+		newWriter := newLoggingResponseWriter(w)
+		h.ServeHTTP(newWriter, r)
+
+		bodyField := zap.Skip()
+		if newWriter.Header().Get("Content-Encoding") != "gzip" {
+			bodyField = zap.String("body", newWriter.body)
+		}
+		logger.End(zapcore.InfoLevel, nil, zap.Int("status", newWriter.statusCode), bodyField)
+	}
+}
+
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
@@ -145,13 +193,13 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	handleTasks := http.StripPrefix("/tasks", http.HandlerFunc(l.handleTask))
-	mux.Handle("/tasks", handleTasks)
-	mux.Handle("/tasks/", handleTasks)
-	mux.HandleFunc("/progress/task", handleProgressTask)
-	mux.HandleFunc("/progress/table", handleProgressTable)
-	mux.HandleFunc("/pause", handlePause)
-	mux.HandleFunc("/resume", handleResume)
-	mux.HandleFunc("/loglevel", handleLogLevel)
+	mux.Handle("/tasks", httpHandleWrapper(handleTasks.ServeHTTP))
+	mux.Handle("/tasks/", httpHandleWrapper(handleTasks.ServeHTTP))
+	mux.HandleFunc("/progress/task", httpHandleWrapper(handleProgressTask))
+	mux.HandleFunc("/progress/table", httpHandleWrapper(handleProgressTable))
+	mux.HandleFunc("/pause", httpHandleWrapper(handlePause))
+	mux.HandleFunc("/resume", httpHandleWrapper(handleResume))
+	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
 
 	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
 		IndexHTML: true,
@@ -215,7 +263,8 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
-		err = l.run(context.Background(), task, nil)
+		o := &options{}
+		err = l.run(context.Background(), task, o)
 		if err != nil && !common.IsContextCanceledError(err) {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
@@ -315,6 +364,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 			}
 		}
 		failpoint.Return(nil)
+	})
+
+	failpoint.Inject("SetCertExpiredSoon", func(val failpoint.Value) {
+		rootKeyPath := val.(string)
+		rootCaPath := taskCfg.Security.CAPath
+		keyPath := taskCfg.Security.KeyPath
+		certPath := taskCfg.Security.CertPath
+		if err := updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath, time.Second*10); err != nil {
+			panic(err)
+		}
 	})
 
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
@@ -559,7 +618,7 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot read request", err)
 		return
 	}
-	log.L().Debug("received task config", zap.ByteString("content", data))
+	log.L().Info("received task config", zap.ByteString("content", data))
 
 	cfg := config.NewConfig()
 	if err = cfg.LoadFromGlobal(l.globalCfg); err != nil {
@@ -904,4 +963,58 @@ func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode s
 			return tikv.SwitchMode(c, tls, store.Address, m)
 		},
 	)
+}
+
+func updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath string, expiry time.Duration) error {
+	rootKey, err := parsePrivateKey(rootKeyPath)
+	if err != nil {
+		return err
+	}
+	rootCaPem, err := os.ReadFile(rootCaPath)
+	if err != nil {
+		return err
+	}
+	rootCaDer, _ := pem.Decode(rootCaPem)
+	rootCa, err := x509.ParseCertificate(rootCaDer.Bytes)
+	if err != nil {
+		return err
+	}
+	key, err := parsePrivateKey(keyPath)
+	if err != nil {
+		return err
+	}
+	certPem, err := os.ReadFile(certPath)
+	if err != nil {
+		panic(err)
+	}
+	certDer, _ := pem.Decode(certPem)
+	cert, err := x509.ParseCertificate(certDer.Bytes)
+	if err != nil {
+		return err
+	}
+	cert.NotBefore = time.Now()
+	cert.NotAfter = time.Now().Add(expiry)
+	derBytes, err := x509.CreateCertificate(rand.Reader, cert, rootCa, &key.PublicKey, rootKey)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), 0o600)
+}
+
+func parsePrivateKey(keyPath string) (*ecdsa.PrivateKey, error) {
+	keyPemBlock, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	var keyDERBlock *pem.Block
+	for {
+		keyDERBlock, keyPemBlock = pem.Decode(keyPemBlock)
+		if keyDERBlock == nil {
+			return nil, errors.New("failed to find PEM block with type ending in \"PRIVATE KEY\"")
+		}
+		if keyDERBlock.Type == "PRIVATE KEY" || strings.HasSuffix(keyDERBlock.Type, " PRIVATE KEY") {
+			break
+		}
+	}
+	return x509.ParseECPrivateKey(keyDERBlock.Bytes)
 }

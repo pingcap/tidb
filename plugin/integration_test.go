@@ -360,7 +360,7 @@ func TestAuditLogNormal(t *testing.T) {
 		},
 		{
 			sql:      "ROLLBACK",
-			stmtType: "RollBack",
+			stmtType: "Rollback",
 		},
 		{
 			sql:      "START TRANSACTION",

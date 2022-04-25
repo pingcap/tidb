@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -227,7 +228,7 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	err = b.ctx.GetAdvisoryLock(lockName, timeout)
 	if err != nil {
-		switch err.(*terror.Error).Code() {
+		switch errors.Cause(err).(*terror.Error).Code() {
 		case mysql.ErrLockWaitTimeout:
 			return 0, false, nil // Another user has the lock
 		case mysql.ErrLockDeadlock:
