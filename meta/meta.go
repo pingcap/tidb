@@ -137,6 +137,8 @@ func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 
 // NewSnapshotMeta creates a Meta with snapshot.
 func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
+	snapshot.SetOption(kv.RequestSourceInternal, true)
+	snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
 	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 	return &Meta{txn: t}
 }

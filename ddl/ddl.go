@@ -269,6 +269,17 @@ func (dc *ddlCtx) setDDLLabelForTopSQL(job *model.Job) {
 	ctx.setDDLLabelForTopSQL(job)
 }
 
+func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	if !exists {
+		ctx = NewJobContext()
+		dc.jobCtx.jobCtxMap[job.ID] = ctx
+	}
+	ctx.setDDLLabelForDiagnosis(job)
+}
+
 func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(job *model.Job) tikvrpc.ResourceGroupTagger {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
@@ -431,6 +442,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	d := &ddl{
 		ddlCtx:            ddlCtx,
@@ -524,7 +536,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // GetNextDDLSeqNum return the next ddl seq num.
 func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
 	var count uint64
-	err := kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		count, err = t.GetHistoryDDLCount()
@@ -580,7 +593,8 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 
 func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	var ret []int64
-	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(errors.New("gofail genGlobalIDs error"))
@@ -598,7 +612,8 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 
 func (d *ddl) genPlacementPolicyID() (int64, error) {
 	var ret int64
-	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenPlacementPolicyID()
