@@ -65,22 +65,9 @@ message Context {
 
 ```
 
-In TiDB, `request_source` is concatenated by **scope** and **type**, the scope is one of "internal" and "external", for type, there will be some variation between internal and external transactions.
-
-The type of the internal transactions would be their capabilities, the internal transactions are listed in the [Internal Transaction Usage](#internal-transaction-usage) section. The concatenated `request_source` would be like "internal_ddl_backfill_index", "internal_bindinfo_load", "internal_statistic_load", etc.
-
-The type of external transaction is the statement type. The concatenated `request_source` would be like "external_select", "external_insert", "external_commit", etc.
-
 #### Session
 
-Add a flag in `SessionVars`, TiDB creates some internal sessions when bootstrap, and the internal flags are set after bootstrap.
-
-```diff
-type SessionVars struct {
-	...
-+	Internal bool
-}
-```
+`SessionVars.InRestrictedSQL` indicates whether the session is used for internal transactions.
 
 #### Coprocessor
 
@@ -115,7 +102,11 @@ type KVSnapshot struct {
 }
 ```
 
-The default value of `internal` is `false`(from the user client), and we should mark TiDB’s internal transaction as `true`.
+In TiDB, `request_source` is concatenated by **RequestSourceScope(scope)** and **RequestSourceType(type)**, the scope is one of "internal" and "external", for type, there will be some variation between internal and external transactions.
+
+The type of the internal transactions would be their capabilities, the internal transactions are listed in the [Internal Transaction Usage](#internal-transaction-usage) section. The concatenated `request_source` would be like "internal_ddl_backfill_index", "internal_bindinfo_load", "internal_statistic_load", etc.
+
+The type of external transaction is the statement type. The concatenated `request_source` would be like "external_select", "external_insert", "external_commit", etc.
 
 #### Metrics in TiDB
 
@@ -136,7 +127,6 @@ Metrics need to be collected in both internal and external ways:
 
 Metrics collected for external transactions only:
 
-- UnionScan
 - Resolve Lock(but need to be differentiated by read and write)
 - Region Cache
 
