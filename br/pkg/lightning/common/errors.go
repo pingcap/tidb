@@ -73,6 +73,10 @@ var (
 	ErrCheckKVVersion   = errors.Normalize("check tikv version error", errors.RFCCodeText("Lightning:KV:ErrCheckKVVersion"))
 	ErrCreateKVClient   = errors.Normalize("create kv client error", errors.RFCCodeText("Lightning:KV:ErrCreateKVClient"))
 	ErrCheckMultiIngest = errors.Normalize("check multi-ingest support error", errors.RFCCodeText("Lightning:KV:ErrCheckMultiIngest"))
+	ErrKVEpochNotMatch  = errors.Normalize("epoch not match", errors.RFCCodeText("Lightning:KV:EpochNotMatch"))
+	ErrKVNotLeader      = errors.Normalize("not leader", errors.RFCCodeText("Lightning:KV:NotLeader"))
+	ErrKVServerIsBusy   = errors.Normalize("server is busy", errors.RFCCodeText("Lightning:KV:ServerIsBusy"))
+	ErrKVRegionNotFound = errors.Normalize("region not found", errors.RFCCodeText("Lightning:KV:RegionNotFound"))
 
 	ErrUnknownBackend     = errors.Normalize("unknown backend %s", errors.RFCCodeText("Lightning:Restore:ErrUnknownBackend"))
 	ErrCheckLocalFile     = errors.Normalize("cannot find local file for table: %s engineDir: %s", errors.RFCCodeText("Lightning:Restore:ErrCheckLocalFile"))
@@ -87,13 +91,6 @@ var (
 	ErrAllocTableRowIDs   = errors.Normalize("allocate table row id error", errors.RFCCodeText("Lightning:Restore:ErrAllocTableRowIDs"))
 	ErrInvalidMetaStatus  = errors.Normalize("invalid meta status: '%s'", errors.RFCCodeText("Lightning:Restore:ErrInvalidMetaStatus"))
 	ErrTableIsChecksuming = errors.Normalize("table '%s' is checksuming", errors.RFCCodeText("Lightning:Restore:ErrTableIsChecksuming"))
-
-	// TODO: BR has similar errors, but it contains BR inside, maybe merge them later
-
-	ErrKVEpochNotMatch  = errors.Normalize("epoch not match", errors.RFCCodeText("Lightning:KV:EpochNotMatch"))
-	ErrKVNotLeader      = errors.Normalize("not leader", errors.RFCCodeText("Lightning:KV:NotLeader"))
-	ErrKVServerIsBusy   = errors.Normalize("server is busy", errors.RFCCodeText("Lightning:KV:ServerIsBusy"))
-	ErrKVRegionNotFound = errors.Normalize("region not found", errors.RFCCodeText("Lightning:KV:RegionNotFound"))
 )
 
 type withStack struct {

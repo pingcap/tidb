@@ -40,10 +40,13 @@ func TestIsRetryableError(t *testing.T) {
 
 	// kv errors
 	require.True(t, IsRetryableError(ErrKVNotLeader))
-	require.True(t, IsRetryableError(ErrKVNotLeader.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVEpochNotMatch))
 	require.True(t, IsRetryableError(ErrKVServerIsBusy))
 	require.True(t, IsRetryableError(ErrKVRegionNotFound))
+	require.True(t, IsRetryableError(ErrKVNotLeader.GenWithStack("test")))
+	require.True(t, IsRetryableError(ErrKVEpochNotMatch.GenWithStack("test")))
+	require.True(t, IsRetryableError(ErrKVServerIsBusy.GenWithStack("test")))
+	require.True(t, IsRetryableError(ErrKVRegionNotFound.GenWithStack("test")))
 
 	// net: connection refused
 	_, err := net.Dial("tcp", "localhost:65533")
