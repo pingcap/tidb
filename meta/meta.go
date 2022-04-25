@@ -218,14 +218,17 @@ func (m *Meta) autoTableIDKey(tableID int64) []byte {
 	return AutoTableIDKey(tableID)
 }
 
+// AutoTableIDKey decodes the auto tableID key.
 func AutoTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
 }
 
+// IsAutoTableIDKey checks whether the key is auto tableID key.
 func IsAutoTableIDKey(key []byte) bool {
 	return strings.HasPrefix(string(key), mTableIDPrefix+":")
 }
 
+// ParseAutoTableIDKey decodes the tableID from the auto tableID key.
 func ParseAutoTableIDKey(key []byte) (int64, error) {
 	if !IsAutoTableIDKey(key) {
 		return 0, ErrInvalidString.GenWithStack("fail to parse autoTableKey")
@@ -244,14 +247,17 @@ func (m *Meta) autoRandomTableIDKey(tableID int64) []byte {
 	return AutoRandomTableIDKey(tableID)
 }
 
+// AutoRandomTableIDKey encodes the auto random tableID key.
 func AutoRandomTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mRandomIDPrefix, tableID))
 }
 
+// IsAutoRandomTableIDKey checks whether the key is auto random tableID key.
 func IsAutoRandomTableIDKey(key []byte) bool {
 	return strings.HasPrefix(string(key), mRandomIDPrefix+":")
 }
 
+// ParseAutoRandomTableIDKey decodes the tableID from the auto random tableID key.
 func ParseAutoRandomTableIDKey(key []byte) (int64, error) {
 	if !IsAutoRandomTableIDKey(key) {
 		return 0, ErrInvalidString.GenWithStack("fail to parse AutoRandomTableIDKey")
@@ -291,14 +297,17 @@ func (m *Meta) sequenceKey(sequenceID int64) []byte {
 	return SequenceKey(sequenceID)
 }
 
+// SequenceKey encodes the sequence key.
 func SequenceKey(sequenceID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mSequencePrefix, sequenceID))
 }
 
+// IsSequenceKey checks whether the key is sequence key.
 func IsSequenceKey(key []byte) bool {
 	return strings.HasPrefix(string(key), mSequencePrefix+":")
 }
 
+// ParseSequenceKey decodes the tableID from the sequence key.
 func ParseSequenceKey(key []byte) (int64, error) {
 	if !IsSequenceKey(key) {
 		return 0, ErrInvalidString.GenWithStack("fail to parse sequence key")
