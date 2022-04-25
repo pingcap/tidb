@@ -4428,6 +4428,16 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	// See PR: 11561.
 	job.BinlogInfo = nil
 	job.SchemaName = ""
+	b, err := job.Encode(true)
+	require.NoError(t, err)
+	if variable.AllowConcurrencyDDL.Load() {
+		tk.MustExec(fmt.Sprintf("update mysql.tidb_history_job set job_meta = 0x%x where job_id = %d", b, job.ID))
+	} else {
+		txn, err := tk.Session().Txn(true)
+		require.NoError(t, err)
+		err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
+		require.NoError(t, err)
+	}
 	require.NoError(t, err)
 
 	re = tk.MustQuery("admin show ddl jobs 1")
