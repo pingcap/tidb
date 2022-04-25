@@ -433,6 +433,10 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	store, dom, clean := createMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/errorMockPanic"))
+	}()
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

@@ -17,7 +17,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/admin"
 	"sync"
 	"testing"
 	"time"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
