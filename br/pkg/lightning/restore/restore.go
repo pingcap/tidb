@@ -362,7 +362,9 @@ func NewRestoreControllerWithPauser(
 			needChecksum: cfg.PostRestore.Checksum != config.OpLevelOff,
 		}
 	case isSSTImport:
-		metaBuilder = singleMgrBuilder{}
+		metaBuilder = singleMgrBuilder{
+			taskID: cfg.TaskID,
+		}
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
