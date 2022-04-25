@@ -676,7 +676,7 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 		PKIsHandle: true,
 		State:      model.StatePublic,
 	}
-	//historyTblInfo.Indices = append(tableInfo.Indices, historyIdx2)
+	historyTblInfo.Indices = append(tableInfo.Indices, historyIdx2)
 	historyTblInfo.Columns = append(historyTblInfo.Columns, historyTblCol1, historyTblCol2, historyTblCol3)
 	data, err = json.Marshal(historyTblInfo)
 	if err != nil {
