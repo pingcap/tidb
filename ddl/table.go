@@ -780,6 +780,12 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return ver, nil
+	}
+
 	if alloc := tbl.Allocators(nil).Get(tp); alloc != nil {
 		// The next value to allocate is `newBase`.
 		newEnd := newBase - 1
@@ -811,6 +817,11 @@ func onModifyTableAutoIDCache(t *meta.Meta, job *model.Job) (int64, error) {
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
+	}
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return 0, nil
 	}
 
 	tblInfo.AutoIdCache = cache
@@ -850,6 +861,12 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 		// MaxShardRowIDBits use to check the overflow of auto ID.
 		tblInfo.MaxShardRowIDBits = shardRowIDBits
 	}
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return ver, err
+	}
+
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1009,6 +1026,11 @@ func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return 0, nil
+	}
+
 	tblInfo.Comment = comment
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
@@ -1041,6 +1063,11 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return ver, nil
 	}
 
 	tblInfo.Charset = toCharset

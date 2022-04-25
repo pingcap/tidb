@@ -745,7 +745,7 @@ func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
 	if job.State == model.JobStateNone {
 		// In multiple schema change, we don't call the hook because
 		// the job does not run yet.
-		return nil
+		return err
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()

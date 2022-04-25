@@ -983,6 +983,27 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 	dom.DDL().SetHook(originHook)
 }
 
+func TestMultiSchemaChangeTableOption(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 0;")
+	tk.MustExec("create table t (a int auto_increment primary key, b int);")
+	tk.MustGetErrCode("alter table t modify column b tinyint, auto_increment = 100;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
+	tk.MustExec("alter table t modify column b tinyint, auto_increment = 100;")
+	tk.MustExec("insert into t (b) values (1);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("100 1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int) shard_row_id_bits=2;")
+	tk.MustExec("alter table t modify column a tinyint, shard_row_id_bits = 3, comment = 'abc', charset = utf8mb4;")
+	tk.MustQuery("select TIDB_ROW_ID_SHARDING_INFO, TABLE_COMMENT, TABLE_COLLATION from information_schema.tables where table_name = 't';").
+		Check(testkit.Rows("SHARD_BITS=3 abc utf8mb4_bin"))
+}
+
 func composeHooks(dom *domain.Domain, cbs ...ddl.Callback) ddl.Callback {
 	return &ddl.TestDDLCallback{
 		Do: dom,
