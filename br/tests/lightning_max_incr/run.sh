@@ -46,4 +46,7 @@ check_result
 # sql fail because of of duplicate key
 run_sql 'INSERT INTO db.test(b) VALUES(11);' 2>&1 | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
 check_contains 'ERROR'
+# sql succeed: though 9223372036854775807 is definitely out-of-range of max_auto_random_base
+# but lightning sets it to max_auto_random_base instead of 9223372036854775807
+run_sql 'INSERT INTO db.test1(b) VALUES(22);'
 cleanup
