@@ -20,6 +20,7 @@ import (
 
 // statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
 type statsCacheInner interface {
+	GetByQuery(int64) (*statistics.Table, bool)
 	Get(int64) (*statistics.Table, bool)
 	Put(int64, *statistics.Table)
 	Del(int64)
@@ -96,6 +97,11 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 type mapCache struct {
 	tables   map[int64]cacheItem
 	memUsage int64
+}
+
+// GetByQuery implements statsCacheInner
+func (m *mapCache) GetByQuery(k int64) (*statistics.Table, bool) {
+	return m.Get(k)
 }
 
 // Get implements statsCacheInner

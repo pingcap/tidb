@@ -515,14 +515,24 @@ func (h *Handle) GetMemConsumed() (size int64) {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
-	return h.GetPartitionStats(tblInfo, tblInfo.ID)
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...GetTableStatsOpt) *statistics.Table {
+	return h.GetPartitionStats(tblInfo, tblInfo.ID, opts...)
 }
 
 // GetPartitionStats retrieves the partition stats from cache.
-func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...GetTableStatsOpt) *statistics.Table {
 	statsCache := h.statsCache.Load().(statsCache)
-	tbl, ok := statsCache.Get(pid)
+	var tbl *statistics.Table
+	var ok bool
+	option := &getTableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
+	if option.byQuery {
+		tbl, ok = statsCache.GetByQuery(pid)
+	} else {
+		tbl, ok = statsCache.Get(pid)
+	}
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
@@ -2041,4 +2051,18 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) err
 func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
 	_, _, err := h.execRestrictedSQL(context.TODO(), "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 	return err
+}
+
+type getTableStatsOption struct {
+	byQuery bool
+}
+
+// GetTableStatsOpt used to edit getTableStatsOption
+type GetTableStatsOpt func(*getTableStatsOption)
+
+// WithGetTableStatsByQuery indicates Get table stats for user query
+func WithGetTableStatsByQuery() GetTableStatsOpt {
+	return func(option *getTableStatsOption) {
+		option.byQuery = true
+	}
 }
