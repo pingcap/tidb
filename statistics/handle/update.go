@@ -1028,7 +1028,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		return false
 	}
 	pruneMode := h.CurrentPruneMode()
-	rd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
 	})
