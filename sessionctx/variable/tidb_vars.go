@@ -443,6 +443,9 @@ const (
 	// TiDBEnableStrictDoubleTypeCheck is used to control table field double type syntax check.
 	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
 
+	// TiDBOptProjectionPushDown is used to control whether to pushdown projection to coprocessor.
+	TiDBOptProjectionPushDown = "tidb_opt_projection_push_down"
+
 	// TiDBEnableVectorizedExpression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 
@@ -623,6 +626,9 @@ const (
 
 	// TiDBIgnorePreparedCacheCloseStmt indicates whether to ignore close-stmt commands for prepared statements.
 	TiDBIgnorePreparedCacheCloseStmt = "tidb_ignore_prepared_cache_close_stmt"
+
+	// TiDBEnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
+	TiDBEnableNewCostInterface = "tidb_enable_new_cost_interface"
 
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"

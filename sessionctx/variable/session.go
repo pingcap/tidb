@@ -731,6 +731,9 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+	// AllowProjectionPushDown enables pushdown projection on TiKV.
+	AllowProjectionPushDown bool
+
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
 
@@ -1020,6 +1023,8 @@ type SessionVars struct {
 	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
+	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
+	EnableNewCostInterface bool
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
