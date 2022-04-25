@@ -412,7 +412,7 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 }
 
 func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
-	sess := testNewContext(store)
+	sess := testkit.NewTestKit(t, store).Session()
 	historyJob, err := ddl.GetHistoryJobFromStore(sess, store, jobID)
 	require.NoError(t, err)
 	require.Equal(t, historyJob.State, model.JobStateSynced)
