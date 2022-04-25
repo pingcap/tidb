@@ -687,7 +687,6 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk.MustExec("insert t1 values (1, 1), (2, 2)")
 	tk.MustExec("create table t2 (c1 int, c2 int)")
 	tk.MustExec("insert t2 values (1, 3), (2, 5)")
-
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
