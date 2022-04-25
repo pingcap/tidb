@@ -15,6 +15,10 @@
 package chunk
 
 import (
+	"io"
+	"os"
+	"strconv"
+
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/terror"
@@ -23,9 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/memory"
-	"io"
-	"os"
-	"strconv"
 )
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
