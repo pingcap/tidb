@@ -122,7 +122,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		s.otherConds = finalRemainOthers
 		// delete from priorityMap
 		for _, eqCond := range finalUsedEdges {
-			for key, _ := range s.priorityMap {
+			for key := range s.priorityMap {
 				eqConds := s.priorityMap[key]
 				deletedEqConds := s.deleteEqCond(eqConds, eqCond)
 				if len(deletedEqConds) != len(eqConds) {

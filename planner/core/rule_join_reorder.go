@@ -83,7 +83,7 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 			if !extracted {
 				continue
 			}
-			for key, _ := range extractedPriorityMap {
+			for key := range extractedPriorityMap {
 				priorityMap[key] = append(priorityMap[key], extractedPriorityMap[key]...)
 			}
 		}
@@ -93,15 +93,15 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 			if !extracted {
 				continue
 			}
-			for key, _ := range extractedPriorityMap {
+			for key := range extractedPriorityMap {
 				priorityMap[key] = append(priorityMap[key], extractedPriorityMap[key]...)
 			}
 		}
 	}
-	for key, _ := range lPriorityMap {
+	for key := range lPriorityMap {
 		priorityMap[key] = append(priorityMap[key], lPriorityMap[key]...)
 	}
-	for key, _ := range rPriorityMap {
+	for key := range rPriorityMap {
 		priorityMap[key] = append(priorityMap[key], rPriorityMap[key]...)
 	}
 	directedEdges = append(directedEdges, lhsDirectedEdges...)
