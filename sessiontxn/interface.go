@@ -15,6 +15,7 @@
 package sessiontxn
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -25,13 +26,19 @@ type TxnContextProvider interface {
 	Initialize(sctx sessionctx.Context) error
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
+	// GetReadTS returns the read timestamp used by select statement (not for select ... for update)
+	GetReadTS() (uint64, error)
+	// GetForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
+	GetForUpdateTS() (uint64, error)
 }
 
 // SimpleTxnContextProvider implements TxnContextProvider
 // It is only used in refactor stage
 // TODO: remove it after refactor finished
 type SimpleTxnContextProvider struct {
-	InfoSchema infoschema.InfoSchema
+	InfoSchema         infoschema.InfoSchema
+	GetReadTSFunc      func() (uint64, error)
+	GetForUpdateTSFunc func() (uint64, error)
 }
 
 // Initialize the provider with session context
@@ -44,10 +51,30 @@ func (p *SimpleTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.InfoSchema
 }
 
+// GetReadTS returns the read timestamp used by select statement (not for select ... for update)
+func (p *SimpleTxnContextProvider) GetReadTS() (uint64, error) {
+	if p.GetReadTSFunc == nil {
+		return 0, errors.New("ReadTSFunc not set")
+	}
+	return p.GetReadTSFunc()
+}
+
+// GetForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
+func (p *SimpleTxnContextProvider) GetForUpdateTS() (uint64, error) {
+	if p.GetForUpdateTSFunc == nil {
+		return 0, errors.New("GetForUpdateTSFunc not set")
+	}
+	return p.GetForUpdateTSFunc()
+}
+
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
+	// GetReadTS returns the read timestamp used by select statement (not for select ... for update)
+	GetReadTS() (uint64, error)
+	// GetForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
+	GetForUpdateTS() (uint64, error)
 
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider
