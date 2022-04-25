@@ -5931,6 +5931,32 @@ func TestCharset(t *testing.T) {
 	require.NotNil(t, st.(*ast.AlterDatabaseStmt))
 }
 
+func TestUnderscoreCharset(t *testing.T) {
+	p := parser.New()
+	tests := []struct {
+		cs        string
+		parseFail bool
+		unSupport bool
+	}{
+		{"utf8", false, false},
+		{"gbk", false, true},
+		{"ujis", false, true},
+		{"gbk1", true, true},
+		{"ujisx", true, true},
+	}
+	for _, tt := range tests {
+		sql := fmt.Sprintf("select hex(_%s '3F')", tt.cs)
+		_, err := p.ParseOneStmt(sql, "", "")
+		if tt.parseFail {
+			require.EqualError(t, err, fmt.Sprintf("line 1 column %d near \"'3F')\" ", len(tt.cs)+17))
+		} else if tt.unSupport {
+			require.EqualError(t, err, ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", tt.cs).Error())
+		} else {
+			require.NoError(t, err)
+		}
+	}
+}
+
 func TestFulltextSearch(t *testing.T) {
 	p := parser.New()
 
