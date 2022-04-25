@@ -656,13 +656,15 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 
 	memBuffer := txn.GetMemBuffer()
 	cp := memBuffer.Checkpoint()
-	e.deleteSavepoint(s.Name)
-	txnCtx.Savepoints = append(txnCtx.Savepoints, variable.SavepointRecord{Name: s.Name, Cp: cp})
+	name := strings.ToLower(s.Name)
+	e.deleteSavepoint(name)
+	txnCtx.Savepoints = append(txnCtx.Savepoints, variable.SavepointRecord{Name: name, Cp: cp})
 	return nil
 }
 
 func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error {
-	deleted := e.deleteSavepoint(s.Name)
+	name := strings.ToLower(s.Name)
+	deleted := e.deleteSavepoint(name)
 	if !deleted {
 		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
 	}
@@ -794,8 +796,9 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 		if !txn.Valid() {
 			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 		}
+		savepointName := strings.ToLower(s.SavepointName)
 		for idx, sp := range sessVars.TxnCtx.Savepoints {
-			if s.SavepointName == sp.Name {
+			if savepointName == sp.Name {
 				txn.GetMemBuffer().RevertToCheckpoint(sp.Cp)
 				sessVars.TxnCtx.Savepoints = sessVars.TxnCtx.Savepoints[:idx+1]
 				return nil
