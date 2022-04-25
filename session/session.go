@@ -2724,16 +2724,6 @@ func loadCollationParameter(se *session) (bool, error) {
 }
 
 func updateMemoryConfigAndSysVar(se *session) error {
-	if !config.IsMemoryQuotaQuerySetByUser {
-		newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
-		if err != nil {
-			return err
-		}
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.MemQuotaQuery = newMemoryQuotaQuery
-		})
-		variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10))
-	}
 	if !config.IsOOMActionSetByUser {
 		newOOMAction, err := loadDefOOMAction(se)
 		if err != nil {
@@ -2745,23 +2735,6 @@ func updateMemoryConfigAndSysVar(se *session) error {
 	}
 
 	return nil
-}
-
-// loadDefMemQuotaQuery loads the default value of mem-quota-query.
-// We'll read a tuple if the cluster is upgraded from v3.0.x to v4.0.9+.
-// An empty result will be returned if it's a newly deployed cluster whose
-// version is v4.0.9.
-// See the comment upon the function `upgradeToVer54` for details.
-func loadDefMemQuotaQuery(se *session) (int64, error) {
-	_, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbDefMemoryQuotaQuery)
-	if err != nil {
-		if err == errResultIsEmpty {
-			return 1 << 30, nil
-		}
-		return 1 << 30, err
-	}
-	// If there is a tuple in mysql.tidb, the value must be 32 << 30.
-	return 32 << 30, nil
 }
 
 func loadDefOOMAction(se *session) (string, error) {
