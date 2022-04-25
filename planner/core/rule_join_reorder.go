@@ -32,20 +32,17 @@ import (
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
-func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.ScalarFunction,
+func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
 	otherConds []expression.Expression, directedEdges []directedEdge, joinTypes []JoinType,
 	priorityMap map[*expression.ScalarFunction][]*expression.ScalarFunction) {
 	join, isJoin := p.(*LogicalJoin)
 	directedEdges = make([]directedEdge, 0)
 	priorityMap = make(map[*expression.ScalarFunction][]*expression.ScalarFunction)
-	jNode := &joinNode{
-		p: p,
-	}
 	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && len(join.EqualConditions) > 1) {
-		return []*joinNode{jNode}, nil, nil, directedEdges, nil, priorityMap
+		return []LogicalPlan{p}, nil, nil, directedEdges, nil, priorityMap
 	}
 
 	lhsGroup, lhsEqualConds, lhsOtherConds, lhsDirectedEdges, lhsJoinTypes, lPriorityMap := extractJoinGroup(join.children[0])
@@ -54,19 +51,19 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 	// Collect the order for plans of the outerJoin
 	// For example: a left join b indicate a must join before b
 	//              a right join b indicate a must join after b
-	var leftNode *joinNode
-	var rightNode *joinNode
+	var leftNode LogicalPlan
+	var rightNode LogicalPlan
 	for _, eqCond := range join.EqualConditions {
 		arg0 := eqCond.GetArgs()[0].(*expression.Column)
 		arg1 := eqCond.GetArgs()[1].(*expression.Column)
 		for _, ld := range lhsGroup {
-			if ld.p.Schema().Contains(arg0) {
+			if ld.Schema().Contains(arg0) {
 				leftNode = ld
 				break
 			}
 		}
 		for _, rd := range rhsGroup {
-			if rd.p.Schema().Contains(arg1) {
+			if rd.Schema().Contains(arg1) {
 				rightNode = rd
 				break
 			}
@@ -124,7 +121,7 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 	return group, eqEdges, otherConds, directedEdges, joinTypes, priorityMap
 }
 
-func buildDirectedEdge(left *joinNode, right *joinNode, joinType JoinType, eqCond *expression.ScalarFunction) (directedEdge, bool) {
+func buildDirectedEdge(left LogicalPlan, right LogicalPlan, joinType JoinType, eqCond *expression.ScalarFunction) (directedEdge, bool) {
 	var edge directedEdge
 	if joinType == RightOuterJoin {
 		edge = directedEdge{
@@ -167,7 +164,7 @@ func extractPriorityMap(edge1 directedEdge, edge2 directedEdge) (map[*expression
 
 	priorityMap := make(map[*expression.ScalarFunction][]*expression.ScalarFunction)
 	// Construct a directed graph of joinNode
-	joinNodeGraph := make(map[*joinNode][]*joinNode, 4)
+	joinNodeGraph := make(map[LogicalPlan][]LogicalPlan, 4)
 	mergeToGraph(edge1, joinNodeGraph)
 	mergeToGraph(edge2, joinNodeGraph)
 	// Find endpoints from the same source in a directed edge
@@ -187,7 +184,7 @@ func extractPriorityMap(edge1 directedEdge, edge2 directedEdge) (map[*expression
 }
 
 // mergeToGraph merge directed edge to construct graph
-func mergeToGraph(edge directedEdge, joinNodeGraph map[*joinNode][]*joinNode) {
+func mergeToGraph(edge directedEdge, joinNodeGraph map[LogicalPlan][]LogicalPlan) {
 	if edge.directed {
 		joinNodeGraph[edge.from] = append(joinNodeGraph[edge.from], edge.to)
 	} else {
@@ -199,7 +196,7 @@ func mergeToGraph(edge directedEdge, joinNodeGraph map[*joinNode][]*joinNode) {
 
 // getCommonImplictEndPoint find endpoints from the same source in a directed edge
 // For example there is a directed graph `A->B,A->C`, we will return points B,A
-func getCommonImplictEndPoint(joinNodeGraph map[*joinNode][]*joinNode) ([]*joinNode, bool) {
+func getCommonImplictEndPoint(joinNodeGraph map[LogicalPlan][]LogicalPlan) ([]LogicalPlan, bool) {
 	for _, endPoints := range joinNodeGraph {
 		if len(endPoints) == 2 {
 			return endPoints, true
@@ -212,15 +209,10 @@ type joinReOrderSolver struct {
 }
 
 type directedEdge struct {
-	from     *joinNode
-	to       *joinNode
+	from     LogicalPlan
+	to       LogicalPlan
 	eqCond   *expression.ScalarFunction
 	directed bool
-}
-
-type joinNode struct {
-	id int
-	p  LogicalPlan
 }
 
 type jrNode struct {
@@ -244,7 +236,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 	curJoinGroup, eqEdges, otherConds, directedEdges, joinTypes, priorityMap := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
-			curJoinGroup[i].p, err = s.optimizeRecursive(ctx, curJoinGroup[i].p, tracer)
+			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
 			if err != nil {
 				return nil, err
 			}

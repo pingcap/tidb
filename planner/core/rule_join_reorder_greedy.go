@@ -46,18 +46,18 @@ type joinReorderGreedySolver struct {
 //
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
-func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinReorderTrace) (LogicalPlan, error) {
+func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	for _, node := range joinNodePlans {
-		_, err := node.p.recursiveDeriveStats(nil)
+		_, err := node.recursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
-		cost := s.baseNodeCumCost(node.p)
+		cost := s.baseNodeCumCost(node)
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			p:       node.p,
+			p:       node,
 			cumCost: cost,
 		})
-		tracer.appendLogicalJoinCost(node.p, cost)
+		tracer.appendLogicalJoinCost(node, cost)
 	}
 
 	// Sort plans by cost and join order

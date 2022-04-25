@@ -37,18 +37,18 @@ type joinGroupNonEqEdge struct {
 	expr       expression.Expression
 }
 
-func (s *joinReorderDPSolver) solve(joinGroup []*joinNode, eqConds []expression.Expression, tracer *joinReorderTrace) (LogicalPlan, error) {
+func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expression.Expression, tracer *joinReorderTrace) (LogicalPlan, error) {
 	for _, node := range joinGroup {
-		_, err := node.p.recursiveDeriveStats(nil)
+		_, err := node.recursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
-		cost := s.baseNodeCumCost(node.p)
+		cost := s.baseNodeCumCost(node)
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			p:       node.p,
+			p:       node,
 			cumCost: cost,
 		})
-		tracer.appendLogicalJoinCost(node.p, cost)
+		tracer.appendLogicalJoinCost(node, cost)
 	}
 	adjacents := make([][]int, len(s.curJoinGroup))
 	totalEqEdges := make([]joinGroupEqEdge, 0, len(eqConds))
@@ -160,7 +160,7 @@ func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents 
 // dpGraph is the core part of this algorithm.
 // It implements the traditional join reorder algorithm: DP by subset using the following formula:
 //   bestPlan[S:set of node] = the best one among Join(bestPlan[S1:subset of S], bestPlan[S2: S/S1])
-func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, joinGroup []*joinNode,
+func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, joinGroup []LogicalPlan,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge, tracer *joinReorderTrace) (LogicalPlan, error) {
 	nodeCnt := uint(len(visitID2NodeID))
 	bestPlan := make([]*jrNode, 1<<nodeCnt)
@@ -277,9 +277,9 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, ot
 	return cartesianJoinGroup[0]
 }
 
-func findNodeIndexInGroup(group []*joinNode, col *expression.Column) (int, error) {
-	for i, jd := range group {
-		if jd.p.Schema().Contains(col) {
+func findNodeIndexInGroup(group []LogicalPlan, col *expression.Column) (int, error) {
+	for i, plan := range group {
+		if plan.Schema().Contains(col) {
 			return i, nil
 		}
 	}
