@@ -3154,7 +3154,7 @@ func TestIssue19148(t *testing.T) {
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	require.Zero(t, tblInfo.Meta().Columns[0].Flag)
+	require.Zero(t, tblInfo.Meta().Columns[0].GetFlag())
 }
 
 func TestIssue19667(t *testing.T) {

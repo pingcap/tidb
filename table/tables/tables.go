@@ -610,7 +610,7 @@ func PrimaryPrefixColumnIDs(tbl *model.TableInfo) (prefixCols []int64) {
 			continue
 		}
 		for _, col := range idx.Columns {
-			if col.Length > 0 && tbl.Columns[col.Offset].Flen > col.Length {
+			if col.Length > 0 && tbl.Columns[col.Offset].GetFlen() > col.Length {
 				prefixCols = append(prefixCols, tbl.Columns[col.Offset].ID)
 			}
 		}
@@ -1016,7 +1016,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			continue
 		}
 		if col.IsPKHandleColumn(meta) {
-			if mysql.HasUnsignedFlag(col.Flag) {
+			if mysql.HasUnsignedFlag(col.GetFlag()) {
 				v[i].SetUint64(uint64(h.IntValue()))
 			} else {
 				v[i].SetInt64(h.IntValue())
@@ -1385,13 +1385,13 @@ func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 		data := make([]types.Datum, len(cols))
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
-				if mysql.HasUnsignedFlag(col.Flag) {
+				if mysql.HasUnsignedFlag(col.GetFlag()) {
 					data[col.Offset].SetUint64(uint64(handle.IntValue()))
 				} else {
 					data[col.Offset].SetInt64(handle.IntValue())
 				}
 				continue
-			} else if mysql.HasPriKeyFlag(col.Flag) {
+			} else if mysql.HasPriKeyFlag(col.GetFlag()) {
 				data[col.Offset], err = tryDecodeColumnFromCommonHandle(col, handle, pkIds, decodeLoc)
 				if err != nil {
 					return err
@@ -1443,7 +1443,7 @@ func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds 
 // The defaultVals is used to avoid calculating the default value multiple times.
 func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
-	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.Flag) {
+	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.GetFlag()) {
 		return colVal, errors.New("Miss column")
 	}
 	if col.State != model.StatePublic {
@@ -1873,7 +1873,7 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 			}
 		}
 		tablecodec.TruncateIndexValue(&datum, truncateTargetCol, pkCol)
-		if collate.IsBinCollation(pkCol.Collate) {
+		if collate.IsBinCollation(pkCol.GetCollate()) {
 			rsData = append(rsData, types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString())))
 		} else {
 			rsData = append(rsData, datum)

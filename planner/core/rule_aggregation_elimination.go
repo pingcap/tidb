@@ -177,7 +177,7 @@ func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetT
 	// If is count(expr not null), we will change it to constant 1.
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
-		if mysql.HasNotNullFlag(expr.GetType().Flag) {
+		if mysql.HasNotNullFlag(expr.GetType().GetFlag()) {
 			isNullExprs = append(isNullExprs, expression.NewZero())
 		} else {
 			isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)

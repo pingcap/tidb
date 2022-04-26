@@ -301,16 +301,16 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			// Deal with sortKey, the length of sortKey maybe longer than the column's length.
-			orgLen := colInfo.FieldType.Flen
-			if types.IsString(colInfo.FieldType.Tp) {
-				colInfo.Flen = types.UnspecifiedLength
+			orgLen := colInfo.FieldType.GetFlen()
+			if types.IsString(colInfo.FieldType.GetType()) {
+				colInfo.SetFlen(types.UnspecifiedLength)
 			}
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if types.IsString(colInfo.FieldType.Tp) {
-				colInfo.Flen = orgLen
+			if types.IsString(colInfo.FieldType.GetType()) {
+				colInfo.SetFlen(orgLen)
 			}
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
 			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
@@ -328,7 +328,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				TopN:       topN,
 				FMSketch:   fms,
 				Info:       colInfo,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				StatsVer:   statsVer,
 				Loaded:     true,
 			}

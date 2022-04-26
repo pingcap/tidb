@@ -669,7 +669,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		if autoIncrementMustBeKey && !isKey {
 			p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 		}
-		switch col.Tp.Tp {
+		switch col.Tp.GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
 		default:
@@ -1261,81 +1261,81 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	if tp == nil {
 		return nil
 	}
-	if tp.Flen > math.MaxUint32 {
+	if tp.GetFlen() > math.MaxUint32 {
 		return types.ErrTooBigDisplayWidth.GenWithStack("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
 	}
 
-	switch tp.Tp {
+	switch tp.GetType() {
 	case mysql.TypeString:
-		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
+		if tp.GetFlen() != types.UnspecifiedLength && tp.GetFlen() > mysql.MaxFieldCharLength {
 			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
 		}
 	case mysql.TypeVarchar:
-		if len(tp.Charset) == 0 {
+		if len(tp.GetCharset()) == 0 {
 			// It's not easy to get the schema charset and table charset here.
 			// The charset is determined by the order ColumnDefaultCharset --> TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
 			// return nil, to make the check in the ddl.CreateTable.
 			return nil
 		}
-		err := ddl.IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, tp.Charset)
+		err := ddl.IsTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
 		if err != nil {
 			return err
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		// For FLOAT, the SQL standard permits an optional specification of the precision.
 		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
-		if tp.Decimal == -1 {
-			switch tp.Tp {
+		if tp.GetDecimal() == -1 {
+			switch tp.GetType() {
 			case mysql.TypeDouble:
-				// For Double type Flen and Decimal check is moved to parser component
+				// For Double type flen and decimal check is moved to parser component
 			default:
-				if tp.Flen > mysql.MaxDoublePrecisionLength {
+				if tp.GetFlen() > mysql.MaxDoublePrecisionLength {
 					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
 				}
 			}
 		} else {
-			if tp.Decimal > mysql.MaxFloatingTypeScale {
-				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+			if tp.GetDecimal() > mysql.MaxFloatingTypeScale {
+				return types.ErrTooBigScale.GenWithStackByArgs(tp.GetDecimal(), colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
 			}
-			if tp.Flen > mysql.MaxFloatingTypeWidth || tp.Flen == 0 {
+			if tp.GetFlen() > mysql.MaxFloatingTypeWidth || tp.GetFlen() == 0 {
 				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 			}
-			if tp.Flen < tp.Decimal {
+			if tp.GetFlen() < tp.GetDecimal() {
 				return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 			}
 		}
 	case mysql.TypeSet:
-		if len(tp.Elems) > mysql.MaxTypeSetMembers {
+		if len(tp.GetElems()) > mysql.MaxTypeSetMembers {
 			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colDef.Name.Name.O)
 		}
 		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
-		for _, str := range colDef.Tp.Elems {
+		for _, str := range colDef.Tp.GetElems() {
 			if strings.Contains(str, ",") {
-				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.Tp), str)
+				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.GetType()), str)
 			}
 		}
 	case mysql.TypeNewDecimal:
-		if tp.Decimal > mysql.MaxDecimalScale {
-			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
+		if tp.GetDecimal() > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenWithStackByArgs(tp.GetDecimal(), colDef.Name.Name.O, mysql.MaxDecimalScale)
 		}
 
-		if tp.Flen > mysql.MaxDecimalWidth {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		if tp.GetFlen() > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetFlen(), colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
 
-		if tp.Flen < tp.Decimal {
+		if tp.GetFlen() < tp.GetDecimal() {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 		}
 		// If decimal and flen all equals 0, just set flen to default value.
-		if tp.Decimal == 0 && tp.Flen == 0 {
+		if tp.GetDecimal() == 0 && tp.GetFlen() == 0 {
 			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
-			tp.Flen = defaultFlen
+			tp.SetFlen(defaultFlen)
 		}
 	case mysql.TypeBit:
-		if tp.Flen <= 0 {
+		if tp.GetFlen() <= 0 {
 			return types.ErrInvalidFieldSize.GenWithStackByArgs(colDef.Name.Name.O)
 		}
-		if tp.Flen > mysql.MaxBitDisplayWidth {
+		if tp.GetFlen() > mysql.MaxBitDisplayWidth {
 			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
 		}
 	default:
@@ -1361,7 +1361,7 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 	for i := len(colDef.Options) - 1; i >= 0; i-- {
 		columnOpt := colDef.Options[i]
 		if columnOpt.Tp == ast.ColumnOptionDefaultValue {
-			if !(tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeDatetime) && isDefaultValNowSymFunc(columnOpt.Expr) {
+			if !(tp.GetType() == mysql.TypeTimestamp || tp.GetType() == mysql.TypeDatetime) && isDefaultValNowSymFunc(columnOpt.Expr) {
 				return true
 			}
 			break
@@ -1588,7 +1588,7 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 
 func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	if node.Tp.EvalType() == types.ETDecimal {
-		if node.Tp.Flen >= node.Tp.Decimal && node.Tp.Flen <= mysql.MaxDecimalWidth && node.Tp.Decimal <= mysql.MaxDecimalScale {
+		if node.Tp.GetFlen() >= node.Tp.GetDecimal() && node.Tp.GetFlen() <= mysql.MaxDecimalWidth && node.Tp.GetDecimal() <= mysql.MaxDecimalScale {
 			// valid
 			return
 		}
@@ -1599,16 +1599,16 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			p.err = err
 			return
 		}
-		if node.Tp.Flen < node.Tp.Decimal {
+		if node.Tp.GetFlen() < node.Tp.GetDecimal() {
 			p.err = types.ErrMBiggerThanD.GenWithStackByArgs(buf.String())
 			return
 		}
-		if node.Tp.Flen > mysql.MaxDecimalWidth {
-			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.Flen, buf.String(), mysql.MaxDecimalWidth)
+		if node.Tp.GetFlen() > mysql.MaxDecimalWidth {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.GetFlen(), buf.String(), mysql.MaxDecimalWidth)
 			return
 		}
-		if node.Tp.Decimal > mysql.MaxDecimalScale {
-			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.Decimal, buf.String(), mysql.MaxDecimalScale)
+		if node.Tp.GetDecimal() > mysql.MaxDecimalScale {
+			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.GetDecimal(), buf.String(), mysql.MaxDecimalScale)
 			return
 		}
 	}
@@ -1698,9 +1698,9 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 
 func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	sessVars := p.ctx.GetSessionVars()
-	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.Tp == mysql.TypeVarchar {
-		colDef.Tp.Tp = mysql.TypeBlob
-		if colDef.Tp.Charset == charset.CharsetBin {
+	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.GetType() == mysql.TypeVarchar {
+		colDef.Tp.SetType(mysql.TypeBlob)
+		if colDef.Tp.GetCharset() == charset.CharsetBin {
 			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
 		} else {
 			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
