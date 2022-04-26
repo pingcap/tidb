@@ -5,8 +5,11 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"net/http"
 	"net/url"
 	"path"
 	"regexp"
@@ -241,7 +244,70 @@ func NewS3Storage( // revive:disable-line:flag-parameter
 	})
 }
 
-func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storage, error) {
+const (
+	ossRAMMetaUrl = "http://100.100.100.200/latest/meta-data/ram/security-credentials/"
+	ossRAMAK      = "AccessKeyId"
+	ossRAMSK      = "AccessKeySecret"
+	ossRAMToken   = "SecurityToken"
+	//
+	domain_aliyun = "aliyuncs.com"
+)
+
+// auto access without ak / sk.
+
+func autoNewCred(qs *backuppb.S3, opts *ExternalStorageOptions) (cred *credentials.Credentials, err error) {
+	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
+		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, ""), nil
+	}
+	endpoint := qs.Endpoint
+	// if endpoint is empty,return no error and run default(aws) follow.
+	if endpoint == "" {
+		return nil, nil
+	}
+	// if it Contains 'aliyuncs', fetch the sts token.
+	if strings.Contains(endpoint, domain_aliyun) {
+		return createOssRamCred(opts.HTTPClient)
+	}
+	// other case ,return no error and run default(aws) follow.
+	return nil, nil
+}
+func createOssRamCred(cli *http.Client) (*credentials.Credentials, error) {
+
+	if cli == nil {
+		cli = http.DefaultClient
+	}
+	// get role ;
+	resp, err := cli.Get(ossRAMMetaUrl)
+	if err != nil {
+		return nil, errors.Annotate(err, "createOssRamCred failed to get role")
+	}
+	d, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return nil, errors.Annotate(err, "createOssRamCred failed to get role data")
+	}
+	resp, err = cli.Get(ossRAMMetaUrl + string(d))
+	if err != nil {
+
+		return nil, errors.Annotatef(err, "createOssRamCred failed get sts by role %s", string(d))
+	}
+	d, err = ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return nil, errors.Annotate(err, "createOssRamCred failed get sts token")
+	}
+	var mp map[string]string
+	err = json.Unmarshal(d, &mp)
+	if err != nil {
+		return nil, errors.Annotate(err, "createOssRamCred failed parse sts token")
+	}
+	ak := mp[ossRAMAK]
+	sk := mp[ossRAMSK]
+	token := mp[ossRAMToken]
+	return credentials.NewStaticCredentials(ak, sk, token), nil
+}
+
+func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
@@ -253,9 +319,9 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	if opts.HTTPClient != nil {
 		awsConfig.WithHTTPClient(opts.HTTPClient)
 	}
-	var cred *credentials.Credentials
-	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
-		cred = credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, "")
+	cred, err := autoNewCred(&qs, opts)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if cred != nil {
 		awsConfig.WithCredentials(cred)
