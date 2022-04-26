@@ -97,7 +97,7 @@ func TestColumnAdd(t *testing.T) {
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		jobID = job.ID
 		tbl := external.GetTableByName(t, internal, "test", "t")
-		if job.SchemaState != model.StateNone {
+		if job.SchemaState != model.StatePublic {
 			for _, col := range tbl.Cols() {
 				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
 			}
@@ -118,7 +118,7 @@ func TestColumnAdd(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable = tbl
-		case model.StatePublic:
+		case model.StateNone:
 			if first {
 				first = false
 			} else {
