@@ -1327,6 +1327,9 @@ func (e *Explain) RenderResult() error {
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
 			explained := ExplainPhysicalPlan(physicalPlan, e.ctx)
 			visual := VisualDataFromExplainedPlan(e.ctx, explained)
+			if visual == nil {
+				return nil
+			}
 			proto, err := visual.Marshal()
 			if err != nil {
 				return err
@@ -1429,10 +1432,14 @@ func visualOpFromExplainedOp(explainCtx sessionctx.Context, op *ExplainedOperato
 		if p.PartitionInfo != nil {
 			res.AccessPartition = p.PartitionInfo.Name.O
 		}
-		res.AccessIndex = p.IndexInfo.Name.O
+		if p.IndexInfo != nil {
+			res.AccessIndex = p.IndexInfo.Name.O
+		}
 	case *BatchPointGetPlan:
 		res.AccessTable = p.TblInfo.Name.O
-		res.AccessIndex = p.IndexInfo.Name.O
+		if p.IndexInfo != nil {
+			res.AccessIndex = p.IndexInfo.Name.O
+		}
 	case *PhysicalTableReader:
 		if !explainCtx.GetSessionVars().UseDynamicPartitionPrune() {
 			break

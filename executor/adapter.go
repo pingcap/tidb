@@ -1063,11 +1063,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if variable.GenerateVisualPlan.Load() {
 		explained := plannercore.ExplainPhysicalPlan(a.Plan, a.Ctx)
 		visual := plannercore.VisualDataFromExplainedPlan(a.Ctx, explained)
-		proto, err := visual.Marshal()
-		if err != nil {
-			proto = nil
+		if visual != nil {
+			proto, err := visual.Marshal()
+			if err != nil {
+				proto = nil
+			}
+			visualPlan = base64.StdEncoding.EncodeToString(snappy.Encode(nil, proto))
 		}
-		visualPlan = base64.StdEncoding.EncodeToString(snappy.Encode(nil, proto))
 	}
 
 	slowItems := &variable.SlowQueryLogItems{

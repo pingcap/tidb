@@ -129,6 +129,7 @@ func ExplainPhysicalPlan(p Plan, sctx sessionctx.Context) *ExplainedPhysicalPlan
 
 func (f *ExplainedPhysicalPlan) explainSingle(p Plan, info *operatorCtx) *ExplainedOperator {
 	rawId := p.ExplainID().String()
+	// Explain operator doesn't have a meaningful explain ID. It's explain ID is "_0", we skip such operator.
 	if rawId == "_0" {
 		return nil
 	}
@@ -307,6 +308,19 @@ func (f *ExplainedPhysicalPlan) explainRecursively(p Plan, info *operatorCtx, ta
 			childInfo.driverSide = Empty
 			childInfo.isLastChild = true
 			target = f.explainRecursively(plan.Plan, childInfo, target)
+		}
+	case *Explain:
+		// Explain is ignored in explainSingle(). We start to explain its TargetPlan from a new operatorCtx.
+		if plan.TargetPlan != nil {
+			initInfo := &operatorCtx{
+				depth:       0,
+				driverSide:  Empty,
+				isRoot:      true,
+				storeType:   kv.TiDB,
+				indent:      "",
+				isLastChild: true,
+			}
+			target = f.explainRecursively(plan.TargetPlan, initInfo, target)
 		}
 	}
 	return target
