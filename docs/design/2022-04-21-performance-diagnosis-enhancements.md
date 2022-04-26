@@ -75,8 +75,8 @@ message Context {
 // Request represents a kv request.
 type Request struct {
 	...
-+	RequestSourceScope string
-+	RequestSourceType string
++	RequestSourceInternal bool
++	RequestSourceType     string
 }
 ```
 
@@ -88,8 +88,8 @@ Add in transaction and snapshot.
 // KVTxn contains methods to interact with a TiKV transaction.
 type KVTxn struct {
 	...
-+	RequestSourceScope string
-+	RequestSourceType string
++	RequestSourceInternal bool
++	RequestSourceType     string
 }
 ```
 
@@ -97,12 +97,14 @@ type KVTxn struct {
 // KVSnapshot implements the tidbkv.Snapshot interface.
 type KVSnapshot struct {
 	...
-+	RequestSourceScope string
-+	RequestSourceType string
++	RequestSourceInternal bool
++	RequestSourceType     string
 }
 ```
 
-In TiDB, `request_source` is concatenated by **RequestSourceScope(scope)** and **RequestSourceType(type)**, the scope is one of "internal" and "external", for type, there will be some variation between internal and external transactions.
+In TiDB, `request_source` is concatenated by **RequestSourceInternal**(cast to scope) and **RequestSourceType**, the scope is one of "internal" and "external", for type, there will be some variation between internal and external transactions.
+
+The default value of `RequestSourceInternal` should indicate to external transactions, if there are more scopes in the future, it's ok to replace `RequestSourceInternal` with an enum type.
 
 The type of the internal transactions would be their capabilities, the internal transactions are listed in the [Internal Transaction Usage](#internal-transaction-usage) section. The concatenated `request_source` would be like "internal_ddl_backfill_index", "internal_bindinfo_load", "internal_statistic_load", etc.
 
