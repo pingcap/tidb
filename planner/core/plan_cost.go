@@ -309,7 +309,7 @@ func (p *PhysicalHashAgg) GetPlanCost(taskType property.TaskType) (float64, erro
 	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
 		p.planCost += p.GetCost(p.children[0].StatsCount(), false, false)
 	case property.MppTaskType:
-		p.planCost += p.GetCost(p.children[0].StatsCount(), false, true)
+		return 0, errors.New("not implemented")
 	default:
 		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
