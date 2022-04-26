@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -240,23 +239,6 @@ func TestSchemaWaitJob(t *testing.T) {
 	require.NoError(t, err)
 	schemaID := genIDs[0]
 	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
-}
-
-func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {
-	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		dbInfo, err1 = t.GetDatabase(schemaID)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return dbInfo, nil
 }
 
 func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, d *ddl) *model.Job {

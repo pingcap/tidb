@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
-func onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -44,7 +44,7 @@ func onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// We just support record the foreign key, so we just make it public.
 		// none -> public
 		fkInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != fkInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != fkInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -56,7 +56,7 @@ func onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 }
 
-func onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -100,7 +100,7 @@ func onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// We just support record the foreign key, so we just make it none.
 		// public -> none
 		fkInfo.State = model.StateNone
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != fkInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != fkInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

@@ -17,10 +17,12 @@ package session
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
@@ -65,9 +67,8 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	if err != nil {
 		return nil, err
 	}
-	if !(se.GetSessionVars().IsAutocommit() && !se.GetSessionVars().InTxn()) {
-		return nil, errors.Errorf("non-transactional statement can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
-			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
+	if err := checkConstraint(ctx, stmt, se); err != nil {
+		return nil, err
 	}
 	tableName, selectSQL, shardColumnInfo, err := buildSelectSQL(stmt, se)
 	if err != nil {
@@ -89,6 +90,32 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 		return buildDryRunResults(stmt.DryRun, splitStmts, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
 	return buildExecuteResults(jobs, se.GetSessionVars().BatchSize.MaxChunkSize)
+}
+
+func checkConstraint(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) error {
+	sessVars := se.GetSessionVars()
+	if !(sessVars.IsAutocommit() && !sessVars.InTxn()) {
+		return errors.Errorf("non-transactional statement can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
+			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
+	}
+	if config.GetGlobalConfig().EnableBatchDML && sessVars.DMLBatchSize > 0 && (sessVars.BatchDelete || sessVars.BatchInsert) {
+		return errors.Errorf("can't run non-transactional statement with batch dml")
+	}
+
+	if sessVars.ReadConsistency.IsWeak() {
+		return errors.New("can't run non-transactional under weak read consistency")
+	}
+	if sessVars.SnapshotTS != 0 {
+		return errors.New("can't do non-transactional DML when tidb_snapshot is set")
+	}
+	// TODO: return error if there are multiple tables
+	if stmt.DeleteStmt.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs == nil {
+		return errors.New("table reference is nil")
+	}
+	if stmt.DeleteStmt.TableRefs.TableRefs.Right != nil {
+		return errors.New("Non-transactional delete doesn't support multiple tables")
+	}
+	return nil
 }
 
 // single-threaded worker. work on the key range [start, end]
@@ -270,7 +297,16 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 		shardColumnCollate = ""
 	}
 
+	// A NT-DML is not a SELECT. We ignore the SelectLimit for selectSQL so that it can read all values.
+	originalSelectLimit := se.GetSessionVars().SelectLimit
+	se.GetSessionVars().SelectLimit = math.MaxUint64
+	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
+	originalReadStaleness := se.GetSessionVars().ReadStaleness
+	se.GetSessionVars().ReadStaleness = 0
 	rss, err := se.Execute(ctx, selectSQL)
+	se.GetSessionVars().SelectLimit = originalSelectLimit
+	se.GetSessionVars().ReadStaleness = originalReadStaleness
+
 	if err != nil {
 		return nil, err
 	}
@@ -344,13 +380,6 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 
 func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.TableName, string, *model.ColumnInfo, error) {
 	// only use the first table
-	// TODO: return error if there are multiple tables
-	if stmt.DeleteStmt.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs == nil {
-		return nil, "", nil, errors.New("table reference is nil")
-	}
-	if stmt.DeleteStmt.TableRefs.TableRefs.Right != nil {
-		return nil, "", nil, errors.New("Non-transactional delete doesn't support multiple tables")
-	}
 	tableSource, ok := stmt.DeleteStmt.TableRefs.TableRefs.Left.(*ast.TableSource)
 	if !ok {
 		return nil, "", nil, errors.New("Non-transactional delete, table source not found")

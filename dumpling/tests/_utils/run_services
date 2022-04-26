@@ -36,7 +36,6 @@ start_services() {
 
     cat > "$DUMPLING_TEST_DIR/tidb.toml" <<EOF
 port = 4000
-mem-quota-query = 1073741824
 [status]
 status-port = 10080
 [log.file]
