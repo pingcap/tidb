@@ -82,7 +82,7 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 			srcCol := ch.Schema().Columns[i]
 			srcCol.Index = i
 			srcType := srcCol.RetType
-			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.Flag) == mysql.HasNotNullFlag(srcType.Flag)) {
+			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.GetFlag()) == mysql.HasNotNullFlag(srcType.GetFlag())) {
 				exprs[i] = expression.BuildCastFunction4Union(un.ctx, srcCol, dstType)
 				needChange = true
 			} else {

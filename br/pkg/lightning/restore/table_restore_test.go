@@ -1411,11 +1411,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 									},
 									{
 										// colB doesn't have the default value
-										Name: model.NewCIStr("colB"),
-										FieldType: types.FieldType{
-											// not null flag
-											Flag: 1,
-										},
+										Name:      model.NewCIStr("colB"),
+										FieldType: types.NewFieldTypeBuilderP().SetType(0).SetFlag(1).Build(),
 									},
 								},
 							},
@@ -1566,10 +1563,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 									},
 									{
 										// colC doesn't have the default value
-										Name: model.NewCIStr("colC"),
-										FieldType: types.FieldType{
-											Flag: 1,
-										},
+										Name:      model.NewCIStr("colC"),
+										FieldType: types.NewFieldTypeBuilderP().SetType(0).SetFlag(1).Build(),
 									},
 								},
 							},
@@ -1619,10 +1614,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB doesn't have the default value
-										Name: model.NewCIStr("colB"),
-										FieldType: types.FieldType{
-											Flag: 1,
-										},
+										Name:      model.NewCIStr("colB"),
+										FieldType: types.NewFieldTypeBuilderP().SetType(0).SetFlag(1).Build(),
 									},
 									{
 										// colC has the default value
@@ -1824,16 +1817,12 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 						Core: &model.TableInfo{
 							Columns: []*model.ColumnInfo{
 								{
-									Name: model.NewCIStr("colA"),
-									FieldType: types.FieldType{
-										Flag: 1,
-									},
+									Name:      model.NewCIStr("colA"),
+									FieldType: types.NewFieldTypeBuilderP().SetType(0).SetFlag(1).Build(),
 								},
 								{
-									Name: model.NewCIStr("colB"),
-									FieldType: types.FieldType{
-										Flag: 1,
-									},
+									Name:      model.NewCIStr("colB"),
+									FieldType: types.NewFieldTypeBuilderP().SetType(0).SetFlag(1).Build(),
 								},
 							},
 						},

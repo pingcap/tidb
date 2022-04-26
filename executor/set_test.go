@@ -1538,7 +1538,7 @@ func TestSetClusterConfigJSONData(t *testing.T) {
 	var d types.MyDecimal
 	require.NoError(t, d.FromFloat64(123.456))
 	tyBool := types.NewFieldType(mysql.TypeTiny)
-	tyBool.Flag |= mysql.IsBooleanFlag
+	tyBool.AddFlag(mysql.IsBooleanFlag)
 	cases := []struct {
 		val    expression.Expression
 		result string

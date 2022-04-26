@@ -753,7 +753,7 @@ func TestStringBuiltin(t *testing.T) {
 	// for convert
 	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
 	result.Check(testkit.Rows("123 中文 中文 中文 中文"))
-	// Charset 866 does not have a default collation configured currently, so this will return error.
+	// charset 866 does not have a default collation configured currently, so this will return error.
 	err = tk.ExecToErr(`select convert("123" using "866");`)
 	require.Error(t, err, "[parser:1115]Unknown character set: '866'")
 	// Test case in issue #4436.
@@ -2580,7 +2580,7 @@ func TestColumnInfoModified(t *testing.T) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
-	require.Equal(t, mysql.TypeLong, col.Tp)
+	require.Equal(t, mysql.TypeLong, col.GetType())
 }
 
 func TestIssues(t *testing.T) {
@@ -3709,7 +3709,7 @@ func TestDatetimeMicrosecond(t *testing.T) {
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 DAY_MICROSECOND);`).Check(
 		testkit.Rows("2007-03-28 22:08:27.800000"))
 
-	// For Decimal
+	// For decimal
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE);`).Check(
 		testkit.Rows("2007-03-29 00:10:28"))
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE_SECOND);`).Check(
@@ -5404,6 +5404,16 @@ func TestIssue19892(t *testing.T) {
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2000-01-00 00:00:00'"))
 		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 	}
+	tk.MustExec("drop table if exists table_20220419;")
+	tk.MustExec(`CREATE TABLE table_20220419 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  lastLoginDate datetime NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec("set sql_mode='';")
+	tk.MustExec("insert into table_20220419 values(1,'0000-00-00 00:00:00');")
+	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';")
+	tk.MustGetErrMsg("insert into table_20220419(lastLoginDate) select lastLoginDate from table_20220419;", "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00'")
 }
 
 // The actual results do not agree with the test results, It should be modified after the test suite is updated

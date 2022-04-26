@@ -32,6 +32,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -197,7 +198,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	if topsqlstate.TopSQLEnabled() {
-		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, vars.InRestrictedSQL)
+		e.ctx.GetSessionVars().StmtCtx.IsSQLRegistered.Store(true)
+		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, vars.InRestrictedSQL)
 	}
 
 	var (
@@ -367,6 +369,10 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	failpoint.Inject("assertTxnManagerInCompile", func() {
 		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
+		staleread.AssertStmtStaleness(sctx, snapshotTS != 0)
+		if snapshotTS != 0 {
+			sessiontxn.AssertTxnManagerReadTS(sctx, snapshotTS)
+		}
 	})
 
 	stmt := &ExecStmt{
@@ -377,8 +383,6 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		Ctx:              sctx,
 		OutputNames:      names,
 		Ti:               &TelemetryInfo{},
-		IsStaleness:      isStaleness,
-		SnapshotTS:       snapshotTS,
 		ReplicaReadScope: replicaReadScope,
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {

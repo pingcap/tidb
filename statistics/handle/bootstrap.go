@@ -146,7 +146,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
 				Count:      nullCount + topnCount,
-				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
 			}
@@ -294,7 +294,7 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 				continue
 			}
 			column.Count += row.GetInt64(3)
-			if !mysql.HasPriKeyFlag(column.Info.Flag) {
+			if !mysql.HasPriKeyFlag(column.Info.GetFlag()) {
 				continue
 			}
 			hist = &column.Histogram

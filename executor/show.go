@@ -108,12 +108,12 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		iter := chunk.NewIterator4Chunk(e.result)
 		for colIdx := 0; colIdx < e.Schema().Len(); colIdx++ {
 			retType := e.Schema().Columns[colIdx].RetType
-			if !types.IsTypeVarchar(retType.Tp) {
+			if !types.IsTypeVarchar(retType.GetType()) {
 				continue
 			}
 			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-				if valLen := len(row.GetString(colIdx)); retType.Flen < valLen {
-					retType.Flen = valLen
+				if valLen := len(row.GetString(colIdx)); retType.GetFlen() < valLen {
+					retType.SetFlen(valLen)
 				}
 			}
 		}
@@ -603,14 +603,14 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			// SHOW COLUMNS result expects string value
 			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
 			// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
-			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && !strings.HasPrefix(strings.ToUpper(defaultValStr), strings.ToUpper(ast.CurrentTimestamp)) {
+			if col.GetType() == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && !strings.HasPrefix(strings.ToUpper(defaultValStr), strings.ToUpper(ast.CurrentTimestamp)) {
 				timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
 				if err != nil {
 					return errors.Trace(err)
 				}
 				defaultValStr = timeValue.GetMysqlTime().String()
 			}
-			if col.Tp == mysql.TypeBit {
+			if col.GetType() == mysql.TypeBit {
 				defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
 			} else {
@@ -661,7 +661,7 @@ func (e *ShowExec) fetchShowIndex() error {
 	if tb.Meta().PKIsHandle {
 		var pkCol *table.Column
 		for _, col := range tb.Cols() {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				pkCol = col
 				break
 			}
@@ -707,7 +707,7 @@ func (e *ShowExec) fetchShowIndex() error {
 
 			tblCol := tb.Meta().Columns[col.Offset]
 			nullVal := "YES"
-			if mysql.HasNotNullFlag(tblCol.Flag) {
+			if mysql.HasNotNullFlag(tblCol.GetFlag()) {
 				nullVal = ""
 			}
 
@@ -924,16 +924,16 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			buf.WriteString(",\n")
 		}
 		fmt.Fprintf(buf, "  %s %s", stringutil.Escape(col.Name.O, sqlMode), col.GetTypeDesc())
-		if col.Charset != "binary" {
-			if col.Charset != tblCharset {
-				fmt.Fprintf(buf, " CHARACTER SET %s", col.Charset)
+		if col.GetCharset() != "binary" {
+			if col.GetCharset() != tblCharset {
+				fmt.Fprintf(buf, " CHARACTER SET %s", col.GetCharset())
 			}
-			if col.Collate != tblCollate {
-				fmt.Fprintf(buf, " COLLATE %s", col.Collate)
+			if col.GetCollate() != tblCollate {
+				fmt.Fprintf(buf, " COLLATE %s", col.GetCollate())
 			} else {
-				defcol, err := charset.GetDefaultCollation(col.Charset)
-				if err == nil && defcol != col.Collate {
-					fmt.Fprintf(buf, " COLLATE %s", col.Collate)
+				defcol, err := charset.GetDefaultCollation(col.GetCharset())
+				if err == nil && defcol != col.GetCollate() {
+					fmt.Fprintf(buf, " COLLATE %s", col.GetCollate())
 				}
 			}
 		}
@@ -946,33 +946,33 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 				buf.WriteString(" VIRTUAL")
 			}
 		}
-		if mysql.HasAutoIncrementFlag(col.Flag) {
+		if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 			hasAutoIncID = true
 			buf.WriteString(" NOT NULL AUTO_INCREMENT")
 		} else {
-			if mysql.HasNotNullFlag(col.Flag) {
+			if mysql.HasNotNullFlag(col.GetFlag()) {
 				buf.WriteString(" NOT NULL")
 			}
 			// default values are not shown for generated columns in MySQL
-			if !mysql.HasNoDefaultValueFlag(col.Flag) && !col.IsGenerated() {
+			if !mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.IsGenerated() {
 				defaultValue := col.GetDefaultValue()
 				switch defaultValue {
 				case nil:
-					if !mysql.HasNotNullFlag(col.Flag) {
-						if col.Tp == mysql.TypeTimestamp {
+					if !mysql.HasNotNullFlag(col.GetFlag()) {
+						if col.GetType() == mysql.TypeTimestamp {
 							buf.WriteString(" NULL")
 						}
 						buf.WriteString(" DEFAULT NULL")
 					}
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
-					if col.Decimal > 0 {
-						buf.WriteString(fmt.Sprintf("(%d)", col.Decimal))
+					if col.GetDecimal() > 0 {
+						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
 					}
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
-					if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr {
+					if col.GetType() == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr {
 						timeValue, err := table.GetColDefaultValue(ctx, col)
 						if err != nil {
 							return errors.Trace(err)
@@ -980,7 +980,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 						defaultValStr = timeValue.GetMysqlTime().String()
 					}
 
-					if col.Tp == mysql.TypeBit {
+					if col.GetType() == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
 					} else if col.DefaultIsExpr {
@@ -990,7 +990,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					}
 				}
 			}
-			if mysql.HasOnUpdateNowFlag(col.Flag) {
+			if mysql.HasOnUpdateNowFlag(col.GetFlag()) {
 				buf.WriteString(" ON UPDATE CURRENT_TIMESTAMP")
 				buf.WriteString(table.OptionalFsp(&col.FieldType))
 			}
@@ -1004,7 +1004,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if i != len(tableInfo.Cols())-1 {
 			needAddComma = true
 		}
-		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) {
 			pkCol = col
 		}
 	}
@@ -1906,8 +1906,8 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 				if idx >= 0 {
 					col.FieldType = *viewSchema.Columns[idx].GetType()
 				}
-				if col.Tp == mysql.TypeVarString {
-					col.Tp = mysql.TypeVarchar
+				if col.GetType() == mysql.TypeVarString {
+					col.SetType(mysql.TypeVarchar)
 				}
 			}
 		} else {
