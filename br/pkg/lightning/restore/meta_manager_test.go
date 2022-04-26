@@ -6,11 +6,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"sort"
-<<<<<<< HEAD
-=======
-	"testing"
 	"time"
->>>>>>> 59566fad3... lightning: maintain task meta in singleTaskMetaMgr (#34214)
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
@@ -329,27 +325,27 @@ func (s *taskMetaMgrSuite) TestCheckTasksExclusively(c *C) {
 
 }
 
-func TestSingleTaskMetaMgr(t *testing.T) {
+func (s *taskMetaMgrSuite) TestSingleTaskMetaMgr(c *C) {
 	metaBuilder := singleMgrBuilder{
 		taskID: time.Now().UnixNano(),
 	}
 	metaMgr := metaBuilder.TaskMetaMgr(nil)
 
 	ok, err := metaMgr.CheckTaskExist(context.Background())
-	require.NoError(t, err)
-	require.False(t, ok)
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
 
 	err = metaMgr.InitTask(context.Background(), 1<<30)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	ok, err = metaMgr.CheckTaskExist(context.Background())
-	require.NoError(t, err)
-	require.True(t, ok)
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
 
 	err = metaMgr.CheckTasksExclusively(context.Background(), func(tasks []taskMeta) ([]taskMeta, error) {
-		require.Len(t, tasks, 1)
-		require.Equal(t, uint64(1<<30), tasks[0].sourceBytes)
+		c.Assert(len(tasks), Equals, 1)
+		c.Assert(tasks[0].sourceBytes, Equals, uint64(1<<30))
 		return nil, nil
 	})
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 }
