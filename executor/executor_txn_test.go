@@ -437,3 +437,38 @@ func TestTxnSavepoint1(t *testing.T) {
 		}
 	}
 }
+
+func TestRollbackToSavepoint0(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, a int, unique index idx(id))")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert into t values (2,2)")
+	tk.MustExec("rollback to s1")
+	//tk.MustExec("insert into t values (2,2)")
+}
+
+func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(id int, a int, unique index idx(id))")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("insert into t values (1,1)")
+	tk1.MustExec("savepoint s1")
+	tk1.MustExec("insert into t values (2,2)")
+	tk1.MustExec("rollback to s1")
+
+	//tk2.MustExec("begin pessimistic")
+	//tk2.MustExec("insert into t values (2,2)")
+}
