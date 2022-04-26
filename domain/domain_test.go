@@ -31,10 +31,8 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -216,47 +214,4 @@ func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 
 func (mebd *mockEtcdBackend) StartGCWorker() error {
 	panic("not implemented")
-}
-
-type mockSessionManager struct {
-	PS []*util.ProcessInfo
-}
-
-func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
-	for _, item := range msm.PS {
-		ret[item.ID] = item
-	}
-	return ret
-}
-
-func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	for _, item := range msm.PS {
-		if item.ID == id {
-			return item, true
-		}
-	}
-	return &util.ProcessInfo{}, false
-}
-
-func (msm *mockSessionManager) Kill(uint64, bool) {}
-
-func (msm *mockSessionManager) KillAllConnections() {}
-
-func (msm *mockSessionManager) UpdateTLSConfig(*tls.Config) {}
-
-func (msm *mockSessionManager) ServerID() uint64 {
-	return 1
-}
-
-func (msm *mockSessionManager) StoreInternalSession(se interface{}) {}
-
-func (msm *mockSessionManager) DeleteInternalSession(se interface{}) {}
-
-func (msm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
-	return nil
 }
