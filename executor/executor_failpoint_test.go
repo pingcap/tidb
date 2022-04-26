@@ -269,12 +269,13 @@ func TestCollectCopRuntimeStats(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t1 (a int, b int)")
+	time.Sleep(1 * time.Second)
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreRespResult", `return(true)`))
 	rows := tk.MustQuery("explain analyze select * from t1").Rows()
 	require.Len(t, rows, 2)
 	explain := fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*rpc_num: 2, .*regionMiss:.*", explain)
+	require.Regexp(t, ".*rpc_num: .*, .*regionMiss:.*", explain)
 	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreRespResult"))
 }
 

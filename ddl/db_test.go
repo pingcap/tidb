@@ -345,7 +345,7 @@ func TestIssue23473(t *testing.T) {
 	tk.MustExec("alter table t_23473 change column k k bigint")
 
 	tbl := external.GetTableByName(t, tk, "test", "t_23473")
-	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].Flag))
+	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].GetFlag()))
 }
 
 func TestDropCheck(t *testing.T) {
@@ -558,14 +558,14 @@ func TestAutoConvertBlobTypeByLength(t *testing.T) {
 	tbl, exist := dom.InfoSchema().TableByID(tableID)
 	require.True(t, exist)
 
-	require.Equal(t, tbl.Cols()[0].Tp, mysql.TypeTinyBlob)
-	require.Equal(t, tbl.Cols()[0].Flen, 255)
-	require.Equal(t, tbl.Cols()[1].Tp, mysql.TypeBlob)
-	require.Equal(t, tbl.Cols()[1].Flen, 65535)
-	require.Equal(t, tbl.Cols()[2].Tp, mysql.TypeMediumBlob)
-	require.Equal(t, tbl.Cols()[2].Flen, 16777215)
-	require.Equal(t, tbl.Cols()[3].Tp, mysql.TypeLongBlob)
-	require.Equal(t, tbl.Cols()[3].Flen, 4294967295)
+	require.Equal(t, tbl.Cols()[0].GetType(), mysql.TypeTinyBlob)
+	require.Equal(t, tbl.Cols()[0].GetFlen(), 255)
+	require.Equal(t, tbl.Cols()[1].GetType(), mysql.TypeBlob)
+	require.Equal(t, tbl.Cols()[1].GetFlen(), 65535)
+	require.Equal(t, tbl.Cols()[2].GetType(), mysql.TypeMediumBlob)
+	require.Equal(t, tbl.Cols()[2].GetFlen(), 16777215)
+	require.Equal(t, tbl.Cols()[3].GetType(), mysql.TypeLongBlob)
+	require.Equal(t, tbl.Cols()[3].GetFlen(), 4294967295)
 }
 
 func TestAddExpressionIndexRollback(t *testing.T) {
@@ -697,7 +697,7 @@ func TestProcessColumnFlags(t *testing.T) {
 		tbl := external.GetTableByName(t, tk, "test", "t")
 		for _, col := range tbl.Cols() {
 			if strings.EqualFold(col.Name.L, n) {
-				require.True(t, f(col.Flag))
+				require.True(t, f(col.GetFlag()))
 				break
 			}
 		}

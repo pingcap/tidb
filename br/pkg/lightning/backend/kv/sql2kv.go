@@ -77,7 +77,7 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error
 	autoIDFn := func(id int64) int64 { return id }
 	if meta.PKIsHandle && meta.ContainsAutoRandomBits() {
 		for _, col := range cols {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
 				autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits // nolint:gosec
 				autoIDFn = func(id int64) int64 {
@@ -112,9 +112,9 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error
 }
 
 func autoRandomIncrementBits(col *table.Column, randomBits int) int {
-	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[col.Tp] * 8
+	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[col.GetType()] * 8
 	incrementalBits := typeBitsLength - randomBits
-	hasSignBit := !mysql.HasUnsignedFlag(col.Flag)
+	hasSignBit := !mysql.HasUnsignedFlag(col.GetFlag())
 	if hasSignBit {
 		incrementalBits--
 	}
@@ -359,8 +359,8 @@ func (kvcodec *tableKVEncoder) Encode(
 	isAutoRandom := meta.PKIsHandle && meta.ContainsAutoRandomBits()
 	for i, col := range cols {
 		j := columnPermutation[i]
-		isAutoIncCol := mysql.HasAutoIncrementFlag(col.Flag)
-		isPk := mysql.HasPriKeyFlag(col.Flag)
+		isAutoIncCol := mysql.HasAutoIncrementFlag(col.GetFlag())
+		isPk := mysql.HasPriKeyFlag(col.GetFlag())
 		switch {
 		case j >= 0 && j < len(row):
 			value, err = table.CastValue(kvcodec.se, row[j], col.ToInfo(), false, false)
@@ -373,7 +373,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		case isAutoRandom && isPk:
 			var val types.Datum
 			realRowID := kvcodec.autoIDFn(rowID)
-			if mysql.HasUnsignedFlag(col.Flag) {
+			if mysql.HasUnsignedFlag(col.GetFlag()) {
 				val = types.NewUintDatum(uint64(realRowID))
 			} else {
 				val = types.NewIntDatum(realRowID)
@@ -454,13 +454,13 @@ func (kvcodec *tableKVEncoder) Encode(
 //
 // See: https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
 func getAutoRecordID(d types.Datum, target *types.FieldType) int64 {
-	switch target.Tp {
+	switch target.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		return int64(math.Round(d.GetFloat64()))
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		return d.GetInt64()
 	default:
-		panic(fmt.Sprintf("unsupported auto-increment field type '%d'", target.Tp))
+		panic(fmt.Sprintf("unsupported auto-increment field type '%d'", target.GetType()))
 	}
 }
 

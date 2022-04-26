@@ -132,6 +132,10 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBOptProjectionPushDown, Value: BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown), skipInit: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.AllowProjectionPushDown = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 		return nil
@@ -169,10 +173,6 @@ var defaultSysVars = []*SysVar{
 			return "", err
 		}
 		return string(info), nil
-	}},
-	{Scope: ScopeSession, Name: TiDBMemQuotaQuery, Value: strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10), skipInit: true, Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.MemQuotaQuery = TidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
-		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: On, Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		s.EnableChunkRPC = TiDBOptOn(val)
@@ -1430,6 +1430,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRemoveOrderbyInSubquery, Value: BoolToOnOff(DefTiDBRemoveOrderbyInSubquery), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.RemoveOrderbyInSubquery = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMemQuotaQuery, Value: strconv.Itoa(DefTiDBMemQuotaQuery), Type: TypeInt, MinValue: 128, MaxValue: 128 << 30, SetSession: func(s *SessionVars, val string) error {
+		s.MemQuotaQuery = TidbOptInt64(val, DefTiDBMemQuotaQuery)
 		return nil
 	}},
 }

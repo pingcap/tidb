@@ -653,7 +653,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			} else {
 				value.AuthPlugin = mysql.AuthNativePassword
 			}
-		case f.Column.Tp == mysql.TypeEnum:
+		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
 			}
@@ -734,7 +734,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) 
 		case f.ColumnAsName.L == "db":
 			value.DB = row.GetString(i)
 			value.dbPatChars, value.dbPatTypes = stringutil.CompilePatternBytes(strings.ToUpper(value.DB), '\\')
-		case f.Column.Tp == mysql.TypeEnum:
+		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
 			}
