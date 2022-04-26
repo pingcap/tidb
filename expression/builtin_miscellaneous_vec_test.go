@@ -49,6 +49,7 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 			)}},
 	},
 	ast.InetAton: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4StrGener{newDefaultRandGen()}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
 			newSelectStringGener(
 				[]string{
