@@ -92,26 +92,29 @@ func (l *internalLRUCache) get(key int64) (*statistics.Table, bool) {
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
-func (l *internalLRUCache) Put(key int64, value *statistics.Table) bool {
-	var success bool
+func (l *internalLRUCache) Put(key int64, value *statistics.Table) {
 	var trackingCost int64
 	var totalCost int64
 	l.Lock()
-	success = l.put(key, value, value.MemoryUsage(), true)
+	l.put(key, value, value.MemoryUsage(), true)
 	trackingCost = l.trackingCost
 	totalCost = l.totalCost
 	l.Unlock()
-	if success {
-		metrics.StatsCacheLRUCounter.WithLabelValues(typUpdate).Inc()
-		metrics.StatsCacheLRUMemUsage.WithLabelValues(typTrack).Set(float64(trackingCost))
-		metrics.StatsCacheLRUMemUsage.WithLabelValues(typTotal).Set(float64(totalCost))
-	}
-	return success
+	metrics.StatsCacheLRUCounter.WithLabelValues(typUpdate).Inc()
+	metrics.StatsCacheLRUMemUsage.WithLabelValues(typTrack).Set(float64(trackingCost))
+	metrics.StatsCacheLRUMemUsage.WithLabelValues(typTotal).Set(float64(totalCost))
 }
 
-func (l *internalLRUCache) put(key int64, value *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, tryEvict bool) bool {
-	if l.capacity < tblMemUsage.TotalColTrackingMemUsage() {
-		return false
+func (l *internalLRUCache) put(key int64, value *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, tryEvict bool) {
+	// If the item TotalColTrackingMemUsage is larger than capacity, we will drop some structures in order to put it in cache
+	for l.capacity < tblMemUsage.TotalColTrackingMemUsage() {
+		for _, col := range value.Columns {
+			col.DropEvicted()
+			tblMemUsage = value.MemoryUsage()
+			if l.capacity >= tblMemUsage.TotalColTrackingMemUsage() {
+				break
+			}
+		}
 	}
 	defer func() {
 		if tryEvict {
@@ -124,8 +127,8 @@ func (l *internalLRUCache) put(key int64, value *statistics.Table, tblMemUsage *
 		element.Value.(*cacheItem).value = value
 		element.Value.(*cacheItem).tblMemUsage = tblMemUsage
 		l.calculateCost(tblMemUsage, oldMemUsage)
-		l.maintainList(element, nil, tblMemUsage, oldMemUsage)
-		return true
+		l.maintainList(element, nil, tblMemUsage.TotalColTrackingMemUsage(), oldMemUsage.TotalColTrackingMemUsage())
+		return
 	}
 	newCacheEntry := &cacheItem{
 		key:         key,
@@ -133,9 +136,12 @@ func (l *internalLRUCache) put(key int64, value *statistics.Table, tblMemUsage *
 		tblMemUsage: tblMemUsage,
 	}
 	l.calculateCost(tblMemUsage, &statistics.TableMemoryUsage{})
-	element = l.maintainList(nil, newCacheEntry, tblMemUsage, &statistics.TableMemoryUsage{})
+	// We first push it into cache front here, if the element TotalColTrackingMemUsage is 0, it will be
+	// removed form cache list in l.maintainList
+	element = l.cache.PushFront(newCacheEntry)
+	l.maintainList(element, newCacheEntry, tblMemUsage.TotalColTrackingMemUsage(), 1)
 	l.elements[key] = element
-	return true
+	return
 }
 
 // Del deletes the key-value pair from the LRU Cache.
@@ -156,14 +162,14 @@ func (l *internalLRUCache) Del(key int64) {
 }
 
 func (l *internalLRUCache) del(key int64) bool {
-	element := l.elements[key]
-	if element == nil {
+	element, exists := l.elements[key]
+	if !exists {
 		return false
 	}
 	delete(l.elements, key)
 	memUsage := element.Value.(*cacheItem).tblMemUsage
 	l.calculateCost(&statistics.TableMemoryUsage{}, memUsage)
-	l.maintainList(element, nil, &statistics.TableMemoryUsage{}, memUsage)
+	l.maintainList(element, nil, 0, 1)
 	return true
 }
 
@@ -225,7 +231,7 @@ func (l *internalLRUCache) FreshMemUsage() {
 		newMemUsage := item.value.MemoryUsage()
 		item.tblMemUsage = newMemUsage
 		l.calculateCost(newMemUsage, oldMemUsage)
-		l.maintainList(v, nil, newMemUsage, oldMemUsage)
+		l.maintainList(v, nil, newMemUsage.TotalColTrackingMemUsage(), oldMemUsage.TotalColTrackingMemUsage())
 	}
 	l.evictIfNeeded()
 	totalCost = l.totalCost
@@ -301,7 +307,7 @@ func (l *internalLRUCache) evictIfNeeded() {
 		}
 		newMemUsage := tbl.MemoryUsage()
 		if newMemUsage.TotalColTrackingMemUsage() < 1 {
-			l.maintainList(curr, nil, newMemUsage, oldMemUsage)
+			l.maintainList(curr, nil, newMemUsage.TotalColTrackingMemUsage(), oldMemUsage.TotalColTrackingMemUsage())
 		}
 		if l.trackingCost <= l.capacity {
 			break
@@ -318,16 +324,21 @@ func (l *internalLRUCache) calculateCost(newUsage, oldUsage *statistics.TableMem
 	l.trackingCost += newUsage.TotalColTrackingMemUsage() - oldUsage.TotalColTrackingMemUsage()
 }
 
-func (l *internalLRUCache) maintainList(element *list.Element, item *cacheItem, newUsage, oldUsage *statistics.TableMemoryUsage) *list.Element {
-	if oldUsage.TotalColTrackingMemUsage() > 0 {
-		if newUsage.TotalColTrackingMemUsage() > 0 {
+// maintainList maintains elements in list cache
+// For oldTotalColTrackingMemUsage>0 && newTotalColTrackingMemUsage>0, it means the element is updated.
+// For oldTotalColTrackingMemUsage>0 && newTotalColTrackingMemUsage=0, it means the element is removed.
+// For oldTotalColTrackingMemUsage=0 && newTotalColTrackingMemUsage>0, it means the new element is inserted
+// For oldTotalColTrackingMemUsage=0 && newTotalColTrackingMemUsage=0, we do nothing.
+func (l *internalLRUCache) maintainList(element *list.Element, item *cacheItem, newTotalColTrackingMemUsage, oldTotalColTrackingMemUsage int64) *list.Element {
+	if oldTotalColTrackingMemUsage > 0 {
+		if newTotalColTrackingMemUsage > 0 {
 			l.cache.MoveToFront(element)
 			return element
 		}
 		l.cache.Remove(element)
 		return nil
 	}
-	if newUsage.TotalColTrackingMemUsage() > 0 {
+	if newTotalColTrackingMemUsage > 0 {
 		return l.cache.PushFront(item)
 	}
 	return nil

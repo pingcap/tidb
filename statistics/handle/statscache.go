@@ -21,7 +21,7 @@ import (
 // statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
 type statsCacheInner interface {
 	Get(int64) (*statistics.Table, bool)
-	Put(int64, *statistics.Table) bool
+	Put(int64, *statistics.Table)
 	Del(int64)
 	Cost() int64
 	Keys() []int64
@@ -99,7 +99,7 @@ func (m *mapCache) Get(k int64) (*statistics.Table, bool) {
 }
 
 // Put implements statsCacheInner
-func (m *mapCache) Put(k int64, v *statistics.Table) bool {
+func (m *mapCache) Put(k int64, v *statistics.Table) {
 	item, ok := m.tables[k]
 	if ok {
 		oldMemUsage := item.tblMemUsage
@@ -108,7 +108,7 @@ func (m *mapCache) Put(k int64, v *statistics.Table) bool {
 		item.tblMemUsage = newMemUsage
 		m.tables[k] = item
 		m.memUsage += newMemUsage.TotalMemUsage - oldMemUsage.TotalMemUsage
-		return true
+		return
 	}
 	memUsage := v.MemoryUsage()
 	item = cacheItem{
@@ -118,7 +118,6 @@ func (m *mapCache) Put(k int64, v *statistics.Table) bool {
 	}
 	m.tables[k] = item
 	m.memUsage += memUsage.TotalMemUsage
-	return true
 }
 
 // Del implements statsCacheInner

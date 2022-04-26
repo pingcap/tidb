@@ -85,9 +85,11 @@ func TestLRUEvict(t *testing.T) {
 	t1 := newMockStatisticsTable(2, 1)
 	require.Equal(t, t1.MemoryUsage().TotalMemUsage, 2*columnMemoryUsage+1*indexMemoryUsage)
 	require.Equal(t, t1.MemoryUsage().TotalColTrackingMemUsage(), 2*columnMemoryUsage)
+	// Put t1, assert TotalMemUsage and TotalColTrackingMemUsage
 	lru.Put(int64(1), t1)
 	require.Equal(t, lru.totalCost, t1.MemoryUsage().TotalMemUsage)
 	require.Equal(t, lru.trackingCost, t1.MemoryUsage().TotalColTrackingMemUsage())
+	// Put t2, assert TotalMemUsage and TotalColTrackingMemUsage
 	t2 := newMockStatisticsTable(1, 2)
 	lru.Put(int64(2), t2)
 	require.Equal(t, lru.totalCost, t1.MemoryUsage().TotalMemUsage+t2.MemoryUsage().TotalMemUsage)
@@ -196,8 +198,13 @@ func TestLRUFreshTableMemUsage(t *testing.T) {
 func TestLRUPutTooBig(t *testing.T) {
 	lru := newInternalLRUCache(1)
 	mockTable := newMockStatisticsTable(1, 1)
-	success := lru.Put(int64(1), mockTable)
-	require.False(t, success)
+	// put mockTable, the column should be evicted
+	lru.Put(int64(1), mockTable)
+	_, ok := lru.Get(int64(1))
+	require.True(t, ok)
+	require.Equal(t, lru.totalCost, indexMemoryUsage)
+	require.Equal(t, lru.trackingCost, 0)
+	require.Equal(t, mockTable.MemoryUsage().TotalColTrackingMemUsage(), 0)
 }
 
 func TestCacheLen(t *testing.T) {
