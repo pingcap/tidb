@@ -5939,3 +5939,39 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
 	tk.MustQuery("select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )'").Check(testkit.Rows("Update"))
 }
+
+func TestIsFastPlan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, a int)")
+
+	cases := []struct {
+		sql        string
+		isFastPlan bool
+	}{
+		{"select a from t where id=1", true},
+		{"select a+id from t where id=1", true},
+		{"select 1", true},
+		{"select @@autocommit", true},
+		{"set @@autocommit=1", true},
+		{"set @a=1", true},
+		{"select * from t where a=1", false},
+		{"select * from t", false},
+	}
+
+	for _, ca := range cases {
+		if strings.HasPrefix(ca.sql, "select") {
+			tk.MustQuery(ca.sql)
+		} else {
+			tk.MustExec(ca.sql)
+		}
+		info := tk.Session().ShowProcess()
+		require.NotNil(t, info)
+		p, ok := info.Plan.(plannercore.Plan)
+		require.True(t, ok)
+		ok = executor.IsFastPlan(p)
+		require.Equal(t, ca.isFastPlan, ok)
+	}
+}
