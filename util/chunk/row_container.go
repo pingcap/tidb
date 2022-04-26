@@ -277,6 +277,7 @@ func (c *RowContainer) Close() (err error) {
 		// Set status to spilledYet to avoid spilling.
 		c.actionSpill.setStatus(spilledYet)
 		c.actionSpill.cond.Broadcast()
+		c.actionSpill.SetFinished()
 	}
 	if c.alreadySpilled() {
 		err = c.m.records.inDisk.Close()
