@@ -370,7 +370,12 @@ func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	}
 	subSampleNum := len(subCollector.Base().Samples)
 	newSampleNum := len(s.Samples)
-	s.MemSize = (s.MemSize + subCollector.Base().MemSize) * int64(newSampleNum) / int64(oldSampleNum+subSampleNum)
+	totalSampleNum := oldSampleNum + subSampleNum
+	if totalSampleNum == 0 {
+		s.MemSize = 0
+	} else {
+		s.MemSize = (s.MemSize + subCollector.Base().MemSize) * int64(newSampleNum) / int64(totalSampleNum)
+	}
 }
 
 // RowSamplesToProto converts the samp slice to the pb struct.
