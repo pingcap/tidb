@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	goctx "context"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/table"
 	"github.com/stretchr/testify/require"

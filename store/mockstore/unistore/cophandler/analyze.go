@@ -22,6 +22,7 @@ import (
 	"sort"
 	"time"
 
+	"context"
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/errors"

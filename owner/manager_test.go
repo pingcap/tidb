@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	goctx "context"
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"

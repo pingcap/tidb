@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	goctx "context"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
