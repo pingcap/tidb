@@ -376,6 +376,16 @@ const (
 		column_ids TEXT(19372),
 		PRIMARY KEY (table_id) CLUSTERED
 	);`
+	// CreateStatsHistory stores the historical stats.
+	CreateStatsHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_history (
+		table_id bigint(64) NOT NULL,
+		stats_data longblob NOT NULL,
+		seq_no bigint(64) NOT NULL comment 'sequence number of the gzipped data slice',
+		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
+		create_time datetime(6) NOT NULL,
+		UNIQUE KEY table_version_seq (table_id, version, seq_no),
+		KEY table_create_time (table_id, create_time, seq_no)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -557,22 +567,14 @@ const (
 	version81 = 81
 	// version82 adds the mysql.analyze_options table
 	version82 = 82
-<<<<<<< HEAD
-=======
-	// version83 adds the tables mysql.stats_history
+	// version83 adds the tables mysql.stats_history.
+	// (In TiDB 6.0 and later this is done in version86.) /And update mysql.tables_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References').
 	version83 = 83
-	// version84 adds the tables mysql.stats_meta_history
-	version84 = 84
-	// version85 updates bindings with status 'using' in mysql.bind_info table to 'enabled' status
-	version85 = 85
-	// version86 update mysql.tables_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References').
-	version86 = 86
->>>>>>> e15e6d035... session: fix tables_priv table schema (#33599)
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version82
+var currentBootstrapVersion int64 = version83
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -658,13 +660,7 @@ var (
 		upgradeToVer80,
 		upgradeToVer81,
 		upgradeToVer82,
-<<<<<<< HEAD
-=======
 		upgradeToVer83,
-		upgradeToVer84,
-		upgradeToVer85,
-		upgradeToVer86,
->>>>>>> e15e6d035... session: fix tables_priv table schema (#33599)
 	}
 )
 
@@ -1721,37 +1717,14 @@ func upgradeToVer82(s Session, ver int64) {
 	doReentrantDDL(s, CreateAnalyzeOptionsTable)
 }
 
-<<<<<<< HEAD
-=======
 func upgradeToVer83(s Session, ver int64) {
 	if ver >= version83 {
 		return
 	}
 	doReentrantDDL(s, CreateStatsHistory)
-}
-
-func upgradeToVer84(s Session, ver int64) {
-	if ver >= version84 {
-		return
-	}
-	doReentrantDDL(s, CreateStatsMetaHistory)
-}
-
-func upgradeToVer85(s Session, ver int64) {
-	if ver >= version85 {
-		return
-	}
-	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.Enabled, bindinfo.Using))
-}
-
-func upgradeToVer86(s Session, ver int64) {
-	if ver >= version86 {
-		return
-	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
 }
 
->>>>>>> e15e6d035... session: fix tables_priv table schema (#33599)
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1838,6 +1811,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTableCacheMetaTable)
 	// Create analyze_options table.
 	mustExecute(s, CreateAnalyzeOptionsTable)
+	// Create stats_history table.
+	mustExecute(s, CreateStatsHistory)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
