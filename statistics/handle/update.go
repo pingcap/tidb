@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -1027,11 +1028,22 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		return false
 	}
 	pruneMode := h.CurrentPruneMode()
+	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
+	rd.Shuffle(len(dbs), func(i, j int) {
+		dbs[i], dbs[j] = dbs[j], dbs[i]
+	})
 	for _, db := range dbs {
 		if util.IsMemOrSysDB(strings.ToLower(db)) {
 			continue
 		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
+		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
+		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
+		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
+		// TODO: Design a priority queue to place the table which needs analyze most in the front.
+		rd.Shuffle(len(tbls), func(i, j int) {
+			tbls[i], tbls[j] = tbls[j], tbls[i]
+		})
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			if tblInfo.IsView() {
