@@ -84,7 +84,7 @@ func (c *logicAndFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	sig := &builtinLogicAndSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalAnd)
-	sig.tp.Flen = 1
+	sig.tp.SetFlen(1)
 	return sig, nil
 }
 
@@ -135,7 +135,7 @@ func (c *logicOrFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	sig := &builtinLogicOrSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalOr)
 	return sig, nil
@@ -196,7 +196,7 @@ func (c *logicXorFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	sig := &builtinLogicXorSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalXor)
-	sig.tp.Flen = 1
+	sig.tp.SetFlen(1)
 	return sig, nil
 }
 
@@ -240,7 +240,7 @@ func (c *bitAndFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	sig := &builtinBitAndSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitAndSig)
-	sig.tp.Flag |= mysql.UnsignedFlag
+	sig.tp.AddFlag(mysql.UnsignedFlag)
 	return sig, nil
 }
 
@@ -281,7 +281,7 @@ func (c *bitOrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	sig := &builtinBitOrSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitOrSig)
-	sig.tp.Flag |= mysql.UnsignedFlag
+	sig.tp.AddFlag(mysql.UnsignedFlag)
 	return sig, nil
 }
 
@@ -322,7 +322,7 @@ func (c *bitXorFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	sig := &builtinBitXorSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitXorSig)
-	sig.tp.Flag |= mysql.UnsignedFlag
+	sig.tp.AddFlag(mysql.UnsignedFlag)
 	return sig, nil
 }
 
@@ -363,7 +363,7 @@ func (c *leftShiftFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	sig := &builtinLeftShiftSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LeftShift)
-	sig.tp.Flag |= mysql.UnsignedFlag
+	sig.tp.AddFlag(mysql.UnsignedFlag)
 	return sig, nil
 }
 
@@ -404,7 +404,7 @@ func (c *rightShiftFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	sig := &builtinRightShiftSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_RightShift)
-	sig.tp.Flag |= mysql.UnsignedFlag
+	sig.tp.AddFlag(mysql.UnsignedFlag)
 	return sig, nil
 }
 
@@ -460,7 +460,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 
 	var sig builtinFunc
 	switch c.op {
@@ -682,7 +682,7 @@ func (c *bitNegFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.AddFlag(mysql.UnsignedFlag)
 	sig := &builtinBitNegSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitNegSig)
 	return sig, nil
@@ -726,7 +726,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 
 	var sig builtinFunc
 	switch argTp {
@@ -813,7 +813,7 @@ type unaryMinusFunctionClass struct {
 }
 
 func (c *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow bool) {
-	if mysql.HasUnsignedFlag(arg.GetType().Flag) {
+	if mysql.HasUnsignedFlag(arg.GetType().GetFlag()) {
 		uval := arg.Value.GetUint64()
 		// -math.MinInt64 is 9223372036854775808, so if uval is more than 9223372036854775808, like
 		// 9223372036854775809, -9223372036854775809 is less than math.MinInt64, overflow occurs.
@@ -876,13 +876,13 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			sig = &builtinUnaryMinusIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusInt)
 		}
-		bf.tp.Decimal = 0
+		bf.tp.SetDecimal(0)
 	case types.ETDecimal:
 		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal)
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.Decimal = argExprTp.Decimal
+		bf.tp.SetDecimal(argExprTp.GetDecimal())
 		sig = &builtinUnaryMinusDecimalSig{bf, false}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 	case types.ETReal:
@@ -893,7 +893,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		sig = &builtinUnaryMinusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 	default:
-		tp := argExpr.GetType().Tp
+		tp := argExpr.GetType().GetType()
 		if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
 			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal)
 			if err != nil {
@@ -910,7 +910,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 		}
 	}
-	bf.tp.Flen = argExprTp.Flen + 1
+	bf.tp.SetFlen(argExprTp.GetFlen() + 1)
 	return sig, err
 }
 
@@ -931,7 +931,7 @@ func (b *builtinUnaryMinusIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		return val, isNull, err
 	}
 
-	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+	if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
 		uval := uint64(val)
 		if uval > uint64(-math.MinInt64) {
 			return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("-%v", uval))
@@ -997,7 +997,7 @@ func (c *isNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	var sig builtinFunc
 	switch argTp {
 	case types.ETInt:

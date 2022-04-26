@@ -297,7 +297,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		colName string
 	)
 	if col != nil {
-		colTp = col.Tp
+		colTp = col.GetType()
 		colName = col.Name.String()
 	}
 
@@ -405,7 +405,7 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 		d, err := e.getColDefaultValue(i, c)
 		if err == nil {
 			row[i] = d
-			if !mysql.HasAutoIncrementFlag(c.Flag) {
+			if !mysql.HasAutoIncrementFlag(c.GetFlag()) {
 				// It is an interesting behavior in MySQL.
 				// If the value of auto ID is not explicit, MySQL use 0 value for auto ID when it is
 				// evaluated by another column, but it should be used once only.
@@ -559,7 +559,7 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 // fillColValue fills the column value if it is not set in the insert statement.
 func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
 	error) {
-	if mysql.HasAutoIncrementFlag(column.Flag) {
+	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
 		if e.lazyFillAutoID {
 			// Handle hasValue info in autoIncrement column previously for lazy handle.
 			if !hasValue {
@@ -624,7 +624,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			if row[i], err = e.fillColValue(ctx, row[i], i, c, hasValue[i]); err != nil {
 				return nil, err
 			}
-			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.Flag)) {
+			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
 				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
 					return nil, err
 				}
@@ -674,7 +674,7 @@ func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table
 
 func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int, found bool) {
 	for i, c := range t.Cols() {
-		if mysql.HasAutoIncrementFlag(c.Flag) {
+		if mysql.HasAutoIncrementFlag(c.GetFlag()) {
 			return c, i, true
 		}
 	}
@@ -682,7 +682,7 @@ func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int,
 }
 
 func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col *table.Column) error {
-	d.SetAutoID(id, col.Flag)
+	d.SetAutoID(id, col.GetFlag())
 	var err error
 	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
 	if err == nil && d.GetInt64() < id {
@@ -845,7 +845,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 
 func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
 	var recordID int64
-	switch target.Tp {
+	switch target.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		f := d.GetFloat64()
 		if isInsert {
@@ -856,7 +856,7 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		recordID = d.GetInt64()
 	default:
-		return 0, errors.Errorf("unexpected field type [%v]", target.Tp)
+		return 0, errors.Errorf("unexpected field type [%v]", target.GetType())
 	}
 
 	return recordID, nil
