@@ -195,47 +195,45 @@ func TestIsTypeTemporal(t *testing.T) {
 }
 
 func TestIsBinaryStr(t *testing.T) {
-	in := FieldType{
-		Tp:      mysql.TypeBit,
-		Flag:    mysql.UnsignedFlag,
-		Flen:    1,
-		Decimal: 0,
-		Charset: charset.CharsetUTF8,
-		Collate: charset.CollationUTF8,
-	}
-	in.Collate = charset.CollationUTF8
-	res := IsBinaryStr(&in)
+	in := &FieldType{}
+	in.SetType(mysql.TypeBit)
+	in.SetFlag(mysql.UnsignedFlag)
+	in.SetFlen(1)
+	in.SetDecimal(0)
+	in.SetCharset(charset.CharsetUTF8)
+	in.SetCollate(charset.CollationUTF8)
+
+	in.SetCollate(charset.CollationUTF8)
+	res := IsBinaryStr(in)
 	require.False(t, res)
 
-	in.Collate = charset.CollationBin
-	res = IsBinaryStr(&in)
+	in.SetCollate(charset.CollationBin)
+	res = IsBinaryStr(in)
 	require.False(t, res)
 
-	in.Tp = mysql.TypeBlob
-	res = IsBinaryStr(&in)
+	in.SetType(mysql.TypeBlob)
+	res = IsBinaryStr(in)
 	require.True(t, res)
 }
 
 func TestIsNonBinaryStr(t *testing.T) {
-	in := FieldType{
-		Tp:      mysql.TypeBit,
-		Flag:    mysql.UnsignedFlag,
-		Flen:    1,
-		Decimal: 0,
-		Charset: charset.CharsetUTF8,
-		Collate: charset.CollationUTF8,
-	}
+	in := NewFieldType(mysql.TypeBit)
+	in.SetFlag(mysql.UnsignedFlag)
+	in.SetFlen(1)
+	in.SetDecimal(0)
+	in.SetCharset(charset.CharsetUTF8)
+	in.SetCollate(charset.CollationUTF8)
 
-	in.Collate = charset.CollationBin
-	res := IsBinaryStr(&in)
+	in.SetCollate(charset.CollationBin)
+	res := IsBinaryStr(in)
 	require.False(t, res)
 
-	in.Collate = charset.CollationUTF8
-	res = IsBinaryStr(&in)
+	in.SetCollate(charset.CollationUTF8)
+	res = IsBinaryStr(in)
 	require.False(t, res)
 
-	in.Tp = mysql.TypeBlob
-	res = IsBinaryStr(&in)
+	in.SetType(mysql.TypeBlob)
+	res = IsBinaryStr(in)
 	require.False(t, res)
 }
 

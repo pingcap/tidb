@@ -592,10 +592,10 @@ func TestConv(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Conv, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
 		tp := f.GetType()
-		require.Equal(t, mysql.TypeVarString, tp.Tp)
-		require.Equal(t, charset.CharsetUTF8MB4, tp.Charset)
-		require.Equal(t, charset.CollationUTF8MB4, tp.Collate)
-		require.Equal(t, uint(0), tp.Flag)
+		require.Equal(t, mysql.TypeVarString, tp.GetType())
+		require.Equal(t, charset.CharsetUTF8MB4, tp.GetCharset())
+		require.Equal(t, charset.CollationUTF8MB4, tp.GetCollate())
+		require.Equal(t, uint(0), tp.GetFlag())
 
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {

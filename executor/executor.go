@@ -1999,7 +1999,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 				return err
 			}
 			// Handle the bad null error.
-			if (mysql.HasNotNullFlag(columns[idx].Flag) || mysql.HasPreventNullInsertFlag(columns[idx].Flag)) && castDatum.IsNull() {
+			if (mysql.HasNotNullFlag(columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(columns[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(columns[idx])
 			}
 			virCols.AppendDatum(i, &castDatum)

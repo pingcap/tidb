@@ -538,7 +538,7 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 	isUnsigned := false
 	if e.tableInfo.PKIsHandle {
 		if pkCol := e.tableInfo.GetPkColInfo(); pkCol != nil {
-			isUnsigned = mysql.HasUnsignedFlag(pkCol.Flag)
+			isUnsigned = mysql.HasUnsignedFlag(pkCol.GetFlag())
 		}
 	}
 	if isUnsigned {
@@ -629,7 +629,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	// This is used to decode the int handle properly.
 	var hasUnsignedIntHandle bool
 	if pkInfo := tableInfo.GetPkColInfo(); pkInfo != nil {
-		hasUnsignedIntHandle = mysql.HasUnsignedFlag(pkInfo.Flag)
+		hasUnsignedIntHandle = mysql.HasUnsignedFlag(pkInfo.GetFlag())
 	}
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalTableID)

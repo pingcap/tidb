@@ -131,7 +131,7 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 			continue
 		}
 		oldMemUsage := p.MemUsage()
-		switch dataType.Tp {
+		switch dataType.GetType() {
 		case mysql.TypeLonglong:
 			val := row.GetInt64(0)
 			*(*int64)(unsafe.Pointer(&buf[0])) = val
@@ -139,7 +139,7 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 			val := row.GetString(0)
 			buf = codec.EncodeCompactBytes(buf, hack.Slice(val))
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.GetType())
 		}
 
 		x := farm.Hash64(buf)
@@ -162,7 +162,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 		}
 		val := ""
 		memDelta := int64(0)
-		switch dataType.Tp {
+		switch dataType.GetType() {
 		case mysql.TypeLonglong:
 			val = strconv.FormatInt(row.GetInt64(0), 10)
 			memDelta = aggfuncs.DefInt64Size
@@ -199,7 +199,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			val = string(bytes)
 			memDelta = int64(len(val))
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.GetType())
 		}
 		if valSet.Exist(val) {
 			memDeltas = append(memDeltas, int64(0))
@@ -250,7 +250,7 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 		memDelta += int64(len(key))
 
 		memDelta += aggfuncs.DefInterfaceSize
-		switch dataTypes[1].Tp {
+		switch dataTypes[1].GetType() {
 		case mysql.TypeLonglong:
 			memDelta += aggfuncs.DefUint64Size
 		case mysql.TypeDouble:
@@ -269,7 +269,7 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 		case mysql.TypeNewDecimal:
 			memDelta += aggfuncs.DefMyDecimalSize
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataTypes[1].Tp)
+			return memDeltas, errors.Errorf("unsupported type - %v", dataTypes[1].GetType())
 		}
 		memDeltas = append(memDeltas, memDelta)
 	}
@@ -318,7 +318,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
-	ctor := collate.GetCollator(p.dataType.Collate)
+	ctor := collate.GetCollator(p.dataType.GetCollate())
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -449,7 +449,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p mul
 			{Expr: args[0], Desc: true},
 		}
 	}
-	ctor := collate.GetCollator(args[0].GetType().Collate)
+	ctor := collate.GetCollator(args[0].GetType().GetCollate())
 	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build partial func for partial phase.
@@ -535,7 +535,7 @@ func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldTyp
 }
 
 func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
-	switch ft.Tp {
+	switch ft.GetType() {
 	case mysql.TypeLonglong:
 		return func(i int) types.Datum { return types.NewIntDatum(int64(i)) }
 	case mysql.TypeFloat:
@@ -556,13 +556,13 @@ func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 		elems := []string{"e", "d", "c", "b", "a"}
 		return func(i int) types.Datum {
 			e, _ := types.ParseEnumValue(elems, uint64(i+1))
-			return types.NewCollateMysqlEnumDatum(e, ft.Collate)
+			return types.NewCollateMysqlEnumDatum(e, ft.GetCollate())
 		}
 	case mysql.TypeSet:
 		elems := []string{"e", "d", "c", "b", "a"}
 		return func(i int) types.Datum {
 			e, _ := types.ParseSetValue(elems, uint64(i+1))
-			return types.NewMysqlSetDatum(e, ft.Collate)
+			return types.NewMysqlSetDatum(e, ft.GetCollate())
 		}
 	}
 	return nil
@@ -573,7 +573,7 @@ func testAggFunc(t *testing.T, p aggTest) {
 	ctx := mock.NewContext()
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
-	ctor := collate.GetCollator(p.dataType.Collate)
+	ctor := collate.GetCollator(p.dataType.GetCollate())
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -662,7 +662,7 @@ func testAggFuncWithoutDistinct(t *testing.T, p aggTest) {
 	srcChk := p.genSrcChk()
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
-	ctor := collate.GetCollator(p.dataType.Collate)
+	ctor := collate.GetCollator(p.dataType.GetCollate())
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -754,7 +754,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTe
 			{Expr: args[0], Desc: true},
 		}
 	}
-	ctor := collate.GetCollator(args[0].GetType().Collate)
+	ctor := collate.GetCollator(args[0].GetType().GetCollate())
 	finalFunc := aggfuncs.Build(ctx, desc, 0)
 	finalPr, _ := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)

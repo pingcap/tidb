@@ -1338,7 +1338,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	if !tablePseudo {
 		return nil
 	}
-	isIndex := q.Hist.Tp.Tp == mysql.TypeBlob
+	isIndex := q.Hist.Tp.GetType() == mysql.TypeBlob
 	id := q.Hist.ID
 	if isIndex && (t.Indices[id] == nil || !t.Indices[id].NotAccurate()) {
 		return nil

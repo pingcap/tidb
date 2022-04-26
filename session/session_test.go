@@ -1681,8 +1681,8 @@ func (s *testSessionSuite) TestResultField(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(fields), Equals, 1)
 	field := fields[0].Column
-	c.Assert(field.Tp, Equals, mysql.TypeLonglong)
-	c.Assert(field.Flen, Equals, 21)
+	c.Assert(field.GetType(), Equals, mysql.TypeLonglong)
+	c.Assert(field.GetFlen(), Equals, 21)
 }
 
 func (s *testSessionSuite) TestResultType(c *C) {
@@ -1694,7 +1694,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).IsNull(0), IsTrue)
-	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
+	c.Assert(rs.Fields()[0].Column.FieldType.GetType(), Equals, mysql.TypeVarString)
 }
 
 func (s *testSessionSuite) TestFieldText(c *C) {
