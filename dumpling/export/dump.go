@@ -536,17 +536,17 @@ func adjustColumnsCollation(tctx *tcontext.Context, createStmt *ast.CreateTableS
 			}
 		}
 		fieldType := col.Tp
-		if fieldType.Collate != "" {
+		if fieldType.GetCollate() != "" {
 			continue
 		}
-		if fieldType.Charset != "" {
+		if fieldType.GetCharset() != "" {
 			// just have charset
-			collation, ok := charsetAndDefaultCollationMap[strings.ToLower(fieldType.Charset)]
+			collation, ok := charsetAndDefaultCollationMap[strings.ToLower(fieldType.GetCharset())]
 			if !ok {
-				tctx.L().Warn("not found charset default collation for column.", zap.String("table", createStmt.Table.Name.String()), zap.String("column", col.Name.String()), zap.String("charset", strings.ToLower(fieldType.Charset)))
+				tctx.L().Warn("not found charset default collation for column.", zap.String("table", createStmt.Table.Name.String()), zap.String("column", col.Name.String()), zap.String("charset", strings.ToLower(fieldType.GetCharset())))
 				continue
 			}
-			fieldType.Collate = collation
+			fieldType.SetCollate(collation)
 		}
 	}
 }

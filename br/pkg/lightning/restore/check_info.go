@@ -590,8 +590,8 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 
 // hasDefault represents col has default value.
 func hasDefault(col *model.ColumnInfo) bool {
-	return col.DefaultIsExpr || col.DefaultValue != nil || !mysql.HasNotNullFlag(col.Flag) ||
-		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.Flag)
+	return col.DefaultIsExpr || col.DefaultValue != nil || !mysql.HasNotNullFlag(col.GetFlag()) ||
+		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.GetFlag())
 }
 
 func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.SourceFileMeta) (cols []string, row []types.Datum, err error) {
@@ -663,7 +663,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	core := info.Core
 	defaultCols := make(map[string]struct{})
 	for _, col := range core.Columns {
-		if hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.Flag)) {
+		if hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.GetFlag())) {
 			// this column has default value or it's auto random id, so we can ignore it
 			defaultCols[col.Name.L] = struct{}{}
 		}

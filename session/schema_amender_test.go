@@ -95,7 +95,7 @@ func prepareTestData(
 	basicRowValue := make([]types.Datum, len(oldTblInfo.Meta().Columns))
 	for i, col := range oldTblInfo.Meta().Columns {
 		colIds[i] = oldTblInfo.Meta().Columns[col.Offset].ID
-		if col.FieldType.Tp == mysql.TypeLong {
+		if col.FieldType.GetType() == mysql.TypeLong {
 			basicRowValue[i] = types.NewIntDatum(int64(col.Offset))
 		} else {
 			basicRowValue[i] = types.NewStringDatum(strconv.Itoa(col.Offset))

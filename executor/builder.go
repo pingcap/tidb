@@ -1126,7 +1126,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 
 	us.collators = make([]collate.Collator, 0, len(us.columns))
 	for _, tp := range retTypes(us) {
-		us.collators = append(us.collators, collate.GetCollator(tp.Collate))
+		us.collators = append(us.collators, collate.GetCollator(tp.GetCollate()))
 	}
 
 	startTS, err := b.getSnapshotTS()
@@ -1376,18 +1376,20 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys))
 	for i, col := range v.LeftJoinKeys {
 		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
-		leftTypes[i].Flag = col.RetType.Flag
+		leftTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 	for i, col := range v.RightJoinKeys {
 		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
-		rightTypes[i].Flag = col.RetType.Flag
+		rightTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 
 	// consider collations
 	for i := range v.EqualConditions {
 		chs, coll := v.EqualConditions[i].CharsetAndCollation()
-		leftTypes[i].Charset, leftTypes[i].Collate = chs, coll
-		rightTypes[i].Charset, rightTypes[i].Collate = chs, coll
+		leftTypes[i].SetCharset(chs)
+		leftTypes[i].SetCollate(coll)
+		rightTypes[i].SetCharset(chs)
+		rightTypes[i].SetCollate(coll)
 	}
 	if leftIsBuildSide {
 		e.buildTypes, e.probeTypes = leftTypes, rightTypes
@@ -2966,18 +2968,18 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType.Clone()
 		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
-		// to build hash map or construct lookup keys. So we need to modify its Flen otherwise there would be
+		// to build hash map or construct lookup keys. So we need to modify its flen otherwise there would be
 		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
 		if innerTypes[i].EvalType() == types.ETString {
-			innerTypes[i].Flen = types.UnspecifiedLength
+			innerTypes[i].SetFlen(types.UnspecifiedLength)
 		}
 	}
 
 	// Use the probe table's collation.
 	for i, col := range v.OuterHashKeys {
 		outerTypes[col.Index] = outerTypes[col.Index].Clone()
-		outerTypes[col.Index].Collate = innerTypes[v.InnerHashKeys[i].Index].Collate
-		outerTypes[col.Index].Flag = col.RetType.Flag
+		outerTypes[col.Index].SetCollate(innerTypes[v.InnerHashKeys[i].Index].GetCollate())
+		outerTypes[col.Index].SetFlag(col.RetType.GetFlag())
 	}
 
 	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
@@ -2988,11 +2990,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	outerHashTypes := make([]*types.FieldType, len(v.OuterHashKeys))
 	for i, col := range v.InnerHashKeys {
 		innerHashTypes[i] = innerTypes[col.Index].Clone()
-		innerHashTypes[i].Flag = col.RetType.Flag
+		innerHashTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 	for i, col := range v.OuterHashKeys {
 		outerHashTypes[i] = outerTypes[col.Index].Clone()
-		outerHashTypes[i].Flag = col.RetType.Flag
+		outerHashTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 
 	var (
@@ -3066,7 +3068,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
-		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.Collate))
+		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
 	}
 	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
@@ -3080,7 +3082,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 	for i := 0; i < len(v.InnerHashKeys); i++ {
 		innerHashCols[i] = v.InnerHashKeys[i].Index
-		hashCollators = append(hashCollators, collate.GetCollator(v.InnerHashKeys[i].RetType.Collate))
+		hashCollators = append(hashCollators, collate.GetCollator(v.InnerHashKeys[i].RetType.GetCollate()))
 	}
 	e.outerCtx.hashCols = outerHashCols
 	e.innerCtx.hashCols = innerHashCols
@@ -3102,10 +3104,10 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType.Clone()
 		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
-		// to build hash map or construct lookup keys. So we need to modify its Flen otherwise there would be
+		// to build hash map or construct lookup keys. So we need to modify its flen otherwise there would be
 		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
 		if innerTypes[i].EvalType() == types.ETString {
-			innerTypes[i].Flen = types.UnspecifiedLength
+			innerTypes[i].SetFlen(types.UnspecifiedLength)
 		}
 	}
 	var (
@@ -3139,7 +3141,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
-		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.Collate))
+		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
 	}
 	executorCounterIndexLookUpJoin.Inc()
 
@@ -4649,7 +4651,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	reqCols := make([]rowcodec.ColInfo, len(schema.Columns))
 	for i := range schema.Columns {
 		idx, col := i, schema.Columns[i]
-		isPK := (tbl.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag)) || col.ID == model.ExtraHandleID
+		isPK := (tbl.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag())) || col.ID == model.ExtraHandleID
 		if isPK {
 			pkCols = append(pkCols, col.ID)
 		}
