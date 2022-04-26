@@ -103,7 +103,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		AddNewAnalyzeJob(e.ctx, task.job)
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
-		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+		dom := domain.GetDomain(e.ctx)
+		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 	})
 	for _, task := range e.tasks {
 		taskCh <- task
@@ -200,7 +201,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
-		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+		dom := domain.GetDomain(e.ctx)
+		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 	})
 	if err != nil {
 		return err
@@ -482,7 +484,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	} else {
 		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
 	}
-	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
+	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
 		SetStartTS(e.snapshot).
@@ -586,7 +588,8 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 	}
 	for {
 		failpoint.Inject("mockKillRunningAnalyzeIndexJob", func() {
-			domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+			dom := domain.GetDomain(e.ctx)
+			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			return nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
@@ -854,7 +857,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
-	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
+	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
@@ -915,7 +918,8 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	defer close(mergeTaskCh)
 	for {
 		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
-			domain.GetDomain(ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+			dom := domain.GetDomain(ctx)
+			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 		})
 		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
 			return errors.Trace(ErrQueryInterrupted)
@@ -1489,7 +1493,8 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	}
 	for {
 		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
-			domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+			dom := domain.GetDomain(e.ctx)
+			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			return nil, nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)

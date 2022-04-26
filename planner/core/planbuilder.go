@@ -1196,7 +1196,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
-	if ctx.GetSessionVars().StmtCtx.IsStaleness {
+	if staleread.IsStmtStaleness(ctx) {
 		// skip tiflash if the statement is for stale read until tiflash support stale read
 		available = removeTiflashDuringStaleRead(available)
 	}
@@ -3104,7 +3104,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
 					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 				}
-			} else if raw.ConnectionID == util2.GetAutoAnalyzeProcID() {
+			} else if raw.ConnectionID == util2.GetAutoAnalyzeProcID(domain.GetDomain(b.ctx).ServerID) {
 				// Only the users with SUPER or CONNECTION_ADMIN privilege can kill auto analyze.
 				err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
 				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
