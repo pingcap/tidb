@@ -112,7 +112,7 @@ func (c *sleepFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 21
+	bf.tp.SetFlen(21)
 	sig := &builtinSleepSig{bf}
 	return sig, nil
 }
@@ -170,7 +170,7 @@ func (c *lockFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	sig := &builtinLockSig{bf}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
@@ -205,7 +205,7 @@ func (c *releaseLockFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	sig := &builtinReleaseLockSig{bf}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
@@ -241,7 +241,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	ft := args[0].GetType().Clone()
-	ft.Flag |= bf.tp.Flag
+	ft.AddFlag(bf.tp.GetFlag())
 	*bf.tp = *ft
 	var sig builtinFunc
 	switch argTp {
@@ -252,7 +252,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinDurationAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_DurationAnyValue)
 	case types.ETInt:
-		bf.tp.Decimal = 0
+		bf.tp.SetDecimal(0)
 		sig = &builtinIntAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IntAnyValue)
 	case types.ETJson:
@@ -262,11 +262,13 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinRealAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_RealAnyValue)
 	case types.ETString:
-		bf.tp.Decimal = types.UnspecifiedLength
+		bf.tp.SetDecimal(types.UnspecifiedLength)
 		sig = &builtinStringAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StringAnyValue)
 	case types.ETDatetime, types.ETTimestamp:
-		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
+		bf.tp.SetCharset(mysql.DefaultCharset)
+		bf.tp.SetCollate(mysql.DefaultCollationName)
+		bf.tp.SetFlag(0)
 		sig = &builtinTimeAnyValueSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_TimeAnyValue)
 	default:
@@ -407,8 +409,8 @@ func (c *inetAtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 21
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.SetFlen(21)
+	bf.tp.AddFlag(mysql.UnsignedFlag)
 	sig := &builtinInetAtonSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_InetAton)
 	return sig, nil
@@ -484,9 +486,11 @@ func (c *inetNtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 93
-	bf.tp.Decimal = 0
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(93)
+	bf.tp.SetDecimal(0)
 	sig := &builtinInetNtoaSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_InetNtoa)
 	return sig, nil
@@ -537,9 +541,9 @@ func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 16
+	bf.tp.SetFlen(16)
 	types.SetBinChsClnFlag(bf.tp)
-	bf.tp.Decimal = 0
+	bf.tp.SetDecimal(0)
 	sig := &builtinInet6AtonSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Inet6Aton)
 	return sig, nil
@@ -610,9 +614,11 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 117
-	bf.tp.Decimal = 0
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(117)
+	bf.tp.SetDecimal(0)
 	sig := &builtinInet6NtoaSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Inet6Ntoa)
 	return sig, nil
@@ -667,7 +673,7 @@ func (c *isIPv4FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	sig := &builtinIsIPv4Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4)
 	return sig, nil
@@ -735,7 +741,7 @@ func (c *isIPv4CompatFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	sig := &builtinIsIPv4CompatSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Compat)
 	return sig, nil
@@ -784,7 +790,7 @@ func (c *isIPv4MappedFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	sig := &builtinIsIPv4MappedSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Mapped)
 	return sig, nil
@@ -833,7 +839,7 @@ func (c *isIPv6FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	sig := &builtinIsIPv6Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IsIPv6)
 	return sig, nil
@@ -883,7 +889,7 @@ func (c *isUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	sig := &builtinIsUUIDSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IsUUID)
 	return sig, nil
@@ -941,17 +947,19 @@ func (c *nameConstFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	case types.ETDuration:
 		sig = &builtinNameConstDurationSig{bf}
 	case types.ETInt:
-		bf.tp.Decimal = 0
+		bf.tp.SetDecimal(0)
 		sig = &builtinNameConstIntSig{bf}
 	case types.ETJson:
 		sig = &builtinNameConstJSONSig{bf}
 	case types.ETReal:
 		sig = &builtinNameConstRealSig{bf}
 	case types.ETString:
-		bf.tp.Decimal = types.UnspecifiedLength
+		bf.tp.SetDecimal(types.UnspecifiedLength)
 		sig = &builtinNameConstStringSig{bf}
 	case types.ETDatetime, types.ETTimestamp:
-		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
+		bf.tp.SetCharset(mysql.DefaultCharset)
+		bf.tp.SetCollate(mysql.DefaultCollationName)
+		bf.tp.SetFlag(0)
 		sig = &builtinNameConstTimeSig{bf}
 	default:
 		return nil, errIncorrectArgs.GenWithStackByArgs("NAME_CONST")
@@ -1077,8 +1085,10 @@ func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 36
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(36)
 	sig := &builtinUUIDSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_UUID)
 	return sig, nil
@@ -1127,8 +1137,8 @@ func (c *vitessHashFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, err
 	}
 
-	bf.tp.Flen = 20 //64 bit unsigned
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.SetFlen(20) //64 bit unsigned
+	bf.tp.AddFlag(mysql.UnsignedFlag)
 	types.SetBinChsClnFlag(bf.tp)
 
 	sig := &builtinVitessHashSig{bf}
@@ -1176,9 +1186,9 @@ func (c *uuidToBinFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 
-	bf.tp.Flen = 16
+	bf.tp.SetFlen(16)
 	types.SetBinChsClnFlag(bf.tp)
-	bf.tp.Decimal = 0
+	bf.tp.SetDecimal(0)
 	sig := &builtinUUIDToBinSig{bf}
 	return sig, nil
 }
@@ -1243,9 +1253,11 @@ func (c *binToUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 32
-	bf.tp.Decimal = 0
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(32)
+	bf.tp.SetDecimal(0)
 	sig := &builtinBinToUUIDSig{bf}
 	return sig, nil
 }
@@ -1325,8 +1337,8 @@ func (c *tidbShardFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 
-	bf.tp.Flen = 4 //64 bit unsigned
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.SetFlen(4) //64 bit unsigned
+	bf.tp.AddFlag(mysql.UnsignedFlag)
 	types.SetBinChsClnFlag(bf.tp)
 
 	sig := &builtinTidbShardSig{bf}
