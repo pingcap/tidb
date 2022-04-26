@@ -76,6 +76,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 	// because all of them are sorted by their `Offset`, which
 	// causes all writable columns are after public columns.
 
+<<<<<<< HEAD
 	// 1. Cast modified values.
 	for i, col := range t.Cols() {
 		if modified[i] {
@@ -89,6 +90,9 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 	}
 
 	// 2. Handle the bad null error.
+=======
+	// Handle the bad null error.
+>>>>>>> b119f2620... table: fix NO_ZERO_DATE not work for insert into select statement (#34101)
 	for i, col := range t.Cols() {
 		var err error
 		if newData[i], err = col.HandleBadNull(newData[i], sc); err != nil {
@@ -96,7 +100,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 		}
 	}
 
-	// 3. Compare datum, then handle some flags.
+	// Compare datum, then handle some flags.
 	for i, col := range t.Cols() {
 		collation := newData[i].Collation()
 		// We should use binary collation to compare datum, otherwise the result will be incorrect.
@@ -161,7 +165,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 		return false, false, 0, nil
 	}
 
-	// 4. Fill values into on-update-now fields, only if they are really changed.
+	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
 			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, int8(col.Decimal)); err == nil {
@@ -173,7 +177,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 		}
 	}
 
-	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
+	// If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
 		if sc.DupKeyAsWarning {
 			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
