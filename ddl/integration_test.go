@@ -184,7 +184,7 @@ func TestSchema(t *testing.T) {
 	job, _ = testDropSchema(t, ctx, domain.DDL(), dbInfo1)
 	testCheckSchemaState(t, store, dbInfo1, model.StateNone)
 	testCheckJobDone(t, store, job.ID, false)
-	ddl.ExportTestSchema(t)
+	//ddl.ExportTestSchema(t)
 }
 
 func TestDDLOnCachedTable(t *testing.T) {
