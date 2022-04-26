@@ -683,16 +683,9 @@ select * from t1;
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	checkFn := func(quota int) {
-		originCfg := config.GetGlobalConfig()
-		newCfg := *originCfg
-		newCfg.MemQuotaQuery = int64(quota)
-		config.StoreGlobalConfig(&newCfg)
-		tk.MustExec("set @@tidb_mem_quota_query=" + strconv.Itoa(quota))
+		tk.MustExec("set tidb_mem_quota_query=" + strconv.Itoa(quota)) // session
 
 		err = tk.QueryToErr("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
-		require.Error(t, err, quota)
-		require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
-		err = tk.QueryToErr("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 		require.Error(t, err, quota)
 		require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
 	}
@@ -701,13 +694,12 @@ select * from t1;
 		checkFn(quota)
 	}
 	for i := 0; i < 100; i++ {
-		quota := rand.Int()%10240 + 1
+		quota := rand.Int()%8192 + 1
 		checkFn(quota)
 	}
 
-	newCfg.MemQuotaQuery = 1024 * 1024 * 1024
-	config.StoreGlobalConfig(&newCfg)
-	tk.MustExec("set @@tidb_mem_quota_query=" + strconv.Itoa(int(newCfg.MemQuotaQuery)))
+	newMemQuota := 1024 * 1024 * 1024
+	tk.MustExec("set @@tidb_mem_quota_query=" + strconv.Itoa(newMemQuota))
 	tk.MustQuery("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 	mem := tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
 	require.Equal(t, mem, int64(0))

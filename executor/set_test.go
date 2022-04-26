@@ -594,6 +594,14 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_ignore_prepared_cache_close_stmt").Check(testkit.Rows("0"))
 	tk.MustQuery("show global variables like 'tidb_ignore_prepared_cache_close_stmt'").Check(testkit.Rows("tidb_ignore_prepared_cache_close_stmt OFF"))
 
+	// test for tidb_enable_new_cost_interface
+	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set global tidb_enable_new_cost_interface=1")
+	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("1"))
+	tk.MustQuery("show global variables like 'tidb_enable_new_cost_interface'").Check(testkit.Rows()) // hidden
+	tk.MustExec("set global tidb_enable_new_cost_interface=0")
+	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("0"))
+
 	// test for tidb_remove_orderby_in_subquery
 	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
 	tk.MustExec("set session tidb_remove_orderby_in_subquery=1")
@@ -607,9 +615,9 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '16385'"))
 	result := tk.MustQuery("select @@global.max_allowed_packet;")
 	result.Check(testkit.Rows("16384"))
-	tk.MustExec("set @@max_allowed_packet=2047")
+	tk.MustExec("set @@global.max_allowed_packet=2047")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '2047'"))
-	result = tk.MustQuery("select @@max_allowed_packet;")
+	result = tk.MustQuery("select @@global.max_allowed_packet;")
 	result.Check(testkit.Rows("1024"))
 	tk.MustExec("set @@global.max_allowed_packet=0")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '0'"))
@@ -911,6 +919,9 @@ func TestValidateSetVar(t *testing.T) {
 
 	err = tk.ExecToErr("set @@global.max_allowed_packet='hello'")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
+
+	err = tk.ExecToErr("set @@max_allowed_packet=default")
+	require.True(t, terror.ErrorEqual(err, variable.ErrReadOnly))
 
 	tk.MustExec("set @@global.max_connect_errors=18446744073709551615")
 

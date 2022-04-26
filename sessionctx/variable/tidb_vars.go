@@ -109,7 +109,8 @@ const (
 	// The following session variables controls the memory quota during query execution.
 
 	// TiDBMemQuotaQuery controls the memory quota of a query.
-	TiDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
+	TiDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TiDBMemQuotaApplyCache controls the memory quota of a query.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 
 	// TiDBGeneralLog is used to log every query in the server in info level.
@@ -443,6 +444,9 @@ const (
 	// TiDBEnableStrictDoubleTypeCheck is used to control table field double type syntax check.
 	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
 
+	// TiDBOptProjectionPushDown is used to control whether to pushdown projection to coprocessor.
+	TiDBOptProjectionPushDown = "tidb_opt_projection_push_down"
+
 	// TiDBEnableVectorizedExpression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 
@@ -623,6 +627,9 @@ const (
 
 	// TiDBIgnorePreparedCacheCloseStmt indicates whether to ignore close-stmt commands for prepared statements.
 	TiDBIgnorePreparedCacheCloseStmt = "tidb_ignore_prepared_cache_close_stmt"
+
+	// TiDBEnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
+	TiDBEnableNewCostInterface = "tidb_enable_new_cost_interface"
 
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
@@ -832,6 +839,7 @@ const (
 	DefTiDBReadStaleness                         = 0
 	DefTiDBGCMaxWaitTime                         = 24 * 60 * 60
 	DefMaxAllowedPacket                   uint64 = 67108864
+	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
 )
 
 // Process global variables.

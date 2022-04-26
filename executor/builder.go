@@ -47,6 +47,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -117,16 +119,27 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *executorBuilder {
-	return &executorBuilder{
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *executorBuilder {
+	b := &executorBuilder{
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
-		snapshotTSCached: isStaleness,
-		snapshotTS:       snapshotTS,
-		isStaleness:      isStaleness,
+		isStaleness:      staleread.IsStmtStaleness(ctx),
 		readReplicaScope: replicaReadScope,
 	}
+
+	txnManager := sessiontxn.GetTxnManager(ctx)
+	if provider, ok := txnManager.GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); ok {
+		provider.GetReadTSFunc = b.getReadTS
+		provider.GetForUpdateTSFunc = func() (uint64, error) {
+			if b.forUpdateTS != 0 {
+				return b.forUpdateTS, nil
+			}
+			return b.getReadTS()
+		}
+	}
+
+	return b
 }
 
 // MockPhysicalPlan is used to return a specified executor in when build.
@@ -143,9 +156,9 @@ type MockExecutorBuilder struct {
 }
 
 // NewMockExecutorBuilderForTest is ONLY used in test.
-func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *MockExecutorBuilder {
+func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-		executorBuilder: newExecutorBuilder(ctx, is, ti, snapshotTS, isStaleness, replicaReadScope)}
+		executorBuilder: newExecutorBuilder(ctx, is, ti, replicaReadScope)}
 }
 
 // Build builds an executor tree according to `p`.
@@ -733,10 +746,6 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	failpoint.Inject("assertStaleReadValuesSameWithExecuteAndBuilder", func() {
 		// This fail point is used to assert the behavior after refactoring is exactly the same with the previous implement.
 		// Some variables in `plannercore.Execute` is deprecated and only be used for asserting now.
-		if b.snapshotTS != v.SnapshotTS {
-			panic(fmt.Sprintf("%d != %d", b.snapshotTS, v.SnapshotTS))
-		}
-
 		if b.isStaleness != v.IsStaleness {
 			panic(fmt.Sprintf("%v != %v", b.isStaleness, v.IsStaleness))
 		}
@@ -746,7 +755,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		}
 
 		if v.SnapshotTS != 0 {
-			is, err := domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
+			is, err := domain.GetDomain(b.ctx).GetSnapshotInfoSchema(v.SnapshotTS)
 			if err != nil {
 				panic(err)
 			}
@@ -754,13 +763,28 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 			if b.is.SchemaMetaVersion() != is.SchemaMetaVersion() {
 				panic(fmt.Sprintf("%d != %d", b.is.SchemaMetaVersion(), is.SchemaMetaVersion()))
 			}
+
+			ts, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
+			if err != nil {
+				panic(e)
+			}
+
+			if v.SnapshotTS != ts {
+				panic(fmt.Sprintf("%d != %d", ts, v.SnapshotTS))
+			}
 		}
 	})
 
 	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
-		if strconv.FormatUint(b.snapshotTS, 10) != assertTS ||
+		staleread.AssertStmtStaleness(b.ctx, true)
+		ts, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
+		if err != nil {
+			panic(e)
+		}
+
+		if strconv.FormatUint(ts, 10) != assertTS ||
 			assertTxnScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}
@@ -1541,11 +1565,11 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 		return b.dataReaderTS, nil
 	}
 
-	if (b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt) && b.forUpdateTS != 0 {
-		return b.forUpdateTS, nil
+	txnManager := sessiontxn.GetTxnManager(b.ctx)
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+		return txnManager.GetForUpdateTS()
 	}
-
-	return b.getReadTS()
+	return txnManager.GetReadTS()
 }
 
 // getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
@@ -1557,6 +1581,11 @@ func (b *executorBuilder) getReadTS() (uint64, error) {
 	// logics. However for `IndexLookUpMergeJoin` and `IndexLookUpHashJoin`, it requires caching the
 	// snapshotTS and and may even use it after the txn being destroyed. In this case, mark
 	// `snapshotTSCached` to skip `refreshForUpdateTSForRC`.
+	failpoint.Inject("assertNotStaleReadForExecutorGetReadTS", func() {
+		// after refactoring stale read will use its own context provider
+		staleread.AssertStmtStaleness(b.ctx, false)
+	})
+
 	if b.snapshotTSCached {
 		return b.snapshotTS, nil
 	}
@@ -3384,11 +3413,14 @@ func keyColumnsIncludeAllPartitionColumns(keyColumns []int, pe *tables.Partition
 	return true
 }
 
-func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
+func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
 	lookUpContent []*indexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
+
+	// In index join, this is called by multiple goroutines simultaneously, but partitionPruning is not thread-safe.
+	// Use once.Do to avoid DATA RACE here.
 	// TODO: condition based pruning can be do in advance.
-	condPruneResult, err := partitionPruning(ctx, partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	condPruneResult, err := builder.partitionPruning(partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -3441,7 +3473,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 		for i, date := range content.keys {
 			locateKey[keyColOffsets[i]] = date
 		}
-		p, err := partitionTbl.GetPartitionByRow(ctx, locateKey)
+		p, err := partitionTbl.GetPartitionByRow(builder.ctx, locateKey)
 		if err != nil {
 			return nil, false, nil, err
 		}
@@ -3886,6 +3918,11 @@ type dataReaderBuilder struct {
 	*executorBuilder
 
 	selectResultHook // for testing
+	once             struct {
+		sync.Once
+		condPruneResult []table.PhysicalTable
+		err             error
+	}
 }
 
 type mockPhysicalIndexReader struct {
@@ -3985,7 +4022,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	partitionInfo := &v.PartitionInfo
-	usedPartitionList, err := partitionPruning(e.ctx, pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	usedPartitionList, err := builder.partitionPruning(pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
 	if err != nil {
 		return nil, err
 	}
@@ -4189,7 +4226,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4235,7 +4272,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		return e, err
 	}
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4760,6 +4797,16 @@ func (b *executorBuilder) buildAdminShowTelemetry(v *plannercore.AdminShowTeleme
 
 func (b *executorBuilder) buildAdminResetTelemetryID(v *plannercore.AdminResetTelemetryID) Executor {
 	return &AdminResetTelemetryIDExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID())}
+}
+
+func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
+	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
+	builder.once.Do(func() {
+		condPruneResult, err := partitionPruning(builder.executorBuilder.ctx, tbl, conds, partitionNames, columns, columnNames)
+		builder.once.condPruneResult = condPruneResult
+		builder.once.err = err
+	})
+	return builder.once.condPruneResult, builder.once.err
 }
 
 func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,

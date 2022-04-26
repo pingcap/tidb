@@ -51,7 +51,7 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
