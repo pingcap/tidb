@@ -210,7 +210,6 @@ enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
-mem-quota-query = 10000
 max-index-length = 3080
 index-limit = 70
 table-column-count-limit = 4000
@@ -285,7 +284,6 @@ grpc-max-send-msg-size = 40960
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.MaxServerConnections)
-	require.Equal(t, int64(10000), conf.MemQuotaQuery)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)

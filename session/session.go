@@ -2124,6 +2124,9 @@ func (s *session) preparedStmtExec(ctx context.Context,
 	failpoint.Inject("assertTxnManagerInPreparedStmtExec", func() {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInPreparedStmtExec", true)
 		sessiontxn.AssertTxnManagerInfoSchema(s, is)
+		if snapshotTS != 0 {
+			sessiontxn.AssertTxnManagerReadTS(s, snapshotTS)
+		}
 	})
 
 	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, is, snapshotTS, replicaReadScope, args)
@@ -2146,13 +2149,7 @@ func (s *session) preparedStmtExec(ctx context.Context,
 
 // cachedPlanExec short path currently ONLY for cached "point select plan" execution
 func (s *session) cachedPlanExec(ctx context.Context,
-	is infoschema.InfoSchema, snapshotTS uint64,
-	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, replicaReadScope string, args []types.Datum) (sqlexec.RecordSet, error) {
-
-	failpoint.Inject("assertTxnManagerInCachedPlanExec", func() {
-		sessiontxn.RecordAssert(s, "assertTxnManagerInCachedPlanExec", true)
-		sessiontxn.AssertTxnManagerInfoSchema(s, is)
-	})
+	is infoschema.InfoSchema, stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, replicaReadScope string, args []types.Datum) (sqlexec.RecordSet, error) {
 
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
@@ -2160,8 +2157,14 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
 		return nil, err
 	}
-	isStaleness := snapshotTS != 0
-	s.sessionVars.StmtCtx.IsStaleness = isStaleness
+
+	failpoint.Inject("assertTxnManagerInCachedPlanExec", func() {
+		sessiontxn.RecordAssert(s, "assertTxnManagerInCachedPlanExec", true)
+		sessiontxn.AssertTxnManagerInfoSchema(s, is)
+		// stale read should not reach here
+		staleread.AssertStmtStaleness(s, false)
+	})
+
 	execAst.BinaryArgs = args
 	execPlan, err := planner.OptimizeExecStmt(ctx, s, execAst, is)
 	if err != nil {
@@ -2178,8 +2181,6 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		OutputNames:      execPlan.OutputNames(),
 		PsStmt:           prepareStmt,
 		Ti:               &executor.TelemetryInfo{},
-		IsStaleness:      isStaleness,
-		SnapshotTS:       snapshotTS,
 		ReplicaReadScope: replicaReadScope,
 	}
 	compileDuration := time.Since(s.sessionVars.StartTime)
@@ -2303,8 +2304,14 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
 
-	txnCtxProvider := &sessiontxn.SimpleTxnContextProvider{
-		InfoSchema: is,
+	var txnCtxProvider sessiontxn.TxnContextProvider
+	staleness := snapshotTS > 0
+	if staleness {
+		txnCtxProvider = staleread.NewStalenessTxnContextProvider(is, snapshotTS)
+	} else {
+		txnCtxProvider = &sessiontxn.SimpleTxnContextProvider{
+			InfoSchema: is,
+		}
 	}
 
 	txnManager := sessiontxn.GetTxnManager(s)
@@ -2313,7 +2320,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
-	ok, err = s.IsCachedExecOk(ctx, preparedStmt, snapshotTS != 0)
+	ok, err = s.IsCachedExecOk(ctx, preparedStmt, staleness)
 	if err != nil {
 		return nil, err
 	}
@@ -2321,7 +2328,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	defer s.txn.onStmtEnd()
 
 	if ok {
-		return s.cachedPlanExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, replicaReadScope, args)
+		return s.cachedPlanExec(ctx, txnManager.GetTxnInfoSchema(), stmtID, preparedStmt, replicaReadScope, args)
 	}
 	return s.preparedStmtExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, replicaReadScope, args)
 }
@@ -2500,7 +2507,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		TxnScope:    txnScope,
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
-	return nil
+	return sessiontxn.GetTxnManager(s).SetContextProvider(staleread.NewStalenessTxnContextProvider(is, txn.StartTS()))
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
@@ -2717,16 +2724,6 @@ func loadCollationParameter(se *session) (bool, error) {
 }
 
 func updateMemoryConfigAndSysVar(se *session) error {
-	if !config.IsMemoryQuotaQuerySetByUser {
-		newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
-		if err != nil {
-			return err
-		}
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.MemQuotaQuery = newMemoryQuotaQuery
-		})
-		variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10))
-	}
 	if !config.IsOOMActionSetByUser {
 		newOOMAction, err := loadDefOOMAction(se)
 		if err != nil {
@@ -2738,23 +2735,6 @@ func updateMemoryConfigAndSysVar(se *session) error {
 	}
 
 	return nil
-}
-
-// loadDefMemQuotaQuery loads the default value of mem-quota-query.
-// We'll read a tuple if the cluster is upgraded from v3.0.x to v4.0.9+.
-// An empty result will be returned if it's a newly deployed cluster whose
-// version is v4.0.9.
-// See the comment upon the function `upgradeToVer54` for details.
-func loadDefMemQuotaQuery(se *session) (int64, error) {
-	_, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbDefMemoryQuotaQuery)
-	if err != nil {
-		if err == errResultIsEmpty {
-			return 1 << 30, nil
-		}
-		return 1 << 30, err
-	}
-	// If there is a tuple in mysql.tidb, the value must be 32 << 30.
-	return 32 << 30, nil
 }
 
 func loadDefOOMAction(se *session) (string, error) {
@@ -3112,7 +3092,7 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		return
 	}
 	if !s.txn.validOrPending() {
-		if s.GetSessionVars().StmtCtx.IsStaleness {
+		if staleread.IsStmtStaleness(s) {
 			// Do nothing when StmtCtx.IsStaleness is true
 			// we don't need to request tso for stale read
 			return
