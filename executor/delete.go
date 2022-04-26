@@ -159,6 +159,9 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
+		if unmatchedOuterRow(info, joinedRow) {
+			continue
+		}
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = kv.NewHandleMap()
 		}
