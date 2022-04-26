@@ -252,7 +252,81 @@ func TestInvalidReadCacheTable(t *testing.T) {
 	}
 }
 
-func TestTxnSavepoint(t *testing.T) {
+func TestTxnSavepoint0(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, a int, unique index idx(id))")
+
+	cases := []struct {
+		sql string
+		sps []string
+		err string
+	}{
+		{"savepoint s1", nil, ""},
+		{"rollback to s1", nil, "[executor:1305]SAVEPOINT s1 does not exist"},
+		{"begin", nil, ""},
+		{"savepoint s1", []string{"s1"}, ""},
+		{"savepoint s2", []string{"s1", "s2"}, ""},
+		{"savepoint s3", []string{"s1", "s2", "s3"}, ""},
+		{"savepoint S1", []string{"s2", "s3", "s1"}, ""},
+		{"rollback to S3", []string{"s2", "s3"}, ""},
+		{"rollback to S1", []string{"s2", "s3"}, "[executor:1305]SAVEPOINT S1 does not exist"},
+		{"rollback to s1", []string{"s2", "s3"}, "[executor:1305]SAVEPOINT s1 does not exist"},
+		{"rollback to S3", []string{"s2", "s3"}, ""},
+		{"rollback to S2", []string{"s2"}, ""},
+		{"rollback to S2", []string{"s2"}, ""},
+		{"rollback", nil, ""},
+
+		{"set autocommit=1", nil, ""},
+		{"savepoint s1", nil, ""},
+		{"set autocommit=0", nil, ""},
+		{"savepoint s1", []string{"s1"}, ""},
+		{"savepoint s2", []string{"s1", "s2"}, ""},
+		{"savepoint S1", []string{"s2", "s1"}, ""},
+		{"set autocommit=1", nil, ""},
+		{"savepoint s1", nil, ""},
+
+		{"begin", nil, ""},
+		{"savepoint s1", []string{"s1"}, ""},
+		{"set autocommit=1", nil, ""},
+		{"set autocommit=0", nil, ""},
+		{"savepoint s1", []string{"s1"}, ""},
+		{"commit", nil, ""},
+
+		{"begin", nil, ""},
+		{"savepoint s1", []string{"s1"}, ""},
+		{"savepoint s2", []string{"s1", "s2"}, ""},
+		{"savepoint s3", []string{"s1", "s2", "s3"}, ""},
+		{"release savepoint s2", []string{"s1", "s3"}, ""},
+		{"rollback to S2", []string{"s1", "s3"}, "[executor:1305]SAVEPOINT S2 does not exist"},
+		{"release savepoint s3", []string{"s1"}, ""},
+		{"savepoint s2", []string{"s1", "s2"}, ""},
+		{"release savepoint s1", []string{"s2"}, ""},
+		{"release savepoint s1", []string{"s2"}, "[executor:1305]SAVEPOINT s1 does not exist"},
+		{"release savepoint S2", nil, ""},
+		{"commit", nil, ""},
+	}
+
+	for idx, ca := range cases {
+		comment := fmt.Sprintf("idx: %v, %#v", idx, ca)
+		_, err := tk.Exec(ca.sql)
+		if ca.err == "" {
+			require.NoError(t, err, comment)
+		} else {
+			require.Error(t, err, comment)
+			require.Equal(t, ca.err, err.Error(), comment)
+		}
+		txnCtx := tk.Session().GetSessionVars().TxnCtx
+		require.Equal(t, len(ca.sps), len(txnCtx.Savepoints), comment)
+		for i, sp := range ca.sps {
+			require.Equal(t, sp, txnCtx.Savepoints[i].Name, comment)
+		}
+	}
+}
+
+func TestTxnSavepoint1(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

@@ -646,7 +646,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
-	if !sessVars.InTxn() {
+	if !sessVars.InTxn() && sessVars.IsAutocommit() {
 		return nil
 	}
 	txn, err := e.ctx.Txn(true)
