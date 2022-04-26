@@ -1465,7 +1465,9 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		if p.err = p.staleReadProcessor.OnSelectTable(tn); p.err != nil {
 			return
 		}
-		p.updateStateFromStaleReadProcessor()
+		if p.err = p.updateStateFromStaleReadProcessor(); p.err != nil {
+			return
+		}
 	}
 
 	table, err := p.tableByName(tn)
@@ -1547,7 +1549,9 @@ func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
 	}
 
 	if p.err = p.staleReadProcessor.OnExecutePreparedStmt(prepared.SnapshotTSEvaluator); p.err == nil {
-		p.updateStateFromStaleReadProcessor()
+		if p.err = p.updateStateFromStaleReadProcessor(); p.err != nil {
+			return
+		}
 	}
 }
 
@@ -1610,9 +1614,9 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	}
 }
 
-func (p *preprocessor) updateStateFromStaleReadProcessor() {
+func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 	if p.initedLastSnapshotTS {
-		return
+		return nil
 	}
 
 	if p.IsStaleness = p.staleReadProcessor.IsStaleness(); p.IsStaleness {
@@ -1622,8 +1626,18 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() {
 		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 		// in stmtCtx
-		if p.flag&inPrepare == 0 {
+		if p.flag&initTxnContextProvider != 0 {
 			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			if !p.ctx.GetSessionVars().InTxn() {
+				err := sessiontxn.GetTxnManager(p.ctx).SetContextProvider(staleread.NewStalenessTxnContextProvider(
+					p.InfoSchema,
+					p.LastSnapshotTS,
+				))
+
+				if err != nil {
+					return err
+				}
+			}
 		}
 	}
 
@@ -1639,6 +1653,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() {
 	}
 
 	p.initedLastSnapshotTS = true
+	return nil
 }
 
 // ensureInfoSchema get the infoschema from the preprocessor.
@@ -1666,6 +1681,16 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 		return
 	}
 
+	txnManager := sessiontxn.GetTxnManager(p.ctx)
+	currentProvider := txnManager.GetContextProvider()
+
+	if currentProvider != nil {
+		if _, ok := currentProvider.(*sessiontxn.SimpleTxnContextProvider); !ok {
+			return
+		}
+	}
+
+	// if current provider is nil or `SimpleTxnContextProvider`, it means we should use p.ensureInfoSchema()
 	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
 		InfoSchema: p.ensureInfoSchema(),
 	})

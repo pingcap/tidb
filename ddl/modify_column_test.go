@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
@@ -30,10 +29,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -907,83 +904,4 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 
 	res := tk.MustQuery("show warnings")
 	require.Len(t, res.Rows(), count)
-}
-
-func TestModifyColumnRollBack(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (c1 int, c2 int, c3 int default 1, index (c1))")
-
-	var c2 *table.Column
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: dom}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
-		if checkErr != nil {
-			return
-		}
-
-		tbl := external.GetTableByName(t, tk, "test", "t1")
-		for _, col := range tbl.Cols() {
-			if col.Name.L == "c2" {
-				c2 = col
-			}
-		}
-		if mysql.HasPreventNullInsertFlag(c2.Flag) {
-			tk.MustGetErrCode("insert into t1(c2) values (null);", errno.ErrBadNull)
-		}
-
-		hookCtx := mock.NewContext()
-		hookCtx.Store = store
-		err := hookCtx.NewTxn(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-
-		jobIDs := []int64{job.ID}
-		txn, err := hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		errs, err := admin.CancelJobs(txn, jobIDs)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		// It only tests cancel one DDL job.
-		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
-			return
-		}
-
-		txn, err = hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		err = txn.Commit(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-	}
-
-	dom.DDL().SetHook(hook)
-	done := make(chan error, 1)
-	go backgroundExec(store, "alter table test.t1 change c2 c2 bigint not null;", done)
-
-	err := <-done
-	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
-	tk.MustExec("insert into t1(c2) values (null);")
-
-	tbl := external.GetTableByName(t, tk, "test", "t1") //nolint:typecheck
-	for _, col := range tbl.Cols() {
-		if col.Name.L == "c2" {
-			c2 = col
-		}
-	}
-	require.False(t, mysql.HasNotNullFlag(c2.Flag))
-	tk.MustExec("drop table t1")
 }
