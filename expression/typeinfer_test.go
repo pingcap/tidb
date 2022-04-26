@@ -19,6 +19,7 @@ import (
 	"math"
 	"testing"
 
+	"context"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/net/context"
 )
 
 func TestInferType(t *testing.T) {

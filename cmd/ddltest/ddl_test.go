@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	goctx "context"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	goctx "golang.org/x/net/context"
 )
 
 var (
