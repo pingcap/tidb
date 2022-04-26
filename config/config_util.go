@@ -46,7 +46,6 @@ var (
 		"Performance.StmtCountLimit":      {},
 		"Performance.TCPKeepAlive":        {},
 		"OOMAction":                       {},
-		"MemQuotaQuery":                   {},
 		"TiKVClient.StoreLimit":           {},
 		"Log.Level":                       {},
 		"Log.SlowThreshold":               {},

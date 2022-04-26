@@ -1288,7 +1288,7 @@ func NewSessionVars() *SessionVars {
 		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:      config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaQuery:      DefTiDBMemQuotaQuery,
 		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
 	}
 	vars.BatchSize = BatchSize{
