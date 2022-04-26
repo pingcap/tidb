@@ -65,7 +65,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
 
-	var cartesianGroup []LogicalPlan
+	var cartesianGroup = make([]LogicalPlan, 0, 1)
 	err := s.constructConnectedJoinTree(tracer)
 	if err != nil {
 		return nil, err
