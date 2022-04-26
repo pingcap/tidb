@@ -817,9 +817,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 			err := do.acquireServerID(ctx)
 			if err != nil {
 				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
+				do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
 			} else {
-				do.isLostConnectionToPD.Store(0)
+				do.isLostConnectionToPD.Set(0)
 			}
 
 			do.wg.Add(1)
@@ -852,27 +852,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		return err
 	}
 
-<<<<<<< HEAD
-	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
-		if do.etcdClient != nil {
-			err := do.acquireServerID(ctx)
-			if err != nil {
-				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-				do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
-			} else {
-				do.isLostConnectionToPD.Set(0)
-			}
-
-			do.wg.Add(1)
-			go do.serverIDKeeper()
-		} else {
-			// set serverID for standalone deployment to enable 'KILL'.
-			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
-		}
-	}
-
-=======
->>>>>>> 4e708d1ec... domain: adjust the order of acquireServerID and GlobalInfoSyncerInit to fix global kill test (#33536)
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
