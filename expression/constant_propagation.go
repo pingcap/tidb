@@ -184,6 +184,11 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 	return false, false, cond
 }
 
+type condInfo struct {
+	c         *Constant
+	collation string
+}
+
 type propConstSolver struct {
 	basePropConstSolver
 	conditions []Expression
@@ -204,13 +209,15 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		cols := make([]*Column, 0, len(mapper))
 		cons := make([]Expression, 0, len(mapper))
+		colls := make([]string, 0, len(mapper))
 		for id, con := range mapper {
 			cols = append(cols, s.columns[id])
-			cons = append(cons, con)
+			cons = append(cons, con.c)
+			colls = append(colls, con.collation)
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
+				s.conditions[i] = ColumnSubstitute4PropagateConstantEQ(cond, colls, NewSchema(cols...), cons)
 			}
 		}
 	}
@@ -286,8 +293,8 @@ func (s *propConstSolver) setConds2ConstFalse() {
 }
 
 // pickNewEQConds tries to pick new equal conds and puts them to retMapper.
-func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Constant) {
-	retMapper = make(map[int]*Constant)
+func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*condInfo) {
+	retMapper = make(map[int]*condInfo)
 	for i, cond := range s.conditions {
 		if visited[i] {
 			continue
@@ -319,6 +326,9 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		if col.GetType().Hybrid() {
 			continue
 		}
+
+		_, coll := cond.(*ScalarFunction).CharsetAndCollation()
+
 		visited[i] = true
 		updated, foreverFalse := s.tryToUpdateEQList(col, con)
 		if foreverFalse {
@@ -326,7 +336,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 			return nil
 		}
 		if updated {
-			retMapper[s.getColID(col)] = con
+			retMapper[s.getColID(col)] = &condInfo{con, coll}
 		}
 	}
 	return
@@ -386,7 +396,7 @@ func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 }
 
 // pickEQCondsOnOuterCol picks constant equal expression from specified conditions.
-func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Constant, visited []bool, filterConds bool) map[int]*Constant {
+func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*condInfo, visited []bool, filterConds bool) map[int]*condInfo {
 	var conds []Expression
 	var condsOffset int
 	if filterConds {
@@ -426,6 +436,9 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 		if !s.outerSchema.Contains(col) {
 			continue
 		}
+
+		_, coll := cond.(*ScalarFunction).CharsetAndCollation()
+
 		visited[i+condsOffset] = true
 		updated, foreverFalse := s.tryToUpdateEQList(col, con)
 		if foreverFalse {
@@ -433,15 +446,15 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 			return nil
 		}
 		if updated {
-			retMapper[s.getColID(col)] = con
+			retMapper[s.getColID(col)] = &condInfo{con, coll}
 		}
 	}
 	return retMapper
 }
 
 // pickNewEQConds picks constant equal expressions from join and filter conditions.
-func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Constant {
-	retMapper := make(map[int]*Constant)
+func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*condInfo {
+	retMapper := make(map[int]*condInfo)
 	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, true)
 	if retMapper == nil {
 		// Filter is constant false or error occurred, enforce early termination.
@@ -464,13 +477,15 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 		}
 		cols := make([]*Column, 0, len(mapper))
 		cons := make([]Expression, 0, len(mapper))
+		colls := make([]string, 0, len(mapper))
 		for id, con := range mapper {
 			cols = append(cols, s.columns[id])
-			cons = append(cons, con)
+			cons = append(cons, con.c)
+			colls = append(colls, con.collation)
 		}
 		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				s.joinConds[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
+				s.joinConds[i] = ColumnSubstitute4PropagateConstantEQ(cond, colls, NewSchema(cols...), cons)
 			}
 		}
 	}
