@@ -218,7 +218,6 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType) (floa
 		rowSize := tblStats.GetAvgRowSize(p.ctx, tblScan.Schema().Columns, false, false)
 		p.planCost += tblScan.StatsCount() * rowSize * netFactor // net I/O cost
 	}
-
 	for _, partialScan := range p.partialPlans {
 		childCost, err := partialScan.GetPlanCost(property.CopSingleReadTaskType)
 		if err != nil {
