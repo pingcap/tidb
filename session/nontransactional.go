@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -79,7 +81,13 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	if stmt.DryRun == ast.DryRunQuery {
 		return buildDryRunResults(stmt.DryRun, []string{selectSQL}, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
-	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumnInfo)
+
+	// TODO: choose an appropriate quota.
+	// Use the mem-quota-query as a workaround. As a result, a NT-DML may consume 2x of the memory quota.
+	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, config.GetGlobalConfig().MemQuotaQuery)
+	memTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+	defer memTracker.DetachFromGlobalTracker()
+	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumnInfo, memTracker)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +302,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 }
 
 func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session,
-	selectSQL string, shardColumnInfo *model.ColumnInfo) ([]job, error) {
+	selectSQL string, shardColumnInfo *model.ColumnInfo, memTracker *memory.Tracker) ([]job, error) {
 	logutil.Logger(ctx).Info("Non-transactional delete, select SQL", zap.String("selectSQL", selectSQL))
 	var shardColumnCollate string
 	if shardColumnInfo != nil {
@@ -342,7 +350,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 		if chk.NumRows() == 0 {
 			if currentSize > 0 {
 				// there's remaining work
-				jobs = append(jobs, job{jobID: jobCount, start: currentStart, end: currentEnd, jobSize: currentSize})
+				jobs = appendNewJob(jobs, jobCount, currentStart, currentEnd, currentSize, memTracker)
 			}
 			break
 		}
@@ -368,7 +376,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 					return nil, err
 				}
 				if cmp != 0 {
-					jobs = append(jobs, job{jobID: jobCount, start: *currentStart.Clone(), end: *currentEnd.Clone(), jobSize: currentSize})
+					jobs = appendNewJob(jobs, jobCount, *currentStart.Clone(), *currentEnd.Clone(), currentSize, memTracker)
 					jobCount++
 					currentSize = 0
 					currentStart = newEnd
@@ -382,6 +390,12 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 	}
 
 	return jobs, nil
+}
+
+func appendNewJob(jobs []job, count int, start types.Datum, end types.Datum, size int, tracker *memory.Tracker) []job {
+	jobs = append(jobs, job{jobID: count, start: start, end: end, jobSize: size})
+	tracker.Consume(start.EstimatedMemUsage() + end.EstimatedMemUsage() + 64)
+	return jobs
 }
 
 func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.TableName, string, *model.ColumnInfo, error) {
