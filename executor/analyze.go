@@ -87,6 +87,9 @@ const (
 	maxSketchSize       = 10000
 )
 
+// MemToGC records the memory size to be GC during Analyze
+var MemToGC = atomicutil.NewInt64(0)
+
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
@@ -726,7 +729,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		})
 		defer wg.Wait()
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
-		runtime.GC() // force GC after stats built
+		tryGC(colExec.memTracker, true)
 		if err != nil {
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
@@ -985,7 +988,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 	rootCollectorSize := rootRowCollector.Base().MemSize
 	e.memTracker.Consume(rootCollectorSize)
-	memToGC := atomicutil.NewInt64(0)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
@@ -996,7 +998,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
-		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i, e.memTracker, memToGC)
+		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i, e.memTracker)
 	}
 	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker); err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -1004,7 +1006,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	mergeWorkerPanicCnt := 0
 	for mergeWorkerPanicCnt < statsConcurrency {
-		tryGC(memToGC, e.memTracker)
+		tryGC(e.memTracker, false)
 		mergeResult, ok := <-mergeResultCh
 		if !ok {
 			break
@@ -1019,7 +1021,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		oldRootCollectorSize := rootCollectorSize
 		rootRowCollector.MergeCollector(mergeResult.collector)
 		rootCollectorSize = rootRowCollector.Base().MemSize
-		memToGC.Add(oldRootCollectorSize + mergeResult.collector.Base().MemSize - rootCollectorSize)
+		MemToGC.Add(oldRootCollectorSize + mergeResult.collector.Base().MemSize - rootCollectorSize)
 	}
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -1079,7 +1081,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	e.samplingBuilderWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
 		e.samplingBuilderWg.Run(func() {
-			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh, memToGC)
+			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
 		})
 	}
 	for i, col := range e.colsInfo {
@@ -1119,7 +1121,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	close(buildTaskChan)
 	panicCnt := 0
 	for panicCnt < statsConcurrency {
-		tryGC(memToGC, e.memTracker)
+		tryGC(e.memTracker, false)
 		err1, ok := <-buildResultChan
 		if !ok {
 			break
@@ -1143,15 +1145,16 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			return 0, nil, nil, nil, nil, err
 		}
 	}
+	MemToGC.Add(rootCollectorSize)
 	return
 }
 
-func tryGC(memToGC *atomicutil.Int64, memTracker *memory.Tracker) {
-	toGC := memToGC.Load()
-	if toGC > 524288000 { // GC when exceeds 500MB
+func tryGC(memTracker *memory.Tracker, force bool) {
+	toGC := MemToGC.Load()
+	if force || toGC > 524288000 { // GC when exceeds 500MB
 		runtime.GC()
 		memTracker.Consume(-toGC)
-		memToGC.Add(-toGC)
+		MemToGC.Add(-toGC)
 	}
 }
 
@@ -1327,8 +1330,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	resultCh chan<- *samplingMergeResult,
 	taskCh <-chan []byte,
 	l int, idx int,
-	memTracker *memory.Tracker,
-	memToGC *atomicutil.Int64) {
+	memTracker *memory.Tracker) {
 	isClosedChanThread := idx == 0
 	defer func() {
 		if r := recover(); r != nil {
@@ -1385,8 +1387,8 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 		retCollector.MergeCollector(subCollector)
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
-		memToGC.Add(dataSize + colRespSize + tmpMemSize)
-		memToGC.Add(oldRetCollectorSize + subCollectorSize - newRetCollectorSize)
+		MemToGC.Add(dataSize + colRespSize + tmpMemSize)
+		MemToGC.Add(oldRetCollectorSize + subCollectorSize - newRetCollectorSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -1405,8 +1407,7 @@ func (e *AnalyzeColumnsExec) subBuildWorker(
 	hists []*statistics.Histogram,
 	topns []*statistics.TopN,
 	collectors []*statistics.SampleCollector,
-	exitCh chan struct{},
-	memToGC *atomicutil.Int64) {
+	exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -1537,6 +1538,7 @@ workLoop:
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
+			MemToGC.Add(totalMemInc)
 		case <-exitCh:
 			return
 		}
