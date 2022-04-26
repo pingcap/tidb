@@ -116,6 +116,14 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t use index(b) where b+200 < 1000",            // pushed down to lookup index-side
 		"select * from t use index(b) where c+200 < 1000",            // pushed down to lookup table-side
 		"select * from t use index(b) where mod(b+c, 200) < 100",     // not pushed down
+		// aggregation
+		"select /*+ hash_agg() */ count(*) from t use index(primary) where a < 200",
+		"select /*+ hash_agg() */ sum(a) from t use index(primary) where a < 200",
+		"select /*+ hash_agg() */ avg(a), b from t use index(primary) where a < 200 group by b",
+		"select /*+ stream_agg() */ count(*) from t use index(primary) where a < 200",
+		"select /*+ stream_agg() */ sum(a) from t use index(primary) where a < 200",
+		"select /*+ stream_agg() */ avg(a), b from t use index(primary) where a < 200 group by b",
+		"select /*+ stream_agg() */ avg(d), c from t use index(cd) group by c",
 		// sort
 		"select * from t use index(primary) where a < 200 order by a", // table-scan + sort
 		"select * from t use index(primary) where a = 200  order by a",
