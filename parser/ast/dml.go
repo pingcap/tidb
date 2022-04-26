@@ -1042,6 +1042,7 @@ type CommonTableExpression struct {
 	Name        model.CIStr
 	Query       *SubqueryExpr
 	ColNameList []model.CIStr
+	IsRecursive bool
 }
 
 // Restore implement it Before using
@@ -1184,6 +1185,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 		}()
 	}
 	if !n.WithBeforeBraces && n.With != nil {
+		defer ctx.RestoreCTEFunc()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err

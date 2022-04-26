@@ -114,10 +114,9 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
 	v := preprocessor{
-		ctx:              ctx,
-		tableAliasInJoin: make([]map[string]interface{}, 0),
-		preprocessWith: preprocessWith{withNameNew: make([]*ast.WithClause, 0),
-			withNameCanUsed: make([]*ast.WithClause, 0)},
+		ctx:                ctx,
+		tableAliasInJoin:   make([]map[string]interface{}, 0),
+		preprocessWith:     preprocessWith{withNameNew: make([]string, 0), withNameBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
 	}
 	for _, optFn := range preprocessOpt {
@@ -179,14 +178,8 @@ type PreprocessExecuteISUpdate struct {
 
 // preprocessWith is used to record info from WITH statements like CTE name.
 type preprocessWith struct {
-	withNameNew     []*ast.WithClause
-	withNameCanUsed []*ast.WithClause
-}
-
-func (p *preprocessWith) popWithNameCanUsedIfNotEmpty() {
-	if len(p.withNameCanUsed) > 0 {
-		p.withNameCanUsed = p.withNameCanUsed[:len(p.withNameCanUsed)-1]
-	}
+	withNameNew          []string
+	withNameBeforeOffset []int
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -331,17 +324,17 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
 	case *ast.WithClause:
-		p.preprocessWith.withNameNew = append(p.preprocessWith.withNameNew, node)
-	case *ast.CommonTableExpression:
-		lastWithNode := p.preprocessWith.withNameNew[len(p.preprocessWith.withNameNew)-1]
-		newCTEMap := make([]*ast.CommonTableExpression, 0)
-		for _, cte := range lastWithNode.CTEs {
-			if cte.Name.L == node.Name.L && !lastWithNode.IsRecursive {
-				continue
+		if node.IsRecursive {
+			for _, cte := range node.CTEs {
+				cte.IsRecursive = true
 			}
-			newCTEMap = append(newCTEMap, cte)
 		}
-		lastWithNode.CTEs = newCTEMap
+	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+		beforeOffset := len(p.preprocessWith.withNameNew)
+		p.preprocessWith.withNameBeforeOffset = append(p.preprocessWith.withNameBeforeOffset, beforeOffset)
+		if cteNode, exist := node.(*ast.CommonTableExpression); exist && cteNode.IsRecursive {
+			p.preprocessWith.withNameNew = append(p.preprocessWith.withNameNew, cteNode.Name.L)
+		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
 		// start transaction read only as of timestamp ....
@@ -585,37 +578,17 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if x.Kind == ast.BRIEKindRestore {
 			p.flag &= ^inCreateOrDropTable
 		}
-	case *ast.CommonTableExpression:
-		lastWithNode := p.preprocessWith.withNameNew[len(p.preprocessWith.withNameNew)-1]
-		if !lastWithNode.IsRecursive {
-			lastWithNode.CTEs = append(lastWithNode.CTEs, x)
+	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+		lenWithNameBeforeOffset := len(p.preprocessWith.withNameBeforeOffset)
+		if lenWithNameBeforeOffset < 1 {
+			p.err = ErrInternal.GenWithStack("len(withNameBeforeOffset) is less than one.Maybe it was deleted is somewhere.Should match in Enter and Leave")
+			break
 		}
-
-	case *ast.WithClause:
-		if len(p.preprocessWith.withNameNew) > 0 {
-			p.preprocessWith.withNameNew =
-				p.preprocessWith.withNameNew[:len(p.preprocessWith.withNameNew)-1]
-		}
-		p.preprocessWith.withNameCanUsed = append(p.preprocessWith.withNameCanUsed, x)
-	case *ast.SetOprSelectList:
-		if x.With != nil {
-			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
-		}
-	case *ast.SelectStmt:
-		if x.With != nil {
-			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
-		}
-	case *ast.UpdateStmt:
-		if x.With != nil {
-			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
-		}
-	case *ast.DeleteStmt:
-		if x.With != nil {
-			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
-		}
-	case *ast.SetOprStmt:
-		if x.With != nil {
-			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
+		beforeOffset := p.preprocessWith.withNameBeforeOffset[lenWithNameBeforeOffset-1]
+		p.preprocessWith.withNameBeforeOffset = p.preprocessWith.withNameBeforeOffset[:lenWithNameBeforeOffset-1]
+		p.preprocessWith.withNameNew = p.preprocessWith.withNameNew[:beforeOffset]
+		if cteNode, exist := x.(*ast.CommonTableExpression); exist {
+			p.preprocessWith.withNameNew = append(p.preprocessWith.withNameNew, cteNode.Name.L)
 		}
 	}
 
@@ -1484,20 +1457,9 @@ func (p *preprocessor) stmtType() string {
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 
-		if len(p.preprocessWith.withNameNew) > 0 {
-			with := p.preprocessWith.withNameNew[len(p.preprocessWith.withNameNew)-1]
-			for _, cte := range with.CTEs {
-				if cte.Name.L == tn.Name.L {
-					return
-				}
-			}
-		}
-
-		for _, with := range p.preprocessWith.withNameCanUsed {
-			for _, cte := range with.CTEs {
-				if cte.Name.L == tn.Name.L {
-					return
-				}
+		for _, cte := range p.preprocessWith.withNameNew {
+			if cte == tn.Name.L {
+				return
 			}
 		}
 
