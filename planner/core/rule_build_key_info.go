@@ -237,7 +237,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 				uniqueKey = append(uniqueKey, schema.Columns[i])
 				findUniqueKey = true
 				if newKeyOK {
-					if !mysql.HasNotNullFlag(col.Flag) {
+					if !mysql.HasNotNullFlag(col.GetFlag()) {
 						newKeyOK = false
 						break
 					}
@@ -291,7 +291,7 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 	}
 	if ds.tableInfo.PKIsHandle {
 		for i, col := range ds.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{selfSchema.Columns[i]})
 				break
 			}

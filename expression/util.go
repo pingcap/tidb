@@ -428,7 +428,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
-						changed = checkCollationStrictness(coll, newFuncExpr.GetType().Collate)
+						changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
 					}
 				}
 			}
@@ -904,7 +904,7 @@ func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err e
 // DatumToConstant generates a Constant expression from a Datum.
 func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 	t := types.NewFieldType(tp)
-	t.Flag |= flag
+	t.AddFlag(flag)
 	return &Constant{Value: d, RetType: t}
 }
 
@@ -937,7 +937,7 @@ func DisableParseJSONFlag4Expr(expr Expression) {
 	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
 		return
 	}
-	expr.GetType().Flag &= ^mysql.ParseToJSONFlag
+	expr.GetType().SetFlag(expr.GetType().GetFlag() & ^mysql.ParseToJSONFlag)
 }
 
 // ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
