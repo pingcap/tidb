@@ -689,7 +689,7 @@ func TestAddColumn(t *testing.T) {
 
 	d.SetHook(tc)
 
-	jobID := testCreateColumn(tk, t, testNewContext(store), tableID, newColName, "", defaultColValue, dom)
+	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColName, "", defaultColValue, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	require.True(t, checkOK)
