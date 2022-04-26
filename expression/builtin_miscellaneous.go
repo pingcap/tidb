@@ -435,7 +435,7 @@ func (b *builtinInetAtonSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	// ip address should not end with '.'.
 	if len(val) == 0 || val[len(val)-1] == '.' {
-		return 0, true, nil
+		return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
 	}
 
 	var (
@@ -447,17 +447,17 @@ func (b *builtinInetAtonSig) evalInt(row chunk.Row) (int64, bool, error) {
 			digit := uint64(c - '0')
 			byteResult = byteResult*10 + digit
 			if byteResult > 255 {
-				return 0, true, nil
+				return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
 			}
 		} else if c == '.' {
 			dotCount++
 			if dotCount > 3 {
-				return 0, true, nil
+				return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
 			}
 			result = (result << 8) + byteResult
 			byteResult = 0
 		} else {
-			return 0, true, nil
+			return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
 		}
 	}
 	// 127 		-> 0.0.0.127
@@ -568,12 +568,12 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	if len(val) == 0 {
-		return "", true, nil
+		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton6")
 	}
 
 	ip := net.ParseIP(val)
 	if ip == nil {
-		return "", true, nil
+		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton6")
 	}
 
 	var isMappedIpv6 bool
