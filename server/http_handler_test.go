@@ -700,7 +700,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	bin := base64.StdEncoding.EncodeToString(bs)
 
 	unitTest := func(col *column) {
-		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
+		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.GetType(), col.tp.GetFlag(), col.tp.GetFlen(), bin)
 		resp, err := ts.fetchStatus(path)
 		require.NoErrorf(t, err, "url: %v", ts.statusURL(path))
 		decoder := json.NewDecoder(resp.Body)

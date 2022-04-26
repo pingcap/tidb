@@ -194,8 +194,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			panic("point get replica option fail")
 		}
 	})
-	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
-	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), e.snapshot)
+	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 
@@ -499,22 +498,22 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
 		// So we don't use CastValue for string value for now.
 		// TODO: merge two if branch.
-		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
+		if colInfo.GetType() == mysql.TypeString || colInfo.GetType() == mysql.TypeVarString || colInfo.GetType() == mysql.TypeVarchar {
 			var str string
 			str, err = idxVals[i].ToString()
-			idxVals[i].SetString(str, colInfo.FieldType.Collate)
-		} else if colInfo.Tp == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
+			idxVals[i].SetString(str, colInfo.FieldType.GetCollate())
+		} else if colInfo.GetType() == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
 			var str string
 			var e types.Enum
 			str, err = idxVals[i].ToString()
 			if err != nil {
 				return nil, kv.ErrNotExist
 			}
-			e, err = types.ParseEnumName(colInfo.FieldType.Elems, str, colInfo.FieldType.Collate)
+			e, err = types.ParseEnumName(colInfo.FieldType.GetElems(), str, colInfo.FieldType.GetCollate())
 			if err != nil {
 				return nil, kv.ErrNotExist
 			}
-			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.Collate)
+			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.GetCollate())
 		} else {
 			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
 			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.
@@ -596,7 +595,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 
 func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk,
 	decoder *codec.Decoder, pkCols []int64, prefixColIDs []int64) (bool, error) {
-	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
@@ -608,7 +607,7 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 		return false, nil
 	}
 	// Try to decode common handle.
-	if mysql.HasPriKeyFlag(col.RetType.Flag) {
+	if mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 		for i, hid := range pkCols {
 			if col.ID == hid && notPKPrefixCol(hid, prefixColIDs) {
 				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)

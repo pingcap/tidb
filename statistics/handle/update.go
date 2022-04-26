@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -376,7 +377,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
-	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
+	tbl, ok := h.statsCache.Load().(statsCache).Get(id)
 	if !ok {
 		// No need to dump if the stats is invalid.
 		return false
@@ -572,7 +573,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 			if fb.Tp == statistics.PkType {
 				err = h.DumpFeedbackToKV(fb)
 			} else {
-				t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
+				t, ok := h.statsCache.Load().(statsCache).Get(fb.PhysicalID)
 				if !ok {
 					continue
 				}
@@ -1027,11 +1028,22 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		return false
 	}
 	pruneMode := h.CurrentPruneMode()
+	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
+	rd.Shuffle(len(dbs), func(i, j int) {
+		dbs[i], dbs[j] = dbs[j], dbs[i]
+	})
 	for _, db := range dbs {
 		if util.IsMemOrSysDB(strings.ToLower(db)) {
 			continue
 		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
+		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
+		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
+		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
+		// TODO: Design a priority queue to place the table which needs analyze most in the front.
+		rd.Shuffle(len(tbls), func(i, j int) {
+			tbls[i], tbls[j] = tbls[j], tbls[i]
+		})
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			if tblInfo.IsView() {
@@ -1171,7 +1183,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(), sql, params...)
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(h.serverIDGetter), sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -1286,7 +1298,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return
 	}
@@ -1327,7 +1339,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
-	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return nil
 	}
@@ -1338,7 +1350,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	if !tablePseudo {
 		return nil
 	}
-	isIndex := q.Hist.Tp.Tp == mysql.TypeBlob
+	isIndex := q.Hist.Tp.GetType() == mysql.TypeBlob
 	id := q.Hist.ID
 	if isIndex && (t.Indices[id] == nil || !t.Indices[id].NotAccurate()) {
 		return nil

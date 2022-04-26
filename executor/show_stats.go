@@ -251,7 +251,7 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 		if err != nil {
 			return errors.Trace(err)
 		}
-		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
@@ -306,11 +306,11 @@ func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string
 	}
 	colNameToType := make(map[string]byte, len(statsTbl.Columns))
 	for _, col := range stableColsStats(statsTbl.Columns) {
-		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.Tp})
+		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.GetType()})
 		if err != nil {
 			return errors.Trace(err)
 		}
-		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
