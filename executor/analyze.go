@@ -229,6 +229,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 	})
 	if err != nil {
+		if err.Error() == globalPanicAnalyzeMemoryExceed {
+			return errors.New(globalPanicAnalyzeMemoryExceed + " Please try with smaller samplerate(refer to 110000/count) or sample number.")
+		}
 		return err
 	}
 	if needGlobalStats {

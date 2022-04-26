@@ -138,7 +138,7 @@ const (
 	// globalPanicMemoryExceed represents the panic message when out of memory limit.
 	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
 	// globalPanicAnalyzeMemoryExceed represents the panic message when out of analyze memory limit.
-	globalPanicAnalyzeMemoryExceed string = "Out Of Global Analyze Memory Limit! Please try with smaller samplerate, refer to 110000/count."
+	globalPanicAnalyzeMemoryExceed string = "Out Of Global Analyze Memory Limit!"
 )
 
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
