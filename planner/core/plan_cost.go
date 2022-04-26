@@ -207,27 +207,39 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType) (floa
 		return p.planCost, nil
 	}
 	p.planCost = 0
-	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	if tblScan := p.tablePlan; tblScan != nil {
 		childCost, err := tblScan.GetPlanCost(property.CopSingleReadTaskType)
 		if err != nil {
 			return 0, err
 		}
+		netFactor := getTableNetFactor(tblScan)
 		p.planCost += childCost // child's cost
 		tblStats := getTblStats(tblScan)
 		rowSize := tblStats.GetAvgRowSize(p.ctx, tblScan.Schema().Columns, false, false)
 		p.planCost += tblScan.StatsCount() * rowSize * netFactor // net I/O cost
 	}
-	for _, idxScan := range p.partialPlans {
-		childCost, err := idxScan.GetPlanCost(property.CopSingleReadTaskType)
+
+	for _, partialScan := range p.partialPlans {
+		childCost, err := partialScan.GetPlanCost(property.CopSingleReadTaskType)
 		if err != nil {
 			return 0, err
 		}
+		var isIdxScan bool
+		for p := partialScan; ; p = p.Children()[0] {
+			_, isIdxScan = p.(*PhysicalIndexScan)
+			if len(p.Children()) == 0 {
+				break
+			}
+		}
+
+		netFactor := getTableNetFactor(partialScan)
 		p.planCost += childCost // child's cost
-		tblStats := getTblStats(idxScan)
-		rowSize := tblStats.GetAvgRowSize(p.ctx, idxScan.Schema().Columns, true, false)
-		p.planCost += idxScan.StatsCount() * rowSize * netFactor // net I/O cost
+		tblStats := getTblStats(partialScan)
+		rowSize := tblStats.GetAvgRowSize(p.ctx, partialScan.Schema().Columns, isIdxScan, false)
+		p.planCost += partialScan.StatsCount() * rowSize * netFactor // net I/O cost
 	}
+
+	// TODO: accumulate table-side seek cost
 
 	// consider concurrency
 	copIterWorkers := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
