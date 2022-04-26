@@ -87,8 +87,22 @@ const (
 	maxSketchSize       = 10000
 )
 
-// MemToGC records the memory size to be GC during Analyze
-var MemToGC = atomicutil.NewInt64(0)
+var (
+	memToGC = atomicutil.NewInt64(0)
+	inGC    = atomicutil.NewBool(false)
+)
+
+func tryGC(memTracker *memory.Tracker, force bool) {
+	if inGC.CAS(false, true) {
+		defer inGC.Store(false)
+		toGC := memToGC.Load()
+		if force || toGC > 524288000 { // GC when exceeds 500MB
+			runtime.GC()
+			memTracker.Consume(-toGC)
+			memToGC.Add(-toGC)
+		}
+	}
+}
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -1021,7 +1035,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		oldRootCollectorSize := rootCollectorSize
 		rootRowCollector.MergeCollector(mergeResult.collector)
 		rootCollectorSize = rootRowCollector.Base().MemSize
-		MemToGC.Add(oldRootCollectorSize + mergeResult.collector.Base().MemSize - rootCollectorSize)
+		memToGC.Add(oldRootCollectorSize + mergeResult.collector.Base().MemSize - rootCollectorSize)
 	}
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -1145,17 +1159,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			return 0, nil, nil, nil, nil, err
 		}
 	}
-	MemToGC.Add(rootCollectorSize)
+	memToGC.Add(rootCollectorSize)
 	return
-}
-
-func tryGC(memTracker *memory.Tracker, force bool) {
-	toGC := MemToGC.Load()
-	if force || toGC > 524288000 { // GC when exceeds 500MB
-		runtime.GC()
-		memTracker.Consume(-toGC)
-		MemToGC.Add(-toGC)
-	}
 }
 
 type analyzeIndexNDVTotalResult struct {
@@ -1387,8 +1392,8 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 		retCollector.MergeCollector(subCollector)
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
-		MemToGC.Add(dataSize + colRespSize + tmpMemSize)
-		MemToGC.Add(oldRetCollectorSize + subCollectorSize - newRetCollectorSize)
+		memToGC.Add(dataSize + colRespSize + tmpMemSize)
+		memToGC.Add(oldRetCollectorSize + subCollectorSize - newRetCollectorSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -1538,7 +1543,7 @@ workLoop:
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
-			MemToGC.Add(totalMemInc)
+			memToGC.Add(totalMemInc)
 		case <-exitCh:
 			return
 		}
