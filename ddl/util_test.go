@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/ddl"
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
@@ -24,17 +25,16 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
 // testTableInfo creates a test table with num int columns and with no index.
-func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
+func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, error) {
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
 	}
-	genIDs, err := d.genGlobalIDs(1)
+	genIDs, err := genGlobalIDs(store,1)
 
 	if err != nil {
 		return nil, err
@@ -51,7 +51,8 @@ func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 		}
 
 		col.FieldType = *types.NewFieldType(mysql.TypeLong)
-		col.ID = allocateColumnID(tblInfo)
+		tblInfo.MaxColumnID++
+		col.ID = tblInfo.MaxColumnID
 		cols[i] = col
 	}
 	tblInfo.Columns = cols
@@ -61,10 +62,10 @@ func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 }
 
 // testTableInfoWithPartition creates a test table with num int columns and with no index.
-func testTableInfoWithPartition(t *testing.T, d *ddl, name string, num int) *model.TableInfo {
-	tblInfo, err := testTableInfo(d, name, num)
+func testTableInfoWithPartition(t *testing.T, store kv.Storage, name string, num int) *model.TableInfo {
+	tblInfo, err := testTableInfo(store, name, num)
 	require.NoError(t, err)
-	genIDs, err := d.genGlobalIDs(1)
+	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	pid := genIDs[0]
 	tblInfo.Partition = &model.PartitionInfo{
@@ -81,7 +82,7 @@ func testTableInfoWithPartition(t *testing.T, d *ddl, name string, num int) *mod
 	return tblInfo
 }
 
-func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -100,23 +101,8 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model
 	return job
 }
 
-func testDropTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropTable,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
-
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func testCheckTableState(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
@@ -130,10 +116,4 @@ func testCheckTableState(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *mo
 		require.Equal(t, info.State, state)
 		return nil
 	}))
-}
-
-func testGetTable(t *testing.T, d *ddl, schemaID int64, tableID int64) table.Table {
-	tbl, err := testGetTableWithError(d, schemaID, tableID)
-	require.NoError(t, err)
-	return tbl
 }

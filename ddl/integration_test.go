@@ -16,6 +16,10 @@ package ddl_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
@@ -119,9 +123,67 @@ func TestDDLStatementsBackFill(t *testing.T) {
 }
 
 func TestSchema(t *testing.T) {
-	_, clean := testkit.CreateMockStore(t)
+	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	defer clean()
 
+	dbInfo, err := testSchemaInfo(store, "test_schema")
+	require.NoError(t, err)
+
+	// create a database.
+	job := testCreateSchema(t, testkit.NewTestKit(t, store).Session(), domain.DDL(), dbInfo)
+	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+
+	/*** to drop the schema with two tables. ***/
+	// create table t with 100 records.
+	tblInfo1, err := testTableInfo(store, "t", 3)
+	require.NoError(t, err)
+	tJob1 := testCreateTable(t, testkit.NewTestKit(t, store).Session(), domain.DDL(), dbInfo, tblInfo1)
+	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
+	testCheckJobDone(t, store, tJob1.ID, true)
+	tbl1 := testGetTable(t, domain, tblInfo1.ID)
+	for i := 1; i <= 100; i++ {
+		_, err := tbl1.AddRecord(testkit.NewTestKit(t, store).Session(), types.MakeDatums(i, i, i))
+		require.NoError(t, err)
+	}
+	// create table t1 with 1034 records.
+	tblInfo2, err := testTableInfo(store, "t1", 3)
+	require.NoError(t, err)
+	tJob2 := testCreateTable(t, testkit.NewTestKit(t, store).Session(), domain.DDL(), dbInfo, tblInfo2)
+	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
+	testCheckJobDone(t, store, tJob2.ID, true)
+	tbl2 := testGetTable(t, domain, tblInfo2.ID)
+	for i := 1; i <= 1034; i++ {
+		_, err := tbl2.AddRecord(testkit.NewTestKit(t, store).Session(), types.MakeDatums(i, i, i))
+		require.NoError(t, err)
+	}
+	job, v := testDropSchema(t, testkit.NewTestKit(t, store).Session(), domain.DDL(), dbInfo)
+	testCheckSchemaState(t, store, dbInfo, model.StateNone)
+	ids := make(map[int64]struct{})
+	ids[tblInfo1.ID] = struct{}{}
+	ids[tblInfo2.ID] = struct{}{}
+	checkHistoryJobArgs(t, testkit.NewTestKit(t, store).Session(), job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
+
+	// Drop a non-existent database.
+	job = &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	ctx := testkit.NewTestKit(t, store).Session()
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = domain.DDL().DoDDLJob(ctx, job)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
+
+	// Drop a database without a table.
+	dbInfo1, err := testSchemaInfo(store, "test1")
+	require.NoError(t, err)
+	job = testCreateSchema(t, ctx, domain.DDL(), dbInfo1)
+	testCheckSchemaState(t, store, dbInfo1, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+	job, _ = testDropSchema(t, ctx, domain.DDL(), dbInfo1)
+	testCheckSchemaState(t, store, dbInfo1, model.StateNone)
+	testCheckJobDone(t, store, job.ID, false)
 	ddl.ExportTestSchema(t)
 }
 

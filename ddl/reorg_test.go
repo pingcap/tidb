@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit/testutil"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -210,79 +209,79 @@ func TestReorg(t *testing.T) {
 	}
 }
 
-func TestReorgOwner(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	d1, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-	require.NoError(t, err)
-	defer func() {
-		err := d1.Stop()
-		require.NoError(t, err)
-	}()
-
-	ctx := testNewContext(d1)
-
-	testCheckOwner(t, d1, true)
-
-	d2, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-	require.NoError(t, err)
-	defer func() {
-		err := d2.Stop()
-		require.NoError(t, err)
-	}()
-
-	dbInfo, err := testSchemaInfo(d1, "test_reorg")
-	require.NoError(t, err)
-	testCreateSchema(t, ctx, d1, dbInfo)
-
-	tblInfo, err := testTableInfo(d1, "t", 3)
-	require.NoError(t, err)
-	testCreateTable(t, ctx, d1, dbInfo, tblInfo)
-	tbl := testGetTable(t, d1, dbInfo.ID, tblInfo.ID)
-
-	num := 10
-	for i := 0; i < num; i++ {
-		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
-		require.NoError(t, err)
-	}
-
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-
-	tc := &TestDDLCallback{}
-	tc.onJobRunBefore = func(job *model.Job) {
-		if job.SchemaState == model.StateDeleteReorganization {
-			err = d1.Stop()
-			require.NoError(t, err)
-		}
-	}
-
-	d1.SetHook(tc)
-
-	testDropSchema(t, ctx, d1, dbInfo)
-
-	err = kv.RunInNewTxn(context.Background(), d1.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		db, err1 := m.GetDatabase(dbInfo.ID)
-		require.NoError(t, err1)
-		require.Nil(t, db)
-		return nil
-	})
-	require.NoError(t, err)
-}
+//func TestReorgOwner(t *testing.T) {
+//	store := createMockStore(t)
+//	defer func() {
+//		require.NoError(t, store.Close())
+//	}()
+//
+//	d1, err := testNewDDLAndStart(
+//		context.Background(),
+//		WithStore(store),
+//		WithLease(testLease),
+//	)
+//	require.NoError(t, err)
+//	defer func() {
+//		err := d1.Stop()
+//		require.NoError(t, err)
+//	}()
+//
+//	ctx := testNewContext(d1)
+//
+//	testCheckOwner(t, d1, true)
+//
+//	d2, err := testNewDDLAndStart(
+//		context.Background(),
+//		WithStore(store),
+//		WithLease(testLease),
+//	)
+//	require.NoError(t, err)
+//	defer func() {
+//		err := d2.Stop()
+//		require.NoError(t, err)
+//	}()
+//
+//	dbInfo, err := testSchemaInfo(d1, "test_reorg")
+//	require.NoError(t, err)
+//	testCreateSchema(t, ctx, d1, dbInfo)
+//
+//	tblInfo, err := testTableInfo(d1, "t", 3)
+//	require.NoError(t, err)
+//	testCreateTable(t, ctx, d1, dbInfo, tblInfo)
+//	tbl := testGetTable(t, d1, dbInfo.ID, tblInfo.ID)
+//
+//	num := 10
+//	for i := 0; i < num; i++ {
+//		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+//		require.NoError(t, err)
+//	}
+//
+//	txn, err := ctx.Txn(true)
+//	require.NoError(t, err)
+//	err = txn.Commit(context.Background())
+//	require.NoError(t, err)
+//
+//	tc := &TestDDLCallback{}
+//	tc.onJobRunBefore = func(job *model.Job) {
+//		if job.SchemaState == model.StateDeleteReorganization {
+//			err = d1.Stop()
+//			require.NoError(t, err)
+//		}
+//	}
+//
+//	d1.SetHook(tc)
+//
+//	testDropSchema(t, ctx, d1, dbInfo)
+//
+//	err = kv.RunInNewTxn(context.Background(), d1.store, false, func(ctx context.Context, txn kv.Transaction) error {
+//		m := meta.NewMeta(txn)
+//		db, err1 := m.GetDatabase(dbInfo.ID)
+//		require.NoError(t, err1)
+//		require.Nil(t, db)
+//		return nil
+//	})
+//	require.NoError(t, err)
+//}
 
 func testCheckOwner(t *testing.T, d *ddl, expectedVal bool) {
 	require.Equal(t, d.isOwner(), expectedVal)

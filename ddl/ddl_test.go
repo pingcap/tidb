@@ -35,6 +35,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var testLease = 5 * time.Second
+
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
