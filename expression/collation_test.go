@@ -83,7 +83,7 @@ func TestInferCollation(t *testing.T) {
 		// binary charset with non-binary charset.
 		{
 			[]Expression{
-				newExpression(CoercibilityNumeric, UNICODE, charset.CharsetBinary, charset.CollationBin),
+				newExpression(CoercibilityNumeric, UNICODE, charset.CharsetBin, charset.CollationBin),
 				newExpression(CoercibilityCoercible, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
 			},
 			false,
@@ -92,7 +92,7 @@ func TestInferCollation(t *testing.T) {
 		{
 			[]Expression{
 				newExpression(CoercibilityCoercible, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
-				newExpression(CoercibilityNumeric, UNICODE, charset.CharsetBinary, charset.CollationBin),
+				newExpression(CoercibilityNumeric, UNICODE, charset.CharsetBin, charset.CollationBin),
 			},
 			false,
 			&ExprCollation{CoercibilityCoercible, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
@@ -100,10 +100,10 @@ func TestInferCollation(t *testing.T) {
 		{
 			[]Expression{
 				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
-				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetBinary, charset.CollationBin),
+				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetBin, charset.CollationBin),
 			},
 			false,
-			&ExprCollation{CoercibilityExplicit, UNICODE, charset.CharsetBinary, charset.CollationBin},
+			&ExprCollation{CoercibilityExplicit, UNICODE, charset.CharsetBin, charset.CollationBin},
 		},
 		// different charset, one of them is utf8mb4
 		{
@@ -252,7 +252,7 @@ func newColString(chs, coll string) *Column {
 }
 
 func newColJSON() *Column {
-	column := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON, Charset: charset.CharsetBinary, Collate: charset.CollationBin}}
+	column := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON, Charset: charset.CharsetBin, Collate: charset.CollationBin}}
 	return column
 }
 
@@ -543,12 +543,12 @@ func TestDeriveCollation(t *testing.T) {
 			},
 			[]Expression{
 				newColJSON(),
-				newColString(charset.CharsetBinary, charset.CharsetBinary),
+				newColString(charset.CharsetBin, charset.CharsetBin),
 			},
 			[]types.EvalType{types.ETJson, types.ETString},
 			types.ETString,
 			false,
-			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBinary, charset.CharsetBinary},
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBin, charset.CharsetBin},
 		},
 		{
 			[]string{
