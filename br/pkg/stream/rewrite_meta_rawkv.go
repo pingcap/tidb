@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -53,6 +54,7 @@ type SchemasReplace struct {
 	DbMap           map[OldID]*DBReplace
 	RewriteTS       uint64
 	TableFilter     filter.Filter
+	info            infoschema.InfoSchema
 	genGenGlobalID  func(ctx context.Context) (int64, error)
 	genGenGlobalIDs func(ctx context.Context, n int) ([]int64, error)
 }
@@ -106,17 +108,8 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, bool, 
 		return nil, false, 0, errors.Trace(err)
 	}
 
-	dbReplace, exist := sr.DbMap[dbID]
-	if !exist {
-		newID, err := sr.genGenGlobalID(context.Background())
-		if err != nil {
-			return nil, false, 0, errors.Trace(err)
-		}
-
-		dbReplace = NewDBReplace(newID, "", "")
-		sr.DbMap[dbID] = dbReplace
-	}
-
+	//because we need rewriteDBInfo first.
+	dbReplace := sr.DbMap[dbID]
 	rawMetaKey.UpdateField(meta.DBkey(dbReplace.DBID))
 	if cf == "write" {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
@@ -125,17 +118,32 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, bool, 
 }
 
 func (sr *SchemasReplace) rewriteDBInfo(value []byte, _ int64) ([]byte, bool, error) {
-	var dbInfo = model.DBInfo{}
-	if err := json.Unmarshal(value, &dbInfo); err != nil {
+	var (
+		dbInfo model.DBInfo
+		err    error
+	)
+
+	if err = json.Unmarshal(value, &dbInfo); err != nil {
 		return nil, false, errors.Trace(err)
 	}
 
-	dbReplace := sr.DbMap[dbInfo.ID]
-	if len(dbReplace.OldName) == 0 {
-		dbReplace.OldName = dbInfo.Name.O
-	}
-	if len(dbReplace.NewName) == 0 {
-		dbReplace.NewName = dbInfo.Name.O
+	dbReplace, exist := sr.DbMap[dbInfo.ID]
+	if !exist {
+		// If the schema has existed, don't need generate a new ID.
+		// Or we need a new ID to rewrite the dbID in kv entry.
+		var newID int64
+		newDBInfo, exist := sr.info.SchemaByName(dbInfo.Name)
+		if exist {
+			newID = newDBInfo.ID
+		} else {
+			newID, err = sr.genGenGlobalID(context.Background())
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+		}
+
+		dbReplace = NewDBReplace(newID, dbInfo.Name.O, dbInfo.Name.O)
+		sr.DbMap[dbInfo.ID] = dbReplace
 	}
 
 	log.Debug("rewrite dbinfo", zap.String("dbName", dbReplace.OldName),
@@ -150,12 +158,12 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte, _ int64) ([]byte, bool, er
 }
 
 func (sr *SchemasReplace) rewriteKVEntryForDB(e *kv.Entry, cf string) (*kv.Entry, error) {
-	newKey, needWrite, dbID, err := sr.rewriteKeyForDB(e.Key, cf)
+	newValue, needWrite, err := sr.rewriteValue(e.Value, cf, 0, sr.rewriteDBInfo)
 	if err != nil || !needWrite {
 		return nil, errors.Trace(err)
 	}
 
-	newValue, needWrite, err := sr.rewriteValue(e.Value, cf, dbID, sr.rewriteDBInfo)
+	newKey, needWrite, _, err := sr.rewriteKeyForDB(e.Key, cf)
 	if err != nil || !needWrite {
 		return nil, errors.Trace(err)
 	}
