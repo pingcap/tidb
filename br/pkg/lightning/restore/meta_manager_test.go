@@ -6,6 +6,11 @@ import (
 	"context"
 	"database/sql/driver"
 	"sort"
+<<<<<<< HEAD
+=======
+	"testing"
+	"time"
+>>>>>>> 59566fad3... lightning: maintain task meta in singleTaskMetaMgr (#34214)
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
@@ -322,4 +327,29 @@ func (s *taskMetaMgrSuite) TestCheckTasksExclusively(c *C) {
 	})
 	c.Assert(err, IsNil)
 
+}
+
+func TestSingleTaskMetaMgr(t *testing.T) {
+	metaBuilder := singleMgrBuilder{
+		taskID: time.Now().UnixNano(),
+	}
+	metaMgr := metaBuilder.TaskMetaMgr(nil)
+
+	ok, err := metaMgr.CheckTaskExist(context.Background())
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	err = metaMgr.InitTask(context.Background(), 1<<30)
+	require.NoError(t, err)
+
+	ok, err = metaMgr.CheckTaskExist(context.Background())
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	err = metaMgr.CheckTasksExclusively(context.Background(), func(tasks []taskMeta) ([]taskMeta, error) {
+		require.Len(t, tasks, 1)
+		require.Equal(t, uint64(1<<30), tasks[0].sourceBytes)
+		return nil, nil
+	})
+	require.NoError(t, err)
 }

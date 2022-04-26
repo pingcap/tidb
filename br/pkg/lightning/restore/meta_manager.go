@@ -1034,7 +1034,9 @@ func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {
 	return nil
 }
 
-type singleMgrBuilder struct{}
+type singleMgrBuilder struct {
+	taskID int64
+}
 
 func (b singleMgrBuilder) Init(context.Context) error {
 	return nil
@@ -1042,7 +1044,8 @@ func (b singleMgrBuilder) Init(context.Context) error {
 
 func (b singleMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 	return &singleTaskMetaMgr{
-		pd: pd,
+		pd:     pd,
+		taskID: b.taskID,
 	}
 }
 
@@ -1051,15 +1054,34 @@ func (b singleMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 }
 
 type singleTaskMetaMgr struct {
-	pd *pdutil.PdController
+	pd           *pdutil.PdController
+	taskID       int64
+	initialized  bool
+	sourceBytes  uint64
+	clusterAvail uint64
 }
 
 func (m *singleTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
+	m.sourceBytes = uint64(source)
+	m.initialized = true
 	return nil
 }
 
 func (m *singleTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
-	_, err := action(nil)
+	newTasks, err := action([]taskMeta{
+		{
+			taskID:       m.taskID,
+			status:       taskMetaStatusInitial,
+			sourceBytes:  m.sourceBytes,
+			clusterAvail: m.clusterAvail,
+		},
+	})
+	for _, t := range newTasks {
+		if m.taskID == t.taskID {
+			m.sourceBytes = t.sourceBytes
+			m.clusterAvail = t.clusterAvail
+		}
+	}
 	return err
 }
 
@@ -1068,7 +1090,7 @@ func (m *singleTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdut
 }
 
 func (m *singleTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
-	return true, nil
+	return m.initialized, nil
 }
 
 func (m *singleTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (shouldSwitchBack bool, shouldCleanupMeta bool, err error) {
