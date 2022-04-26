@@ -312,6 +312,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if trace.IsEnabled() {
 		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
+	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CAS(false, true) {
+		registerSQLAndPlanInExecForTopSQL(sessVars)
+	}
 	err := e.Next(ctx, req)
 
 	if err != nil {
@@ -1817,7 +1820,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
+			sc.IsSQLRegistered.Store(true)
+			topsql.AttachAndRegisterSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
 			if s.LockInfo == nil {
@@ -1969,6 +1973,18 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	return
 }
 
+// registerSQLAndPlanInExecForTopSQL register the sql and plan information if it doesn't register before execution.
+// This uses to catch the running SQL when Top SQL is enabled in execution.
+func registerSQLAndPlanInExecForTopSQL(sessVars *variable.SessionVars) {
+	stmtCtx := sessVars.StmtCtx
+	normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
+	topsql.RegisterSQL(normalizedSQL, sqlDigest, sessVars.InRestrictedSQL)
+	normalizedPlan, planDigest := stmtCtx.GetPlanDigest()
+	if len(normalizedPlan) > 0 {
+		topsql.RegisterPlan(normalizedPlan, planDigest)
+	}
+}
+
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.
 func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
 	sc.InUpdateStmt = true
@@ -2012,7 +2028,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 }
 
 func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot == nil || !topsqlstate.TopSQLEnabled() {
+	if snapshot == nil {
 		return
 	}
 	snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())

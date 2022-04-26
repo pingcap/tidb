@@ -1684,15 +1684,13 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 	txnManager := sessiontxn.GetTxnManager(p.ctx)
 	currentProvider := txnManager.GetContextProvider()
 
-	// If currentProvider is nil or not a `SimpleTxnContextProvider`, it means
-	if currentProvider == nil {
-		return
+	if currentProvider != nil {
+		if _, ok := currentProvider.(*sessiontxn.SimpleTxnContextProvider); !ok {
+			return
+		}
 	}
 
-	if _, ok := currentProvider.(*sessiontxn.SimpleTxnContextProvider); !ok {
-		return
-	}
-
+	// if current provider is nil or `SimpleTxnContextProvider`, it means we should use p.ensureInfoSchema()
 	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
 		InfoSchema: p.ensureInfoSchema(),
 	})
