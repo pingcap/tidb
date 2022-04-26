@@ -340,15 +340,39 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 	return mapper
 }
 
+//batchInsertSize is the every insert values size limit.Used in such as DumpIndexUsageToKV,DumpColStatsUsageToKV
+const batchInsertSize = 10
+
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
 	ctx := context.Background()
 	mapper := h.sweepIdxUsageList()
+	type FullIndexUsageInformation struct {
+		id          GlobalIndexID
+		information IndexUsageInformation
+	}
+	indexInformationSlice := make([]FullIndexUsageInformation, 0, len(mapper))
 	for id, value := range mapper {
-		const sql = `insert into mysql.SCHEMA_INDEX_USAGE values (%?, %?, %?, %?, %?) on duplicate key update query_count=query_count+%?, rows_selected=rows_selected+%?, last_used_at=greatest(last_used_at, %?)`
-		_, _, err := h.execRestrictedSQL(ctx, sql, id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
-		if err != nil {
-			return err
+		indexInformationSlice = append(indexInformationSlice, FullIndexUsageInformation{id: id, information: value})
+	}
+	for i := 0; i < len(mapper); i += batchInsertSize {
+		end := i + batchInsertSize
+		if end > len(mapper) {
+			end = len(mapper)
+		}
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "insert into mysql.SCHEMA_INDEX_USAGE (table_id,index_id,query_count,rows_selected,last_used_at) values")
+		for j := i; j < end; j++ {
+			index := indexInformationSlice[j]
+			sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)", index.id.TableID, index.id.IndexID,
+				index.information.QueryCount, index.information.RowsSelected, index.information.LastUsedAt)
+			if j < end-1 {
+				sqlexec.MustFormatSQL(sql, ",")
+			}
+		}
+		sqlexec.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
+		if _, _, err := h.execRestrictedSQL(ctx, sql.String()); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -893,8 +917,8 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
 	})
 	// Use batch insert to reduce cost.
-	for i := 0; i < len(pairs); i += 10 {
-		end := i + 10
+	for i := 0; i < len(pairs); i += batchInsertSize {
+		end := i + batchInsertSize
 		if end > len(pairs) {
 			end = len(pairs)
 		}
