@@ -5227,10 +5227,8 @@ func (s *testIntegrationSuite) TestIssue31202(c *C) {
 	tk.MustExec("drop table if exists t31202")
 }
 
-func TestIssue33042(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testIntegrationSuite) TestIssue33042(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int primary key, col1 int)")
