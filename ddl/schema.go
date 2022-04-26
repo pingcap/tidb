@@ -211,9 +211,6 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-
-		// Update the job state when all affairs done.
-		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
 		dbInfo.State = model.StateDeleteOnly
@@ -221,8 +218,6 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// Update the job state when all affairs done.
-		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
 		var tables []*model.TableInfo
@@ -248,7 +243,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		// We can't enter here.
 		err = errors.Errorf("invalid db state %v", dbInfo.State)
 	}
-
+	job.SchemaState = dbInfo.State
 	return ver, errors.Trace(err)
 }
 
