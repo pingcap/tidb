@@ -140,13 +140,18 @@ func TestIsCurrentTimestampExpr(t *testing.T) {
 	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), nil)
 	require.True(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), &types.FieldType{Decimal: 3})
+	ft := &types.FieldType{}
+	ft.SetDecimal(3)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), ft)
 	require.True(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), ft)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), ft)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), &types.FieldType{Decimal: 0})
+
+	ft1 := &types.FieldType{}
+	ft1.SetDecimal(0)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), ft1)
 	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), nil)
 	require.False(t, v)
