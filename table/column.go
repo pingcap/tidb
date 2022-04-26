@@ -306,7 +306,6 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		}
 		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str)
 	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
-		(val.Kind() != types.KindMysqlTime || !val.GetMysqlTime().IsZero()) &&
 		(col.GetType() == mysql.TypeDate || col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp) {
 		str, err1 := val.ToString()
 		if err1 != nil {
