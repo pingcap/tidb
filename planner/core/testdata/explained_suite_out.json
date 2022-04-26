@@ -31,7 +31,7 @@
             "EstRows": 10000,
             "ExplainInfo": "table:t, keep order:false, stats:pseudo",
             "IsPhysicalPlan": true,
-            "EstCost": 1785020
+            "EstCost": 1785000
           }
         ],
         "CTEs": null
@@ -107,7 +107,7 @@
             "EstRows": 10000,
             "ExplainInfo": "table:t, index:f(f), keep order:false, stats:pseudo",
             "IsPhysicalPlan": true,
-            "EstCost": 555020
+            "EstCost": 555000
           },
           {
             "ExplainID": "TableReader_27",
@@ -135,7 +135,7 @@
             "EstRows": 10000,
             "ExplainInfo": "table:t2, keep order:false, stats:pseudo",
             "IsPhysicalPlan": true,
-            "EstCost": 570020
+            "EstCost": 570000
           }
         ],
         "CTEs": null
@@ -183,7 +183,7 @@
             "EstRows": 3333.3333333333335,
             "ExplainInfo": "table:t, index:f(f), range:(100,+inf], keep order:false, stats:pseudo",
             "IsPhysicalPlan": true,
-            "EstCost": 185020
+            "EstCost": 185000
           }
         ],
         "CTEs": null
@@ -231,7 +231,7 @@
             "EstRows": 3333.3333333333335,
             "ExplainInfo": "gt(test.t.f, 100)",
             "IsPhysicalPlan": true,
-            "EstCost": 1815020
+            "EstCost": 1815000
           },
           {
             "ExplainID": "TableFullScan_5",
@@ -245,7 +245,7 @@
             "EstRows": 10000,
             "ExplainInfo": "table:t, keep order:false, stats:pseudo",
             "IsPhysicalPlan": true,
-            "EstCost": 1785020
+            "EstCost": 1785000
           }
         ],
         "CTEs": null
@@ -380,7 +380,7 @@
               "EstRows": 10000,
               "ExplainInfo": "table:t, keep order:false, stats:pseudo",
               "IsPhysicalPlan": true,
-              "EstCost": 1785020
+              "EstCost": 1785000
             }
           ],
           [
@@ -438,7 +438,7 @@
               "EstRows": 10000,
               "ExplainInfo": "table:t2, index:b(b), keep order:false, stats:pseudo",
               "IsPhysicalPlan": true,
-              "EstCost": 555020
+              "EstCost": 555000
             }
           ]
         ]

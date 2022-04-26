@@ -26,7 +26,7 @@
             "children": [
               {
                 "name": "TableFullScan_4",
-                "cost": 570020,
+                "cost": 570000,
                 "est_rows": 10000,
                 "act_rows": 0,
                 "access_table": "t",
@@ -89,7 +89,7 @@
                         "children": [
                           {
                             "name": "IndexFullScan_14",
-                            "cost": 435020,
+                            "cost": 435000,
                             "est_rows": 10000,
                             "act_rows": 0,
                             "access_table": "t",
@@ -113,7 +113,7 @@
                         "children": [
                           {
                             "name": "TableFullScan_16",
-                            "cost": 570020,
+                            "cost": 570000,
                             "est_rows": 10000,
                             "act_rows": 0,
                             "access_table": "t2",
@@ -149,7 +149,7 @@
             "children": [
               {
                 "name": "IndexRangeScan_5",
-                "cost": 145020,
+                "cost": 145000,
                 "est_rows": 3333.3333333333335,
                 "act_rows": 0,
                 "access_table": "t",
@@ -179,7 +179,7 @@
             "children": [
               {
                 "name": "Selection_6",
-                "cost": 600020,
+                "cost": 600000,
                 "est_rows": 3333.3333333333335,
                 "act_rows": 0,
                 "access_table": "",
@@ -190,7 +190,7 @@
                 "children": [
                   {
                     "name": "TableFullScan_5",
-                    "cost": 570020,
+                    "cost": 570000,
                     "est_rows": 10000,
                     "act_rows": 0,
                     "access_table": "t",
@@ -306,7 +306,7 @@
                       "children": [
                         {
                           "name": "TableFullScan_15",
-                          "cost": 570020,
+                          "cost": 570000,
                           "est_rows": 10000,
                           "act_rows": 0,
                           "access_table": "t",
@@ -356,7 +356,7 @@
                       "children": [
                         {
                           "name": "TableFullScan_20",
-                          "cost": 570020,
+                          "cost": 570000,
                           "est_rows": 10000,
                           "act_rows": 0,
                           "access_table": "t2",
