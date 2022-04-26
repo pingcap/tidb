@@ -664,12 +664,6 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
 	var buf bytes.Buffer
-<<<<<<< HEAD
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	start := time.Now()
-	if err := cmd.Run(); err != nil {
-=======
 	var err error
 	var start time.Time
 	for i := 0; i < 3; i++ {
@@ -701,7 +695,6 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 		break
 	}
 	if err != nil {
->>>>>>> 7443ec8f6... tools/check: let ut binary retry on more errors to make CI stable (#33964)
 		res.Failure = &JUnitFailure{
 			Message:  "Failed",
 			Contents: buf.String(),
