@@ -15,11 +15,11 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/parser/ast"
 	"math"
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
 )
 
 type joinReorderGreedySolver struct {
