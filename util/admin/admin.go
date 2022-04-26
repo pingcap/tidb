@@ -370,7 +370,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
-				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().GetOriginDefaultValue() == nil {
+				if mysql.HasNotNullFlag(col.GetFlag()) && col.ToInfo().GetOriginDefaultValue() == nil {
 					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.

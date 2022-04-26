@@ -678,7 +678,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 	var ranges []*ranger.Range
 	if hc := colExec.handleCols; hc != nil {
 		if hc.IsInt() {
-			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.Flag))
+			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.GetFlag()))
 		} else {
 			ranges = ranger.FullNotNullRange()
 		}
@@ -1383,8 +1383,8 @@ workLoop:
 					// When it's new collation data, we need to use its collate key instead of original value because only
 					// the collate key can ensure the correct ordering.
 					// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
-					if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
-						val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
+					if ft.EvalType() == types.ETString && ft.GetType() != mysql.TypeEnum && ft.GetType() != mysql.TypeSet {
+						val.SetBytes(collate.GetCollator(ft.GetCollate()).Key(val.GetString()))
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   val,
@@ -2289,7 +2289,7 @@ type analyzePKIncrementalExec struct {
 func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.AnalyzeResults {
 	var maxVal types.Datum
 	pkInfo := colExec.handleCols.GetCol(0)
-	if mysql.HasUnsignedFlag(pkInfo.RetType.Flag) {
+	if mysql.HasUnsignedFlag(pkInfo.RetType.GetFlag()) {
 		maxVal = types.NewUintDatum(math.MaxUint64)
 	} else {
 		maxVal = types.NewIntDatum(math.MaxInt64)

@@ -490,7 +490,7 @@ func (dc *ddlCtx) GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.P
 	switch {
 	case tblInfo.PKIsHandle:
 		for _, col := range tbl.Meta().Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				handleCols = []*model.ColumnInfo{col}
 				break
 			}
