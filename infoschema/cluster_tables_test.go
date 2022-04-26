@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
@@ -270,6 +270,11 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
 	require.NotNil(t, re)
 	require.Equal(t, 0, len(re.Rows()))
+
+	// Test for https://github.com/pingcap/tidb/issues/33974
+	instanceAddr, err := infoschema.GetInstanceAddr(tk.Session())
+	require.NoError(t, err)
+	tk.MustQuery("select instance from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.Rows(instanceAddr))
 }
 
 func SubTestSelectClusterTablePrivilege(t *testing.T) {
@@ -675,20 +680,12 @@ select * from t1;
 		config.StoreGlobalConfig(originCfg)
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
-	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	checkFn := func(quota int) {
-		originCfg := config.GetGlobalConfig()
-		newCfg := *originCfg
-		newCfg.MemQuotaQuery = int64(quota)
-		config.StoreGlobalConfig(&newCfg)
-		tk.MustExec("set @@tidb_mem_quota_query=" + strconv.Itoa(quota))
+		tk.MustExec("set tidb_mem_quota_query=" + strconv.Itoa(quota)) // session
 
 		err = tk.QueryToErr("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
-		require.Error(t, err, quota)
-		require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
-		err = tk.QueryToErr("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 		require.Error(t, err, quota)
 		require.Contains(t, err.Error(), "Out Of Memory Quota!", quota)
 	}
@@ -697,13 +694,12 @@ select * from t1;
 		checkFn(quota)
 	}
 	for i := 0; i < 100; i++ {
-		quota := rand.Int()%10240 + 1
+		quota := rand.Int()%8192 + 1
 		checkFn(quota)
 	}
 
-	newCfg.MemQuotaQuery = 1024 * 1024 * 1024
-	config.StoreGlobalConfig(&newCfg)
-	tk.MustExec("set @@tidb_mem_quota_query=" + strconv.Itoa(int(newCfg.MemQuotaQuery)))
+	newMemQuota := 1024 * 1024 * 1024
+	tk.MustExec("set @@tidb_mem_quota_query=" + strconv.Itoa(newMemQuota))
 	tk.MustQuery("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 	mem := tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
 	require.Equal(t, mem, int64(0))
