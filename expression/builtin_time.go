@@ -6028,16 +6028,19 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	tp, decimal := args[2].GetType().EvalType(), 0
+
 	switch tp {
 	case types.ETInt:
-	case types.ETReal, types.ETDecimal:
-		decimal = args[2].GetType().Decimal
-		if decimal > 6 || decimal == types.UnspecifiedLength {
-			decimal = 6
-		}
+	case types.ETString:
+		decimal = types.UnspecifiedLength
 	default:
+		decimal = args[2].GetType().Decimal
+	}
+
+	if decimal > 6 || decimal == types.UnspecifiedLength {
 		decimal = 6
 	}
+
 	// MySQL will cast the first and second arguments to INT, and the third argument to DECIMAL.
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, types.ETInt, types.ETInt, types.ETReal)
 	if err != nil {
