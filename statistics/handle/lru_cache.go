@@ -69,10 +69,8 @@ func newInternalLRUCache(capacity int64) *internalLRUCache {
 
 // Get tries to find the corresponding value according to the given key.
 func (l *internalLRUCache) Get(key int64) (*statistics.Table, bool) {
-	var hit bool
-	var r *statistics.Table
 	l.Lock()
-	r, hit = l.get(key)
+	r, hit := l.get(key)
 	l.Unlock()
 	if hit {
 		metrics.StatsCacheLRUCounter.WithLabelValues(typHit).Inc()
@@ -93,12 +91,10 @@ func (l *internalLRUCache) get(key int64) (*statistics.Table, bool) {
 
 // Put puts the (key, value) pair into the LRU Cache.
 func (l *internalLRUCache) Put(key int64, value *statistics.Table) {
-	var trackingCost int64
-	var totalCost int64
 	l.Lock()
 	l.put(key, value, value.MemoryUsage(), true)
-	trackingCost = l.trackingCost
-	totalCost = l.totalCost
+	trackingCost := l.trackingCost
+	totalCost := l.totalCost
 	l.Unlock()
 	metrics.StatsCacheLRUCounter.WithLabelValues(typUpdate).Inc()
 	metrics.StatsCacheLRUMemUsage.WithLabelValues(typTrack).Set(float64(trackingCost))
@@ -141,18 +137,14 @@ func (l *internalLRUCache) put(key int64, value *statistics.Table, tblMemUsage *
 	element = l.cache.PushFront(newCacheEntry)
 	l.maintainList(element, newCacheEntry, tblMemUsage.TotalColTrackingMemUsage(), 1)
 	l.elements[key] = element
-	return
 }
 
 // Del deletes the key-value pair from the LRU Cache.
 func (l *internalLRUCache) Del(key int64) {
-	var del bool
-	var trackingCost int64
-	var totalCost int64
 	l.Lock()
-	del = l.del(key)
-	trackingCost = l.trackingCost
-	totalCost = l.totalCost
+	del := l.del(key)
+	trackingCost := l.trackingCost
+	totalCost := l.totalCost
 	l.Unlock()
 	if del {
 		metrics.StatsCacheLRUCounter.WithLabelValues(typDel).Inc()
@@ -222,8 +214,6 @@ func (l *internalLRUCache) Len() int {
 
 // FreshMemUsage re-calculate the memory message
 func (l *internalLRUCache) FreshMemUsage() {
-	var trackingCost int64
-	var totalCost int64
 	l.Lock()
 	for _, v := range l.elements {
 		item := v.Value.(*cacheItem)
@@ -234,8 +224,8 @@ func (l *internalLRUCache) FreshMemUsage() {
 		l.maintainList(v, nil, newMemUsage.TotalColTrackingMemUsage(), oldMemUsage.TotalColTrackingMemUsage())
 	}
 	l.evictIfNeeded()
-	totalCost = l.totalCost
-	trackingCost = l.trackingCost
+	totalCost := l.totalCost
+	trackingCost := l.trackingCost
 	l.Unlock()
 	metrics.StatsCacheLRUMemUsage.WithLabelValues(typTrack).Set(float64(trackingCost))
 	metrics.StatsCacheLRUMemUsage.WithLabelValues(typTotal).Set(float64(totalCost))
@@ -243,13 +233,10 @@ func (l *internalLRUCache) FreshMemUsage() {
 
 // FreshTableCost re-calculate the memory message for the certain key
 func (l *internalLRUCache) FreshTableCost(key int64) {
-	var trackingCost int64
-	var totalCost int64
-	var calculated bool
 	l.Lock()
-	calculated = l.calculateTableCost(key)
-	totalCost = l.totalCost
-	trackingCost = l.trackingCost
+	calculated := l.calculateTableCost(key)
+	totalCost := l.totalCost
+	trackingCost := l.trackingCost
 	l.Unlock()
 	if calculated {
 		metrics.StatsCacheLRUMemUsage.WithLabelValues(typTrack).Set(float64(trackingCost))
@@ -290,27 +277,27 @@ func (l *internalLRUCache) Copy() statsCacheInner {
 func (l *internalLRUCache) evictIfNeeded() {
 	curr := l.cache.Back()
 	evicted := false
-	for l.trackingCost > l.capacity && curr != nil {
+	for !l.underCapacity() {
 		evicted = true
 		item := curr.Value.(*cacheItem)
 		tbl := item.value
 		oldMemUsage := item.tblMemUsage
 		prev := curr.Prev()
 		for _, col := range tbl.Columns {
+			if col.IsEvicted() {
+				continue
+			}
 			col.DropEvicted()
 			newMemUsage := tbl.MemoryUsage()
 			item.tblMemUsage = newMemUsage
 			l.calculateCost(newMemUsage, oldMemUsage)
-			if l.trackingCost <= l.capacity {
+			if l.underCapacity() {
 				break
 			}
 		}
 		newMemUsage := tbl.MemoryUsage()
 		if newMemUsage.TotalColTrackingMemUsage() < 1 {
 			l.maintainList(curr, nil, newMemUsage.TotalColTrackingMemUsage(), oldMemUsage.TotalColTrackingMemUsage())
-		}
-		if l.trackingCost <= l.capacity {
-			break
 		}
 		curr = prev
 	}
@@ -342,4 +329,8 @@ func (l *internalLRUCache) maintainList(element *list.Element, item *cacheItem, 
 		return l.cache.PushFront(item)
 	}
 	return nil
+}
+
+func (l *internalLRUCache) underCapacity() bool {
+	return l.trackingCost <= l.capacity
 }

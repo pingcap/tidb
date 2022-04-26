@@ -203,8 +203,8 @@ func TestLRUPutTooBig(t *testing.T) {
 	_, ok := lru.Get(int64(1))
 	require.True(t, ok)
 	require.Equal(t, lru.totalCost, indexMemoryUsage)
-	require.Equal(t, lru.trackingCost, 0)
-	require.Equal(t, mockTable.MemoryUsage().TotalColTrackingMemUsage(), 0)
+	require.Equal(t, lru.trackingCost, int64(0))
+	require.Equal(t, mockTable.MemoryUsage().TotalColTrackingMemUsage(), int64(0))
 }
 
 func TestCacheLen(t *testing.T) {

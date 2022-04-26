@@ -1120,6 +1120,11 @@ func (c *Column) DropEvicted() {
 	c.CMSketch = nil
 }
 
+// IsEvicted returns whether column data structures evicted
+func (c *Column) IsEvicted() bool {
+	return c.CMSketch == nil
+}
+
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
