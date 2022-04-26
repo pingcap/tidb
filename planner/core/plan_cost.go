@@ -15,6 +15,8 @@
 package core
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
@@ -172,7 +174,48 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType) (float64, 
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType) (float64, error) {
-	return 0, errors.New("not implemented")
+	if p.planCostInit {
+		return p.planCost, nil
+	}
+	p.planCost = 0
+	if tblScan := p.tablePlan; tblScan != nil {
+		childCost, err := tblScan.GetPlanCost(property.CopSingleReadTaskType)
+		if err != nil {
+			return 0, err
+		}
+		netFactor := getTableNetFactor(tblScan)
+		p.planCost += childCost // child's cost
+		tblStats := getTblStats(tblScan)
+		rowSize := tblStats.GetAvgRowSize(p.ctx, tblScan.Schema().Columns, false, false)
+		p.planCost += tblScan.StatsCount() * rowSize * netFactor // net I/O cost
+	}
+	for _, partialScan := range p.partialPlans {
+		childCost, err := partialScan.GetPlanCost(property.CopSingleReadTaskType)
+		if err != nil {
+			return 0, err
+		}
+		var isIdxScan bool
+		for p := partialScan; ; p = p.Children()[0] {
+			_, isIdxScan = p.(*PhysicalIndexScan)
+			if len(p.Children()) == 0 {
+				break
+			}
+		}
+
+		netFactor := getTableNetFactor(partialScan)
+		p.planCost += childCost // child's cost
+		tblStats := getTblStats(partialScan)
+		rowSize := tblStats.GetAvgRowSize(p.ctx, partialScan.Schema().Columns, isIdxScan, false)
+		p.planCost += partialScan.StatsCount() * rowSize * netFactor // net I/O cost
+	}
+
+	// TODO: accumulate table-side seek cost
+
+	// consider concurrency
+	copIterWorkers := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	p.planCost /= copIterWorkers
+	p.planCostInit = true
+	return p.planCost, nil
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -247,12 +290,32 @@ func (p *PhysicalHashAgg) GetPlanCost(taskType property.TaskType) (float64, erro
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalSort) GetPlanCost(taskType property.TaskType) (float64, error) {
-	return 0, errors.New("not implemented")
+	if p.planCostInit {
+		return p.planCost, nil
+	}
+	childCost, err := p.children[0].GetPlanCost(taskType)
+	if err != nil {
+		return 0, err
+	}
+	p.planCost = childCost
+	p.planCost += p.GetCost(p.children[0].StatsCount(), p.Schema())
+	p.planCostInit = true
+	return p.planCost, nil
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalTopN) GetPlanCost(taskType property.TaskType) (float64, error) {
-	return 0, errors.New("not implemented")
+	if p.planCostInit {
+		return p.planCost, nil
+	}
+	childCost, err := p.children[0].GetPlanCost(taskType)
+	if err != nil {
+		return 0, err
+	}
+	p.planCost = childCost
+	p.planCost += p.GetCost(p.children[0].StatsCount(), taskType == property.RootTaskType)
+	p.planCostInit = true
+	return p.planCost, nil
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -267,7 +330,20 @@ func (p *PointGetPlan) GetPlanCost(taskType property.TaskType) (float64, error) 
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalUnionAll) GetPlanCost(taskType property.TaskType) (float64, error) {
-	return 0, errors.New("not implemented")
+	if p.planCostInit {
+		return p.planCost, nil
+	}
+	var childMaxCost float64
+	for _, child := range p.children {
+		childCost, err := child.GetPlanCost(taskType)
+		if err != nil {
+			return 0, err
+		}
+		childMaxCost = math.Max(childMaxCost, childCost)
+	}
+	p.planCost = childMaxCost + float64(1+len(p.children))*p.ctx.GetSessionVars().ConcurrencyFactor
+	p.planCostInit = true
+	return p.planCost, nil
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
