@@ -1901,7 +1901,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			if rc.cfg.Checkpoint.Enable {
 				taskCheckpoints, err := rc.checkpointsDB.TaskCheckpoint(ctx)
 				if err != nil {
-					return common.ErrReadCheckpoint.Wrap(err).GenWithStack("get task checkpoint failed")
+					return errors.Trace(err)
 				}
 				// If task checkpoint is initialized, it means check has been performed before.
 				// We don't need and shouldn't check again, because lightning may have already imported some data.
