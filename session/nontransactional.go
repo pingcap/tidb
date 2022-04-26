@@ -115,6 +115,12 @@ func checkConstraint(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, 
 	if stmt.DeleteStmt.TableRefs.TableRefs.Right != nil {
 		return errors.New("Non-transactional delete doesn't support multiple tables")
 	}
+	if stmt.DeleteStmt.Limit != nil {
+		return errors.New("Non-transactional delete doesn't support limit")
+	}
+	if stmt.DeleteStmt.Order != nil {
+		return errors.New("Non-transactional delete doesn't support order by")
+	}
 	return nil
 }
 

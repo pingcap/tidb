@@ -316,6 +316,13 @@ func TestNonTransactionalDeleteCheckConstraint(t *testing.T) {
 	tk.Session().GetSessionVars().BatchInsert = false
 	tk.Session().GetSessionVars().DMLBatchSize = 0
 
+	err = tk.ExecToErr("split on a limit 10 delete from t limit 10")
+	require.EqualError(t, err, "Non-transactional delete doesn't support limit")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+
+	err = tk.ExecToErr("split on a limit 10 delete from t order by a")
+	require.EqualError(t, err, "Non-transactional delete doesn't support order by")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
 }
 
 func TestNonTransactionalDeleteOptimizerHints(t *testing.T) {
