@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	storekv "github.com/tikv/client-go/v2/kv"
 	pd "github.com/tikv/pd/client"
@@ -241,6 +242,8 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		variable.PersistAnalyzeOptions.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableColumnTracking:
 		variable.EnableColumnTracking.Store(variable.TiDBOptOn(sVal))
+	case variable.RequireSecureTransport:
+		tls.RequireSecureTransport.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStatsLoadSyncWait:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)

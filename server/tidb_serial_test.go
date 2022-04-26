@@ -96,6 +96,22 @@ func TestLoadDataListPartition(t *testing.T) {
 	ts.runTestLoadDataForListColumnPartition2(t)
 }
 
+func TestInvalidTLS(t *testing.T) {
+	ts, cleanup := createTidbTestSuite(t)
+	defer cleanup()
+
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Security = config.Security{
+		SSLCA:   "bogus-ca-cert.pem",
+		SSLCert: "bogus-server-cert.pem",
+		SSLKey:  "bogus-server-key.pem",
+	}
+	_, err := NewServer(cfg, ts.tidbdrv)
+	require.Error(t, err)
+}
+
 func TestTLSAuto(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
@@ -285,10 +301,9 @@ func TestErrorNoRollback(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	cfg.Security = config.Security{
-		RequireSecureTransport: true,
-		SSLCA:                  "wrong path",
-		SSLCert:                "wrong path",
-		SSLKey:                 "wrong path",
+		SSLCA:   "wrong path",
+		SSLCert: "wrong path",
+		SSLKey:  "wrong path",
 	}
 	_, err = NewServer(cfg, ts.tidbdrv)
 	require.Error(t, err)

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -672,6 +673,15 @@ var defaultSysVars = []*SysVar{
 		EnableColumnTracking.Store(v)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: RequireSecureTransport, Value: BoolToOnOff(DefRequireSecureTransport), Type: TypeBool,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(tls.RequireSecureTransport.Load()), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			tls.RequireSecureTransport.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBStatsLoadPseudoTimeout, Value: BoolToOnOff(DefTiDBStatsLoadPseudoTimeout), skipInit: true, Type: TypeBool,
 		GetGlobal: func(s *SessionVars) (string, error) {
 			return strconv.FormatBool(StatsLoadPseudoTimeout.Load()), nil
