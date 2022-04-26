@@ -63,40 +63,23 @@ func (h *benchHelper) init() {
 	h.ctx.GetSessionVars().MaxChunkSize = numRows
 
 	h.inputTypes = make([]*types.FieldType, 0, 10)
-	h.inputTypes = append(h.inputTypes, &types.FieldType{
-		Tp:      mysql.TypeLonglong,
-		Flen:    mysql.MaxIntWidth,
-		Decimal: 0,
-		Flag:    mysql.BinaryFlag,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	})
-	h.inputTypes = append(h.inputTypes, &types.FieldType{
-		Tp:      mysql.TypeDouble,
-		Flen:    mysql.MaxRealWidth,
-		Decimal: types.UnspecifiedLength,
-		Flag:    mysql.BinaryFlag,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	})
-	h.inputTypes = append(h.inputTypes, &types.FieldType{
-		Tp:      mysql.TypeNewDecimal,
-		Flen:    11,
-		Decimal: 0,
-		Flag:    mysql.BinaryFlag,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	})
+	ftb := types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
+	h.inputTypes = append(h.inputTypes, ftb.BuildP())
+
+	ftb = types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeDouble).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxRealWidth).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
+	h.inputTypes = append(h.inputTypes, ftb.BuildP())
+
+	ftb = types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeNewDecimal).SetFlag(mysql.BinaryFlag).SetFlen(11).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
+	h.inputTypes = append(h.inputTypes, ftb.BuildP())
 
 	// Use 20 string columns to show the cache performance.
 	for i := 0; i < 20; i++ {
-		h.inputTypes = append(h.inputTypes, &types.FieldType{
-			Tp:      mysql.TypeVarString,
-			Flen:    0,
-			Decimal: types.UnspecifiedLength,
-			Charset: charset.CharsetUTF8,
-			Collate: charset.CollationUTF8,
-		})
+		ftb = types.NewFieldTypeBuilder()
+		ftb.SetType(mysql.TypeVarString).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8)
+		h.inputTypes = append(h.inputTypes, ftb.BuildP())
 	}
 
 	h.inputChunk = chunk.NewChunkWithCapacity(h.inputTypes, numRows)

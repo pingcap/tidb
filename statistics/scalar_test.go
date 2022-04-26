@@ -56,7 +56,7 @@ func getBinaryLiteral(value string) types.BinaryLiteral {
 
 func getUnsignedFieldType() *types.FieldType {
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.Flag |= mysql.UnsignedFlag
+	tp.AddFlag(mysql.UnsignedFlag)
 	return tp
 }
 
