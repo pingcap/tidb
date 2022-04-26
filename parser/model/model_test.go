@@ -214,6 +214,14 @@ func TestModelBasic(t *testing.T) {
 	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.Flag)
 	require.Equal(t, charset.CharsetBin, extraPK.Charset)
 	require.Equal(t, charset.CollationBin, extraPK.Collate)
+
+	extraPartIDCol := NewExtraPartitionIDColInfo()
+	require.Equal(t, mysql.NotNullFlag, extraPartIDCol.Flag)
+	require.Equal(t, mysql.TypeLonglong, extraPartIDCol.Tp)
+
+	extraPhysTblIDCol := NewExtraPhysTblIDColInfo()
+	require.Equal(t, mysql.NotNullFlag, extraPhysTblIDCol.Flag)
+	require.Equal(t, mysql.TypeLonglong, extraPhysTblIDCol.Tp)
 }
 
 func TestJobStartTime(t *testing.T) {

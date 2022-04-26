@@ -701,6 +701,7 @@ func NewExtraPartitionIDColInfo() *ColumnInfo {
 		Name: ExtraPartitionIdName,
 	}
 	colInfo.Tp = mysql.TypeLonglong
+	colInfo.Flag = mysql.NotNullFlag
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	return colInfo
 }
@@ -712,6 +713,7 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 		Name: ExtraPhysTblIdName,
 	}
 	colInfo.Tp = mysql.TypeLonglong
+	colInfo.Flag = mysql.NotNullFlag
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	return colInfo
 }
