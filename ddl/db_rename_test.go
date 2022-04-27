@@ -84,15 +84,15 @@ func TestRenameTableWithLocked(t *testing.T) {
 
 func TestRenameTable2(t *testing.T) {
 	isAlterTable := false
-	testRenameTableTest(t, "rename table %s to %s", isAlterTable)
+	testRenameTable(t, "rename table %s to %s", isAlterTable)
 }
 
 func TestAlterTableRenameTable(t *testing.T) {
 	isAlterTable := true
-	testRenameTableTest(t, "alter table %s rename to %s", isAlterTable)
+	testRenameTable(t, "alter table %s rename to %s", isAlterTable)
 }
 
-func testRenameTableTest(t *testing.T, sql string, isAlterTable bool) {
+func testRenameTable(t *testing.T, sql string, isAlterTable bool) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
