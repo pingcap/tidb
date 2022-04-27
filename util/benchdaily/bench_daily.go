@@ -82,6 +82,8 @@ func Run(tests ...func(b *testing.B)) {
 	writeBenchResultToFile(res, *outfile)
 }
 
+// readBenchResultFromFile is used by the daily bench test.
+// nolint: unused, deadcode
 func readBenchResultFromFile(file string) []BenchResult {
 	f, err := os.Open(file)
 	if err != nil {

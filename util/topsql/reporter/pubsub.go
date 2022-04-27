@@ -146,7 +146,7 @@ func (ds *pubSubDataSink) run() error {
 }
 
 func (ds *pubSubDataSink) doSend(ctx context.Context, data *ReportData) error {
-	if err := ds.sendCPUTime(ctx, data.CPUTimeRecords); err != nil {
+	if err := ds.sendTopSQLRecords(ctx, data.DataRecords); err != nil {
 		return err
 	}
 	if err := ds.sendSQLMeta(ctx, data.SQLMetas); err != nil {
@@ -155,7 +155,7 @@ func (ds *pubSubDataSink) doSend(ctx context.Context, data *ReportData) error {
 	return ds.sendPlanMeta(ctx, data.PlanMetas)
 }
 
-func (ds *pubSubDataSink) sendCPUTime(ctx context.Context, records []tipb.CPUTimeRecord) (err error) {
+func (ds *pubSubDataSink) sendTopSQLRecords(ctx context.Context, records []tipb.TopSQLRecord) (err error) {
 	if len(records) == 0 {
 		return
 	}
@@ -171,11 +171,11 @@ func (ds *pubSubDataSink) sendCPUTime(ctx context.Context, records []tipb.CPUTim
 		}
 	}()
 
-	cpuRecord := &tipb.TopSQLSubResponse_Record{}
-	r := &tipb.TopSQLSubResponse{RespOneof: cpuRecord}
+	topSQLRecord := &tipb.TopSQLSubResponse_Record{}
+	r := &tipb.TopSQLSubResponse{RespOneof: topSQLRecord}
 
 	for i := range records {
-		cpuRecord.Record = &records[i]
+		topSQLRecord.Record = &records[i]
 		if err = ds.stream.Send(r); err != nil {
 			return
 		}

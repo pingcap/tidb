@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -106,9 +105,6 @@ func TestNullableBoolUnmarshal(t *testing.T) {
 func TestLogConfig(t *testing.T) {
 	var conf Config
 	configFile := "log_config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
-
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func() {
@@ -179,9 +175,6 @@ func TestConfig(t *testing.T) {
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Log.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	configFile := "config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
-
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -217,7 +210,6 @@ enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
-mem-quota-query = 10000
 max-index-length = 3080
 index-limit = 70
 table-column-count-limit = 4000
@@ -239,13 +231,6 @@ resolve-lock-lite-threshold = 16
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
-[stmt-summary]
-enable=false
-enable-internal-query=true
-max-stmt-count=1000
-max-sql-length=1024
-refresh-interval=100
-history-size=100
 [experimental]
 allow-expression-index = true
 [isolation-read]
@@ -259,6 +244,7 @@ spilled-file-encryption-method = "plaintext"
 [pessimistic-txn]
 deadlock-history-capacity = 123
 deadlock-history-collect-retryable = true
+pessimistic-auto-commit = true
 [top-sql]
 receiver-address = "127.0.0.1:10100"
 [status]
@@ -294,17 +280,10 @@ grpc-max-send-msg-size = 40960
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
-	require.False(t, conf.StmtSummary.Enable)
-	require.True(t, conf.StmtSummary.EnableInternalQuery)
-	require.Equal(t, uint(1000), conf.StmtSummary.MaxStmtCount)
-	require.Equal(t, uint(1024), conf.StmtSummary.MaxSQLLength)
-	require.Equal(t, 100, conf.StmtSummary.RefreshInterval)
-	require.Equal(t, 100, conf.StmtSummary.HistorySize)
 	require.True(t, conf.EnableBatchDML)
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.MaxServerConnections)
-	require.Equal(t, int64(10000), conf.MemQuotaQuery)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)
@@ -321,7 +300,7 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint64(30), conf.StoresRefreshInterval)
 	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
 	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
-	require.False(t, conf.Experimental.EnableNewCharset)
+	require.True(t, conf.PessimisticTxn.PessimisticAutoCommit.Load())
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
 	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
@@ -339,7 +318,14 @@ grpc-max-send-msg-size = 40960
 [log.file]
 log-rotate = true
 [performance]
-mem-profile-interval="1m"`)
+mem-profile-interval="1m"
+[stmt-summary]
+enable=false
+enable-internal-query=true
+max-stmt-count=1000
+max-sql-length=1024
+refresh-interval=100
+history-size=100`)
 	require.NoError(t, err)
 	err = conf.Load(configFile)
 	tmp := err.(*ErrConfigValidationFailed)
@@ -383,7 +369,7 @@ spilled-file-encryption-method = "aes128-ctr"
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
 
-	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	configFile = "config.toml.example"
 	require.NoError(t, conf.Load(configFile))
 
 	// Make sure the example config is the same as default config except `auto_tls`.
@@ -403,7 +389,6 @@ spilled-file-encryption-method = "aes128-ctr"
 
 	// Test for TLS config.
 	certFile := "cert.pem"
-	certFile = filepath.Join(filepath.Dir(localFile), certFile)
 	f, err = os.Create(certFile)
 	require.NoError(t, err)
 	_, err = f.WriteString(`-----BEGIN CERTIFICATE-----
@@ -429,7 +414,6 @@ c933WW1E0hCtvuGxWFIFtoJMQoyH0Pl4ACmY/6CokCCZKDInrPdhhf3MGRjkkw==
 	require.NoError(t, f.Close())
 
 	keyFile := "key.pem"
-	keyFile = filepath.Join(filepath.Dir(localFile), keyFile)
 	f, err = os.Create(keyFile)
 	require.NoError(t, err)
 	_, err = f.WriteString(`-----BEGIN RSA PRIVATE KEY-----
@@ -657,14 +641,13 @@ func TestSecurityValid(t *testing.T) {
 
 func TestTcpNoDelay(t *testing.T) {
 	c1 := NewConfig()
-	//check default value
+	// check default value
 	require.True(t, c1.Performance.TCPNoDelay)
 }
 
 func TestConfigExample(t *testing.T) {
 	conf := NewConfig()
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile := filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	configFile := "config.toml.example"
 	metaData, err := toml.DecodeFile(configFile, conf)
 	require.NoError(t, err)
 	keys := metaData.Keys()
@@ -673,4 +656,25 @@ func TestConfigExample(t *testing.T) {
 			require.False(t, ContainHiddenConfig(s))
 		}
 	}
+}
+
+func TestStatsLoadLimit(t *testing.T) {
+	conf := NewConfig()
+	checkConcurrencyValid := func(concurrency int, shouldBeValid bool) {
+		conf.Performance.StatsLoadConcurrency = uint(concurrency)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkConcurrencyValid(DefStatsLoadConcurrencyLimit, true)
+	checkConcurrencyValid(DefStatsLoadConcurrencyLimit-1, false)
+	checkConcurrencyValid(DefMaxOfStatsLoadConcurrencyLimit, true)
+	checkConcurrencyValid(DefMaxOfStatsLoadConcurrencyLimit+1, false)
+	conf = NewConfig()
+	checkQueueSizeValid := func(queueSize int, shouldBeValid bool) {
+		conf.Performance.StatsLoadQueueSize = uint(queueSize)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkQueueSizeValid(DefStatsLoadQueueSizeLimit, true)
+	checkQueueSizeValid(DefStatsLoadQueueSizeLimit-1, false)
+	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit, true)
+	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
 }

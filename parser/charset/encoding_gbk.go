@@ -14,14 +14,17 @@
 package charset
 
 import (
+	"bytes"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
+	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // EncodingGBKImpl is the instance of encodingGBK
-var EncodingGBKImpl = &encodingGBK{encodingBase{enc: simplifiedchinese.GBK}}
+var EncodingGBKImpl = &encodingGBK{encodingBase{enc: customGBK{}}}
 
 func init() {
 	EncodingGBKImpl.self = EncodingGBKImpl
@@ -53,6 +56,20 @@ func (e *encodingGBK) Peek(src []byte) []byte {
 		return src[:charLen]
 	}
 	return src
+}
+
+func (e *encodingGBK) MbLen(bs string) int {
+	if len(bs) < 2 {
+		return 0
+	}
+
+	if 0x81 <= bs[0] && bs[0] <= 0xfe {
+		if (0x40 <= bs[1] && bs[1] <= 0x7e) || (0x80 <= bs[1] && bs[1] <= 0xfe) {
+			return 2
+		}
+	}
+
+	return 0
 }
 
 // ToUpper implements Encoding interface.
@@ -90,4 +107,69 @@ var GBKCase = unicode.SpecialCase{
 	unicode.CaseRange{Lo: 0x01DA, Hi: 0x01DA, Delta: [unicode.MaxCase]rune{0, 0, 0}},
 	unicode.CaseRange{Lo: 0x01DC, Hi: 0x01DC, Delta: [unicode.MaxCase]rune{0, 0, 0}},
 	unicode.CaseRange{Lo: 0x216A, Hi: 0x216B, Delta: [unicode.MaxCase]rune{0, 0, 0}},
+}
+
+// customGBK is a simplifiedchinese.GBK wrapper.
+type customGBK struct{}
+
+// NewCustomGBKEncoder return a custom GBK encoding.
+func NewCustomGBKEncoder() *encoding.Encoder {
+	return customGBK{}.NewEncoder()
+}
+
+// NewDecoder returns simplifiedchinese.GBK.NewDecoder().
+func (c customGBK) NewDecoder() *encoding.Decoder {
+	return &encoding.Decoder{
+		Transformer: customGBKDecoder{
+			gbkDecoder: simplifiedchinese.GBK.NewDecoder(),
+		},
+	}
+}
+
+type customGBKDecoder struct {
+	gbkDecoder *encoding.Decoder
+}
+
+// Transform special treatment for 0x80,
+// see https://github.com/pingcap/tidb/issues/30581 get details.
+func (c customGBKDecoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+	if len(src) == 0 {
+		return 0, 0, nil
+	}
+	if src[0] == 0x80 {
+		return utf8.EncodeRune(dst[:], utf8.RuneError), 1, nil
+	}
+	return c.gbkDecoder.Transform(dst, src, atEOF)
+}
+
+// Reset is same as simplifiedchinese.GBK.Reset().
+func (c customGBKDecoder) Reset() {
+	c.gbkDecoder.Reset()
+}
+
+type customGBKEncoder struct {
+	gbkEncoder *encoding.Encoder
+}
+
+// NewEncoder returns simplifiedchinese.gbk.
+func (c customGBK) NewEncoder() *encoding.Encoder {
+	return &encoding.Encoder{
+		Transformer: customGBKEncoder{
+			gbkEncoder: simplifiedchinese.GBK.NewEncoder(),
+		},
+	}
+}
+
+// Transform special treatment for `€`,
+// see https://github.com/pingcap/tidb/issues/30581 get details.
+func (c customGBKEncoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+	if bytes.HasPrefix(src, []byte{0xe2, 0x82, 0xac} /* '€' */) {
+		return 0, 0, ErrInvalidCharacterString
+	}
+	return c.gbkEncoder.Transform(dst, src, atEOF)
+}
+
+// Reset is same as simplifiedchinese.gbk.
+func (c customGBKEncoder) Reset() {
+	c.gbkEncoder.Reset()
 }

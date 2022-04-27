@@ -16,6 +16,7 @@ package stmtstats
 
 import (
 	"sync"
+	"time"
 
 	"go.uber.org/atomic"
 )
@@ -32,7 +33,10 @@ type StatementObserver interface {
 	OnExecutionBegin(sqlDigest, planDigest []byte)
 
 	// OnExecutionFinished should be called after the statement is executed.
-	OnExecutionFinished(sqlDigest, planDigest []byte)
+	// WARNING: Currently Only call StatementObserver API when TopSQL is enabled,
+	// there is no guarantee that both OnExecutionBegin and OnExecutionFinished will be called for a SQL,
+	// such as TopSQL is enabled during a SQL execution.
+	OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration)
 }
 
 // StatementStats is a counter used locally in each session.
@@ -66,7 +70,18 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
 }
 
 // OnExecutionFinished implements StatementObserver.OnExecutionFinished.
-func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte) {
+func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration) {
+	ns := execDuration.Nanoseconds()
+	if ns < 0 {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+
+	item.SumDurationNs += uint64(ns)
+	item.DurationCount++
 	// Count more data here.
 }
 
@@ -161,6 +176,13 @@ type StatementStatsItem struct {
 	// ExecCount represents the number of SQL executions of TiDB.
 	ExecCount uint64
 
+	// SumDurationNs is the total number of durations in nanoseconds.
+	SumDurationNs uint64
+
+	// DurationCount represents the number of SQL executions specially
+	// used to calculate SQLDuration.
+	DurationCount uint64
+
 	// KvStatsItem contains all indicators of kv layer.
 	KvStatsItem KvStatementStatsItem
 }
@@ -184,6 +206,8 @@ func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
 		return
 	}
 	i.ExecCount += other.ExecCount
+	i.SumDurationNs += other.SumDurationNs
+	i.DurationCount += other.DurationCount
 	i.KvStatsItem.Merge(other.KvStatsItem)
 }
 

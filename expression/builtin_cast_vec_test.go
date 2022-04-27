@@ -110,7 +110,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 
 type dateTimeGenerWithFsp struct {
 	defaultGener
-	fsp int8
+	fsp int
 }
 
 func (g *dateTimeGenerWithFsp) gen() interface{} {
@@ -209,7 +209,7 @@ func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	baseCast := newBaseBuiltinCastFunc(baseFunc, true)
 	baseCast.tp = types.NewFieldType(mysql.TypeNewDecimal)
 	// set the `UnsignedFlag` bit
-	baseCast.tp.Flag |= mysql.UnsignedFlag
+	baseCast.tp.AddFlag(mysql.UnsignedFlag)
 	cast := &builtinCastStringAsDecimalSig{baseCast}
 
 	inputs := []*chunk.Chunk{

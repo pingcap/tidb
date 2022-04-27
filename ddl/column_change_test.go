@@ -12,303 +12,178 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testColumnChangeSuite{})
+func TestColumnAdd(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+	tk := testkit.NewTestKit(t, store)
+	internal := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int, c2 int);")
+	tk.MustExec("insert t values (1, 2);")
 
-type testColumnChangeSuite struct {
-	store  kv.Storage
-	dbInfo *model.DBInfo
-}
+	d := dom.DDL()
+	tc := &ddl.TestDDLCallback{Do: dom}
 
-func (s *testColumnChangeSuite) SetUpSuite(c *C) {
-	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	s.store = testCreateStore(c, "test_column_change")
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := d.Stop()
-		c.Assert(err, IsNil)
-	}()
-	s.dbInfo, err = testSchemaInfo(d, "test_index_change")
-	c.Assert(err, IsNil)
-	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
-}
-
-func (s *testColumnChangeSuite) TearDownSuite(c *C) {
-	s.store.Close()
-}
-
-func (s *testColumnChangeSuite) TestColumnChange(c *C) {
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := d.Stop()
-		c.Assert(err, IsNil)
-	}()
-	// create table t (c1 int, c2 int);
-	tblInfo, err := testTableInfo(d, "t", 2)
-	c.Assert(err, IsNil)
-	ctx := testNewContext(d)
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	// insert t values (1, 2);
-	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	row := types.MakeDatums(1, 2)
-	h, err := originTable.AddRecord(ctx, row)
-	c.Assert(err, IsNil)
-	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	var mu sync.Mutex
-	tc := &TestDDLCallback{}
+	ct := testNewContext(store)
 	// set up hook
-	prevState := model.StateNone
 	var (
 		deleteOnlyTable table.Table
 		writeOnlyTable  table.Table
 		publicTable     table.Table
+		dropCol         *table.Column
 	)
-	var checkErr error
-	tc.onJobUpdated = func(job *model.Job) {
-		if job.SchemaState == prevState {
-			return
-		}
-		hookCtx := mock.NewContext()
-		hookCtx.Store = s.store
-		prevState = job.SchemaState
-		err := hookCtx.NewTxn(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
+	first := true
+	var jobID int64
+	tc.OnJobUpdatedExported = func(job *model.Job) {
+		jobID = job.ID
+		require.NoError(t, dom.Reload())
+		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
+		require.True(t, exist)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
-			deleteOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
-			if err != nil {
-				checkErr = errors.Trace(err)
-			}
+			deleteOnlyTable = tbl
 		case model.StateWriteOnly:
-			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
-			if err != nil {
-				checkErr = errors.Trace(err)
-			}
-			err = s.checkAddWriteOnly(hookCtx, d, deleteOnlyTable, writeOnlyTable, h)
-			if err != nil {
-				checkErr = errors.Trace(err)
-			}
+			writeOnlyTable = tbl
+			require.NoError(t, checkAddWriteOnly(ct, deleteOnlyTable, writeOnlyTable, kv.IntHandle(1)))
 		case model.StatePublic:
-			mu.Lock()
-			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
-			if err != nil {
-				checkErr = errors.Trace(err)
+			if first {
+				first = false
+			} else {
+				return
 			}
-			err = s.checkAddPublic(hookCtx, d, writeOnlyTable, publicTable)
-			if err != nil {
-				checkErr = errors.Trace(err)
-			}
-			mu.Unlock()
-		}
-		txn, err := hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-		err = txn.Commit(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
+			publicTable = tbl
+			require.NoError(t, checkAddPublic(ct, writeOnlyTable, publicTable))
 		}
 	}
 	d.SetHook(tc)
-	defaultValue := int64(3)
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
-	c.Assert(checkErr, IsNil)
-	testCheckJobDone(c, d, job, true)
-	mu.Lock()
+	tk.MustExec("alter table t add column c3 int default 3")
 	tb := publicTable
-	mu.Unlock()
-	s.testColumnDrop(c, ctx, d, tb)
-	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
+	v := getSchemaVer(t, tk.Session())
+	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
+
+	// Drop column.
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if dropCol == nil {
+			tbl := external.GetTableByName(t, internal, "test", "t")
+			dropCol = tbl.VisibleCols()[2]
+		}
+	}
+	tc.OnJobUpdatedExported = func(job *model.Job) {
+		jobID = job.ID
+		tbl := external.GetTableByName(t, internal, "test", "t")
+		if job.SchemaState != model.StateNone {
+			for _, col := range tbl.Cols() {
+				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
+			}
+		}
+	}
+	d.SetHook(tc)
+	tk.MustExec("alter table t drop column c3")
+	v = getSchemaVer(t, tk.Session())
+	// Don't check column, so it's ok to use tb.
+	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
+
+	// Add column not default.
+	first = true
+	tc.OnJobUpdatedExported = func(job *model.Job) {
+		jobID = job.ID
+		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
+		require.True(t, exist)
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			writeOnlyTable = tbl
+		case model.StatePublic:
+			if first {
+				first = false
+			} else {
+				return
+			}
+			sess := testNewContext(store)
+			err := sess.NewTxn(context.Background())
+			require.NoError(t, err)
+			_, err = writeOnlyTable.AddRecord(sess, types.MakeDatums(10, 10))
+			require.NoError(t, err)
+		}
+	}
+	d.SetHook(tc)
+	tk.MustExec("alter table t add column c3 int")
+	testCheckJobDone(t, store, jobID, true)
 }
 
-func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C) {
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := d.Stop()
-		c.Assert(err, IsNil)
-	}()
+func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a bigint primary key clustered AUTO_RANDOM(5));")
 
-	ids, err := d.genGlobalIDs(1)
-	tableID := ids[0]
-	c.Assert(err, IsNil)
-	colInfo := &model.ColumnInfo{
-		Name:      model.NewCIStr("a"),
-		Offset:    0,
-		State:     model.StatePublic,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-	}
-	tblInfo := &model.TableInfo{
-		ID:             tableID,
-		Name:           model.NewCIStr("auto_random_table_name"),
-		Columns:        []*model.ColumnInfo{colInfo},
-		AutoRandomBits: 5,
-	}
-	colInfo.ID = allocateColumnID(tblInfo)
-	ctx := testNewContext(d)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	d := dom.DDL()
+	tc := &ddl.TestDDLCallback{Do: dom}
 
-	tc := &TestDDLCallback{}
 	var errCount int32 = 3
 	var genAutoRandErr error
-	tc.onJobRunBefore = func(job *model.Job) {
+	var dbID int64
+	var tID int64
+	var jobID int64
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		jobID = job.ID
+		dbID = job.SchemaID
+		tID = job.TableID
 		if atomic.LoadInt32(&errCount) > 0 && job.Type == model.ActionModifyColumn {
 			atomic.AddInt32(&errCount, -1)
-			genAutoRandErr = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			genAutoRandErr = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
-				_, err1 := t.GetAutoIDAccessors(s.dbInfo.ID, tableID).RandomID().Inc(1)
+				_, err1 := t.GetAutoIDAccessors(dbID, tID).RandomID().Inc(1)
 				return err1
 			})
 		}
 	}
 	d.SetHook(tc)
+
+	tk.MustExec("alter table t modify column a bigint AUTO_RANDOM(10)")
+	require.True(t, errCount == 0)
+	require.Nil(t, genAutoRandErr)
 	const newAutoRandomBits uint64 = 10
-	job := &model.Job{
-		SchemaID:   s.dbInfo.ID,
-		TableID:    tblInfo.ID,
-		SchemaName: s.dbInfo.Name.L,
-		Type:       model.ActionModifyColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colInfo, colInfo.Name, ast.ColumnPosition{}, 0, newAutoRandomBits},
-	}
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	c.Assert(errCount == 0, IsTrue)
-	c.Assert(genAutoRandErr, IsNil)
-	testCheckJobDone(c, d, job, true)
+	testCheckJobDone(t, store, jobID, true)
 	var newTbInfo *model.TableInfo
-	err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
-		newTbInfo, err = t.GetTable(s.dbInfo.ID, tableID)
+		newTbInfo, err = t.GetTable(dbID, tID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		return nil
 	})
-	c.Assert(err, IsNil)
-	c.Assert(newTbInfo.AutoRandomBits, Equals, newAutoRandomBits)
-}
-
-func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo) {
-	tc := &TestDDLCallback{}
-	// set up hook
-	prevState := model.StateNone
-	var checkErr error
-	var writeOnlyTable table.Table
-	tc.onJobUpdated = func(job *model.Job) {
-		if job.SchemaState == prevState {
-			return
-		}
-		hookCtx := mock.NewContext()
-		hookCtx.Store = s.store
-		prevState = job.SchemaState
-		err := hookCtx.NewTxn(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-		switch job.SchemaState {
-		case model.StateWriteOnly:
-			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
-			if err != nil {
-				checkErr = errors.Trace(err)
-			}
-		case model.StatePublic:
-			_, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
-			if err != nil {
-				checkErr = errors.Trace(err)
-			}
-			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10))
-			if err != nil {
-				checkErr = errors.Trace(err)
-			}
-		}
-		txn, err := hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-		err = txn.Commit(context.TODO())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-	}
-	d.SetHook(tc)
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
-	c.Assert(checkErr, IsNil)
-	testCheckJobDone(c, d, job, true)
-}
-
-func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *ddl, tbl table.Table) {
-	dropCol := tbl.Cols()[2]
-	tc := &TestDDLCallback{}
-	// set up hook
-	prevState := model.StateNone
-	var checkErr error
-	tc.onJobUpdated = func(job *model.Job) {
-		if job.SchemaState == prevState {
-			return
-		}
-		prevState = job.SchemaState
-		currentTbl, err := getCurrentTable(d, s.dbInfo.ID, tbl.Meta().ID)
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-		for _, col := range currentTbl.Cols() {
-			if col.ID == dropCol.ID {
-				checkErr = errors.Errorf("column is not dropped")
-			}
-		}
-	}
-	d.SetHook(tc)
-	c.Assert(checkErr, IsNil)
-	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
+	require.NoError(t, err)
+	require.Equal(t, newTbInfo.AutoRandomBits, newAutoRandomBits)
 }
 
 func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
@@ -333,7 +208,7 @@ func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle
 	return handle, true, nil
 }
 
-func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
+func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
@@ -347,8 +222,10 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(),
-		testutil.RowsWithSep(" ", "1 2 <nil>", "2 3 3"))
+	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), [][]string{
+		{"1", "2", "<nil>"},
+		{"2", "3", "3"},
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -363,7 +240,10 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 		return errors.Errorf("expect %v, got %v", expect, got)
 	}
 	// DeleteOnlyTable: select * from t
-	err = checkResult(ctx, deleteOnlyTable, deleteOnlyTable.WritableCols(), testutil.RowsWithSep(" ", "1 2", "2 3"))
+	err = checkResult(ctx, deleteOnlyTable, deleteOnlyTable.WritableCols(), [][]string{
+		{"1", "2"},
+		{"2", "3"},
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -381,7 +261,10 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 		return errors.Trace(err)
 	}
 	// After we update the first row, its default value is also set.
-	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), testutil.RowsWithSep(" ", "2 2 3", "2 3 3"))
+	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), [][]string{
+		{"2", "2", "3"},
+		{"2", "3", "3"},
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -395,7 +278,9 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 		return errors.Trace(err)
 	}
 	// After delete table has deleted the first row, check the WriteOnly table records.
-	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), testutil.RowsWithSep(" ", "2 3 3"))
+	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), [][]string{
+		{"2", "3", "3"},
+	})
 	return errors.Trace(err)
 }
 
@@ -407,7 +292,7 @@ func touchedSlice(t table.Table) []bool {
 	return touched
 }
 
-func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
+func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.Table) error {
 	ctx := context.TODO()
 	// publicTable Insert t values (4, 4, 4)
 	err := sctx.NewTxn(ctx)
@@ -440,36 +325,17 @@ func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, 
 		return errors.Trace(err)
 	}
 	// publicTable select * from t, make sure the new c3 value 4 is not overwritten to default value 3.
-	err = checkResult(sctx, publicTable, publicTable.WritableCols(), testutil.RowsWithSep(" ", "2 3 3", "3 4 4"))
+	err = checkResult(sctx, publicTable, publicTable.WritableCols(), [][]string{
+		{"2", "3", "3"},
+		{"3", "4", "4"},
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
-	var tblInfo *model.TableInfo
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err error
-		tblInfo, err = t.GetTable(schemaID, tableID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	alloc := autoid.NewAllocator(d.store, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
-	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return tbl, err
-}
-
-func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]interface{}) error {
+func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]string) error {
 	var gotRows [][]interface{}
 	err := tables.IterRecords(t, ctx, cols, func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))
@@ -492,4 +358,77 @@ func datumsToInterfaces(datums []types.Datum) []interface{} {
 		ifs = append(ifs, d.GetValue())
 	}
 	return ifs
+}
+
+type historyJobArgs struct {
+	ver    int64
+	db     *model.DBInfo
+	tbl    *model.TableInfo
+	tblIDs map[int64]struct{}
+}
+
+func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	ver, err := m.GetSchemaVersion()
+	require.NoError(t, err)
+	return ver
+}
+
+func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
+	require.Equal(t, t1.ID, t2.ID)
+	require.Equal(t, t1.Name, t2.Name)
+	require.Equal(t, t1.Charset, t2.Charset)
+	require.Equal(t, t1.Collate, t2.Collate)
+	require.Equal(t, t1.PKIsHandle, t2.PKIsHandle)
+	require.Equal(t, t1.Comment, t2.Comment)
+	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
+}
+
+func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	tran := meta.NewMeta(txn)
+	historyJob, err := tran.GetHistoryDDLJob(id)
+	require.NoError(t, err)
+	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
+
+	if args.tbl != nil {
+		require.Equal(t, historyJob.BinlogInfo.SchemaVersion, args.ver)
+		checkEqualTable(t, historyJob.BinlogInfo.TableInfo, args.tbl)
+		return
+	}
+
+	// for handling schema job
+	require.Equal(t, historyJob.BinlogInfo.SchemaVersion, args.ver)
+	require.Equal(t, historyJob.BinlogInfo.DBInfo, args.db)
+	// only for creating schema job
+	if args.db != nil && len(args.tblIDs) == 0 {
+		return
+	}
+}
+
+func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		historyJob, err := m.GetHistoryDDLJob(jobID)
+		require.NoError(t, err)
+		require.Equal(t, historyJob.State, model.JobStateSynced)
+		if isAdd {
+			require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		} else {
+			require.Equal(t, historyJob.SchemaState, model.StateNone)
+		}
+
+		return nil
+	}))
+}
+
+func testNewContext(store kv.Storage) sessionctx.Context {
+	ctx := mock.NewContext()
+	ctx.Store = store
+	return ctx
 }

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -116,6 +117,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	} else {
 		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)
 	}
+	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
 	if e.cacheTable != nil {
 		snapshot = cacheTableSnapshot{snapshot, e.cacheTable}
 	}
@@ -128,7 +132,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	replicaReadType := e.ctx.GetSessionVars().GetReplicaRead()
-	if replicaReadType.IsFollowerRead() {
+	if replicaReadType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
@@ -149,8 +153,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			},
 		})
 	}
-	setResourceGroupTaggerForTxn(stmtCtx, snapshot)
-	setRPCInterceptorOfExecCounterForTxn(sessVars, snapshot)
+	setOptionForTopSQL(stmtCtx, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -374,7 +377,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			return e.handles[i].Compare(e.handles[j]) < 0
 
 		}
-		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag) {
+		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().GetFlag()) {
 			uintComparator := func(i, h kv.Handle) int {
 				if !i.IsInt() || !h.IsInt() {
 					panic(fmt.Sprintf("both handles need be IntHandle, but got %T and %T ", i, h))
@@ -475,9 +478,24 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
-			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) {
-				return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
-					e.idxInfo.Name.O, e.handles[i])
+			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) &&
+				!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+				return (&consistency.Reporter{
+					HandleEncode: func(_ kv.Handle) kv.Key {
+						return key
+					},
+					IndexEncode: func(_ *consistency.RecordData) kv.Key {
+						return indexKeys[i]
+					},
+					Tbl:  e.tblInfo,
+					Idx:  e.idxInfo,
+					Sctx: e.ctx,
+				}).ReportLookupInconsistent(ctx,
+					1, 0,
+					e.handles[i:i+1],
+					e.handles,
+					[]consistency.RecordData{{}},
+				)
 			}
 			continue
 		}
@@ -524,7 +542,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 // LockKeys locks the keys for pessimistic transaction.
 func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
 	txnCtx := seCtx.GetSessionVars().TxnCtx
-	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
+	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime, len(keys))
 	if txnCtx.IsPessimistic {
 		lctx.InitReturnValues(len(keys))
 	}
@@ -579,7 +597,7 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 		if !ok {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		unsigned := mysql.HasUnsignedFlag(col.GetType().Flag)
+		unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
 		ranges := partitionExpr.ForRangePruning
 		length := len(ranges.LessThan)
 		partIdx := sort.Search(length, func(i int) bool {

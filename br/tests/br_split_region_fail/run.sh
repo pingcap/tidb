@@ -52,7 +52,7 @@ BR_LOG_TO_TERM=1
 
 grep "a error occurs on split region" $LOG && \
 grep "split region meet not leader error" $LOG && \
-grep "Full restore success" $LOG && \
+grep "Full Restore success" $LOG && \
 grep "find new leader" $LOG
 
 if [ $? -ne 0 ]; then

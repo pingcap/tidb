@@ -3,43 +3,24 @@
 package restore_test
 
 import (
-	"bytes"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/stretchr/testify/require"
 )
 
-type testRangeSuite struct{}
-
-var _ = Suite(&testRangeSuite{})
-
-type rangeEquals struct {
-	*CheckerInfo
-}
-
-var RangeEquals Checker = &rangeEquals{
-	&CheckerInfo{Name: "RangeEquals", Params: []string{"obtained", "expected"}},
-}
-
-func (checker *rangeEquals) Check(params []interface{}, names []string) (result bool, error string) {
-	obtained := params[0].([]rtree.Range)
-	expected := params[1].([]rtree.Range)
-	if len(obtained) != len(expected) {
-		return false, ""
-	}
+func rangeEquals(t *testing.T, obtained, expected []rtree.Range) {
+	require.Equal(t, len(expected), len(obtained))
 	for i := range obtained {
-		if !bytes.Equal(obtained[i].StartKey, expected[i].StartKey) ||
-			!bytes.Equal(obtained[i].EndKey, expected[i].EndKey) {
-			return false, ""
-		}
+		require.Equal(t, expected[i].StartKey, obtained[i].StartKey)
+		require.Equal(t, expected[i].EndKey, obtained[i].EndKey)
 	}
-	return true, ""
 }
 
-func (s *testRangeSuite) TestSortRange(c *C) {
+func TestSortRange(t *testing.T) {
 	dataRules := []*import_sstpb.RewriteRule{
 		{OldKeyPrefix: tablecodec.GenTableRecordPrefix(1), NewKeyPrefix: tablecodec.GenTableRecordPrefix(4)},
 		{OldKeyPrefix: tablecodec.GenTableRecordPrefix(2), NewKeyPrefix: tablecodec.GenTableRecordPrefix(5)},
@@ -54,8 +35,8 @@ func (s *testRangeSuite) TestSortRange(c *C) {
 		},
 	}
 	rs1, err := restore.SortRanges(ranges1, rewriteRules)
-	c.Assert(err, IsNil, Commentf("sort range1 failed: %v", err))
-	c.Assert(rs1, RangeEquals, []rtree.Range{
+	require.NoErrorf(t, err, "sort range1 failed: %v", err)
+	rangeEquals(t, rs1, []rtree.Range{
 		{
 			StartKey: append(tablecodec.GenTableRecordPrefix(4), []byte("aaa")...),
 			EndKey:   append(tablecodec.GenTableRecordPrefix(4), []byte("bbb")...), Files: nil,
@@ -69,13 +50,14 @@ func (s *testRangeSuite) TestSortRange(c *C) {
 		},
 	}
 	_, err = restore.SortRanges(ranges2, rewriteRules)
-	c.Assert(err, ErrorMatches, "table id mismatch.*")
+	require.Error(t, err)
+	require.Regexp(t, "table id mismatch.*", err.Error())
 
 	ranges3 := initRanges()
 	rewriteRules1 := initRewriteRules()
 	rs3, err := restore.SortRanges(ranges3, rewriteRules1)
-	c.Assert(err, IsNil, Commentf("sort range1 failed: %v", err))
-	c.Assert(rs3, RangeEquals, []rtree.Range{
+	require.NoErrorf(t, err, "sort range1 failed: %v", err)
+	rangeEquals(t, rs3, []rtree.Range{
 		{StartKey: []byte("bbd"), EndKey: []byte("bbf"), Files: nil},
 		{StartKey: []byte("bbf"), EndKey: []byte("bbj"), Files: nil},
 		{StartKey: []byte("xxa"), EndKey: []byte("xxe"), Files: nil},

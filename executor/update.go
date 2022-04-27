@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -96,7 +95,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 				break
 			}
 		}
-		if e.unmatchedOuterRow(content, row) {
+		if unmatchedOuterRow(content, row) {
 			updatable = false
 		}
 		e.tableUpdatable = append(e.tableUpdatable, updatable)
@@ -211,7 +210,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 // the inner handle field is filled with a NULL value.
 //
 // This fixes: https://github.com/pingcap/tidb/issues/7176.
-func (e *UpdateExec) unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpdateRow []types.Datum) bool {
+func unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpdateRow []types.Datum) bool {
 	firstHandleIdx := tblPos.HandleCols.GetCol(0)
 	return waitUpdateRow[firstHandleIdx.Index].IsNull()
 }
@@ -271,14 +270,13 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
-		if variable.TopSQLEnabled() {
-			txn, err := e.ctx.Txn(true)
-			if err == nil {
-				txn.SetOption(kv.ResourceGroupTagger, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
-				if e.ctx.GetSessionVars().StmtCtx.KvExecCounter != nil {
-					// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-					txn.SetOption(kv.RPCInterceptor, e.ctx.GetSessionVars().StmtCtx.KvExecCounter.RPCInterceptor())
-				}
+		txn, err := e.ctx.Txn(true)
+		if err == nil {
+			sc := e.ctx.GetSessionVars().StmtCtx
+			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+			if sc.KvExecCounter != nil {
+				// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+				txn.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {

@@ -538,7 +538,7 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 	isUnsigned := false
 	if e.tableInfo.PKIsHandle {
 		if pkCol := e.tableInfo.GetPkColInfo(); pkCol != nil {
-			isUnsigned = mysql.HasUnsignedFlag(pkCol.Flag)
+			isUnsigned = mysql.HasUnsignedFlag(pkCol.GetFlag())
 		}
 	}
 	if isUnsigned {
@@ -561,7 +561,7 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 		lowerValue = lowerRecordID
 	}
 	if step < minRegionStepValue {
-		errMsg := fmt.Sprintf("the region size is too small, expected at least %d, but got %d", step, minRegionStepValue)
+		errMsg := fmt.Sprintf("the region size is too small, expected at least %d, but got %d", minRegionStepValue, step)
 		return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	return lowerValue, step, nil
@@ -629,7 +629,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	// This is used to decode the int handle properly.
 	var hasUnsignedIntHandle bool
 	if pkInfo := tableInfo.GetPkColInfo(); pkInfo != nil {
-		hasUnsignedIntHandle = mysql.HasUnsignedFlag(pkInfo.Flag)
+		hasUnsignedIntHandle = mysql.HasUnsignedFlag(pkInfo.GetFlag())
 	}
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalTableID)

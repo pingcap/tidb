@@ -47,8 +47,7 @@ import (
 // The actions that could be triggered are: AggSpillDiskAction.
 //
 // If the hard limit is exceeded, we will trigger the action that immediately
-// reduces memory usage. The hard limit is set by the config item `mem-quota-query`
-// or the system variable `tidb_mem_query_quota`.
+// reduces memory usage. The hard limit is set by the system variable `tidb_mem_query_quota`.
 // The actions that could be triggered are: SpillDiskAction, SortAndSpillDiskAction, rateLimitAction,
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
@@ -173,9 +172,12 @@ func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
 }
 
 // GetFallbackForTest get the oom action used by test.
-func (t *Tracker) GetFallbackForTest() ActionOnExceed {
+func (t *Tracker) GetFallbackForTest(ignoreFinishedAction bool) ActionOnExceed {
 	t.actionMuForHardLimit.Lock()
 	defer t.actionMuForHardLimit.Unlock()
+	if t.actionMuForHardLimit.actionOnExceed != nil && t.actionMuForHardLimit.actionOnExceed.IsFinished() && ignoreFinishedAction {
+		t.actionMuForHardLimit.actionOnExceed = t.actionMuForHardLimit.actionOnExceed.GetFallback()
+	}
 	return t.actionMuForHardLimit.actionOnExceed
 }
 
@@ -332,6 +334,9 @@ func (t *Tracker) Consume(bytes int64) {
 	tryAction := func(mu *actionMu, tracker *Tracker) {
 		mu.Lock()
 		defer mu.Unlock()
+		for mu.actionOnExceed != nil && mu.actionOnExceed.IsFinished() {
+			mu.actionOnExceed = mu.actionOnExceed.GetFallback()
+		}
 		if mu.actionOnExceed != nil {
 			mu.actionOnExceed.Action(tracker)
 		}
@@ -556,4 +561,6 @@ const (
 	LabelForIndexJoinInnerWorker int = -20
 	// LabelForIndexJoinOuterWorker represents the label of IndexJoin OuterWorker
 	LabelForIndexJoinOuterWorker int = -21
+	// LabelForBindCache represents the label of the bind cache
+	LabelForBindCache int = -22
 )

@@ -89,6 +89,11 @@ type CTEExec struct {
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
+
+	// isInApply indicates whether CTE is in inner side of Apply
+	// and should resTbl/iterInTbl be reset for each outer row of Apply.
+	// Because we reset them when SQL is finished instead of when CTEExec.Close() is called.
+	isInApply bool
 }
 
 // Open implements the Executor interface.
@@ -114,6 +119,9 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		if err = e.recursiveExec.Open(ctx); err != nil {
 			return err
 		}
+		// For non-recursive CTE, the result will be put into resTbl directly.
+		// So no need to build iterOutTbl.
+		// Construct iterOutTbl in Open() instead of buildCTE(), because its destruct is in Close().
 		recursiveTypes := e.recursiveExec.base().retFieldTypes
 		e.iterOutTbl = cteutil.NewStorageRowContainer(recursiveTypes, e.maxChunkSize)
 		if err = e.iterOutTbl.OpenAndRef(); err != nil {
@@ -141,6 +149,9 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.resTbl.Lock()
 	defer e.resTbl.Unlock()
 	if !e.resTbl.Done() {
+		if e.resTbl.Error() != nil {
+			return e.resTbl.Error()
+		}
 		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
 		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
 		var iterOutAction *chunk.SpillDiskAction
@@ -159,17 +170,11 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		})
 
 		if err = e.computeSeedPart(ctx); err != nil {
-			// Don't put it in defer.
-			// Because it should be called only when the filling process is not completed.
-			if err1 := e.reopenTbls(); err1 != nil {
-				return err1
-			}
+			e.resTbl.SetError(err)
 			return err
 		}
 		if err = e.computeRecursivePart(ctx); err != nil {
-			if err1 := e.reopenTbls(); err1 != nil {
-				return err1
-			}
+			e.resTbl.SetError(err)
 			return err
 		}
 		e.resTbl.SetDone()
@@ -210,6 +215,11 @@ func (e *CTEExec) Close() (err error) {
 			}
 		}
 	}
+	if e.isInApply {
+		if err = e.reopenTbls(); err != nil {
+			return err
+		}
+	}
 
 	return e.baseExecutor.Close()
 }
@@ -217,8 +227,6 @@ func (e *CTEExec) Close() (err error) {
 func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
-	// This means iterInTbl's can be read.
-	defer close(e.iterInTbl.GetBegCh())
 	chks := make([]*chunk.Chunk, 0, 10)
 	for {
 		if e.limitDone(e.iterInTbl) {
@@ -371,7 +379,6 @@ func (e *CTEExec) setupTblsForNewIteration() (err error) {
 	if err = e.iterInTbl.Reopen(); err != nil {
 		return err
 	}
-	defer close(e.iterInTbl.GetBegCh())
 	if e.isDistinct {
 		// Already deduplicated by resTbl, adding directly is ok.
 		for _, chk := range chks {
@@ -398,7 +405,9 @@ func (e *CTEExec) reset() {
 }
 
 func (e *CTEExec) reopenTbls() (err error) {
-	e.hashTbl = newConcurrentMapHashTable()
+	if e.isDistinct {
+		e.hashTbl = newConcurrentMapHashTable()
+	}
 	if err := e.resTbl.Reopen(); err != nil {
 		return err
 	}

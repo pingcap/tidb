@@ -43,6 +43,7 @@ import (
 const FullRange = -1
 
 // partitionProcessor rewrites the ast for table partition.
+// Used by static partition prune mode.
 //
 // create table t (id int) partition by range (id)
 //   (partition p1 values less than (10),
@@ -191,7 +192,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				}
 
 				var rangeScalar float64
-				if mysql.HasUnsignedFlag(col.RetType.Flag) {
+				if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
 					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
 				} else {
 					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
@@ -210,11 +211,11 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				}
 
 				// issue:#22619
-				if col.RetType.Tp == mysql.TypeBit {
+				if col.RetType.GetType() == mysql.TypeBit {
 					// maximum number of partitions is 8192
-					if col.RetType.Flen > 0 && col.RetType.Flen < int(gomath.Log2(ddl.PartitionCountLimit)) {
+					if col.RetType.GetFlen() > 0 && col.RetType.GetFlen() < int(gomath.Log2(ddl.PartitionCountLimit)) {
 						// all possible hash values
-						maxUsedPartitions := 1 << col.RetType.Flen
+						maxUsedPartitions := 1 << col.RetType.GetFlen()
 						if maxUsedPartitions < numPartitions {
 							for i := 0; i < maxUsedPartitions; i++ {
 								used = append(used, i)
@@ -307,6 +308,15 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 				TblName:     ds.tableInfo.Name,
 				ColName:     model.ExtraPartitionIdName,
 				OrigColName: model.ExtraPartitionIdName,
+			})
+			continue
+		}
+		if colExpr.ID == model.ExtraPhysTblID {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     model.ExtraPhysTblIdName,
+				OrigColName: model.ExtraPhysTblIdName,
 			})
 			continue
 		}
@@ -640,7 +650,7 @@ func (s *partitionProcessor) prune(ds *DataSource, opt *logicalOptimizeOp) (Logi
 		return s.processListPartition(ds, pi, opt)
 	}
 
-	// We haven't implement partition by list and so on.
+	// We haven't implement partition by key and so on.
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
 }
 
@@ -856,7 +866,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 		if dataForPrune, ok := pruner.extractDataForPrune(ctx, cond); ok {
 			switch dataForPrune.op {
 			case ast.EQ:
-				unsigned := mysql.HasUnsignedFlag(pruner.col.RetType.Flag)
+				unsigned := mysql.HasUnsignedFlag(pruner.col.RetType.GetFlag())
 				start, _ := pruneUseBinarySearch(pruner.lessThan, dataForPrune, unsigned)
 				// if the type of partition key is Int
 				if pk, ok := partExpr.Expr.(*expression.Column); ok && pk.RetType.EvalType() == types.ETInt {
@@ -930,7 +940,7 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		monotonous = getMonotoneMode(raw.FuncName.L)
 		// Check the partitionExpr is in the form: fn(col, ...)
 		// There should be only one column argument, and it should be the first parameter.
-		if expression.ExtractColumnSet(args).Len() == 1 {
+		if expression.ExtractColumnSet(args...).Len() == 1 {
 			if col1, ok := args[0].(*expression.Column); ok {
 				col = col1
 			}
@@ -963,6 +973,9 @@ func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression,
 		} else if op.FuncName.L == ast.In {
 			if p, ok := pruner.(*rangePruner); ok {
 				newRange := partitionRangeForInExpr(sctx, op.GetArgs(), p)
+				return result.intersection(newRange)
+			} else if p, ok := pruner.(*rangeColumnsPruner); ok {
+				newRange := partitionRangeColumnForInExpr(sctx, op.GetArgs(), p)
 				return result.intersection(newRange)
 			}
 			return result
@@ -1007,7 +1020,7 @@ func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expres
 		return 0, 0, false
 	}
 
-	unsigned := mysql.HasUnsignedFlag(p.col.RetType.Flag)
+	unsigned := mysql.HasUnsignedFlag(p.col.RetType.GetFlag())
 	start, end := pruneUseBinarySearch(p.lessThan, dataForPrune, unsigned)
 	return start, end, true
 }
@@ -1024,6 +1037,43 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 	return tmp1.union(tmp2)
 }
 
+func partitionRangeColumnForInExpr(sctx sessionctx.Context, args []expression.Expression,
+	pruner *rangeColumnsPruner) partitionRangeOR {
+	col, ok := args[0].(*expression.Column)
+	if !ok || col.ID != pruner.partCol.ID {
+		return pruner.fullRange()
+	}
+
+	var result partitionRangeOR
+	for i := 1; i < len(args); i++ {
+		constExpr, ok := args[i].(*expression.Constant)
+		if !ok {
+			return pruner.fullRange()
+		}
+		switch constExpr.Value.Kind() {
+		case types.KindInt64, types.KindUint64, types.KindMysqlTime, types.KindString: // for safety, only support string,int and datetime now
+		case types.KindNull:
+			result = append(result, partitionRange{0, 1})
+			continue
+		default:
+			return pruner.fullRange()
+		}
+
+		// convert all elements to EQ-exprs and prune them one by one
+		sf, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{col, args[i]}...)
+		if err != nil {
+			return pruner.fullRange()
+		}
+		start, end, ok := pruner.partitionRangeForExpr(sctx, sf)
+		if !ok {
+			return pruner.fullRange()
+		}
+		result = append(result, partitionRange{start, end})
+	}
+
+	return result.simplify()
+}
+
 func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,
 	pruner *rangePruner) partitionRangeOR {
 	col, ok := args[0].(*expression.Column)
@@ -1032,7 +1082,7 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 	}
 
 	var result partitionRangeOR
-	unsigned := mysql.HasUnsignedFlag(col.RetType.Flag)
+	unsigned := mysql.HasUnsignedFlag(col.RetType.GetFlag())
 	for i := 1; i < len(args); i++ {
 		constExpr, ok := args[i].(*expression.Constant)
 		if !ok {
@@ -1581,7 +1631,7 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 		return
 	}
 	var action, reason func() string
-	var used []model.PartitionDefinition
+	used := make([]model.PartitionDefinition, 0, len(usedMap))
 	for _, def := range usedMap {
 		used = append(used, def)
 	}

@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"sort"
-	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -154,14 +153,14 @@ func (s *tableRegionSampler) pickRanges(count int) ([]kv.KeyRange, error) {
 }
 
 func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chunk.Chunk) error {
-	decLoc, sysLoc := s.ctx.GetSessionVars().Location(), time.UTC
+	decLoc := s.ctx.GetSessionVars().Location()
 	cols, decColMap, err := s.buildSampleColAndDecodeColMap()
 	if err != nil {
 		return err
 	}
 	rowDecoder := decoder.NewRowDecoder(s.table, cols, decColMap)
 	err = s.scanFirstKVForEachRange(ranges, func(handle kv.Handle, value []byte) error {
-		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx, handle, value, decLoc, sysLoc, s.rowMap)
+		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx, handle, value, decLoc, s.rowMap)
 		if err != nil {
 			return err
 		}
@@ -285,6 +284,7 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 	fn func(handle kv.Handle, value []byte) error) error {
 	ver := kv.Version{Ver: s.startTS}
 	snap := s.ctx.GetStore().GetSnapshot(ver)
+	setOptionForTopSQL(s.ctx.GetSessionVars().StmtCtx, snap)
 	concurrency := sampleMethodRegionConcurrency
 	if len(ranges) < concurrency {
 		concurrency = len(ranges)

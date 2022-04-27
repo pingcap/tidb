@@ -24,7 +24,7 @@
       },
       {
         "SQL": "select count(1) from t1 where cos(a) > 0 group by a, b",
-        "AggInput": "[]",
+        "AggInput": "[{[1 2] 3.2}]",
         "JoinInput": ""
       },
       {

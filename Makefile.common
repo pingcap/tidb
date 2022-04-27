@@ -54,7 +54,7 @@ PACKAGE_DIRECTORIES_TIDB_TESTS := $(PACKAGE_LIST_TIDB_TESTS) | sed 's|github.com
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
 FILES_TIDB_TESTS := $$(find $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) -name "*.go")
 
-UNCONVERT_PACKAGES_LIST := go list ./...| grep -vE "lightning\/checkpoints|lightning\/manual|lightning\/common"
+UNCONVERT_PACKAGES_LIST := go list ./...| grep -vE "lightning\/checkpoints|lightning\/manual|lightning\/common|tidb-binlog\/proto\/go-binlog"
 UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 
 FAILPOINT_ENABLE  := find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl enable

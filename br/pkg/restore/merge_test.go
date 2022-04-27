@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -19,11 +18,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testMergeRangesSuite{})
-
-type testMergeRangesSuite struct{}
 
 type fileBulder struct {
 	tableID, startKeyOffset int64
@@ -88,7 +84,7 @@ func (fb *fileBulder) build(tableID, indexID, num, bytes, kv int) (files []*back
 	return files
 }
 
-func (s *testMergeRangesSuite) TestMergeRanges(c *C) {
+func TestMergeRanges(t *testing.T) {
 	type Case struct {
 		files  [][5]int // tableID, indexID num, bytes, kv
 		merged []int    // length of each merged range
@@ -209,25 +205,23 @@ func (s *testMergeRangesSuite) TestMergeRanges(c *C) {
 		for _, f := range cs.files {
 			files = append(files, fb.build(f[0], f[1], f[2], f[3], f[4])...)
 		}
-		rngs, stat, err := restore.MergeFileRanges(
-			files, restore.DefaultMergeRegionSizeBytes, restore.DefaultMergeRegionKeyCount)
-		c.Assert(err, IsNil, Commentf("%+v", cs))
-		c.Assert(stat.TotalRegions, Equals, cs.stat.TotalRegions, Commentf("%+v", cs))
-		c.Assert(stat.MergedRegions, Equals, cs.stat.MergedRegions, Commentf("%+v", cs))
-
-		c.Assert(len(rngs), Equals, len(cs.merged), Commentf("case %d", i))
+		rngs, stat, err := restore.MergeFileRanges(files, restore.DefaultMergeRegionSizeBytes, restore.DefaultMergeRegionKeyCount)
+		require.NoErrorf(t, err, "%+v", cs)
+		require.Equalf(t, cs.stat.TotalRegions, stat.TotalRegions, "%+v", cs)
+		require.Equalf(t, cs.stat.MergedRegions, stat.MergedRegions, "%+v", cs)
+		require.Lenf(t, rngs, len(cs.merged), "case %d", i)
 		for i, rg := range rngs {
-			c.Assert(len(rg.Files), Equals, cs.merged[i], Commentf("%+v", cs))
+			require.Lenf(t, rg.Files, cs.merged[i], "%+v", cs)
 			// Files range must be in [Range.StartKey, Range.EndKey].
 			for _, f := range rg.Files {
-				c.Assert(bytes.Compare(rg.StartKey, f.StartKey), LessEqual, 0)
-				c.Assert(bytes.Compare(rg.EndKey, f.EndKey), GreaterEqual, 0)
+				require.LessOrEqual(t, bytes.Compare(rg.StartKey, f.StartKey), 0)
+				require.GreaterOrEqual(t, bytes.Compare(rg.EndKey, f.EndKey), 0)
 			}
 		}
 	}
 }
 
-func (s *testMergeRangesSuite) TestMergeRawKVRanges(c *C) {
+func TestMergeRawKVRanges(t *testing.T) {
 	files := make([]*backuppb.File, 0)
 	fb := fileBulder{}
 	files = append(files, fb.build(1, 0, 2, 1, 1)...)
@@ -235,12 +229,12 @@ func (s *testMergeRangesSuite) TestMergeRawKVRanges(c *C) {
 	files = files[1:]
 	_, stat, err := restore.MergeFileRanges(
 		files, restore.DefaultMergeRegionSizeBytes, restore.DefaultMergeRegionKeyCount)
-	c.Assert(err, IsNil)
-	c.Assert(stat.TotalRegions, Equals, 1)
-	c.Assert(stat.MergedRegions, Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, stat.TotalRegions)
+	require.Equal(t, 1, stat.MergedRegions)
 }
 
-func (s *testMergeRangesSuite) TestInvalidRanges(c *C) {
+func TestInvalidRanges(t *testing.T) {
 	files := make([]*backuppb.File, 0)
 	fb := fileBulder{}
 	files = append(files, fb.build(1, 0, 1, 1, 1)...)
@@ -248,8 +242,8 @@ func (s *testMergeRangesSuite) TestInvalidRanges(c *C) {
 	files[0].Cf = "invalid"
 	_, _, err := restore.MergeFileRanges(
 		files, restore.DefaultMergeRegionSizeBytes, restore.DefaultMergeRegionKeyCount)
-	c.Assert(err, NotNil)
-	c.Assert(errors.Cause(err), Equals, berrors.ErrRestoreInvalidBackup)
+	require.Error(t, err)
+	require.Equal(t, berrors.ErrRestoreInvalidBackup, errors.Cause(err))
 }
 
 // Benchmark results on Intel(R) Xeon(R) CPU E5-2630 v4 @ 2.20GHz

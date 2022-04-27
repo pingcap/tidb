@@ -26,6 +26,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/http/httputil"
 	"sort"
 	"testing"
@@ -35,10 +36,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -47,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
@@ -696,7 +700,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	bin := base64.StdEncoding.EncodeToString(bs)
 
 	unitTest := func(col *column) {
-		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
+		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.GetType(), col.tp.GetFlag(), col.tp.GetFlen(), bin)
 		resp, err := ts.fetchStatus(path)
 		require.NoErrorf(t, err, "url: %v", ts.statusURL(path))
 		decoder := json.NewDecoder(resp.Body)
@@ -844,8 +848,12 @@ func TestGetSchema(t *testing.T) {
 	}
 	sort.Strings(names)
 	require.Equal(t, expects, names)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-	resp, err = ts.fetchStatus("/schema?table_id=5")
+	tk := testkit.NewTestKit(t, store)
+	userTbl := external.GetTableByName(t, tk, "mysql", "user")
+	resp, err = ts.fetchStatus(fmt.Sprintf("/schema?table_id=%d", userTbl.Meta().ID))
 	require.NoError(t, err)
 	var ti *model.TableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -873,7 +881,7 @@ func TestGetSchema(t *testing.T) {
 	err = decoder.Decode(&lt)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Greater(t, len(lt), 0)
+	require.Greater(t, len(lt), 2)
 
 	resp, err = ts.fetchStatus("/schema/abc")
 	require.NoError(t, err)
@@ -891,7 +899,7 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/db-table/5")
+	resp, err = ts.fetchStatus(fmt.Sprintf("/db-table/%d", userTbl.Meta().ID))
 	require.NoError(t, err)
 	var dbtbl *dbTableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -1058,4 +1066,46 @@ func TestDDLHookHandler(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "\"success!\"", string(body))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestWriteDBTablesData(t *testing.T) {
+	// No table in a schema.
+	info := infoschema.MockInfoSchema([]*model.TableInfo{})
+	rc := httptest.NewRecorder()
+	tbs := info.SchemaTables(model.NewCIStr("test"))
+	require.Equal(t, 0, len(tbs))
+	writeDBTablesData(rc, tbs)
+	var ti []*model.TableInfo
+	decoder := json.NewDecoder(rc.Body)
+	err := decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(ti))
+
+	// One table in a schema.
+	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	rc = httptest.NewRecorder()
+	tbs = info.SchemaTables(model.NewCIStr("test"))
+	require.Equal(t, 1, len(tbs))
+	writeDBTablesData(rc, tbs)
+	decoder = json.NewDecoder(rc.Body)
+	err = decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(ti))
+	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
+
+	// Two tables in a schema.
+	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	rc = httptest.NewRecorder()
+	tbs = info.SchemaTables(model.NewCIStr("test"))
+	require.Equal(t, 2, len(tbs))
+	writeDBTablesData(rc, tbs)
+	decoder = json.NewDecoder(rc.Body)
+	err = decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(ti))
+	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
+	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
+	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
 }

@@ -43,6 +43,7 @@ import (
 
 	/*yy:token "%c" */
 	hintIdentifier
+	hintInvalid    "a special token never used by parser, used by lexer to indicate error"
 
 	/*yy:token "@%c" */
 	hintSingleAtIdentifier "identifier with single leading at"
@@ -93,7 +94,6 @@ import (
 	hintReadFromStorage       "READ_FROM_STORAGE"
 	hintSMJoin                "MERGE_JOIN"
 	hintBCJoin                "BROADCAST_JOIN"
-	hintBCJoinPreferLocal     "BROADCAST_JOIN_LOCAL"
 	hintStreamAgg             "STREAM_AGG"
 	hintSwapJoinInputs        "SWAP_JOIN_INPUTS"
 	hintUseIndexMerge         "USE_INDEX_MERGE"
@@ -533,7 +533,6 @@ UnsupportedTableLevelOptimizerHintName:
 SupportedTableLevelOptimizerHintName:
 	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
-|	"BROADCAST_JOIN_LOCAL"
 |	"INL_JOIN"
 |	"INL_HASH_JOIN"
 |	"SWAP_JOIN_INPUTS"
@@ -634,7 +633,6 @@ Identifier:
 |	"READ_FROM_STORAGE"
 |	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
-|	"BROADCAST_JOIN_LOCAL"
 |	"STREAM_AGG"
 |	"SWAP_JOIN_INPUTS"
 |	"USE_INDEX_MERGE"

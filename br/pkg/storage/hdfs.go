@@ -49,6 +49,7 @@ func dfsCommand(args ...string) (*exec.Cmd, error) {
 	}
 	cmd = append(cmd, bin, "dfs")
 	cmd = append(cmd, args...)
+	//nolint:gosec
 	return exec.Command(cmd[0], cmd[1:]...), nil
 }
 
@@ -123,4 +124,9 @@ func (s *HDFSStorage) URI() string {
 // Create opens a file writer by path. path is relative path to storage base path
 func (s *HDFSStorage) Create(ctx context.Context, path string) (ExternalFileWriter, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
+}
+
+// Rename a file name from oldFileName to newFileName.
+func (s *HDFSStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }

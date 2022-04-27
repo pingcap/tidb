@@ -161,7 +161,7 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 	jsonEncoder := json.NewEncoder(&writer)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)
-	err = jsonEncoder.Encode(se.GetSessionVars().StmtCtx.LogicalOptimizeTrace)
+	err = jsonEncoder.Encode(se.GetSessionVars().StmtCtx.OptimizeTracer)
 	if err != nil {
 		return errors.AddStack(err)
 	}

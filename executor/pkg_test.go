@@ -17,8 +17,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -26,18 +26,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&pkgTestSuite{})
-var _ = SerialSuites(&pkgTestSerialSuite{})
-
-type pkgTestSuite struct {
-}
-
-type pkgTestSerialSuite struct {
-}
-
-func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
+func TestNestedLoopApply(t *testing.T) {
 	ctx := context.Background()
 	sctx := mock.NewContext()
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
@@ -88,20 +80,20 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
 		err := join.Next(ctx, joinChk)
-		c.Check(err, IsNil)
+		require.NoError(t, err)
 		if joinChk.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			correctResult := fmt.Sprintf("%v %v", rowIdx, rowIdx)
 			obtainedResult := fmt.Sprintf("%v %v", row.GetInt64(0), row.GetInt64(1))
-			c.Check(obtainedResult, Equals, correctResult)
+			require.Equal(t, correctResult, obtainedResult)
 			rowIdx++
 		}
 	}
 }
 
-func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
+func TestMoveInfoSchemaToFront(t *testing.T) {
 	dbss := [][]string{
 		{},
 		{"A", "B", "C", "a", "b", "c"},
@@ -124,9 +116,9 @@ func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
 	}
 
 	for i, dbs := range wanted {
-		c.Check(len(dbss[i]), Equals, len(dbs))
+		require.Equal(t, len(dbs), len(dbss[i]))
 		for j, db := range dbs {
-			c.Check(dbss[i][j], Equals, db)
+			require.Equal(t, db, dbss[i][j])
 		}
 	}
 }

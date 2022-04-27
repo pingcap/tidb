@@ -123,20 +123,25 @@ func randGen(client *rawkv.Client, startKey, endKey []byte, maxLen int, concurre
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			for {
-				keys := make([][]byte, 0, batchSize)
-				values := make([][]byte, 0, batchSize)
+				// FIXME: because of the incompatibility of `BatchPut`,
+				//        we must use RawPut here. See https://github.com/tikv/client-go/pull/403.
+				//        Once the client get fixed, we'd better use the BatchPut API back.
+				// keys := make([][]byte, 0, batchSize)
+				// values := make([][]byte, 0, batchSize)
 
 				for i := 0; i < batchSize; i++ {
 					key := randKey(startKey, endKey, maxLen)
-					keys = append(keys, key)
 					value := randValue()
-					values = append(values, value)
+
+					// keys = append(keys, key)
+					// values = append(values, value)
+					err := client.Put(context.Background(), key, value)
+
+					if err != nil {
+						errCh <- errors.Trace(err)
+					}
 				}
 
-				err := client.BatchPut(context.TODO(), keys, values, nil)
-				if err != nil {
-					errCh <- errors.Trace(err)
-				}
 			}
 		}()
 	}
@@ -158,6 +163,7 @@ func testRandKey(startKey, endKey []byte, maxLen int) {
 	}
 }
 
+//nolint:gosec
 func randKey(startKey, endKey []byte, maxLen int) []byte {
 Retry:
 	for { // Regenerate on fail
@@ -208,6 +214,7 @@ Retry:
 	}
 }
 
+//nolint:gosec
 func randValue() []byte {
 	result := make([]byte, 0, 512)
 	for i := 0; i < 512; i++ {
@@ -303,12 +310,17 @@ func put(client *rawkv.Client, dataStr string) error {
 
 		keys = append(keys, key)
 		values = append(values, value)
+		// FIXME: because of the incompatibility of `BatchPut`,
+		//        we must use RawPut here. See https://github.com/tikv/client-go/pull/403.
+		//        Once the client get fixed, we'd better use the BatchPut API back.
+		if err := client.Put(context.Background(), key, value); err != nil {
+			return err
+		}
 	}
 
 	log.Info("Put rawkv data", zap.ByteStrings("keys", keys), zap.ByteStrings("values", values))
 
-	err := client.BatchPut(context.TODO(), keys, values, nil)
-	return errors.Trace(err)
+	return nil
 }
 
 const defaultScanBatchSize = 128

@@ -17,7 +17,7 @@ export DUMPLING_TEST_PORT=3306
 run_sql "drop database if exists $DB_NAME;"
 
 # build data on mysql
-run_sql "create database $DB_NAME;"
+run_sql "create database $DB_NAME DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create table $DB_NAME.$TABLE_NAME (a int(255), b blob);"
 
 # insert 100 records
