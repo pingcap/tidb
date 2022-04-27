@@ -988,10 +988,8 @@ func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {
 }
 
 // https://github.com/pingcap/tidb/issues/32459.
-func TestJoinSystemTableContainsView(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testInfoschemaTableSuite) TestJoinSystemTableContainsView(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a timestamp, b int);")
 	tk.MustExec("insert into t values (null, 100);")
