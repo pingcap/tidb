@@ -53,13 +53,11 @@ func TestSetGlobalVars(t *testing.T) {
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
-		conf.MemQuotaQuery = 9999999
 		conf.ServerVersion = "test"
 	})
 	setGlobalVars()
 
 	require.Equal(t, "tikv,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
-	require.Equal(t, "9999999", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
 	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
 	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
 

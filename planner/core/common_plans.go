@@ -866,7 +866,7 @@ func convertConstant2Datum(sc *stmtctx.StatementContext, con *expression.Constan
 		return nil, err
 	}
 	// The converted result must be same as original datum.
-	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.Collate))
+	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.GetCollate()))
 	if err != nil || cmp != 0 {
 		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
 	}
@@ -883,10 +883,10 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 				pkCols = append(pkCols, pkCol)
 				// We need to consider the prefix index.
 				// For example: when we have 'a varchar(50), index idx(a(10))'
-				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.Flen = 10'.
+				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.flen = 10'.
 				// In 'hasPrefix' function from 'util/ranger/ranger.go' file,
 				// we use 'columnLength == types.UnspecifiedLength' to check whether we have prefix index.
-				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.Flen {
+				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.GetFlen() {
 					pkColsLen = append(pkColsLen, types.UnspecifiedLength)
 				} else {
 					pkColsLen = append(pkColsLen, colInfo.Length)
