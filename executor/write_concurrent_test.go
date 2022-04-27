@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBatchInsertWithOnDuplicate(t *testing.T) {
@@ -72,4 +73,30 @@ func permInt(n int) []interface{} {
 		v = append(v, i)
 	}
 	return v
+}
+
+func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_optimistic_untouched_flag;")
+	tk.MustExec(`create table test_optimistic_untouched_flag(c0 int, c1 varchar(20), c2 varchar(20), unique key uk(c0));`)
+	tk.MustExec(`insert into test_optimistic_untouched_flag(c0, c1, c2) values (1, null, 'green');`)
+
+	// Insert a row with duplicated entry on the unique key, the commit should fail.
+	tk.MustExec("begin optimistic;")
+	tk.MustExec(`insert into test_optimistic_untouched_flag(c0, c1, c2) values (1, 'red', 'white');`)
+	tk.MustExec(`delete from test_optimistic_untouched_flag where c1 is null;`)
+	tk.MustExec("update test_optimistic_untouched_flag set c2 = 'green' where c2 between 'purple' and 'white';")
+	_, err := tk.Exec("commit")
+	require.Error(t, err)
+
+	tk.MustExec("begin optimistic;")
+	tk.MustExec(`insert into test_optimistic_untouched_flag(c0, c1, c2) values (1, 'red', 'white');`)
+	tk.MustExec("update test_optimistic_untouched_flag set c2 = 'green' where c2 between 'purple' and 'white';")
+	_, err = tk.Exec("commit")
+	require.Error(t, err)
 }

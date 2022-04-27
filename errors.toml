@@ -741,6 +741,11 @@ error = '''
 Incorrect usage of %s and %s
 '''
 
+["executor:1235"]
+error = '''
+%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.
+'''
+
 ["executor:1242"]
 error = '''
 Subquery returns more than 1 row

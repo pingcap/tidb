@@ -27,7 +27,7 @@ func (s *testLogRestoreSuite) SetUpSuite(c *C) {
 	s.mock, err = mock.NewCluster()
 	c.Assert(err, IsNil)
 	restoreClient, err := restore.NewRestoreClient(
-		gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
+		gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg, false)
 	c.Assert(err, IsNil)
 
 	s.client, err = restore.NewLogRestoreClient(
