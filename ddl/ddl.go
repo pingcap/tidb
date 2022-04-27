@@ -234,25 +234,25 @@ type ddlCtx struct {
 	}
 }
 
-func (d *ddlCtx) LockSchemaVersion(job *model.Job) {
+func (dc *ddlCtx) LockSchemaVersion(job *model.Job) {
 	if job == nil {
 		return
 	}
-	ownerID := d.schemaVersionOwner.Load()
+	ownerID := dc.schemaVersionOwner.Load()
 	if ownerID == 0 {
-		d.schemaVersionMu.Lock()
-		d.schemaVersionOwner.Store(job.ID)
+		dc.schemaVersionMu.Lock()
+		dc.schemaVersionOwner.Store(job.ID)
 	}
 }
 
-func (d *ddlCtx) UnlockSchemaVersion(job *model.Job) {
+func (dc *ddlCtx) UnlockSchemaVersion(job *model.Job) {
 	if job == nil {
 		return
 	}
-	ownerID := d.schemaVersionOwner.Load()
+	ownerID := dc.schemaVersionOwner.Load()
 	if ownerID == job.ID {
-		d.schemaVersionOwner.Store(0)
-		d.schemaVersionMu.Unlock()
+		dc.schemaVersionOwner.Store(0)
+		dc.schemaVersionMu.Unlock()
 	}
 }
 
