@@ -511,6 +511,14 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustGetErrCode("alter table t add index t(a), drop column a", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add index t(a, b), drop column a", errno.ErrUnsupportedDDLOperation)
+
+	// Test add index failed.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int);")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 1);")
+	tk.MustGetErrCode("alter table t add unique index i1(a), add unique index i2(a, b), add unique index i3(c);",
+		errno.ErrDupEntry)
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
 }
 
 func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
@@ -945,6 +953,33 @@ func TestMultiSchemaChangeMix(t *testing.T) {
 	tk.MustGetErrCode("select * from t use index (i1);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index (i2);", errno.ErrKeyDoesNotExist)
 	tk.MustQuery("select * from t use index (i3);").Check(testkit.Rows("3 4 5 6"))
+}
+
+func TestMultiSchemaChangeMixCancelled(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
+
+	tk.MustExec("create table t (a int, b int, c int, index i1(c), index i2(c));")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	origin := dom.DDL().GetHook()
+	cancelHook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+		return job.MultiSchemaInfo != nil &&
+			len(job.MultiSchemaInfo.SubJobs) > 8 &&
+			job.MultiSchemaInfo.SubJobs[8].SchemaState == model.StateWriteReorganization
+	})
+	dom.DDL().SetHook(cancelHook)
+	tk.MustGetErrCode("alter table t add column d int default 4, add index i3(c), "+
+		"drop column a, drop column if exists z, add column if not exists e int default 5, "+
+		"drop index i2, add column f int default 6, drop column b, drop index i1, add column if not exists g int;",
+		errno.ErrCancelledDDLJob)
+	dom.DDL().SetHook(origin)
+	cancelHook.MustCancelDone(t)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
+	tk.MustQuery("select * from t use index(i1, i2);").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("admin check table t;")
 }
 
 func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
