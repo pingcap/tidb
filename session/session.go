@@ -2795,6 +2795,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
+	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
+	rebuildAllPartitionValueMapAndSorted(ses[0])
 
 	err = updateMemoryConfigAndSysVar(ses[0])
 	if err != nil {
