@@ -266,8 +266,9 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluat
 	}
 }
 
-func GetSessionSnapshotInfoSchema(sctx sessionctx.Context, snaphsotTS uint64) (infoschema.InfoSchema, error) {
-	is, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snaphsotTS)
+// GetSessionSnapshotInfoSchema returns the session's information schema with specified ts
+func GetSessionSnapshotInfoSchema(sctx sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
+	is, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return nil, err
 	}
