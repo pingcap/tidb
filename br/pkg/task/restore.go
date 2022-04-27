@@ -214,24 +214,15 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	return nil
 }
 
-<<<<<<< HEAD
-=======
 func CheckNewCollationEnable(
 	backupNewCollationEnable string,
 	g glue.Glue,
 	storage kv.Storage,
-	CheckRequirements bool,
 ) error {
 	if backupNewCollationEnable == "" {
-		if CheckRequirements {
-			return errors.Annotatef(berrors.ErrUnknown,
-				"NewCollactionEnable not found in backupmeta. "+
-					"if you ensure the NewCollactionEnable config of backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip")
-		} else {
-			log.Warn("no NewCollactionEnable in backup")
-			return nil
-		}
+		log.Warn("new_collations_enabled_on_first_bootstrap not found in backupmeta. "+
+			"we assume that this config is as same as backup cluster")
+		return nil
 	}
 
 	se, err := g.CreateSession(storage)
@@ -252,11 +243,7 @@ func CheckNewCollationEnable(
 	return nil
 }
 
-func isFullRestore(cmdName string) bool {
-	return cmdName == FullRestoreCmd
-}
 
->>>>>>> 8f8dfafc1... br: Fix new collaction enable check (#33500)
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.adjustRestoreConfig()
@@ -323,7 +310,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
-	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage()); err != nil {
 		return errors.Trace(err)
 	}
 

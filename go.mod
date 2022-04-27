@@ -31,12 +31,12 @@ require (
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.2
 	github.com/golang/snappy v0.0.3
-	github.com/google/btree v1.0.0
+	github.com/google/btree v1.0.1
 	github.com/google/pprof v0.0.0-20210720184732-4bb14d4b1be1
 	github.com/google/uuid v1.1.2
 	github.com/gorilla/handlers v1.5.1 // indirect
 	github.com/gorilla/mux v1.8.0
-	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
+	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
@@ -48,28 +48,22 @@ require (
 	github.com/pingcap/badger v1.5.1-0.20210831093107-2f6cb8008145
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
-	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
+	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-<<<<<<< HEAD
-	github.com/pingcap/kvproto v0.0.0-20211207042851-78a55fb8e69c
-	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
-	github.com/pingcap/sysutil v0.0.0-20211208032423-041a72e5860d
-	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
-=======
-	github.com/pingcap/kvproto v0.0.0-20220328072018-6e75c12dbd73
+	github.com/pingcap/kvproto v0.0.0-20220427102456-be1314bcb30f
 	github.com/pingcap/log v0.0.0-20211215031037-e024ba4eb0ee
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
->>>>>>> 8f8dfafc1... br: Fix new collaction enable check (#33500)
+	github.com/pingcap/tidb-tools v6.0.0+incompatible
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20220107024056-3b91949a18a7
-	github.com/prometheus/client_golang v1.5.1
+	github.com/prometheus/client_golang v1.11.1
 	github.com/prometheus/client_model v0.2.0
-	github.com/prometheus/common v0.9.1
+	github.com/prometheus/common v0.26.0
 	github.com/shirou/gopsutil v3.21.3+incompatible
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/sirupsen/logrus v1.8.1 // indirect
-	github.com/soheilhy/cmux v0.1.4
-	github.com/spf13/cobra v1.0.0
+	github.com/soheilhy/cmux v0.1.5
+	github.com/spf13/cobra v1.1.3
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
@@ -82,17 +76,18 @@ require (
 	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20210512015243-d19fbe541bf9
+	go.etcd.io/etcd/tests/v3 v3.5.4 // indirect
 	go.uber.org/atomic v1.9.0
 	go.uber.org/automaxprocs v1.4.0
 	go.uber.org/goleak v1.1.12
 	go.uber.org/multierr v1.7.0
 	go.uber.org/zap v1.19.1
-	golang.org/x/net v0.0.0-20211015210444-4f30a5c0130f
+	golang.org/x/net v0.0.0-20211112202133-69e39bad7dc2
 	golang.org/x/oauth2 v0.0.0-20210805134026-6f1e6394065a
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e
 	golang.org/x/text v0.3.7
-	golang.org/x/time v0.0.0-20191024005414-555d28b269f0
+	golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba
 	golang.org/x/tools v0.1.8
 	google.golang.org/api v0.54.0
 	google.golang.org/grpc v1.40.0
