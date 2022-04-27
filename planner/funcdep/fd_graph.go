@@ -1111,6 +1111,32 @@ func (s *FDSet) ProjectCols(cols FastIntSet) {
 			s.AddLaxFunctionalDependency(fd.from, fd.to)
 		}
 	}
+	// ncEdge should also be projected.
+	for i := 0; i < len(s.ncEdges); i++ {
+		nc := s.ncEdges[i]
+		if !nc.conditionNC.Intersects(cols) {
+			// edge is projected out, the nc edge's condition won't be satisfied anymore.
+			continue
+		}
+		if nc.isConstant() {
+			nc.to.IntersectionWith(cols)
+			if nc.to.IsEmpty() {
+				// edge is projected out.
+				s.ncEdges = append(s.ncEdges[:i], s.ncEdges[i+1:]...)
+				i--
+			}
+			continue
+		}
+		if nc.equiv {
+			nc.from.IntersectionWith(cols)
+			nc.to.IntersectionWith(cols)
+			if nc.from.IsEmpty() {
+				// edge is projected out.
+				s.ncEdges = append(s.ncEdges[:i], s.ncEdges[i+1:]...)
+				i--
+			}
+		}
+	}
 }
 
 // makeEquivMap try to find the equivalence column of every deleted column in the project list.
