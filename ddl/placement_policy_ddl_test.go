@@ -15,15 +15,15 @@ package ddl_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/testkit"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )

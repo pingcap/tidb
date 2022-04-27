@@ -72,28 +72,27 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.DDL, oldSchema
 }
 
 func testLockTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, newSchemaID int64, tblInfo *model.TableInfo, lockTp model.TableLockType) *model.Job {
-	//arg := &lockTablesArg{
-	//	LockTables: []model.TableLockTpInfo{{SchemaID: newSchemaID, TableID: tblInfo.ID, Tp: lockTp}},
-	//	SessionInfo: model.SessionInfo{
-	//		ServerID:  d.GetID(),
-	//		SessionID: ctx.GetSessionVars().ConnectionID,
-	//	},
-	//}
-	//job := &model.Job{
-	//	SchemaID:   newSchemaID,
-	//	TableID:    tblInfo.ID,
-	//	Type:       model.ActionLockTable,
-	//	BinlogInfo: &model.HistoryInfo{},
-	//	Args:       []interface{}{arg},
-	//}
-	//ctx.SetValue(sessionctx.QueryString, "skip")
-	//err := d.DoDDLJob(ctx, job)
-	//require.NoError(t, err)
-	//
-	//v := getSchemaVer(t, ctx)
-	//checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
-	//return job
-	return nil
+	arg := &ddl.LockTablesArg{
+		LockTables: []model.TableLockTpInfo{{SchemaID: newSchemaID, TableID: tblInfo.ID, Tp: lockTp}},
+		SessionInfo: model.SessionInfo{
+			ServerID:  d.GetID(),
+			SessionID: ctx.GetSessionVars().ConnectionID,
+		},
+	}
+	job := &model.Job{
+		SchemaID:   newSchemaID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionLockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
+	return job
 }
 
 func checkTableLockedTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp model.TableLockType) {
@@ -211,10 +210,10 @@ func TestTable(t *testing.T) {
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
 
-	//job = testLockTable(t, ctx, d, dbInfo1.ID, tblInfo, model.TableLockWrite)
-	//testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
-	//testCheckJobDone(t, store, job.ID, true)
-	//checkTableLockedTest(t, store, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
+	job = testLockTable(t, ctx, d, dbInfo1.ID, tblInfo, model.TableLockWrite)
+	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+	checkTableLockedTest(t, store, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
 	// for alter cache table
 	job = testAlterCacheTable(t, ctx, d, dbInfo1.ID, tblInfo)
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)

@@ -140,7 +140,8 @@ func ExportTestSchema(t *testing.T) {
 
 	// create a database.
 	tk := testkit.NewTestKit(t, store)
-	job := testCreateSchema(t, tk.Session(), domain.DDL(), dbInfo)
+	d := domain.DDL()
+	job := testCreateSchema(t, tk.Session(), d, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
 
@@ -148,7 +149,7 @@ func ExportTestSchema(t *testing.T) {
 	// create table t with 100 records.
 	tblInfo1, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
-	tJob1 := testCreateTable(t, tk.Session(), domain.DDL(), dbInfo, tblInfo1)
+	tJob1 := testCreateTable(t, tk.Session(), d, dbInfo, tblInfo1)
 	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(t, store, tJob1.ID, true)
 	tbl1 := testGetTable(t, domain, tblInfo1.ID)
@@ -160,7 +161,7 @@ func ExportTestSchema(t *testing.T) {
 	tblInfo2, err := testTableInfo(store, "t1", 3)
 	require.NoError(t, err)
 	tk2 := testkit.NewTestKit(t, store)
-	tJob2 := testCreateTable(t, tk2.Session(), domain.DDL(), dbInfo, tblInfo2)
+	tJob2 := testCreateTable(t, tk2.Session(), d, dbInfo, tblInfo2)
 	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(t, store, tJob2.ID, true)
 	tbl2 := testGetTable(t, domain, tblInfo2.ID)
@@ -169,7 +170,7 @@ func ExportTestSchema(t *testing.T) {
 		require.NoError(t, err)
 	}
 	tk3 := testkit.NewTestKit(t, store)
-	job, v := testDropSchema(t, tk3.Session(), domain.DDL(), dbInfo)
+	job, v := testDropSchema(t, tk3.Session(), d, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StateNone)
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
@@ -184,16 +185,16 @@ func ExportTestSchema(t *testing.T) {
 	}
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = domain.DDL().DoDDLJob(ctx, job)
+	err = d.DoDDLJob(ctx, job)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 
 	// Drop a database without a table.
 	dbInfo1, err := testSchemaInfo(store, "test1")
 	require.NoError(t, err)
-	job = testCreateSchema(t, ctx, domain.DDL(), dbInfo1)
+	job = testCreateSchema(t, ctx, d, dbInfo1)
 	testCheckSchemaState(t, store, dbInfo1, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
-	job, _ = testDropSchema(t, ctx, domain.DDL(), dbInfo1)
+	job, _ = testDropSchema(t, ctx, d, dbInfo1)
 	testCheckSchemaState(t, store, dbInfo1, model.StateNone)
 	testCheckJobDone(t, store, job.ID, false)
 }

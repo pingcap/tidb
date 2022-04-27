@@ -15,9 +15,9 @@
 package ddl_test
 
 import (
-	"github.com/pingcap/tidb/ddl"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
