@@ -34,12 +34,12 @@ import (
 func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	numCols := 6
 	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeNewDecimal).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeJSON).BuildP())
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {
@@ -57,9 +57,9 @@ func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 func initProbeChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	numCols := 3
 	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).BuildP())
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {

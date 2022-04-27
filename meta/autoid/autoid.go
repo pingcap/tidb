@@ -1073,7 +1073,7 @@ type ShardIDLayout struct {
 func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayout {
 	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
 	incrementalBits := typeBitsLength - shardBits
-	hasSignBit := !mysql.HasUnsignedFlag(fieldType.Flag)
+	hasSignBit := !mysql.HasUnsignedFlag(fieldType.GetFlag())
 	if hasSignBit {
 		incrementalBits -= 1
 	}

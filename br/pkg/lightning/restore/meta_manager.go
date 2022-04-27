@@ -248,10 +248,10 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				// the `show table next_row_id` will returns the unique key field only.
 				var autoIDField string
 				for _, col := range m.tr.tableInfo.Core.Columns {
-					if mysql.HasAutoIncrementFlag(col.Flag) {
+					if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 						autoIDField = col.Name.L
 						break
-					} else if mysql.HasPriKeyFlag(col.Flag) && m.tr.tableInfo.Core.AutoRandomBits > 0 {
+					} else if mysql.HasPriKeyFlag(col.GetFlag()) && m.tr.tableInfo.Core.AutoRandomBits > 0 {
 						autoIDField = col.Name.L
 						break
 					}

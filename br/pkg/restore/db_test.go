@@ -138,7 +138,7 @@ func TestCreateTablesInDb(t *testing.T) {
 
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
-	intField.Charset = "binary"
+	intField.SetCharset("binary")
 	ddlJobMap := make(map[restore.UniqueTableName]bool)
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{
