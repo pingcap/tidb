@@ -252,6 +252,14 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		variable.StatsLoadPseudoTimeout.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBTxnCommitBatchSize:
 		storekv.TxnCommitBatchSize.Store(uint64(variable.TidbOptInt64(sVal, int64(storekv.DefTxnCommitBatchSize))))
+	case variable.TiDBStatsCacheMemQuota:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.StatsCacheMemQuota.Store(val)
+		do.SetStatsCacheCapacity(val)
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))
@@ -269,4 +277,9 @@ func (do *Domain) SetPDClientDynamicOption(option pd.DynamicOption, val interfac
 		return nil
 	}
 	return pdClient.UpdateOption(option, val)
+}
+
+// SetStatsCacheCapacity sets statsCache cap
+func (do *Domain) SetStatsCacheCapacity(c int64) {
+	do.StatsHandle().SetStatsCacheCapacity(c)
 }

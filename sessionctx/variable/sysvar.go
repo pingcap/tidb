@@ -681,6 +681,16 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBStatsCacheMemQuota, Value: strconv.Itoa(DefTiDBStatsCacheMemQuota), skipInit: true,
+		MinValue: 0, MaxValue: math.MaxInt64, Type: TypeInt,
+		GetGlobal: func(vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(StatsCacheMemQuota.Load())), nil
+		}, SetGlobal: func(vars *SessionVars, s string) error {
+			v := TidbOptInt64(s, DefTiDBStatsCacheMemQuota)
+			StatsCacheMemQuota.Store(v)
+			return nil
+		},
+	},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {

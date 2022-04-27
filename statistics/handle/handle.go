@@ -157,7 +157,7 @@ func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
 	h.statsCache.Lock()
-	h.statsCache.Store(newStatsCache())
+	h.statsCache.Store(newStatsCache(variable.StatsCacheMemQuota.Load()))
 	h.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	h.statsCache.Unlock()
 	for len(h.ddlEventCh) > 0 {
@@ -201,7 +201,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tr
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	handle.statsCache.Store(newStatsCache())
+	handle.statsCache.Store(newStatsCache(variable.StatsCacheMemQuota.Load()))
 	handle.globalMap.data = make(tableDeltaMap)
 	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	handle.colMap.data = make(colStatsUsageMap)
@@ -2041,4 +2041,17 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) err
 func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
 	_, _, err := h.execRestrictedSQL(context.TODO(), "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 	return err
+}
+
+// SetStatsCacheCapacity sets capacity
+func (h *Handle) SetStatsCacheCapacity(c int64) {
+	if h == nil {
+		return
+	}
+	v := h.statsCache.Load()
+	if v == nil {
+		return
+	}
+	sc := v.(statsCache)
+	sc.SetCapacity(c)
 }

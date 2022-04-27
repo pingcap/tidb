@@ -31,6 +31,7 @@ type statsCacheInner interface {
 	FreshMemUsage()
 	FreshTableCost(int64)
 	Copy() statsCacheInner
+	SetCapacity(int64)
 }
 
 type cacheItem struct {
@@ -39,7 +40,7 @@ type cacheItem struct {
 	cost  int64
 }
 
-func newStatsCache() statsCache {
+func newStatsCache(capacity int64) statsCache {
 	return statsCache{
 		statsCacheInner: &mapCache{
 			tables:   make(map[int64]cacheItem),
@@ -201,4 +202,8 @@ func (m *mapCache) Copy() statsCacheInner {
 		newM.tables[k] = v
 	}
 	return newM
+}
+
+// SetCapacity implements statsCacheInner
+func (m *mapCache) SetCapacity(int64) {
 }
