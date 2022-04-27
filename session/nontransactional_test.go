@@ -323,6 +323,9 @@ func TestNonTransactionalDeleteCheckConstraint(t *testing.T) {
 	err = tk.ExecToErr("split on a limit 10 delete from t order by a")
 	require.EqualError(t, err, "Non-transactional delete doesn't support order by")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+
+	err = tk.ExecToErr("prepare nt FROM 'split limit 1 delete from t'")
+	require.EqualError(t, err, "[executor:1295]This command is not supported in the prepared statement protocol yet")
 }
 
 func TestNonTransactionalDeleteOptimizerHints(t *testing.T) {

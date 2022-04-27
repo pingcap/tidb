@@ -165,7 +165,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	switch stmt.(type) {
-	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt:
+	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDeleteStmt:
 		return ErrUnsupportedPs
 	}
 
