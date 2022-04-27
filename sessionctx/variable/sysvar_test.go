@@ -955,3 +955,31 @@ func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
 	require.Error(t, err)
 	require.EqualError(t, err, "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
 }
+
+func TestTiDBMemQuotaQuery(t *testing.T) {
+	sv := GetSysVar(TiDBMemQuotaQuery)
+	vars := NewSessionVars()
+
+	for _, scope := range []ScopeFlag{ScopeGlobal, ScopeSession} {
+		newVal := 32 * 1024 * 1024
+		val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
+		require.Equal(t, val, "33554432")
+		require.NoError(t, err)
+
+		// out of range
+		newVal = 129 * 1024 * 1024 * 1024
+		expected := 128 * 1024 * 1024 * 1024
+		val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
+		// expected to truncate
+		require.Equal(t, val, fmt.Sprintf("%d", expected))
+		require.NoError(t, err)
+
+		// min value out of range
+		newVal = 10
+		expected = 128
+		val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
+		// expected to truncate
+		require.Equal(t, val, fmt.Sprintf("%d", expected))
+		require.NoError(t, err)
+	}
+}

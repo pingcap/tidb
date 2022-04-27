@@ -438,7 +438,7 @@ func (helper extractHelper) extractTimeRange(
 
 		if colName == extractColName {
 			timeType := types.NewFieldType(mysql.TypeDatetime)
-			timeType.Decimal = 6
+			timeType.SetDecimal(6)
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
 			if err != nil || timeDatum.Kind() == types.KindNull {
 				remained = append(remained, expr)
