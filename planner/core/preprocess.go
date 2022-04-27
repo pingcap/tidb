@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
@@ -1629,12 +1631,14 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 		if p.flag&initTxnContextProvider != 0 {
 			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
 			if !p.ctx.GetSessionVars().InTxn() {
-				err := sessiontxn.GetTxnManager(p.ctx).SetContextProvider(staleread.NewStalenessTxnContextProvider(
-					p.InfoSchema,
-					p.LastSnapshotTS,
-				))
-
-				if err != nil {
+				txnManager := sessiontxn.GetTxnManager(p.ctx)
+				newTxnRequest := &sessiontxn.EnterNewTxnRequest{
+					TxnContextProvider: staleread.NewStalenessTxnContextProvider(p.ctx, p.LastSnapshotTS, p.InfoSchema),
+				}
+				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
+					return err
+				}
+				if err := txnManager.OnStmtStart(context.TODO()); err != nil {
 					return err
 				}
 			}
@@ -1681,21 +1685,9 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 		return
 	}
 
-	txnManager := sessiontxn.GetTxnManager(p.ctx)
-	currentProvider := txnManager.GetContextProvider()
-
-	// If currentProvider is nil or not a `SimpleTxnContextProvider`, it means
-	if currentProvider == nil {
-		return
+	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
+		provider.InfoSchema = p.ensureInfoSchema()
 	}
-
-	if _, ok := currentProvider.(*sessiontxn.SimpleTxnContextProvider); !ok {
-		return
-	}
-
-	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
-		InfoSchema: p.ensureInfoSchema(),
-	})
 }
 
 func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {

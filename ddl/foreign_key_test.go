@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +64,7 @@ func testCreateForeignKey(t *testing.T, d *ddl, ctx sessionctx.Context, dbInfo *
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err := ctx.NewTxn(context.Background())
+	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = d.DoDDLJob(ctx, job)
@@ -125,7 +126,7 @@ func TestForeignKey(t *testing.T) {
 	tblInfo, err := testTableInfo(d, "t", 3)
 	require.NoError(t, err)
 
-	err = ctx.NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 
 	testCreateTable(t, ctx, d, dbInfo, tblInfo)
@@ -213,7 +214,7 @@ func TestForeignKey(t *testing.T) {
 	require.NoError(t, hErr)
 	require.True(t, ok)
 
-	err = ctx.NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 
 	job = testDropTable(t, ctx, d, dbInfo, tblInfo)

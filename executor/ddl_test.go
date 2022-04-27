@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -861,7 +862,7 @@ func TestShardRowIDBits(t *testing.T) {
 	assertCountAndShard := func(tt table.Table, expectCount int) {
 		var hasShardedID bool
 		var count int
-		require.NoError(t, tk.Session().NewTxn(context.Background()))
+		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 		err = tables.IterRecords(tt, tk.Session(), nil, func(h kv.Handle, rec []types.Datum, cols []*table.Column) (more bool, err error) {
 			require.GreaterOrEqual(t, h.IntValue(), int64(0))
 			first8bits := h.IntValue() >> 56

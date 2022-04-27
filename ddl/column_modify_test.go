@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -124,7 +125,7 @@ AddLoop:
 	tbl := external.GetTableByName(t, tk, "test", "t2")
 	i := 0
 	j := 0
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	defer func() {
 		if txn, err := tk.Session().Txn(true); err == nil {
 			require.NoError(t, txn.Rollback())

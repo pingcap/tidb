@@ -55,6 +55,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/tidb/sessiontxn"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -1679,7 +1681,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.StartStopWatcher()
 	// let stop watcher goroutine quit
 	defer loadDataInfo.ForceQuit()
-	err = loadDataInfo.Ctx.NewTxn(ctx)
+	err = sessiontxn.NewTxn(ctx, loadDataInfo.Ctx)
 	if err != nil {
 		return err
 	}

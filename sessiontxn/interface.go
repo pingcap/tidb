@@ -15,71 +15,83 @@
 package sessiontxn
 
 import (
-	"github.com/pingcap/errors"
+	"context"
+
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
+// EnterNewTxnRequest is the request to tell TxnManager entering a new transaction
+type EnterNewTxnRequest struct {
+	// ActiveNow indicates to active txn immediately
+	ActiveNow bool
+	// TxnContextProvider is the context provider
+	TxnContextProvider TxnContextProvider
+	// TxnMode is the transaction mode for the new txn. It has 3 values: `ast.Pessimistic` ,`ast.Optimistic` or empty/
+	// When the value is empty, it means the value will be determined from sys vars.
+	TxnMode string
+	// CausalConsistencyOnly means whether enable causal consistency for transactions, default is false
+	CausalConsistencyOnly bool
+	// StaleReadTS indicates the read ts for the stale read transaction.
+	//The default value is zero which means not a stale read transaction.
+	StaleReadTS uint64
+	// CanReuseTxn indicates the new provider can use the old txn
+	CanReuseTxn bool
+}
+
 // TxnContextProvider provides txn context
 type TxnContextProvider interface {
-	// Initialize the provider with session context
-	Initialize(sctx sessionctx.Context) error
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
-	// GetReadTS returns the read timestamp used by select statement (not for select ... for update)
-	GetReadTS() (uint64, error)
-	// GetForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
-	GetForUpdateTS() (uint64, error)
+	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+	GetStmtReadTS() (uint64, error)
+	// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
+	GetStmtForUpdateTS() (uint64, error)
+
+	// OnInitialize is the hook that should be called when enter a new txn with this provider
+	OnInitialize(ctx context.Context, activeNow bool) error
+	// OnStmtStart is the hook that should be called when a new statement started
+	OnStmtStart(ctx context.Context) error
 }
 
-// SimpleTxnContextProvider implements TxnContextProvider
-// It is only used in refactor stage
-// TODO: remove it after refactor finished
-type SimpleTxnContextProvider struct {
-	InfoSchema         infoschema.InfoSchema
-	GetReadTSFunc      func() (uint64, error)
-	GetForUpdateTSFunc func() (uint64, error)
-}
-
-// Initialize the provider with session context
-func (p *SimpleTxnContextProvider) Initialize(_ sessionctx.Context) error {
-	return nil
-}
-
-// GetTxnInfoSchema returns the information schema used by txn
-func (p *SimpleTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
-	return p.InfoSchema
-}
-
-// GetReadTS returns the read timestamp used by select statement (not for select ... for update)
-func (p *SimpleTxnContextProvider) GetReadTS() (uint64, error) {
-	if p.GetReadTSFunc == nil {
-		return 0, errors.New("ReadTSFunc not set")
-	}
-	return p.GetReadTSFunc()
-}
-
-// GetForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
-func (p *SimpleTxnContextProvider) GetForUpdateTS() (uint64, error) {
-	if p.GetForUpdateTSFunc == nil {
-		return 0, errors.New("GetForUpdateTSFunc not set")
-	}
-	return p.GetForUpdateTSFunc()
+// ReuseTxnProvider can reuse the old txn
+type ReuseTxnProvider interface {
+	// ReuseTxn reuses the old txn
+	ReuseTxn()
 }
 
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
-	// GetReadTS returns the read timestamp used by select statement (not for select ... for update)
-	GetReadTS() (uint64, error)
-	// GetForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
-	GetForUpdateTS() (uint64, error)
-
+	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+	GetStmtReadTS() (uint64, error)
+	// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
+	GetStmtForUpdateTS() (uint64, error)
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider
-	// SetContextProvider sets the context provider
-	SetContextProvider(provider TxnContextProvider) error
+
+	// EnterNewTxn enters a new transaction.
+	EnterNewTxn(ctx context.Context, req *EnterNewTxnRequest) error
+	// OnStmtStart is the hook that should be called when a new statement started
+	OnStmtStart(ctx context.Context) error
+}
+
+// NewTxn starts a new optimistic and active txn
+func NewTxn(ctx context.Context, sctx sessionctx.Context) error {
+	return GetTxnManager(sctx).EnterNewTxn(ctx, &EnterNewTxnRequest{
+		ActiveNow: true,
+		TxnMode:   ast.Optimistic,
+	})
+}
+
+// InternalNewTxnInStmt us used when we should commit the old txn and create a new one for some statement like ddl operations.
+func InternalNewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
+	if err := NewTxn(ctx, sctx); err != nil {
+		return err
+	}
+	return GetTxnManager(sctx).OnStmtStart(ctx)
 }
 
 // GetTxnManager returns the TxnManager object from session context

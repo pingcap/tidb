@@ -15,28 +15,32 @@
 package staleread
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/temptable"
 )
 
 // StalenessTxnContextProvider implements sessiontxn.TxnContextProvider
 type StalenessTxnContextProvider struct {
-	is infoschema.InfoSchema
-	ts uint64
+	sctx sessionctx.Context
+	is   infoschema.InfoSchema
+	ts   uint64
+
+	isTxnActive bool
 }
 
 // NewStalenessTxnContextProvider creates a new StalenessTxnContextProvider
-func NewStalenessTxnContextProvider(is infoschema.InfoSchema, ts uint64) *StalenessTxnContextProvider {
+func NewStalenessTxnContextProvider(sctx sessionctx.Context, ts uint64, is infoschema.InfoSchema) *StalenessTxnContextProvider {
 	return &StalenessTxnContextProvider{
-		is: is,
-		ts: ts,
+		sctx: sctx,
+		is:   is,
+		ts:   ts,
 	}
-}
-
-// Initialize the provider with session context
-func (p *StalenessTxnContextProvider) Initialize(_ sessionctx.Context) error {
-	return nil
 }
 
 // GetTxnInfoSchema returns the information schema used by txn
@@ -44,12 +48,41 @@ func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
 }
 
-// GetReadTS returns the read timestamp
-func (p *StalenessTxnContextProvider) GetReadTS() (uint64, error) {
+// GetStmtReadTS returns the read timestamp
+func (p *StalenessTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	return p.ts, nil
 }
 
-// GetForUpdateTS will return an error because stale read does not support it
-func (p *StalenessTxnContextProvider) GetForUpdateTS() (uint64, error) {
+// GetStmtForUpdateTS will return an error because stale read does not support it
+func (p *StalenessTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return 0, errors.New("GetForUpdateTS not supported for stalenessTxnProvider")
+}
+
+// OnInitialize is the hook that should be called when enter a new txn with this provider
+func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, activeNow bool) error {
+	if activeNow {
+		if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
+			return err
+		}
+
+		p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+		if err := p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+			return err
+		}
+	}
+
+	if p.is == nil {
+		is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(p.ts)
+		if err != nil {
+			return err
+		}
+		p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
+	}
+
+	return nil
+}
+
+// OnStmtStart is the hook that should be called when a new statement started
+func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
+	return nil
 }

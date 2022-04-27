@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -81,7 +82,7 @@ func testNewContext(d *ddl) sessionctx.Context {
 }
 
 func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn(context.Background())
+	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
