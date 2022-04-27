@@ -1965,7 +1965,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
 		pointGetPlan.PartitionInfo = partitionInfo
 		pointGetPlan.accessCols = ds.TblCols
-		cost = pointGetPlan.GetCost(ds.TblCols)
+		cost = pointGetPlan.GetCost()
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -1984,10 +1984,10 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.PartitionInfo = partitionInfo
 		if candidate.path.IsSingleScan {
 			pointGetPlan.accessCols = candidate.path.IdxCols
-			cost = pointGetPlan.GetCost(candidate.path.IdxCols)
+			cost = pointGetPlan.GetCost()
 		} else {
 			pointGetPlan.accessCols = ds.TblCols
-			cost = pointGetPlan.GetCost(ds.TblCols)
+			cost = pointGetPlan.GetCost()
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
