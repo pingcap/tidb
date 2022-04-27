@@ -77,6 +77,16 @@ func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 }
 
 func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnRequest) error {
+	if m.sctx.GetSessionVars().InTxn() {
+		if !r.ActiveNow {
+			return errors.New("Cannot enter a lazy txn when in explict txn")
+		}
+
+		if r.CanReuseTxn {
+			return errors.New("Cannot reuse txn when in explict txn")
+		}
+	}
+
 	provider := m.newProviderWithRequest(r)
 	if r.CanReuseTxn {
 		if p, ok := provider.(sessiontxn.ReuseTxnProvider); ok {
@@ -85,7 +95,7 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 	}
 
 	m.ctxProvider = provider
-	return provider.OnInitialize(ctx, r.ActiveNow)
+	return m.ctxProvider.OnInitialize(ctx, r.ActiveNow)
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
@@ -97,8 +107,8 @@ func (m *txnManager) OnStmtStart(ctx context.Context) error {
 }
 
 func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) sessiontxn.TxnContextProvider {
-	if m.ctxProvider != nil {
-		return m.ctxProvider
+	if r.TxnContextProvider != nil {
+		return r.TxnContextProvider
 	}
 
 	txnMode := r.TxnMode
