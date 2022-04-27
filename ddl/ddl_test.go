@@ -428,3 +428,118 @@ func TestNotifyDDLJob(t *testing.T) {
 	default:
 	}
 }
+
+func testSchemaInfo(d *ddl, name string) (*model.DBInfo, error) {
+	dbInfo := &model.DBInfo{
+		Name: model.NewCIStr(name),
+	}
+	genIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		return nil, err
+	}
+	dbInfo.ID = genIDs[0]
+	return dbInfo, nil
+}
+
+func testCreateSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.DoDDLJob(ctx, job))
+
+	v := getSchemaVer(t, ctx)
+	dbInfo.State = model.StatePublic
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
+	dbInfo.State = model.StateNone
+	return job
+}
+
+func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
+	return &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+}
+
+func testDropSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
+	job := buildDropSchemaJob(dbInfo)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+	ver := getSchemaVer(t, ctx)
+	return job, ver
+}
+
+func isDDLJobDone(test *testing.T, t *meta.Meta) bool {
+	job, err := t.GetDDLJobByIdx(0)
+	require.NoError(test, err)
+	if job == nil {
+		return true
+	}
+
+	time.Sleep(testLease)
+	return false
+}
+
+func testCheckSchemaState(test *testing.T, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
+	isDropped := true
+
+	for {
+		err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			info, err := t.GetDatabase(dbInfo.ID)
+			require.NoError(test, err)
+
+			if state == model.StateNone {
+				isDropped = isDDLJobDone(test, t)
+				if !isDropped {
+					return nil
+				}
+				require.Nil(test, info)
+				return nil
+			}
+
+			require.Equal(test, info.Name, dbInfo.Name)
+			require.Equal(test, info.State, state)
+			return nil
+		})
+		require.NoError(test, err)
+
+		if isDropped {
+			break
+		}
+	}
+}
+
+func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, d *ddl) *model.Job {
+	job := &model.Job{
+		SchemaID:   schemaID,
+		TableID:    tableID,
+		Type:       tp,
+		Args:       args,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	// TODO: check error detail
+	require.Error(t, d.DoDDLJob(ctx, job))
+	testCheckJobCancelled(t, d.store, job, nil)
+
+	return job
+}
+
+func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state *model.SchemaState) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		historyJob, err := m.GetHistoryDDLJob(job.ID)
+		require.NoError(t, err)
+		require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
+		if state != nil {
+			require.Equal(t, historyJob.SchemaState, *state)
+		}
+		return nil
+	}))
+}
