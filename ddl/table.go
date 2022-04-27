@@ -1050,11 +1050,11 @@ func onModifyTableCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		// update column charset.
 		for _, col := range tblInfo.Columns {
 			if field_types.HasCharset(&col.FieldType) {
-				col.Charset = toCharset
-				col.Collate = toCollate
+				col.SetCharset(toCharset)
+				col.SetCollate(toCollate)
 			} else {
-				col.Charset = charset.CharsetBin
-				col.Collate = charset.CharsetBin
+				col.SetCharset(charset.CharsetBin)
+				col.SetCollate(charset.CharsetBin)
 			}
 		}
 	}

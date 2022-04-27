@@ -521,12 +521,12 @@ func TestCollation(t *testing.T) {
 	rs, err := tk.Exec("show collation;")
 	require.NoError(t, err)
 	fields := rs.Fields()
-	require.Equal(t, mysql.TypeVarchar, fields[0].Column.Tp)
-	require.Equal(t, mysql.TypeVarchar, fields[1].Column.Tp)
-	require.Equal(t, mysql.TypeLonglong, fields[2].Column.Tp)
-	require.Equal(t, mysql.TypeVarchar, fields[3].Column.Tp)
-	require.Equal(t, mysql.TypeVarchar, fields[4].Column.Tp)
-	require.Equal(t, mysql.TypeLonglong, fields[5].Column.Tp)
+	require.Equal(t, mysql.TypeVarchar, fields[0].Column.GetType())
+	require.Equal(t, mysql.TypeVarchar, fields[1].Column.GetType())
+	require.Equal(t, mysql.TypeLonglong, fields[2].Column.GetType())
+	require.Equal(t, mysql.TypeVarchar, fields[3].Column.GetType())
+	require.Equal(t, mysql.TypeVarchar, fields[4].Column.GetType())
+	require.Equal(t, mysql.TypeLonglong, fields[5].Column.GetType())
 }
 
 func TestShowTableStatus(t *testing.T) {
