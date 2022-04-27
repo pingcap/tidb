@@ -326,6 +326,11 @@ error = '''
 init meta manager error
 '''
 
+["Lightning:KV:EpochNotMatch"]
+error = '''
+epoch not match
+'''
+
 ["Lightning:KV:ErrCheckKVVersion"]
 error = '''
 check tikv version error
@@ -339,6 +344,21 @@ check multi-ingest support error
 ["Lightning:KV:ErrCreateKVClient"]
 error = '''
 create kv client error
+'''
+
+["Lightning:KV:NotLeader"]
+error = '''
+not leader
+'''
+
+["Lightning:KV:RegionNotFound"]
+error = '''
+region not found
+'''
+
+["Lightning:KV:ServerIsBusy"]
+error = '''
+server is busy
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
