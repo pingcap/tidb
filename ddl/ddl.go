@@ -330,16 +330,17 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	}
 
 	ddlCtx := &ddlCtx{
-		uuid:         id,
-		store:        opt.Store,
-		lease:        opt.Lease,
-		ddlJobDoneCh: make(chan struct{}, 1),
-		ownerManager: manager,
-		schemaSyncer: syncer,
-		binlogCli:    binloginfo.GetPumpsClient(),
-		infoCache:    opt.InfoCache,
-		tableLockCkr: deadLockCkr,
-		etcdCli:      opt.EtcdCli,
+		schemaVersionOwner: *atomicutil.NewInt64(0),
+		uuid:               id,
+		store:              opt.Store,
+		lease:              opt.Lease,
+		ddlJobDoneCh:       make(chan struct{}, 1),
+		ownerManager:       manager,
+		schemaSyncer:       syncer,
+		binlogCli:          binloginfo.GetPumpsClient(),
+		infoCache:          opt.InfoCache,
+		tableLockCkr:       deadLockCkr,
+		etcdCli:            opt.EtcdCli,
 	}
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
