@@ -25,8 +25,6 @@ import (
 )
 
 func TestMemoryLeak(t *testing.T) {
-	t.Skip("hack")
-
 	initAndCloseTiDB := func() {
 		store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 		require.NoError(t, err)
