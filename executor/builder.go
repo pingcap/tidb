@@ -764,6 +764,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		IfNotExists:  v.IfNotExists,
 		GlobalScope:  v.GlobalScope,
 		Extended:     v.Extended,
+		Extractor:    v.Extractor,
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -1721,6 +1722,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -1728,6 +1731,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					table:      v.Table,
 					outputCols: v.Columns,
 					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
+					memTracker: memTracker,
 				},
 			}
 		case strings.ToLower(infoschema.TableStorageStats):
@@ -3935,9 +3939,6 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
-	}
-	if builder.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-		reqBuilderWithRange.SetIsolationLevel(kv.RC)
 	}
 	kvReq, err := reqBuilderWithRange.
 		SetDAGRequest(e.dagPB).
