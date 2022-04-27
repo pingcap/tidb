@@ -190,7 +190,7 @@ func TestTable(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	jobID := testDropTable(testkit.NewTestKit(t, store), t, tblInfo.Name.L, domain)
+	jobID := testDropTable(testkit.NewTestKit(t, store), t, dbInfo.Name.L, tblInfo.Name.L, domain)
 	testCheckJobDone(t, store, jobID, false)
 
 	// for truncate table

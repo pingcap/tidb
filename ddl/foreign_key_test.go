@@ -185,11 +185,10 @@ func TestForeignKey(t *testing.T) {
 	mu.Unlock()
 	require.NoError(t, hErr)
 	require.True(t, ok)
+	d.SetHook(originalHook)
 
-	err = ctx.NewTxn(context.Background())
-	require.NoError(t, err)
-
-	jobID := testDropTable(testkit.NewTestKit(t, store), t, tblInfo.Name.L, dom)
+	tk := testkit.NewTestKit(t, store)
+	jobID := testDropTable(tk, t, dbInfo.Name.L, tblInfo.Name.L, dom)
 	testCheckJobDone(t, store, jobID, false)
 
 	require.NoError(t, err)

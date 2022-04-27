@@ -18,7 +18,10 @@ import (
 	"context"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"testing"
 	"time"
 
@@ -128,6 +131,73 @@ func testCheckSchemaState(test *testing.T, store kv.Storage, dbInfo *model.DBInf
 	}
 }
 
+func ExportTestSchema(t *testing.T) {
+	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	defer clean()
+
+	dbInfo, err := testSchemaInfo(store, "test_schema")
+	require.NoError(t, err)
+
+	// create a database.
+	tk := testkit.NewTestKit(t, store)
+	job := testCreateSchema(t, tk.Session(), domain.DDL(), dbInfo)
+	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+
+	/*** to drop the schema with two tables. ***/
+	// create table t with 100 records.
+	tblInfo1, err := testTableInfo(store, "t", 3)
+	require.NoError(t, err)
+	tJob1 := testCreateTable(t, tk.Session(), domain.DDL(), dbInfo, tblInfo1)
+	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
+	testCheckJobDone(t, store, tJob1.ID, true)
+	tbl1 := testGetTable(t, domain, tblInfo1.ID)
+	for i := 1; i <= 100; i++ {
+		_, err := tbl1.AddRecord(tk.Session(), types.MakeDatums(i, i, i))
+		require.NoError(t, err)
+	}
+	// create table t1 with 1034 records.
+	tblInfo2, err := testTableInfo(store, "t1", 3)
+	require.NoError(t, err)
+	tk2 := testkit.NewTestKit(t, store)
+	tJob2 := testCreateTable(t, tk2.Session(), domain.DDL(), dbInfo, tblInfo2)
+	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
+	testCheckJobDone(t, store, tJob2.ID, true)
+	tbl2 := testGetTable(t, domain, tblInfo2.ID)
+	for i := 1; i <= 1034; i++ {
+		_, err := tbl2.AddRecord(tk2.Session(), types.MakeDatums(i, i, i))
+		require.NoError(t, err)
+	}
+	tk3 := testkit.NewTestKit(t, store)
+	job, v := testDropSchema(t, tk3.Session(), domain.DDL(), dbInfo)
+	testCheckSchemaState(t, store, dbInfo, model.StateNone)
+	ids := make(map[int64]struct{})
+	ids[tblInfo1.ID] = struct{}{}
+	ids[tblInfo2.ID] = struct{}{}
+	checkHistoryJobArgs(t, tk3.Session(), job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
+
+	// Drop a non-existent database.
+	job = &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	ctx := testkit.NewTestKit(t, store).Session()
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = domain.DDL().DoDDLJob(ctx, job)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
+
+	// Drop a database without a table.
+	dbInfo1, err := testSchemaInfo(store, "test1")
+	require.NoError(t, err)
+	job = testCreateSchema(t, ctx, domain.DDL(), dbInfo1)
+	testCheckSchemaState(t, store, dbInfo1, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+	job, _ = testDropSchema(t, ctx, domain.DDL(), dbInfo1)
+	testCheckSchemaState(t, store, dbInfo1, model.StateNone)
+	testCheckJobDone(t, store, job.ID, false)
+}
+
 func TestSchemaWaitJob(t *testing.T) {
 	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	defer clean()
@@ -154,7 +224,8 @@ func TestSchemaWaitJob(t *testing.T) {
 
 	dbInfo, err := testSchemaInfo(store, "test_schema")
 	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d2, dbInfo)
+	se := testkit.NewTestKit(t, store).Session()
+	testCreateSchema(t, se, d2, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
@@ -163,7 +234,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	schemaID := genIDs[0]
-	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
+	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, se, d2, store)
 }
 
 func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, d ddl.DDL, store kv.Storage) *model.Job {
