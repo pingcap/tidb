@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1675,8 +1676,8 @@ func (s *testSessionSuite) TestResultField(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(fields), Equals, 1)
 	field := fields[0].Column
-	c.Assert(field.Tp, Equals, mysql.TypeLonglong)
-	c.Assert(field.Flen, Equals, 21)
+	c.Assert(field.GetType(), Equals, mysql.TypeLonglong)
+	c.Assert(field.GetFlen(), Equals, 21)
 }
 
 func (s *testSessionSuite) TestResultType(c *C) {
@@ -1688,7 +1689,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).IsNull(0), IsTrue)
-	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
+	c.Assert(rs.Fields()[0].Column.FieldType.GetType(), Equals, mysql.TypeVarString)
 }
 
 func (s *testSessionSuite) TestFieldText(c *C) {
