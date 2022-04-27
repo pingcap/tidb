@@ -89,7 +89,7 @@ type TxnManager interface {
 func NewTxn(ctx context.Context, sctx sessionctx.Context) error {
 	return GetTxnManager(sctx).EnterNewTxn(ctx, &EnterNewTxnRequest{
 		Type:    EnterNewTxnDefault,
-		TxnMode: ast.Pessimistic,
+		TxnMode: ast.Optimistic,
 	})
 }
 
