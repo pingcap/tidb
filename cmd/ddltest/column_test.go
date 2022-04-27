@@ -15,6 +15,7 @@
 package ddltest
 
 import (
+	goctx "context"
 	"fmt"
 	"reflect"
 	"sync"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	goctx "golang.org/x/net/context"
 )
 
 // After add column finished, check the records in the table.

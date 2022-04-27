@@ -15,6 +15,7 @@
 package expression_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"testing"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/net/context"
 )
 
 func TestInferType(t *testing.T) {

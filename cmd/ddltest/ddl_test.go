@@ -15,6 +15,7 @@
 package ddltest
 
 import (
+	goctx "context"
 	"database/sql"
 	"database/sql/driver"
 	"flag"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	goctx "golang.org/x/net/context"
 )
 
 var (
