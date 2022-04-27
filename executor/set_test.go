@@ -623,6 +623,11 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '0'"))
 	result = tk.MustQuery("select @@global.max_allowed_packet;")
 	result.Check(testkit.Rows("1024"))
+
+	// test value of tidb_stats_cache_mem_quota
+	tk.MustQuery("select @@global.tidb_stats_cache_mem_quota").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_stats_cache_mem_quota = 200")
+	tk.MustQuery("select @@global.tidb_stats_cache_mem_quota").Check(testkit.Rows("200"))
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
