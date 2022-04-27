@@ -101,7 +101,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		EnableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
 	}
 
-	if kvReq.StoreType == kv.TiFlash {
+	if kvReq.StoreType == kv.TiFlash && sctx.GetSessionVars().TiflashMaxThreads != -1 {
 		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashMaxThreads, strconv.FormatInt(sctx.GetSessionVars().TiflashMaxThreads, 10))
 	}
 

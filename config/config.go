@@ -493,7 +493,6 @@ type Performance struct {
 	PlanReplayerGCLease  string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                 int    `toml:"gogc" json:"gogc"`
 	EnforceMPP           bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	TiFlashMaxThreads    int `toml:"tiflash-max-threads" json:"tiflash-max-threads"`
 	StatsLoadConcurrency uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
 	StatsLoadQueueSize   uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 }
@@ -701,7 +700,6 @@ var defaultConf = Config{
 		IndexUsageSyncLease:  "0s",
 		GOGC:                 100,
 		EnforceMPP:           false,
-		TiFlashMaxThreads:    -1,
 		PlanReplayerGCLease:  "10m",
 		StatsLoadConcurrency: 5,
 		StatsLoadQueueSize:   1000,
