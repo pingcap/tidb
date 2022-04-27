@@ -116,7 +116,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	v := preprocessor{
 		ctx:                ctx,
 		tableAliasInJoin:   make([]map[string]interface{}, 0),
-		preprocessWith:     preprocessWith{nameNew: make([]string, 0), nameBeforeOffset: make([]int, 0)},
+		preprocessWith:     &preprocessWith{nameNew: make([]string, 0), nameBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
 	}
 	for _, optFn := range preprocessOpt {
@@ -193,7 +193,7 @@ type preprocessor struct {
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
-	preprocessWith   preprocessWith
+	preprocessWith   *preprocessWith
 
 	staleReadProcessor staleread.Processor
 
