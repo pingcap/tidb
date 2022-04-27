@@ -363,7 +363,6 @@ type Log struct {
 	SlowQueryFile       string     `toml:"slow-query-file" json:"slow-query-file"`
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint       `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen      uint64     `toml:"query-log-max-len" json:"query-log-max-len"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
@@ -659,7 +658,6 @@ var defaultConf = Config{
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
-		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
@@ -804,6 +802,7 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.refresh-interval":      {},
 	"stmt-summary.history-size":          {},
 	"mem-quota-query":                    {},
+	"query-log-max-len":                  {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

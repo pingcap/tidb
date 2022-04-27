@@ -49,7 +49,6 @@ var (
 		"TiKVClient.StoreLimit":           {},
 		"Log.Level":                       {},
 		"Log.SlowThreshold":               {},
-		"Log.QueryLogMaxLen":              {},
 		"Log.ExpensiveThreshold":          {},
 		"CheckMb4ValueInUTF8":             {},
 		"TxnLocalLatches.Capacity":        {},
