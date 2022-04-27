@@ -135,3 +135,20 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 	tk.MustExec("select * from tmp_t where id > 1 for update")
 	tk.MustExec("rollback")
 }
+
+func TestIssue33214(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col enum('a', 'b', 'c') default null)")
+	tk.MustExec("insert into t values ('a'), ('b'), ('c'), (null), ('c')")
+	tk.MustExec("alter table t cache")
+	for {
+		tk.MustQuery("select col from t t1 where (select count(*) from t t2 where t2.col = t1.col or t2.col =  'sdf') > 1;").Check(testkit.Rows("c", "c"))
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			break
+		}
+	}
+}
