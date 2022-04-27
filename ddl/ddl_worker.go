@@ -797,8 +797,9 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	// If running job meets error, we will save this error in job Error
 	// and retry later if the job is not cancelled.
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
-	defer d.UnlockSchemaVersion(job)
+
 	if job.IsCancelled() {
+		defer d.UnlockSchemaVersion(job)
 		w.sessForJob.StmtRollback()
 		err = w.finishDDLJob(t, job)
 		if err != nil {
@@ -837,12 +838,14 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	err = w.UpdateDDLJob(t, job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sessForJob.RollbackTxn(context.TODO())
+		d.UnlockSchemaVersion(job)
 		w.unlockSeqNum()
 		return err
 	}
 	writeBinlog(d.binlogCli, txn, job)
 	w.sessForJob.StmtCommit()
 	err = w.sessForJob.CommitTxn(w.ctx)
+	d.UnlockSchemaVersion(job)
 	if err != nil {
 		log.Error("sessForJob.CommitTxn", zap.Error(err))
 		w.unlockSeqNum()
