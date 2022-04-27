@@ -1073,8 +1073,11 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
 func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
-	d.schemaVersionMu.Lock()
-	d.schemaVersionOwner.Store(job.ID)
+	ownerID := d.schemaVersionOwner.Load()
+	if ownerID == 0 {
+		d.schemaVersionMu.Lock()
+		d.schemaVersionOwner.Store(job.ID)
+	}
 	schemaVersion, err := t.GenSchemaVersion()
 	if err != nil {
 		return 0, errors.Trace(err)
