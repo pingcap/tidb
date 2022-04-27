@@ -654,7 +654,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			writeBinlog(d.binlogCli, txn, job)
 			return nil
 		})
-		if d.schemaVersionOwner.Load() == job.ID {
+		ownerID := d.schemaVersionOwner.Load()
+		if ownerID != 0 && ownerID == job.ID {
 			d.schemaVersionMu.Unlock()
 			d.schemaVersionOwner.Store(0)
 		}
