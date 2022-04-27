@@ -59,7 +59,7 @@ func (p *StalenessTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 // OnInitialize is the hook that should be called when enter a new txn with this provider
 func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) error {
 	switch tp {
-	case sessiontxn.EnterNewTxnWithBeginStmt:
+	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
 		if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
 			return err
 		}
