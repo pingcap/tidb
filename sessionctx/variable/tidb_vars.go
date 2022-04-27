@@ -326,6 +326,9 @@ const (
 	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
 	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
 
+	// TiFlashMaxThreads TiflashMaxThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
+	// Default value is -1, means it will not be pushed down to tiflash.
+	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
 	TiFlashMaxThreads = "max_threads"
 
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
