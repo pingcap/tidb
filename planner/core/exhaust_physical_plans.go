@@ -2175,6 +2175,10 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
+	if !prop.IsEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Parallel Apply rejects the possible order properties of its outer child currently"))
+		return nil, true, nil
+	}
 	disableAggPushDownToCop(la.children[0])
 	join := la.GetHashJoin(prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
