@@ -57,15 +57,9 @@ type TxnContextProvider interface {
 	GetStmtForUpdateTS() (uint64, error)
 
 	// OnInitialize is the hook that should be called when enter a new txn with this provider
-	OnInitialize(ctx context.Context, activeNow bool) error
+	OnInitialize(ctx context.Context, enterNewTxnType EnterNewTxnType) error
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
-}
-
-// ReuseTxnProvider can reuse the old txn
-type ReuseTxnProvider interface {
-	// ReuseTxn reuses the old txn
-	ReuseTxn()
 }
 
 // TxnManager is an interface providing txn context management in session

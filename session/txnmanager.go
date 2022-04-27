@@ -76,38 +76,16 @@ func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 	return m.ctxProvider
 }
 
-func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnRequest) (err error) {
-	sessVars := m.sctx.GetSessionVars()
-
-	activeNow := true
-	canReuseTxn := false
-	switch r.Type {
-	case sessiontxn.EnterNewTxnWithBeginStmt:
-		txnCtx := sessVars.TxnCtx
-		if txnCtx.History == nil && !txnCtx.IsStaleness {
-			// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
-			// need to call NewTxn, which commits the existing transaction and begins a new one.
-			// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
-			// always create a new transaction.
-			canReuseTxn = true
-		}
-		sessVars.SetInTxn(true)
-	case sessiontxn.EnterNewTxnBeforeStmt, sessiontxn.EnterNewTxnWithReplaceProvider:
-		if sessVars.InTxn() {
-			return errors.Errorf("EnterNewTxnType %v not supported when in explicit txn", r.Type)
-		}
-		activeNow = false
+func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnRequest) error {
+	m.ctxProvider = m.newProviderWithRequest(r)
+	if err := m.ctxProvider.OnInitialize(ctx, r.Type); err != nil {
+		return err
 	}
 
-	provider := m.newProviderWithRequest(r)
-	if canReuseTxn {
-		if p, ok := provider.(sessiontxn.ReuseTxnProvider); ok {
-			p.ReuseTxn()
-		}
+	if r.Type == sessiontxn.EnterNewTxnWithBeginStmt {
+		m.sctx.GetSessionVars().SetInTxn(true)
 	}
-
-	m.ctxProvider = provider
-	return m.ctxProvider.OnInitialize(ctx, activeNow)
+	return nil
 }
 
 // OnStmtStart is the hook that should be called when a new statement started

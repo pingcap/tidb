@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table/temptable"
 )
 
@@ -41,7 +42,6 @@ type SimpleTxnContextProvider struct {
 	CausalConsistencyOnly bool
 
 	isTxnActive bool
-	reuseTxn    bool
 }
 
 // GetTxnInfoSchema returns the information schema used by txn
@@ -65,40 +65,41 @@ func (p *SimpleTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return p.GetForUpdateTSFunc()
 }
 
-// ReuseTxn reuses the old txn
-func (p *SimpleTxnContextProvider) ReuseTxn() {
-	p.reuseTxn = true
-}
-
 // OnInitialize is the hook that should be called when enter a new txn with this provider
-func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, activeNow bool) error {
+func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) error {
 	p.Ctx = ctx
 	sessVars := p.Sctx.GetSessionVars()
-	switch {
-	case p.reuseTxn:
-		// When rese txn, use the old TxnCtx
-	case activeNow:
-		if err := p.Sctx.NewTxn(ctx); err != nil {
+	switch tp {
+	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
+		txnCtx := sessVars.TxnCtx
+		if tp != sessiontxn.EnterNewTxnWithBeginStmt || txnCtx.History != nil || txnCtx.IsStaleness {
+			// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
+			// need to call NewTxn, which commits the existing transaction and begins a new one.
+			// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
+			// always create a new transaction.
+			if err := p.Sctx.NewTxn(ctx); err != nil {
+				return err
+			}
+		}
+
+		sessVars.SetInTxn(true)
+		if _, err := p.activeTxn(); err != nil {
 			return err
 		}
-	default:
+
+		if is, ok := sessVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
+			p.InfoSchema = is
+		}
+	case sessiontxn.EnterNewTxnBeforeStmt:
+		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.Sctx, domain.GetDomain(p.Sctx).InfoSchema())
 		sessVars.TxnCtx = &variable.TransactionContext{
-			InfoSchema: temptable.AttachLocalTemporaryTableInfoSchema(p.Sctx, domain.GetDomain(p.Sctx).InfoSchema()),
+			InfoSchema: p.InfoSchema,
 			CreateTime: time.Now(),
 			ShardStep:  int(sessVars.ShardAllocateStep),
 			TxnScope:   sessVars.CheckAndGetTxnScope(),
 		}
-	}
-
-	if sessVars.TxnCtx.InfoSchema != nil {
-		p.InfoSchema = sessVars.TxnCtx.InfoSchema.(infoschema.InfoSchema)
-	}
-	sessVars.TxnCtx.IsPessimistic = p.Pessimistic
-
-	if activeNow {
-		if _, err := p.activeTxn(); err != nil {
-			return err
-		}
+	default:
+		return errors.Errorf("Unsupported type: %v", tp)
 	}
 
 	return nil

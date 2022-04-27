@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table/temptable"
 )
 
@@ -57,26 +58,27 @@ func (p *StalenessTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
-func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, activeNow bool) error {
-	if activeNow {
+func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) error {
+	switch tp {
+	case sessiontxn.EnterNewTxnWithBeginStmt:
 		if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
 			return err
 		}
-
 		p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 		if err := p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
 			return err
 		}
-	}
-
-	if p.is == nil {
-		is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(p.ts)
-		if err != nil {
-			return err
+	case sessiontxn.EnterNewTxnWithReplaceProvider:
+		if p.is == nil {
+			is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(p.ts)
+			if err != nil {
+				return err
+			}
+			p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
 		}
-		p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
+	default:
+		return errors.Errorf("Unsupported type: %v", tp)
 	}
-
 	return nil
 }
 
