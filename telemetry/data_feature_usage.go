@@ -109,30 +109,24 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 // while avoiding circle dependency with domain package.
 var GetDomainInfoSchema func(sessionctx.Context) infoschema.InfoSchema
 
-// ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
-type ClusterIndexUsage map[string]TableClusteredInfo
-
-// TableClusteredInfo records the usage info of clusterindex of each table
-// CLUSTERED, NON_CLUSTERED, NA
-type TableClusteredInfo struct {
-	IsClustered   bool   `json:"isClustered"`   // True means CLUSTERED, False means NON_CLUSTERED
-	ClusterPKType string `json:"clusterPKType"` // INT means clustered PK type is int
-	// NON_INT means clustered PK type is not int
-	// NA means this field is no meaningful information
+// ClusterIndexUsage records the cluster index usage info of all the tables
+type ClusterIndexUsage struct {
+	// The number of user's tables with clustered index enabled.
+	NumClusteredTables uint64 `json:"numClusteredTables"`
+	// The number of user's tables.
+	NumTotalTables uint64 `json:"numTotalTables"`
 }
 
 // getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
 func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
-	usage := make(ClusterIndexUsage)
+	var usage ClusterIndexUsage
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
 	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
 	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `
-		SELECT left(sha2(TABLE_NAME, 256), 6) table_name_hash, TIDB_PK_TYPE, TABLE_SCHEMA, TABLE_NAME
+		SELECT TIDB_PK_TYPE
 		FROM information_schema.tables
-		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')
-		ORDER BY table_name_hash
-		limit 10000`)
+		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')`)
 	if err != nil {
 		return nil, err
 	}
@@ -154,36 +148,18 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 	if err != nil {
 		return nil, err
 	}
-	infoSchema := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 
 	// check ClusterIndex information for each table
 	// row: 0 = table_name_hash, 1 = TIDB_PK_TYPE, 2 = TABLE_SCHEMA (db), 3 = TABLE_NAME
-
 	for _, row := range rows {
-		if row.Len() < 4 {
+		if row.Len() < 3 {
 			continue
 		}
-		tblClusteredInfo := TableClusteredInfo{false, "NA"}
-		if row.GetString(1) == "CLUSTERED" {
-			tblClusteredInfo.IsClustered = true
-			table, err := infoSchema.TableByName(model.NewCIStr(row.GetString(2)), model.NewCIStr(row.GetString(3)))
-			if err != nil {
-				continue
-			}
-			tableInfo := table.Meta()
-			if tableInfo.PKIsHandle {
-				tblClusteredInfo.ClusterPKType = "INT"
-			} else if tableInfo.IsCommonHandle {
-				tblClusteredInfo.ClusterPKType = "NON_INT"
-			} else {
-				// if both CLUSTERED IS TURE and CLUSTERPKTYPE IS NA met, this else is hit
-				// it means the status of INFORMATION_SCHEMA.tables if not consistent with session.Context
-				// WE SHOULD treat this issue SERIOUSLY
-			}
+		if row.GetString(0) == "CLUSTERED" {
+			usage.NumClusteredTables++
 		}
-		usage[row.GetString(0)] = tblClusteredInfo
 	}
-
+	usage.NumTotalTables = uint64(len(rows))
 	return &usage, nil
 }
 
