@@ -86,6 +86,7 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 		// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 		// reverts to its previous state.
 		sessVars.SetInTxn(true)
+		sessVars.TxnCtx.IsPessimistic = p.Pessimistic
 		if _, err := p.activeTxn(); err != nil {
 			return err
 		}
@@ -96,10 +97,11 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 	case sessiontxn.EnterNewTxnBeforeStmt:
 		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.Sctx, domain.GetDomain(p.Sctx).InfoSchema())
 		sessVars.TxnCtx = &variable.TransactionContext{
-			InfoSchema: p.InfoSchema,
-			CreateTime: time.Now(),
-			ShardStep:  int(sessVars.ShardAllocateStep),
-			TxnScope:   sessVars.CheckAndGetTxnScope(),
+			InfoSchema:    p.InfoSchema,
+			CreateTime:    time.Now(),
+			ShardStep:     int(sessVars.ShardAllocateStep),
+			TxnScope:      sessVars.CheckAndGetTxnScope(),
+			IsPessimistic: p.Pessimistic,
 		}
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
@@ -127,7 +129,6 @@ func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
 	}
 
 	if p.Pessimistic {
-		p.Sctx.GetSessionVars().TxnCtx.IsPessimistic = true
 		txn.SetOption(kv.Pessimistic, true)
 	}
 
