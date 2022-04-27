@@ -260,11 +260,12 @@ func TestBuildTasksByBuckets(t *testing.T) {
 
 	// out of range buckets
 	// region:  n------------------x
-	// buckets:      q---s---u
-	// ranges:  n-o p----s t---v w-x
-	// tasks:   n-o p----s(it can be improved, i.e., n-o p-q, q-s)
-	//                     t-u
-	//                       u-v w-x
+	// buckets:       q---s---u
+	// ranges:  n-o p ----s t---v w-x
+	// tasks:   n-o p-q
+	//                 q--s
+	//                      t-u
+	//                        u-v w-x
 	expectedTaskRanges = [][]string{
 		{"n", "o", "p", "q"},
 		{"q", "s"},
