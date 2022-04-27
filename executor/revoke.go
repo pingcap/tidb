@@ -64,7 +64,7 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.done = true
 
 	// Commit the old transaction, like DDL.
-	if err := sessiontxn.InternalNewTxnInStmt(ctx, e.ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		return err
 	}
 	defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()

@@ -132,7 +132,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 	}
 
-	if err = sessiontxn.InternalNewTxnInStmt(ctx, e.ctx); err != nil {
+	if err = sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		return err
 	}
 

@@ -86,8 +86,8 @@ func NewTxn(ctx context.Context, sctx sessionctx.Context) error {
 	})
 }
 
-// InternalNewTxnInStmt us used when we should commit the old txn and create a new one for some statement like ddl operations.
-func InternalNewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
+// NewTxnInStmt us used when we should commit the old txn and create a new one for some statement like ddl operations.
+func NewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
 	if err := NewTxn(ctx, sctx); err != nil {
 		return err
 	}

@@ -507,7 +507,7 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
-	if err := sessiontxn.InternalNewTxnInStmt(ctx, e.ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}

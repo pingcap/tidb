@@ -55,8 +55,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/sessiontxn"
-
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -79,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
 	tidbutil "github.com/pingcap/tidb/util"
