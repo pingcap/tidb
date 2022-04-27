@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
@@ -103,6 +104,8 @@ type PointGetExecutor struct {
 
 	stats      *runtimeStatsWithSnapshot
 	cacheTable kv.MemBuffer
+
+	memTracker *memory.Tracker
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -177,6 +180,8 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if readReplicaType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
 		e.snapshot.SetOption(kv.ReplicaRead, readReplicaType)
 	}
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	e.snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
 	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
@@ -200,6 +205,11 @@ func (e *PointGetExecutor) Open(context.Context) error {
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
+	if e.memTracker != nil {
+		e.memTracker.Consume(-e.memTracker.BytesConsumed())
+		e.memTracker = nil
+	}
+
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
@@ -250,6 +260,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil && !kv.ErrNotExist.Equal(err) {
 				return err
 			}
+			e.memTracker.Consume(int64(cap(e.idxKey)))
 
 			e.handleVal, err = e.get(ctx, e.idxKey)
 			if err != nil {
@@ -257,7 +268,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 			}
-
+			e.memTracker.Consume(int64(cap(e.handleVal)))
 			// try lock the index key if isolation level is not read consistency
 			// also lock key if read consistency read a value
 			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0 {
@@ -303,7 +314,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			})
 		}
 	}
-
+	e.memTracker.Consume(e.handle.MemoryUsage())
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
 	val, err := e.getAndLock(ctx, key)
 	if err != nil {

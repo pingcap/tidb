@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
@@ -82,6 +83,8 @@ type BatchPointGetExec struct {
 	snapshot   kv.Snapshot
 	stats      *runtimeStatsWithSnapshot
 	cacheTable kv.MemBuffer
+
+	memTracker *memory.Tracker
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -167,6 +170,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	}
 	e.snapshot = snapshot
 	e.batchGetter = batchGetter
+
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return nil
 }
 
@@ -214,6 +220,12 @@ func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *ca
 
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
+
+	if e.memTracker != nil {
+		e.memTracker.Consume(-e.memTracker.BytesConsumed())
+		e.memTracker = nil
+	}
+
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
@@ -273,6 +285,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		dedup := make(map[hack.MutableString]struct{})
 		toFetchIndexKeys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
+			e.memTracker.Consume(types.EstimatedMemUsage(idxVals, 1))
 			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
 			if datumsContainNull(idxVals) {
 				continue
@@ -500,7 +513,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			continue
 		}
 		e.values = append(e.values, val)
+		e.memTracker.Consume(int64(cap(val)))
 		handles = append(handles, e.handles[i])
+		e.memTracker.Consume(e.handles[i].MemoryUsage())
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
 			// when e.handles is set in builder directly, index should be primary key and the plan is CommonHandleRead

@@ -3603,6 +3603,32 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 }
 
+// Test memory track in POINT_GET/BATCH_POINT_GET for issue 21653
+func (s *testSessionSuite2) TestPointGetMemoryTracking(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int primary key);")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustQuery("select * from t1 where a = 1;").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_mem_quota_query=1;")
+	err := tk.QueryToErr("select * from t1 where a = 1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	err = tk.QueryToErr("select * from t1 where a in (1,2,3);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	tk.MustExec("set tidb_mem_quota_query=1024;")
+	tk.MustQuery("select * from t1 where a = 1;").Check(testkit.Rows("1"))
+	err = tk.QueryToErr("select * from t1 where a = 1;")
+	c.Check(err, IsNil)
+	err = tk.QueryToErr("select * from t1 where a in (1,2,3);")
+	c.Check(err, IsNil)
+}
+
 func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 	// This test checks that 'select ... for update' locks the partition instead of the table.
 	// Cover a bug that table ID is used to encode the lock key mistakenly.
