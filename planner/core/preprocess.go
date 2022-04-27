@@ -581,7 +581,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.CommonTableExpression, *ast.SubqueryExpr:
 		lenWithNameBeforeOffset := len(p.preprocessWith.withNameBeforeOffset)
 		if lenWithNameBeforeOffset < 1 {
-			p.err = ErrInternal.GenWithStack("len(withNameBeforeOffset) is less than one.Maybe it was deleted is somewhere.Should match in Enter and Leave")
+			p.err = ErrInternal.GenWithStack("len(withNameBeforeOffset) is less than one.Maybe it was deleted in somewhere.Should match in Enter and Leave")
 			break
 		}
 		beforeOffset := p.preprocessWith.withNameBeforeOffset[lenWithNameBeforeOffset-1]
