@@ -271,7 +271,7 @@ func TestEncodeRowFormatV2(t *testing.T) {
 
 func TestEncodeTimestamp(t *testing.T) {
 	ty := *types.NewFieldType(mysql.TypeDatetime)
-	ty.Flag |= mysql.NotNullFlag
+	ty.AddFlag(mysql.NotNullFlag)
 	c1 := &model.ColumnInfo{
 		ID:           1,
 		Name:         model.NewCIStr("c1"),
