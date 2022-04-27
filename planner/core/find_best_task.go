@@ -1964,6 +1964,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
 		pointGetPlan.PartitionInfo = partitionInfo
+		pointGetPlan.accessCols = ds.TblCols
 		cost = pointGetPlan.GetCost(ds.TblCols)
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
@@ -1982,8 +1983,10 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
 		if candidate.path.IsSingleScan {
+			pointGetPlan.accessCols = candidate.path.IdxCols
 			cost = pointGetPlan.GetCost(candidate.path.IdxCols)
 		} else {
+			pointGetPlan.accessCols = ds.TblCols
 			cost = pointGetPlan.GetCost(ds.TblCols)
 		}
 		// Add index condition to table plan now.
@@ -2033,7 +2036,8 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
-		cost = batchPointGetPlan.GetCost(ds.TblCols)
+		batchPointGetPlan.accessCols = ds.TblCols
+		cost = batchPointGetPlan.GetCost()
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -2057,9 +2061,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
 		if candidate.path.IsSingleScan {
-			cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
+			batchPointGetPlan.accessCols = candidate.path.IdxCols
+			cost = batchPointGetPlan.GetCost()
 		} else {
-			cost = batchPointGetPlan.GetCost(ds.TblCols)
+			batchPointGetPlan.accessCols = ds.TblCols
+			cost = batchPointGetPlan.GetCost()
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
