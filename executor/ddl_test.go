@@ -153,8 +153,8 @@ func TestCreateTable(t *testing.T) {
 	tk.MustExec("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
 	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].Collate)
+	require.Equal(t, "utf8", tt.Cols()[0].GetCharset())
+	require.Equal(t, "utf8_general_ci", tt.Cols()[0].GetCollate())
 	require.Equal(t, "utf8mb4", tt.Meta().Charset)
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
@@ -162,8 +162,8 @@ func TestCreateTable(t *testing.T) {
 	tk.MustExec("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
 	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].Collate)
+	require.Equal(t, "utf8", tt.Cols()[0].GetCharset())
+	require.Equal(t, "utf8_general_ci", tt.Cols()[0].GetCollate())
 	require.Equal(t, "utf8mb4", tt.Meta().Charset)
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
@@ -685,8 +685,8 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	require.NoError(t, err)
 	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
-	require.Equal(t, "utf8mb4", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Cols()[0].Collate)
+	require.Equal(t, "utf8mb4", tt.Cols()[0].GetCharset())
+	require.Equal(t, "utf8mb4_bin", tt.Cols()[0].GetCollate())
 	require.Equal(t, "utf8mb4", tt.Meta().Charset)
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
@@ -696,8 +696,8 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	require.NoError(t, err)
 	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
-	require.Equal(t, "utf8mb4", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Cols()[0].Collate)
+	require.Equal(t, "utf8mb4", tt.Cols()[0].GetCharset())
+	require.Equal(t, "utf8mb4_bin", tt.Cols()[0].GetCollate())
 	require.Equal(t, "utf8mb4", tt.Meta().Charset)
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
@@ -792,8 +792,8 @@ func TestColumnCharsetAndCollate(t *testing.T) {
 
 			tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
 			require.NoError(t, err)
-			require.Equalf(t, tt.exptCharset, tb.Meta().Columns[0].Charset, sql)
-			require.Equalf(t, tt.exptCollate, tb.Meta().Columns[0].Collate, sql)
+			require.Equalf(t, tt.exptCharset, tb.Meta().Columns[0].GetCharset(), sql)
+			require.Equalf(t, tt.exptCollate, tb.Meta().Columns[0].GetCollate(), sql)
 		} else {
 			_, err := tk.Exec(sql)
 			require.Errorf(t, err, sql)

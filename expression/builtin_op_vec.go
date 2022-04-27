@@ -553,7 +553,7 @@ func (b *builtinUnaryMinusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	}
 	n := input.NumRows()
 	args := result.Int64s()
-	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+	if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
 		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
 				continue

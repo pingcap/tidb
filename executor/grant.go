@@ -740,11 +740,11 @@ func getTablePriv(ctx sessionctx.Context, name string, host string, db string, t
 		return "", "", errors.Errorf("get table privilege fail for %s %s %s %s", name, host, db, tbl)
 	}
 	row := rows[0]
-	if fields[0].Column.Tp == mysql.TypeSet {
+	if fields[0].Column.GetType() == mysql.TypeSet {
 		tablePriv := row.GetSet(0)
 		tPriv = tablePriv.Name
 	}
-	if fields[1].Column.Tp == mysql.TypeSet {
+	if fields[1].Column.GetType() == mysql.TypeSet {
 		columnPriv := row.GetSet(1)
 		cPriv = columnPriv.Name
 	}
@@ -766,7 +766,7 @@ func getColumnPriv(ctx sessionctx.Context, name string, host string, db string, 
 		return "", errors.Errorf("get column privilege fail for %s %s %s %s %s", name, host, db, tbl, col)
 	}
 	cPriv := ""
-	if fields[0].Column.Tp == mysql.TypeSet {
+	if fields[0].Column.GetType() == mysql.TypeSet {
 		setVal := rows[0].GetSet(0)
 		cPriv = setVal.Name
 	}
