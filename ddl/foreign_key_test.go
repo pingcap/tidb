@@ -16,7 +16,6 @@ package ddl_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/testkit"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 

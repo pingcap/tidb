@@ -6952,7 +6952,7 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 		return err
 	}
 
-	if err = checkPlacementPolicyNotInUseFromInfoSchema(is, policy); err != nil {
+	if err = CheckPlacementPolicyNotInUseFromInfoSchema(is, policy); err != nil {
 		return err
 	}
 

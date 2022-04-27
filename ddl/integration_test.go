@@ -119,7 +119,7 @@ func TestDDLStatementsBackFill(t *testing.T) {
 }
 
 func TestSchema(t *testing.T) {
-	ddl.ExportTestSchema(t)
+	ExportTestSchema(t)
 }
 
 func TestDDLOnCachedTable(t *testing.T) {

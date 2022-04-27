@@ -695,7 +695,7 @@ func TestAddColumn(t *testing.T) {
 
 	require.True(t, checkOK)
 
-	jobID = testDropTable(tk, t,"test", "t1", dom)
+	jobID = testDropTable(tk, t, "test", "t1", dom)
 	testCheckJobDone(t, store, jobID, false)
 }
 
@@ -771,7 +771,7 @@ func TestAddColumns(t *testing.T) {
 	require.NoError(t, hErr)
 	require.True(t, ok)
 
-	jobID = testDropTable(tk, t,"test", "t1", dom)
+	jobID = testDropTable(tk, t, "test", "t1", dom)
 	testCheckJobDone(t, store, jobID, false)
 }
 
@@ -833,7 +833,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 	require.NoError(t, hErr)
 	require.True(t, ok)
 
-	jobID = testDropTable(tk, t,"test", "t1", dom)
+	jobID = testDropTable(tk, t, "test", "t1", dom)
 	testCheckJobDone(t, store, jobID, false)
 }
 
@@ -898,7 +898,7 @@ func TestDropColumns(t *testing.T) {
 	require.NoError(t, hErr)
 	require.True(t, ok)
 
-	jobID = testDropTable(tk, t,"test", "t1", dom)
+	jobID = testDropTable(tk, t, "test", "t1", dom)
 	testCheckJobDone(t, store, jobID, false)
 }
 

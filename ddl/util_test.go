@@ -17,9 +17,9 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/ddl"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -34,7 +34,7 @@ func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, er
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
 	}
-	genIDs, err := genGlobalIDs(store,1)
+	genIDs, err := genGlobalIDs(store, 1)
 
 	if err != nil {
 		return nil, err
