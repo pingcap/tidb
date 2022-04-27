@@ -412,10 +412,10 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), nil
 	}},
-	{Scope: ScopeInstance, Name: PluginLoad, Value: "", GetGlobal: func(s *SessionVars) (string, error) {
+	{Scope: ScopeInstance, Name: PluginLoad, Value: "", ReadOnly: true, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.PluginLoad, nil
 	}},
-	{Scope: ScopeInstance, Name: PluginDir, Value: "/data/deploy/plugin", GetGlobal: func(s *SessionVars) (string, error) {
+	{Scope: ScopeInstance, Name: PluginDir, Value: "/data/deploy/plugin", ReadOnly: true, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.PluginDir, nil
 	}},
 

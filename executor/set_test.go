@@ -622,6 +622,10 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '0'"))
 	result = tk.MustQuery("select @@global.max_allowed_packet;")
 	result.Check(testkit.Rows("1024"))
+
+	// for read-only instance scoped system variables.
+	tk.MustGetErrCode("set @@global.plugin_load = ''", errno.ErrIncorrectGlobalLocalVar)
+	tk.MustGetErrCode("set @@global.plugin_dir = ''", errno.ErrIncorrectGlobalLocalVar)
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
