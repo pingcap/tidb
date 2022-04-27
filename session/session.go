@@ -34,8 +34,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/sessiontxn/legacy"
-
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -50,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -2341,10 +2340,8 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 
-	if preparedStmt.ForUpdateRead {
-		if p, isOK := txManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); isOK {
-			p.InfoSchema = is
-		}
+	if p, isOK := txManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); isOK {
+		p.InfoSchema = is
 	}
 
 	if ok {
