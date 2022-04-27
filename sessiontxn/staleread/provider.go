@@ -30,8 +30,6 @@ type StalenessTxnContextProvider struct {
 	sctx sessionctx.Context
 	is   infoschema.InfoSchema
 	ts   uint64
-
-	isTxnActive bool
 }
 
 // NewStalenessTxnContextProvider creates a new StalenessTxnContextProvider

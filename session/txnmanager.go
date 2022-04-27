@@ -79,11 +79,11 @@ func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnRequest) error {
 	if m.sctx.GetSessionVars().InTxn() {
 		if !r.ActiveNow {
-			return errors.New("Cannot enter a lazy txn when in explict txn")
+			return errors.New("Cannot enter a lazy txn when in explicit txn")
 		}
 
 		if r.CanReuseTxn {
-			return errors.New("Cannot reuse txn when in explict txn")
+			return errors.New("Cannot reuse txn when in explicit txn")
 		}
 	}
 
