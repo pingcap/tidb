@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -78,11 +77,6 @@ func TestMain(m *testing.M) {
 
 func GetClusteredIndexSuiteData() testdata.TestData {
 	return testDataMap["clustered_index_suite"]
-}
-
-// TODO: remove once `session` tests migrated to testify
-func TestT(t *testing.T) {
-	check.TestingT(t)
 }
 
 func createStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
