@@ -258,9 +258,6 @@ type ddlCtx struct {
 }
 
 func (dc *ddlCtx) LockSchemaVersion(job *model.Job) {
-	if job == nil {
-		return
-	}
 	ownerID := dc.schemaVersionOwner.Load()
 	if ownerID == 0 {
 		dc.schemaVersionMu.Lock()
@@ -269,9 +266,6 @@ func (dc *ddlCtx) LockSchemaVersion(job *model.Job) {
 }
 
 func (dc *ddlCtx) UnlockSchemaVersion(job *model.Job) {
-	if job == nil {
-		return
-	}
 	ownerID := dc.schemaVersionOwner.Load()
 	if ownerID == job.ID {
 		dc.schemaVersionOwner.Store(0)
