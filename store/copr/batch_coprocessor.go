@@ -36,11 +36,11 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stathat/consistent"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
-    "github.com/stathat/consistent"
 )
 
 // batchCopTask comprises of multiple copTask that will send to same store.
@@ -605,10 +605,10 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 		panic("tiflash stores num is zero")
 	}
 
-    hasher := consistent.New()
-    for _, store := range allStores {
-        hasher.Add(store.GetAddr())
-    }
+	hasher := consistent.New()
+	for _, store := range allStores {
+		hasher.Add(store.GetAddr())
+	}
 	copTaskNumForEachNode := len(tasks)/nodeNum + 1
 	var taskIdxInOneNode int
 	var handledNum int
@@ -675,17 +675,17 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 // 	var taskCtxMap map[*copTask]*tikv.RPCContext
 // 	var tasks []*copTask
 // 	cache := store.GetRegionCache()
-// 
+//
 // 	for {
 // 		retryNum++
 // 		if retryNum >= 10 {
 // 			return nil, errors.New("too many times of retry to GetTiFlashRPCContext()")
 // 		}
-// 
+//
 // 		rangesLen = 0
 // 		taskCtxMap = make(map[*copTask]*tikv.RPCContext)
 // 		tasks = make([]*copTask, 0)
-// 
+//
 // 		for i, ranges := range rangesForEachPhysicalTable {
 // 			rangesLen += ranges.Len()
 // 			locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
@@ -702,7 +702,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 // 				})
 // 			}
 // 		}
-// 
+//
 // 		for _, task := range tasks {
 // 			// todo: check this func
 // 			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, false)
@@ -724,13 +724,13 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 // 			break
 // 		}
 // 	}
-// 
+//
 // 	allStores := cache.GetTiFlashStores()
 // 	nodeNum := len(allStores)
 // 	if nodeNum == 0 {
 // 		panic("tiflash stores num is zero")
 // 	}
-// 
+//
 // 	copTaskNumForEachNode := len(tasks)/nodeNum + 1
 // 	var taskIdxInOneNode int
 // 	var handledNum int
@@ -744,11 +744,11 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 // 			PartitionIndex: task.partitionIndex,
 // 			Addr:           rpcCtx.Addr,
 // 		}
-// 
+//
 // 		if taskIdxInOneNode == copTaskNumForEachNode {
 // 			taskIdxInOneNode = 0
 // 		}
-// 
+//
 // 		if taskIdxInOneNode == 0 {
 // 			res = append(res, &batchCopTask{
 // 				storeAddr:   rpcCtx.Addr,
@@ -765,18 +765,18 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 // 		handledNum++
 // 		taskIdxInOneNode++
 // 	}
-// 
+//
 // 	if handledNum != len(tasks) {
 // 		panic(fmt.Sprintf("handled %v tasks, but expect %v, len(taskCtxMap): %v, nodeNum: %v, copTaskNumForEachNode: %v",
 // 			handledNum, len(tasks), len(taskCtxMap), nodeNum, copTaskNumForEachNode))
 // 	}
-// 
+//
 // 	var logMsg string
 // 	for i, s := range allStores {
 // 		logMsg += fmt.Sprintf("store[%d]: %s, ", i, s.GetAddr())
 // 	}
 // 	logutil.BgLogger().Info(fmt.Sprintf("nodeNum: %v. ", nodeNum) + logMsg)
-// 
+//
 // 	for _, batchTask := range res {
 // 		logMsg := fmt.Sprintf("batchCopTask Addr: %s", batchTask.storeAddr)
 // 		for i, perTaskRegionInfo := range batchTask.regionInfos {
