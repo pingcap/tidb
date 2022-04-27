@@ -17,8 +17,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"testing"
 	"time"
 
@@ -32,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
@@ -83,74 +83,6 @@ func testNewContext(d *ddl) sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 	return ctx
-}
-
-func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn(context.Background())
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	ver, err := m.GetSchemaVersion()
-	require.NoError(t, err)
-	return ver
-}
-
-type historyJobArgs struct {
-	ver    int64
-	db     *model.DBInfo
-	tbl    *model.TableInfo
-	tblIDs map[int64]struct{}
-}
-
-func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
-	require.Equal(t, t1.ID, t2.ID)
-	require.Equal(t, t1.Name, t2.Name)
-	require.Equal(t, t1.Charset, t2.Charset)
-	require.Equal(t, t1.Collate, t2.Collate)
-	require.Equal(t, t1.PKIsHandle, t2.PKIsHandle)
-	require.Equal(t, t1.Comment, t2.Comment)
-	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
-}
-
-func checkHistoryJob(t *testing.T, job *model.Job) {
-	require.Equal(t, job.State, model.JobStateSynced)
-}
-
-func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	tran := meta.NewMeta(txn)
-	historyJob, err := tran.GetHistoryDDLJob(id)
-	require.NoError(t, err)
-	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
-
-	if args.tbl != nil {
-		require.Equal(t, historyJob.BinlogInfo.SchemaVersion, args.ver)
-		checkEqualTable(t, historyJob.BinlogInfo.TableInfo, args.tbl)
-		return
-	}
-
-	// for handling schema job
-	require.Equal(t, historyJob.BinlogInfo.SchemaVersion, args.ver)
-	require.Equal(t, historyJob.BinlogInfo.DBInfo, args.db)
-	// only for creating schema job
-	if args.db != nil && len(args.tblIDs) == 0 {
-		return
-	}
-}
-
-func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{unique, model.NewCIStr(indexName),
-			[]*ast.IndexPartSpecification{{
-				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
-				Length: types.UnspecifiedLength}}},
-	}
 }
 
 func TestGetIntervalFromPolicy(t *testing.T) {
