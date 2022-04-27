@@ -2819,18 +2819,9 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 	}
 	for _, rule := range rules {
 		skip := true
-<<<<<<< HEAD
 		dbName, tableName, err := checkRule(rule)
-=======
-		dbName, tableName, partitionName, err := checkRule(rule)
 		if err != nil {
 			logutil.BgLogger().Warn("check table-rule failed", zap.String("ID", rule.ID), zap.Error(err))
-			continue
-		}
-		tableID, err := decodeTableIDFromRule(rule)
->>>>>>> e6d55e14f... executor/infoschema_reader.go: skip the unidentifiable table-attributes (#34129)
-		if err != nil {
-			logutil.BgLogger().Warn("decode table ID from rule failed", zap.String("ID", rule.ID), zap.Error(err))
 			continue
 		}
 		if tableName != "" && dbName != "" && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.SelectPriv)) {
