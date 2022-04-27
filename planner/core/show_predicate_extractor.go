@@ -25,7 +25,10 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-var _ ShowPredicateExtractor = &ShowColumnsTableExtractor{}
+var (
+	_ ShowPredicateExtractor = &ShowColumnsTableExtractor{}
+	_ ShowPredicateExtractor = &ShowTablesTableExtractor{}
+)
 
 // ShowPredicateExtractor is used to extract some predicates from `PatternLikeExpr` clause
 // and push the predicates down to the data retrieving on reading memory table stage when use ShowStmt.
@@ -75,7 +78,6 @@ func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
 		return true
 	}
 	return false
-
 }
 
 func (e *ShowColumnsTableExtractor) explainInfo() string {
@@ -86,6 +88,50 @@ func (e *ShowColumnsTableExtractor) explainInfo() string {
 
 	if len(e.FieldPatterns) > 0 {
 		r.WriteString(fmt.Sprintf("field_pattern:[%s], ", e.FieldPatterns))
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// ShowTablesTableExtractor is used to extract some predicates of tables.
+type ShowTablesTableExtractor struct {
+	ShowColumnsTableExtractor
+}
+
+// Extract implements the ShowTablesTableExtractor Extract interface
+func (e *ShowTablesTableExtractor) Extract(show *ast.ShowStmt) bool {
+	if show.Pattern != nil && show.Pattern.Pattern != nil {
+		pattern := show.Pattern
+		switch pattern.Pattern.(type) {
+		case *driver.ValueExpr:
+			// It is used in `SHOW TABLE in t LIKE `abc``.
+			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
+			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
+			if stringutil.IsExactMatch(patTypes) {
+				e.Field = strings.ToLower(string(patValue))
+				return true
+			}
+			// (?i) mean to be case-insensitive.
+			e.FieldPatterns = "(?i)" + stringutil.CompileLike2Regexp(string(patValue))
+			return true
+		}
+	}
+	return false
+}
+
+func (e *ShowTablesTableExtractor) explainInfo() string {
+	r := new(bytes.Buffer)
+	if len(e.Field) > 0 {
+		r.WriteString(fmt.Sprintf("table:[%s], ", e.Field))
+	}
+
+	if len(e.FieldPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("table_pattern:[%s], ", e.FieldPatterns))
 	}
 
 	// remove the last ", " in the message info
