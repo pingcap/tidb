@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"sort"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
@@ -322,4 +323,29 @@ func (s *taskMetaMgrSuite) TestCheckTasksExclusively(c *C) {
 	})
 	c.Assert(err, IsNil)
 
+}
+
+func (s *taskMetaMgrSuite) TestSingleTaskMetaMgr(c *C) {
+	metaBuilder := singleMgrBuilder{
+		taskID: time.Now().UnixNano(),
+	}
+	metaMgr := metaBuilder.TaskMetaMgr(nil)
+
+	ok, err := metaMgr.CheckTaskExist(context.Background())
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
+
+	err = metaMgr.InitTask(context.Background(), 1<<30)
+	c.Assert(err, IsNil)
+
+	ok, err = metaMgr.CheckTaskExist(context.Background())
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+
+	err = metaMgr.CheckTasksExclusively(context.Background(), func(tasks []taskMeta) ([]taskMeta, error) {
+		c.Assert(len(tasks), Equals, 1)
+		c.Assert(tasks[0].sourceBytes, Equals, uint64(1<<30))
+		return nil, nil
+	})
+	c.Assert(err, IsNil)
 }
