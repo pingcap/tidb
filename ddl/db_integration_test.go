@@ -702,6 +702,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 	d.SetHook(hook)
 
 	tk.MustExec("alter table t1 add column c3 bigint default 9")
+
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
 }
 

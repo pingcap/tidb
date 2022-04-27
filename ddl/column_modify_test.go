@@ -1062,7 +1062,6 @@ func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
 			if job.Type != model.ActionModifyColumn || checkErr != nil || job.SchemaState != commitColState {
 				return
 			}
-
 			if times == 0 {
 				_, checkErr = tk1.Exec("commit;")
 			}

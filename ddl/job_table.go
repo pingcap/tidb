@@ -84,7 +84,7 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		log.Warn("No job")
+		log.Debug("No job")
 		return nil, nil
 	}
 	for _, row := range rows {
@@ -180,7 +180,7 @@ func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 		return nil, err
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Info("no reorg job")
+		logutil.BgLogger().Debug("no reorg job")
 		return nil, nil
 	}
 
@@ -275,7 +275,9 @@ func (d *ddl) generalDDLJob(sctx sessionctx.Context) bool {
 	}
 	job, err := d.getGeneralJob(sctx)
 	if job == nil || err != nil {
-		logutil.BgLogger().Info("[ddl] no general job or get job met error", zap.Error(err))
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] get job met error", zap.Error(err))
+		}
 		d.generalDDLWorkerPool.put(wk)
 		return false
 	}
@@ -312,7 +314,9 @@ func (d *ddl) reorgDDLJob(sctx sessionctx.Context) bool {
 	}
 	job, err := d.getReorgJob(sctx)
 	if job == nil || err != nil {
-		logutil.BgLogger().Info("[ddl] no reorg job or get job met error", zap.Error(err))
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] get job met error", zap.Error(err))
+		}
 		d.reorgWorkerPool.put(wk)
 		return false
 	}
