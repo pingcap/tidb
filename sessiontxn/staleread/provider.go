@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -70,7 +69,7 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 		}
 	case sessiontxn.EnterNewTxnWithReplaceProvider:
 		if p.is == nil {
-			is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(p.ts)
+			is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
 			if err != nil {
 				return err
 			}
