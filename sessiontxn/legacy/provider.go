@@ -90,7 +90,9 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, activeNow b
 		}
 	}
 
-	p.InfoSchema = sessVars.TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	if sessVars.TxnCtx.InfoSchema != nil {
+		p.InfoSchema = sessVars.TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	}
 	sessVars.TxnCtx.IsPessimistic = p.Pessimistic
 
 	if activeNow {

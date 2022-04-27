@@ -1633,7 +1633,8 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 			if !p.ctx.GetSessionVars().InTxn() {
 				txnManager := sessiontxn.GetTxnManager(p.ctx)
 				newTxnRequest := &sessiontxn.EnterNewTxnRequest{
-					TxnContextProvider: staleread.NewStalenessTxnContextProvider(p.ctx, p.LastSnapshotTS, p.InfoSchema),
+					Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
+					Provider: staleread.NewStalenessTxnContextProvider(p.ctx, p.LastSnapshotTS, p.InfoSchema),
 				}
 				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
 					return err

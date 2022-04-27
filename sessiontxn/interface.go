@@ -22,22 +22,29 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-// EnterNewTxnRequest is the request to tell TxnManager entering a new transaction
+type EnterNewTxnType int
+
+const (
+	EnterNewTxnDefault EnterNewTxnType = iota
+	EnterNewTxnWithBeginStmt
+	EnterNewTxnBeforeStmt
+	EnterNewTxnWithReplaceProvider
+)
+
+// EnterNewTxnRequest is the request when entering a new transaction
 type EnterNewTxnRequest struct {
-	// ActiveNow indicates to active txn immediately
-	ActiveNow bool
-	// TxnContextProvider is the context provider
-	TxnContextProvider TxnContextProvider
-	// TxnMode is the transaction mode for the new txn. It has 3 values: `ast.Pessimistic` ,`ast.Optimistic` or empty/
+	// Type is the type for new entering a new txn
+	Type EnterNewTxnType
+	// provider is the context provider
+	Provider TxnContextProvider
+	// txnMode is the transaction mode for the new txn. It has 3 values: `ast.Pessimistic` ,`ast.Optimistic` or empty/
 	// When the value is empty, it means the value will be determined from sys vars.
 	TxnMode string
-	// CausalConsistencyOnly means whether enable causal consistency for transactions, default is false
+	// causalConsistencyOnly means whether enable causal consistency for transactions, default is false
 	CausalConsistencyOnly bool
-	// StaleReadTS indicates the read ts for the stale read transaction.
+	// staleReadTS indicates the read ts for the stale read transaction.
 	//The default value is zero which means not a stale read transaction.
 	StaleReadTS uint64
-	// CanReuseTxn indicates the new provider can use the old txn
-	CanReuseTxn bool
 }
 
 // TxnContextProvider provides txn context
@@ -81,8 +88,8 @@ type TxnManager interface {
 // NewTxn starts a new optimistic and active txn
 func NewTxn(ctx context.Context, sctx sessionctx.Context) error {
 	return GetTxnManager(sctx).EnterNewTxn(ctx, &EnterNewTxnRequest{
-		ActiveNow: true,
-		TxnMode:   ast.Optimistic,
+		Type:    EnterNewTxnDefault,
+		TxnMode: ast.Pessimistic,
 	})
 }
 

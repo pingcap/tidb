@@ -2314,7 +2314,8 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		is = staleReadProcessor.GetStalenessInfoSchema()
 		replicaReadScope = config.GetTxnScopeFromConfig()
 		err = txManager.EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
-			TxnContextProvider: staleread.NewStalenessTxnContextProvider(s, snapshotTS, is),
+			Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
+			Provider: staleread.NewStalenessTxnContextProvider(s, snapshotTS, is),
 		})
 
 		if err != nil {
@@ -2464,7 +2465,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
 	s.txn.changeInvalidToValid(txn)
-	is := domain.GetDomain(s).InfoSchema()
+	is := temptable.AttachLocalTemporaryTableInfoSchema(s, domain.GetDomain(s).InfoSchema())
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:  is,
 		CreateTime:  time.Now(),
@@ -3087,6 +3088,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	}
 
 	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+		Type:    sessiontxn.EnterNewTxnBeforeStmt,
 		TxnMode: txnMode,
 	})
 }

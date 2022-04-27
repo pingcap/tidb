@@ -591,26 +591,12 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		}
 	}
 
-	sessVars := e.ctx.GetSessionVars()
-	txnCtx := sessVars.TxnCtx
-	err := sessiontxn.GetTxnManager(e.ctx).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
-		ActiveNow:             true,
+	return sessiontxn.GetTxnManager(e.ctx).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+		Type:                  sessiontxn.EnterNewTxnWithBeginStmt,
 		TxnMode:               s.Mode,
 		CausalConsistencyOnly: s.CausalConsistencyOnly,
 		StaleReadTS:           e.staleTxnStartTS,
-		// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
-		// need to call NewTxn, which commits the existing transaction and begins a new one.
-		// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
-		// always create a new transaction.
-		CanReuseTxn: txnCtx.History == nil && !txnCtx.IsStaleness,
 	})
-
-	if err != nil {
-		return err
-	}
-
-	sessVars.SetInTxn(true)
-	return nil
 }
 
 func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {
