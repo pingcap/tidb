@@ -668,6 +668,8 @@ const (
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
+	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
+	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 )
 
 // TiDB intentional limits
@@ -840,6 +842,7 @@ const (
 	DefTiDBGCMaxWaitTime                         = 24 * 60 * 60
 	DefMaxAllowedPacket                   uint64 = 67108864
 	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
+	DefTiDBMemQuotaAnalyze                       = -1
 )
 
 // Process global variables.
@@ -875,4 +878,9 @@ var (
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
+)
+
+var (
+	SetMemQuotaAnalyze func(quota int64) = nil
+	GetMemQuotaAnalyze func() int64      = nil
 )

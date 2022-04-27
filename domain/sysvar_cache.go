@@ -252,6 +252,13 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		variable.StatsLoadPseudoTimeout.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBTxnCommitBatchSize:
 		storekv.TxnCommitBatchSize.Store(uint64(variable.TidbOptInt64(sVal, int64(storekv.DefTxnCommitBatchSize))))
+	case variable.TiDBMemQuotaAnalyze:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.SetMemQuotaAnalyze(val)
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

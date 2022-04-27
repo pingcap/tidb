@@ -1436,6 +1436,15 @@ var defaultSysVars = []*SysVar{
 		s.MemQuotaQuery = TidbOptInt64(val, DefTiDBMemQuotaQuery)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBMemQuotaAnalyze, Value: strconv.Itoa(DefTiDBMemQuotaAnalyze), skipInit: true, Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatInt(GetMemQuotaAnalyze(), 10), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			SetMemQuotaAnalyze(TidbOptInt64(val, DefTiDBMemQuotaAnalyze))
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
