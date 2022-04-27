@@ -223,19 +223,20 @@ type ddl struct {
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
-	schemaVersionMu sync.Mutex
-	uuid            string
-	store           kv.Storage
-	ownerManager    owner.Manager
-	schemaSyncer    util.SchemaSyncer
-	ddlJobDoneCh    chan struct{}
-	ddlEventCh      chan<- *util.Event
-	lease           time.Duration        // lease is schema lease.
-	binlogCli       *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoCache       *infoschema.InfoCache
-	statsHandle     *handle.Handle
-	tableLockCkr    util.DeadTableLockChecker
-	etcdCli         *clientv3.Client
+	schemaVersionMu    sync.Mutex
+	schemaVersionOwner atomicutil.Int64
+	uuid               string
+	store              kv.Storage
+	ownerManager       owner.Manager
+	schemaSyncer       util.SchemaSyncer
+	ddlJobDoneCh       chan struct{}
+	ddlEventCh         chan<- *util.Event
+	lease              time.Duration        // lease is schema lease.
+	binlogCli          *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoCache          *infoschema.InfoCache
+	statsHandle        *handle.Handle
+	tableLockCkr       util.DeadTableLockChecker
+	etcdCli            *clientv3.Client
 
 	// reorgCtx is used for reorganization.
 	reorgCtx struct {
@@ -253,6 +254,28 @@ type ddlCtx struct {
 	ddlSeqNumMu struct {
 		sync.Mutex
 		seqNum uint64
+	}
+}
+
+func (d *ddlCtx) LockSchemaVersion(job *model.Job) {
+	if job == nil {
+		return
+	}
+	ownerID := d.schemaVersionOwner.Load()
+	if ownerID == 0 {
+		d.schemaVersionMu.Lock()
+		d.schemaVersionOwner.Store(job.ID)
+	}
+}
+
+func (d *ddlCtx) UnlockSchemaVersion(job *model.Job) {
+	if job == nil {
+		return
+	}
+	ownerID := d.schemaVersionOwner.Load()
+	if ownerID == job.ID {
+		d.schemaVersionOwner.Store(0)
+		d.schemaVersionMu.Unlock()
 	}
 }
 
@@ -387,16 +410,17 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	}
 
 	ddlCtx := &ddlCtx{
-		uuid:         id,
-		store:        opt.Store,
-		lease:        opt.Lease,
-		ddlJobDoneCh: make(chan struct{}, 1),
-		ownerManager: manager,
-		schemaSyncer: syncer,
-		binlogCli:    binloginfo.GetPumpsClient(),
-		infoCache:    opt.InfoCache,
-		tableLockCkr: deadLockCkr,
-		etcdCli:      opt.EtcdCli,
+		schemaVersionOwner: *atomicutil.NewInt64(0),
+		uuid:               id,
+		store:              opt.Store,
+		lease:              opt.Lease,
+		ddlJobDoneCh:       make(chan struct{}, 1),
+		ownerManager:       manager,
+		schemaSyncer:       syncer,
+		binlogCli:          binloginfo.GetPumpsClient(),
+		infoCache:          opt.InfoCache,
+		tableLockCkr:       deadLockCkr,
+		etcdCli:            opt.EtcdCli,
 	}
 	ddlCtx.reorgCtx.reorgMap = make(map[int64]*reorgCtx)
 	ddlCtx.mu.hook = opt.Hook

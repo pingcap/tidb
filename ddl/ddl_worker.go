@@ -797,6 +797,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	// If running job meets error, we will save this error in job Error
 	// and retry later if the job is not cancelled.
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
+	defer d.UnlockSchemaVersion(job)
 	if job.IsCancelled() {
 		w.sessForJob.StmtRollback()
 		err = w.finishDDLJob(t, job)
@@ -1001,6 +1002,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 			time.Sleep(GetWaitTimeWhenErrorOccurred())
 		}
+		d.UnlockSchemaVersion(job)
 
 		if err != nil {
 			if w.lockSeqNum {
@@ -1409,8 +1411,7 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
 func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
-	d.schemaVersionMu.Lock()
-	defer d.schemaVersionMu.Unlock()
+	d.LockSchemaVersion(job)
 	schemaVersion, err := t.GenSchemaVersion()
 	if err != nil {
 		return 0, errors.Trace(err)
