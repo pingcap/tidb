@@ -266,14 +266,16 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	//                     t-u
 	//                       u-v w-x
 	expectedTaskRanges = [][]string{
-		{"n", "o", "p", "s"},
+		{"n", "o", "p", "q"},
+		{"q", "s"},
 		{"t", "u"},
 		{"u", "v", "w", "x"},
 	}
-	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'q'}, {'s'}, {'u'}}, regionIDs[1])
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'q'}, {'s'}, {'u'}, {'x'}}, regionIDs[1])
 	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("n", "o", "p", "s", "t", "v", "w", "x"), req, nil)
+
 	require.NoError(t, err)
 	require.Len(t, tasks, len(expectedTaskRanges))
 	for i, task := range tasks {
@@ -294,6 +296,78 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("o", "p", "u", "w"), req, nil)
+	require.NoError(t, err)
+	require.Len(t, tasks, len(expectedTaskRanges))
+	for i, task := range tasks {
+		taskEqual(t, task, regionIDs[1], regionIDs[1], expectedTaskRanges[i]...)
+	}
+
+	// cover the whole region
+	// region:    n--------------x
+	// buckets:   n -- q -- r -- x
+	// ranges:    n--------------x
+	// tasks:     o -- q
+	//                 q -- r
+	//						r -- x
+	expectedTaskRanges = [][]string{
+		{"n", "q"},
+		{"q", "r"},
+		{"r", "x"},
+	}
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'q'}, {'r'}, {'x'}}, regionIDs[1])
+	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("n", "q", "q", "r", "r", "x"), req, nil)
+	require.NoError(t, err)
+	require.Len(t, tasks, len(expectedTaskRanges))
+	for i, task := range tasks {
+		taskEqual(t, task, regionIDs[1], regionIDs[1], expectedTaskRanges[i]...)
+	}
+
+	// cross several  buckets
+	// region:    n  -----------------------------  x
+	// buckets:   n   --   q -- r --  t -- u -- v -- x
+	// ranges:    n--o  p--q       s  ------------ w
+	// tasks:     n--o  p--q
+	//                             s--t
+	//								  t -- u
+	//									   u -- v
+	//											v--w
+	expectedTaskRanges = [][]string{
+		{"n", "o", "p", "q"},
+		{"s", "t"},
+		{"t", "u"},
+		{"u", "v"},
+		{"v", "w"},
+	}
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'q'}, {'r'}, {'t'}, {'u'}, {'v'}, {'x'}}, regionIDs[1])
+	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("n", "o", "p", "q", "s", "w"), req, nil)
+	require.NoError(t, err)
+	require.Len(t, tasks, len(expectedTaskRanges))
+	for i, task := range tasks {
+		taskEqual(t, task, regionIDs[1], regionIDs[1], expectedTaskRanges[i]...)
+	}
+
+	// check edge
+	// region:    n  ----------------------  x
+	// buckets:   n  --  q  --  r  --  t  -- x
+	// ranges:    n  -- q q -- r r -- t t -- x
+	// tasks:     n  --  q
+	//                   q  --  r
+	//						    r  --  t
+	//								   t  -- x
+	expectedTaskRanges = [][]string{
+		{"n", "q"},
+		{"q", "r"},
+		{"r", "t"},
+		{"t", "x"},
+	}
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'q'}, {'r'}, {'t'}, {'x'}}, regionIDs[1])
+	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("n", "q", "q", "r", "r", "t", "t", "x"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, len(expectedTaskRanges))
 	for i, task := range tasks {
