@@ -3468,7 +3468,6 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalShuffle{},
 		&plannercore.PhysicalUnionAll{},
 	}
-	executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
 
 	opsNeedsCoveredMask := uint64(1<<len(opsNeedsCovered) - 1)
 	opsAlreadyCoveredMask := uint64(0)
@@ -3500,6 +3499,11 @@ func TestUnreasonablyClose(t *testing.T) {
 		require.NoError(t, err, comment)
 		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err, comment)
+
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO())
+		require.NoError(t, err, comment)
+
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
 
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NotNil(t, p)
