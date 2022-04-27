@@ -19,9 +19,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
@@ -187,85 +185,6 @@ func TestVerifyCheckpoint(t *testing.T) {
 		fn(cfg)
 		err := cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
 		require.NoError(t, err)
-	}
-}
-
-func TestDiskQuotaLock(t *testing.T) {
-	lock := newDiskQuotaLock()
-
-	lock.Lock()
-	require.False(t, lock.TryRLock())
-	lock.Unlock()
-	require.True(t, lock.TryRLock())
-	require.True(t, lock.TryRLock())
-
-	rLocked := 2
-	lockHeld := make(chan struct{})
-	go func() {
-		lock.Lock()
-		lockHeld <- struct{}{}
-	}()
-	for lock.TryRLock() {
-		rLocked++
-		time.Sleep(time.Millisecond)
-	}
-	select {
-	case <-lockHeld:
-		t.Fatal("write lock is held before all read locks are released")
-	case <-time.NewTimer(10 * time.Millisecond).C:
-	}
-	for ; rLocked > 0; rLocked-- {
-		lock.RUnlock()
-	}
-	<-lockHeld
-	lock.Unlock()
-
-	done := make(chan struct{})
-	count := int32(0)
-	reader := func() {
-		for i := 0; i < 1000; i++ {
-			if lock.TryRLock() {
-				n := atomic.AddInt32(&count, 1)
-				if n < 1 || n >= 10000 {
-					lock.RUnlock()
-					panic(fmt.Sprintf("unexpected count(%d)", n))
-				}
-				for i := 0; i < 100; i++ {
-				}
-				atomic.AddInt32(&count, -1)
-				lock.RUnlock()
-			}
-			time.Sleep(time.Microsecond)
-		}
-		done <- struct{}{}
-	}
-	writer := func() {
-		for i := 0; i < 1000; i++ {
-			lock.Lock()
-			n := atomic.AddInt32(&count, 10000)
-			if n != 10000 {
-				lock.RUnlock()
-				panic(fmt.Sprintf("unexpected count(%d)", n))
-			}
-			for i := 0; i < 100; i++ {
-			}
-			atomic.AddInt32(&count, -10000)
-			lock.Unlock()
-			time.Sleep(time.Microsecond)
-		}
-		done <- struct{}{}
-	}
-	for i := 0; i < 5; i++ {
-		go reader()
-	}
-	for i := 0; i < 2; i++ {
-		go writer()
-	}
-	for i := 0; i < 5; i++ {
-		go reader()
-	}
-	for i := 0; i < 12; i++ {
-		<-done
 	}
 }
 

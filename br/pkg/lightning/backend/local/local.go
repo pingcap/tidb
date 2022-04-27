@@ -91,6 +91,8 @@ const (
 	// lower the max-key-count to avoid tikv trigger region auto split
 	regionMaxKeyCount      = 1_280_000
 	defaultRegionSplitSize = 96 * units.MiB
+	// The max ranges count in a batch to split and scatter.
+	maxBatchSplitRanges = 4096
 
 	propRangeIndex = "tikv.range_index"
 
@@ -714,6 +716,10 @@ func (local *local) WriteToTiKV(
 	regionSplitSize int64,
 	regionSplitKeys int64,
 ) ([]*sst.SSTMeta, Range, rangeStats, error) {
+	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
+		failpoint.Return(nil, Range{}, rangeStats{},
+			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
+	})
 	if local.checkTiKVAvaliable {
 		for _, peer := range region.Region.GetPeers() {
 			var e error
@@ -1099,7 +1105,7 @@ WriteAndIngest:
 			err = local.writeAndIngestPairs(ctx, engine, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
-				if common.IsContextCanceledError(err) {
+				if !utils.IsRetryableError(err) {
 					return err
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -1146,7 +1152,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if common.IsContextCanceledError(err) {
+			if !utils.IsRetryableError(err) {
 				return err
 			}
 
@@ -1243,7 +1249,7 @@ loopWrite:
 			engine.importedKVSize.Add(rangeStats.totalBytes)
 			engine.importedKVCount.Add(rangeStats.count)
 			engine.finishedRanges.add(finishedRange)
-			metric.BytesCounter.WithLabelValues(metric.TableStateImported).Add(float64(rangeStats.totalBytes))
+			metric.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
 		}
 		return errors.Trace(err)
 	}
@@ -1286,6 +1292,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
+				}
+				if !utils.IsRetryableError(err) {
+					break
 				}
 				log.L().Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
@@ -1357,7 +1366,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionByRanges(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize)
+			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}

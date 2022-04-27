@@ -7,6 +7,7 @@ import (
 	"database/sql/driver"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -357,4 +358,29 @@ type testChecksumMgr struct {
 func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
 	t.callCnt++
 	return &t.checksum, nil
+}
+
+func TestSingleTaskMetaMgr(t *testing.T) {
+	metaBuilder := singleMgrBuilder{
+		taskID: time.Now().UnixNano(),
+	}
+	metaMgr := metaBuilder.TaskMetaMgr(nil)
+
+	ok, err := metaMgr.CheckTaskExist(context.Background())
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	err = metaMgr.InitTask(context.Background(), 1<<30)
+	require.NoError(t, err)
+
+	ok, err = metaMgr.CheckTaskExist(context.Background())
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	err = metaMgr.CheckTasksExclusively(context.Background(), func(tasks []taskMeta) ([]taskMeta, error) {
+		require.Len(t, tasks, 1)
+		require.Equal(t, uint64(1<<30), tasks[0].sourceBytes)
+		return nil, nil
+	})
+	require.NoError(t, err)
 }

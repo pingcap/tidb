@@ -153,8 +153,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			},
 		})
 	}
-	setResourceGroupTaggerForTxn(stmtCtx, snapshot)
-	setRPCInterceptorOfExecCounterForTxn(sessVars, snapshot)
+	setOptionForTopSQL(stmtCtx, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -378,7 +377,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			return e.handles[i].Compare(e.handles[j]) < 0
 
 		}
-		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag) {
+		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().GetFlag()) {
 			uintComparator := func(i, h kv.Handle) int {
 				if !i.IsInt() || !h.IsInt() {
 					panic(fmt.Sprintf("both handles need be IntHandle, but got %T and %T ", i, h))
@@ -598,7 +597,7 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 		if !ok {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		unsigned := mysql.HasUnsignedFlag(col.GetType().Flag)
+		unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
 		ranges := partitionExpr.ForRangePruning
 		length := len(ranges.LessThan)
 		partIdx := sort.Search(length, func(i int) bool {

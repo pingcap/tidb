@@ -1357,6 +1357,11 @@ func upgradeToVer54(s Session, ver int64) {
 	// the tidb-server restarts.
 	// If it's a newly deployed cluster, we do not need to write the value into
 	// mysql.tidb, since no compatibility problem will happen.
+
+	// This bootstrap task becomes obsolete in TiDB 5.0+, because it appears that the
+	// default value of mem-quota-query changes back to 1GB. In TiDB 6.1+ mem-quota-query
+	// is no longer a config option, but instead a system variable (tidb_mem_quota_query).
+
 	if ver <= version38 {
 		writeMemoryQuotaQuery(s)
 	}

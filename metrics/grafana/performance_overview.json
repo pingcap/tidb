@@ -77,17 +77,162 @@
     },
     {
       "aliasColors": {},
-      "bars": false,
+      "bars": true,
       "dashLength": 10,
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
-      "description": "Service Time Per Second, show service time distribution among different components and execution phase.\n1. Total Database Time, the time which tidb cluster is processing application requests.\n2. Per SQL Type dimension\n3. Per parse/compile/execute dimension\n4. Per KV/PD request dimension",
+      "description": "Service Time Per Second, show service time distribution among different SQL types:\n1. Database time, the total time that the TiDB cluster is processing application requests.\n2. The service time of different SQL types.\n",
       "fill": 1,
       "fillGradient": 0,
       "gridPos": {
         "h": 7,
-        "w": 12,
+        "w": 8,
         "x": 0,
+        "y": 1
+      },
+      "hiddenSeries": false,
+      "id": 189,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": false,
+        "hideEmpty": true,
+        "hideZero": true,
+        "max": false,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "sideWidth": null,
+        "sort": "avg",
+        "sortDesc": true,
+        "total": false,
+        "values": true
+      },
+      "lines": false,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null as zero",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.0.7",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [
+        {
+          "$$hashKey": "object:601",
+          "alias": "database time",
+          "bars": false,
+          "color": "#FADE2A",
+          "lines": true,
+          "linewidth": 2,
+          "stack": false
+        },
+        {
+          "$$hashKey": "object:637",
+          "alias": "Select",
+          "color": "#5794F2"
+        },
+        {
+          "$$hashKey": "object:645",
+          "alias": "Commit",
+          "color": "#C4162A"
+        },
+        {
+          "$$hashKey": "object:655",
+          "alias": "Insert",
+          "color": "#73BF69"
+        },
+        {
+          "$$hashKey": "object:700",
+          "alias": "general",
+          "color": "#FFA6B0"
+        },
+        {
+          "$$hashKey": "object:2605",
+          "alias": "Update",
+          "color": "#37872D"
+        }
+      ],
+      "spaceLength": 10,
+      "stack": true,
+      "steppedLine": false,
+      "targets": [
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "database time",
+          "refId": "A"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (sql_type)",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "{{sql_type}}",
+          "refId": "G"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Database Time by SQL Type",
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "$$hashKey": "object:3528",
+          "format": "s",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "$$hashKey": "object:3529",
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": true,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
+      "description": "Service Time Per Second, show service time distribution among different SQL phases.\n1. Database time, the total time that the TiDB cluster is processing application requests.\n2. The service time of different SQL phases.\n",
+      "fill": 1,
+      "fillGradient": 0,
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
         "y": 1
       },
       "hiddenSeries": false,
@@ -108,7 +253,7 @@
         "total": false,
         "values": true
       },
-      "lines": true,
+      "lines": false,
       "linewidth": 1,
       "links": [],
       "nullPointMode": "null as zero",
@@ -120,9 +265,39 @@
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
-      "seriesOverrides": [],
+      "seriesOverrides": [
+        {
+          "$$hashKey": "object:205",
+          "alias": "parse",
+          "color": "#FF7383"
+        },
+        {
+          "$$hashKey": "object:216",
+          "alias": "compile",
+          "color": "#FF9830"
+        },
+        {
+          "$$hashKey": "object:227",
+          "alias": "execute",
+          "color": "#73BF69"
+        },
+        {
+          "$$hashKey": "object:364",
+          "alias": "database time",
+          "bars": false,
+          "color": "#FADE2A",
+          "lines": true,
+          "linewidth": 2,
+          "stack": false
+        },
+        {
+          "$$hashKey": "object:2194",
+          "alias": "get token",
+          "color": "#C4162A"
+        }
+      ],
       "spaceLength": 10,
-      "stack": false,
+      "stack": true,
       "steppedLine": false,
       "targets": [
         {
@@ -135,10 +310,187 @@
         },
         {
           "exemplar": true,
+          "expr": "sum(rate(tidb_session_parse_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "parse",
+          "refId": "D"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_session_compile_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "compile",
+          "refId": "E"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_session_execute_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "execute",
+          "refId": "F"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_get_token_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))/1000000",
+          "hide": false,
+          "instant": false,
+          "interval": "",
+          "legendFormat": "get token",
+          "refId": "G"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Database Time by SQL Phase",
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "$$hashKey": "object:3528",
+          "format": "s",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "$$hashKey": "object:3529",
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": true,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
+      "description": "Service Time Per Second, show service time distribution among different KV/PD request:\n1. Execute time, the execute time in SQL Phase\n2. Service time  of different KV/PD request ",
+      "fill": 1,
+      "fillGradient": 0,
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "hiddenSeries": false,
+      "id": 190,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": false,
+        "hideEmpty": true,
+        "hideZero": true,
+        "max": false,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "sideWidth": null,
+        "sort": "avg",
+        "sortDesc": true,
+        "total": false,
+        "values": true
+      },
+      "lines": false,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null as zero",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.0.7",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [
+        {
+          "$$hashKey": "object:1113",
+          "alias": "tso_wait",
+          "color": "#701313"
+        },
+        {
+          "$$hashKey": "object:1127",
+          "alias": "Commit",
+          "color": "#37872D"
+        },
+        {
+          "$$hashKey": "object:1139",
+          "alias": "Prewrite",
+          "color": "#73BF69"
+        },
+        {
+          "$$hashKey": "object:1144",
+          "alias": "PessimisticLock",
+          "color": "#b40606"
+        },
+        {
+          "$$hashKey": "object:2301",
+          "alias": "Get",
+          "color": "#5794F2"
+        },
+        {
+          "$$hashKey": "object:2313",
+          "alias": "BatchGet",
+          "color": "#1F60C4"
+        },
+        {
+          "$$hashKey": "object:2321",
+          "alias": "Cop",
+          "color": "#C0D8FF"
+        },
+        {
+          "$$hashKey": "object:2673",
+          "alias": "Scan",
+          "color": "#8778ee"
+        },
+        {
+          "$$hashKey": "object:2828",
+          "alias": "execute time",
+          "bars": false,
+          "color": "#FADE2A",
+          "lines": true,
+          "linewidth": 2,
+          "stack": false
+        }
+      ],
+      "spaceLength": 10,
+      "stack": true,
+      "steppedLine": false,
+      "targets": [
+        {
+          "exemplar": true,
           "expr": "sum(rate(tidb_tikvclient_request_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", store!=\"0\"}[1m])) by (type)",
           "hide": false,
           "interval": "",
-          "legendFormat": "kv_request - {{type}}",
+          "legendFormat": "{{type}}",
           "refId": "B"
         },
         {
@@ -151,42 +503,18 @@
         },
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_session_parse_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m]))",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "sql - parse",
-          "refId": "D"
-        },
-        {
-          "exemplar": true,
-          "expr": "sum(rate(tidb_session_compile_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m]))",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "sql - compile",
-          "refId": "E"
-        },
-        {
-          "exemplar": true,
           "expr": "sum(rate(tidb_session_execute_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m]))",
           "hide": false,
           "interval": "",
-          "legendFormat": "sql - execute",
+          "legendFormat": "execute time",
           "refId": "F"
-        },
-        {
-          "exemplar": true,
-          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (sql_type)",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "sql_type - {{sql_type}}",
-          "refId": "G"
         }
       ],
       "thresholds": [],
       "timeFrom": null,
       "timeRegions": [],
       "timeShift": null,
-      "title": "Database Time Overview",
+      "title": "SQL Execute Time Overview",
       "tooltip": {
         "shared": true,
         "sort": 0,
@@ -232,7 +560,7 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
-      "description": "TiDB statement statistics. Bold red line on right Y axis for Failed Queries per second",
+      "description": "TiDB statement statistics.\nBold red line on right Y axis for Failed Queries per second",
       "editable": true,
       "error": false,
       "fill": 1,
@@ -240,9 +568,9 @@
       "grid": {},
       "gridPos": {
         "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 1
+        "w": 8,
+        "x": 0,
+        "y": 8
       },
       "hiddenSeries": false,
       "id": 179,
@@ -375,8 +703,8 @@
       "grid": {},
       "gridPos": {
         "h": 7,
-        "w": 12,
-        "x": 0,
+        "w": 8,
+        "x": 8,
         "y": 8
       },
       "hiddenSeries": false,
@@ -482,8 +810,8 @@
       "grid": {},
       "gridPos": {
         "h": 7,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 16,
         "y": 8
       },
       "hiddenSeries": false,
@@ -963,7 +1291,7 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
-      "description": "#### CPU: CPU usage for all instance.\n- CPU-Avg: average cpu usage for all instance.\n- CPU-Delta: max(cpu utilization) - min(cpu utilization)\n- CPU-Max: max(cpu utilization)\n\n####  IO MBps: The total bytes of read and write in all TiKV instances.",
+      "description": "1. CPU: CPU utilization for all TiKV instances.\n- CPU-Avg: avg(cpu utilization)\n- CPU-Delta: max(cpu utilization) - min(cpu utilization)\n- CPU-Max: max(cpu utilization)\n2. IO MBps: The total bytes of read and write in all TiKV instances",
       "editable": true,
       "error": false,
       "fill": 1,
@@ -1504,7 +1832,7 @@
       "dashLength": 10,
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
-      "description": "the time to build plan",
+      "description": "The time to build plan",
       "editable": true,
       "error": false,
       "fill": 1,
@@ -1692,7 +2020,7 @@
       "timeFrom": null,
       "timeRegions": [],
       "timeShift": null,
-      "title": "Execution Duration",
+      "title": "Execute Duration",
       "tooltip": {
         "msResolution": false,
         "shared": true,
@@ -1955,7 +2283,7 @@
       "dashLength": 10,
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
-      "description": "The duration of a client starting to wait for the TS until received the TS result.",
+      "description": "- TSO Wait Duration: The duration of a client starting to wait for the TS until received the TS result.\n- TSO RPC Duration: The duration of a client sending TSO request until received the response.",
       "editable": true,
       "error": false,
       "fill": 1,
@@ -2002,19 +2330,16 @@
           "expr": "(sum(rate(pd_client_cmd_handle_cmds_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) / sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])))",
           "hide": false,
           "interval": "",
-          "legendFormat": "avg",
+          "legendFormat": "wait - avg",
           "refId": "D"
         },
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.999, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
-          "format": "time_series",
-          "hide": true,
+          "expr": "(sum(rate(pd_client_request_handle_requests_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m])) / sum(rate(pd_client_request_handle_requests_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m])))",
+          "hide": false,
           "interval": "",
-          "intervalFactor": 2,
-          "legendFormat": "999",
-          "refId": "A",
-          "step": 10
+          "legendFormat": "rpc - avg",
+          "refId": "A"
         },
         {
           "exemplar": true,
@@ -2022,25 +2347,25 @@
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
-          "legendFormat": "99",
+          "legendFormat": "wait - 99",
           "refId": "B"
         },
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.90, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m])) by (le))",
           "format": "time_series",
-          "hide": true,
+          "hide": false,
           "interval": "",
           "intervalFactor": 2,
-          "legendFormat": "90",
-          "refId": "C"
+          "legendFormat": "rpc - 99",
+          "refId": "E"
         }
       ],
       "thresholds": [],
       "timeFrom": null,
       "timeRegions": [],
       "timeShift": null,
-      "title": "PD TSO Wait Duration",
+      "title": "PD TSO Wait/RPC Duration",
       "tooltip": {
         "msResolution": false,
         "shared": true,
@@ -2142,7 +2467,7 @@
         },
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tikv_storage_engine_async_request_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"write\"}[30s])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(tikv_storage_engine_async_request_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"write\"}[1m])) by (le))",
           "hide": false,
           "interval": "",
           "legendFormat": "99",
@@ -2317,7 +2642,7 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
-      "description": "The store time duration of each request",
+      "description": "The apply time duration of each request",
       "editable": true,
       "error": false,
       "fill": 1,
@@ -2855,5 +3180,5 @@
   "timezone": "browser",
   "title": "Test-Cluster-Performance-Overview",
   "uid": "eDbRZpnWa",
-  "version": 1
+  "version": 2
 }

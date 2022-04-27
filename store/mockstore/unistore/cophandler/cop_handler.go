@@ -536,15 +536,15 @@ func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 // fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
 func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 	charsetStr, collationStr, _ := charset.GetCharsetInfoByID(int(collate.RestoreCollationIDIfNeeded(col.GetCollation())))
-	return &types.FieldType{
-		Tp:      byte(col.GetTp()),
-		Flag:    uint(col.Flag),
-		Flen:    int(col.GetColumnLen()),
-		Decimal: int(col.GetDecimal()),
-		Elems:   col.Elems,
-		Charset: charsetStr,
-		Collate: collationStr,
-	}
+	ft := &types.FieldType{}
+	ft.SetType(byte(col.GetTp()))
+	ft.SetFlag(uint(col.GetFlag()))
+	ft.SetFlen(int(col.GetColumnLen()))
+	ft.SetDecimal(int(col.GetDecimal()))
+	ft.SetElems(col.Elems)
+	ft.SetCharset(charsetStr)
+	ft.SetCollate(collationStr)
+	return ft
 }
 
 // handleCopChecksumRequest handles coprocessor check sum request.
