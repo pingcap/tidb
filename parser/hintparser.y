@@ -105,6 +105,7 @@ import (
 	hintNthPlan               "NTH_PLAN"
 	hintLimitToCop            "LIMIT_TO_COP"
 	hintForceIndex            "FORCE_INDEX"
+	hintStraightJoin          "STRAIGHT_JOIN"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -579,6 +580,7 @@ NullaryHintName:
 |	"NO_INDEX_MERGE"
 |	"READ_CONSISTENT_REPLICA"
 |	"IGNORE_PLAN_CACHE"
+|	"STRAIGHT_JOIN"
 
 HintQueryType:
 	"OLAP"
@@ -643,6 +645,7 @@ Identifier:
 |	"USE_CASCADES"
 |	"NTH_PLAN"
 |	"FORCE_INDEX"
+|	"STRAIGHT_JOIN"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

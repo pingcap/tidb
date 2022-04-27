@@ -4192,6 +4192,16 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints, 2)
 	require.Equal(t, "limit_to_cop", hints[0].HintName.L)
 	require.Equal(t, "limit_to_cop", hints[1].HintName.L)
+
+	// Test STRAIGHT_JOIN
+	stmt, _, err = p.Parse("select /*+ STRAIGHT_JOIN(), straight_join() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "straight_join", hints[0].HintName.L)
+	require.Equal(t, "straight_join", hints[1].HintName.L)
 }
 
 func TestType(t *testing.T) {
