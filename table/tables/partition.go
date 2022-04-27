@@ -893,7 +893,7 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	locations := make([]ListPartitionLocation, 0, lp.sorted.Len())
 	high := newBtreeListColumnSearchItem(string(hack.String(highKey)))
 	lp.sorted.Ascend(newBtreeListColumnSearchItem(string(hack.String(lowKey))), func(item *btreeListColumnItem) bool {
-		if item.key <= high.key {
+		if item.key < high.key {
 			locations = append(locations, item.location)
 			return true
 		}
