@@ -16,11 +16,19 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+	"os"
+	"path/filepath"
+	"runtime"
+	rpprof "runtime/pprof"
+	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // ExplainExec represents an explain executor.
@@ -89,6 +97,16 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				}
 			}
 		}()
+		if e.ctx.GetSessionVars().MemoryDebugMode > 0 {
+			exit := make(chan bool)
+			e.runMemoryDebugGoroutine(exit)
+			defer func() {
+				select {
+				case <-exit:
+				}
+			}()
+			defer func() { exit <- false }()
+		}
 		e.executed = true
 		chk := newFirstChunk(e.analyzeExec)
 		for {
@@ -122,4 +140,72 @@ func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
 		return e.analyzeExec
 	}
 	return nil
+}
+
+func (e *ExplainExec) runMemoryDebugGoroutine(exit chan bool) {
+	debugMode := e.ctx.GetSessionVars().MemoryDebugMode
+	ticker := time.NewTicker(5 * time.Second)
+	tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker
+	instanceStats := &runtime.MemStats{}
+	var heapInUse, trackedMem uint64
+	const GB = 1024 * 1024 * 1024
+	go func() {
+		defer func() {
+			runtime.GC()
+			runtime.ReadMemStats(instanceStats)
+			heapInUse = instanceStats.HeapInuse
+			trackedMem = uint64(tracker.BytesConsumed())
+			logutil.BgLogger().Warn("Memory Debug Mode",
+				zap.String("sql", "finished"),
+				zap.Uint64("heap in use", heapInUse),
+				zap.Uint64("tracked memory", trackedMem),
+				zap.String("heap profile", e.getHeapProfile(false)))
+			close(exit)
+		}()
+		for {
+			select {
+			case <-exit:
+				return
+			case <-ticker.C:
+				if debugMode == 2 {
+					runtime.GC()
+				}
+				runtime.ReadMemStats(instanceStats)
+				heapInUse = instanceStats.HeapInuse
+				trackedMem = uint64(tracker.BytesConsumed())
+
+				if debugMode == 1 {
+					if heapInUse > 10*GB && trackedMem/10*15 < heapInUse {
+						logutil.BgLogger().Warn("Memory Debug Mode",
+							zap.String("debug mode 1 alarm", "trackedMem * 150% < heapInUse, maybe some allocation and free frequently"),
+							zap.Uint64("heap in use", heapInUse),
+							zap.Uint64("tracked memory", trackedMem),
+							zap.String("heap profile", e.getHeapProfile(true)))
+					}
+				} else {
+					if heapInUse > 10*GB && trackedMem/10*11 < heapInUse {
+						logutil.BgLogger().Warn("Memory Debug Mode",
+							zap.String("debug mode 2 alarm", "trackedMem * 110% < heapInUse after GC, maybe some memory not be tracked"),
+							zap.Uint64("heap in use", heapInUse),
+							zap.Uint64("tracked memory", trackedMem),
+							zap.String("heap profile", e.getHeapProfile(false)))
+					}
+				}
+			}
+		}
+	}()
+}
+
+func (e *ExplainExec) getHeapProfile(gc bool) (fileName string) {
+	tempDir := filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
+	timeString := time.Now().Format(time.RFC3339)
+	if gc {
+		runtime.GC()
+	}
+	fileName = filepath.Join(tempDir, "heapGC"+timeString)
+	f, _ := os.Create(fileName)
+	p := rpprof.Lookup("heap")
+	_ = p.WriteTo(f, 0)
+	_ = f.Close()
+	return fileName
 }

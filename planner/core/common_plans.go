@@ -1342,6 +1342,11 @@ func (e *Explain) RenderResult() error {
 			if err != nil {
 				return err
 			}
+			if e.Analyze {
+				row := e.Rows[0]
+				tracker := e.SCtx().GetSessionVars().StmtCtx.MemTracker
+				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
+			}
 		}
 	case types.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {

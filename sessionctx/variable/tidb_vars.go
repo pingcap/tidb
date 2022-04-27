@@ -647,6 +647,9 @@ const (
 	// When set to false, a non-transactional DML returns when it meets the first error.
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
 	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
+
+	// TiDBMemoryDebugMode is used to set tidb memory debug mode.
+	TiDBMemoryDebugMode = "tidb_memory_debug_mode"
 )
 
 // TiDB vars that have only global scope
