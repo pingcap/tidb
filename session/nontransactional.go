@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
@@ -48,7 +49,7 @@ type job struct {
 	end     types.Datum
 	err     error
 	jobID   int
-	jobSize int
+	jobSize int // it can be inaccurate if there are concurrent writes
 	sql     string
 }
 
@@ -60,8 +61,11 @@ type statementBuildInfo struct {
 	originalCondition ast.ExprNode
 }
 
-func (j job) String() string {
-	return fmt.Sprintf("job id: %d, job size: %d, range: [%s, %s]", j.jobID, j.jobSize, j.start.String(), j.end.String())
+func (j job) String(redacted bool) string {
+	if redacted {
+		return fmt.Sprintf("job id: %d, estimated size: %d", j.jobID, j.jobSize)
+	}
+	return fmt.Sprintf("job id: %d, estimated size: %d, sql: %s", j.jobID, j.jobSize, j.sql)
 }
 
 // HandleNonTransactionalDelete is the entry point for a non-transactional delete
@@ -99,7 +103,7 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	if stmt.DryRun == ast.DryRunSplitDml {
 		return buildDryRunResults(stmt.DryRun, splitStmts, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
-	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize)
+	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize, se.GetSessionVars().EnableRedactLog)
 }
 
 func checkConstraint(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) error {
@@ -161,7 +165,7 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 			failedJobs := make([]string, 0)
 			for _, job := range jobs {
 				if job.err != nil {
-					failedJobs = append(failedJobs, fmt.Sprintf("job:%s, error: %s", job.String(), job.err.Error()))
+					failedJobs = append(failedJobs, fmt.Sprintf("job:%s, error: %s", job.String(se.GetSessionVars().EnableRedactLog), job.err.Error()))
 				}
 			}
 			if len(failedJobs) == 0 {
@@ -200,8 +204,6 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 }
 
 func doOneJob(ctx context.Context, job *job, totalJobCount int, options statementBuildInfo, se Session, dryRun bool) string {
-	logutil.Logger(ctx).Info("start a Non-transactional delete", zap.String("job", job.String()), zap.Int("totalJobCount", totalJobCount))
-
 	var whereCondition ast.ExprNode
 
 	if job.start.IsNull() {
@@ -279,6 +281,15 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	}
 
 	job.sql = deleteSQL
+	logutil.Logger(ctx).Info("start a Non-transactional delete",
+		zap.String("job", job.String(se.GetSessionVars().EnableRedactLog)), zap.Int("totalJobCount", totalJobCount))
+	var deleteSQLInLog string
+	if se.GetSessionVars().EnableRedactLog {
+		deleteSQLInLog = parser.Normalize(deleteSQL)
+	} else {
+		deleteSQLInLog = deleteSQL
+	}
+
 	options.stmt.DeleteStmt.SetText(nil, fmt.Sprintf("/* job %v/%v */ %s", job.jobID, totalJobCount, deleteSQL))
 	rs, err := se.ExecuteStmt(ctx, options.stmt.DeleteStmt)
 
@@ -288,12 +299,12 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	})
 	if err != nil {
 		errStr := fmt.Sprintf("Non-transactional delete SQL failed, sql: %s, error: %s, jobID: %d, jobSize: %d. ",
-			deleteSQL, err.Error(), job.jobID, job.jobSize)
+			deleteSQLInLog, err.Error(), job.jobID, job.jobSize)
 		logutil.Logger(ctx).Error(errStr)
 		job.err = err
 	} else {
-		logutil.Logger(ctx).Info("Non-transactional delete SQL finished successfully", zap.Int("jobID", job.jobID),
-			zap.Int("jobSize", job.jobSize), zap.String("deleteSQL", deleteSQL))
+		logutil.Logger(ctx).Debug("Non-transactional delete SQL finished successfully", zap.Int("jobID", job.jobID),
+			zap.Int("jobSize", job.jobSize), zap.String("deleteSQL", deleteSQLInLog))
 	}
 	if rs != nil {
 		rs.Close()
@@ -303,7 +314,6 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 
 func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session,
 	selectSQL string, shardColumnInfo *model.ColumnInfo, memTracker *memory.Tracker) ([]job, error) {
-	logutil.Logger(ctx).Info("Non-transactional delete, select SQL", zap.String("selectSQL", selectSQL))
 	var shardColumnCollate string
 	if shardColumnInfo != nil {
 		shardColumnCollate = shardColumnInfo.GetCollate()
@@ -350,7 +360,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 		if chk.NumRows() == 0 {
 			if currentSize > 0 {
 				// there's remaining work
-				jobs = appendNewJob(jobs, jobCount, currentStart, currentEnd, currentSize, memTracker)
+				jobs = appendNewJob(jobs, jobCount+1, currentStart, currentEnd, currentSize, memTracker)
 			}
 			break
 		}
@@ -376,8 +386,8 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 					return nil, err
 				}
 				if cmp != 0 {
-					jobs = appendNewJob(jobs, jobCount, *currentStart.Clone(), *currentEnd.Clone(), currentSize, memTracker)
 					jobCount++
+					jobs = appendNewJob(jobs, jobCount, *currentStart.Clone(), *currentEnd.Clone(), currentSize, memTracker)
 					currentSize = 0
 					currentStart = newEnd
 				}
@@ -392,8 +402,8 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 	return jobs, nil
 }
 
-func appendNewJob(jobs []job, count int, start types.Datum, end types.Datum, size int, tracker *memory.Tracker) []job {
-	jobs = append(jobs, job{jobID: count, start: start, end: end, jobSize: size})
+func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size int, tracker *memory.Tracker) []job {
+	jobs = append(jobs, job{jobID: id, start: start, end: end, jobSize: size})
 	tracker.Consume(start.EstimatedMemUsage() + end.EstimatedMemUsage() + 64)
 	return jobs
 }
@@ -539,7 +549,7 @@ func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (s
 	}, nil
 }
 
-func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int) (sqlexec.RecordSet, error) {
+func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, redactLog bool) (sqlexec.RecordSet, error) {
 	failedJobs := make([]job, 0)
 	for _, job := range jobs {
 		if job.err != nil {
@@ -596,12 +606,11 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int) (sql
 	rows := make([][]interface{}, 0, len(failedJobs))
 	var sb strings.Builder
 	for _, job := range failedJobs {
-		row := make([]interface{}, 3)
-		row[0] = job.String()
-		row[1] = job.sql
-		row[2] = job.err.Error()
+		row := make([]interface{}, 2)
+		row[0] = job.String(false)
+		row[1] = job.err.Error()
 		rows = append(rows, row)
-		sb.WriteString(fmt.Sprintf("%s, %s, %s;\n", job.String(), job.sql, job.err.Error()))
+		sb.WriteString(fmt.Sprintf("%s, %s;\n", job.String(redactLog), job.err.Error()))
 	}
 
 	// log errors here in case the output is too long. There can be thousands of errors.
