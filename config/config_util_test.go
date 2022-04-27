@@ -54,7 +54,6 @@ func TestMergeConfigItems(t *testing.T) {
 	newConf.Performance.QueryFeedbackLimit = 123
 	newConf.Performance.PseudoEstimateRatio = 123
 	newConf.OOMAction = "panic"
-	newConf.MemQuotaQuery = 123
 	newConf.TiKVClient.StoreLimit = 123
 
 	// rejected
@@ -64,7 +63,7 @@ func TestMergeConfigItems(t *testing.T) {
 	newConf.Log.SlowThreshold = 2345
 
 	as, rs := MergeConfigItems(oldConf, newConf)
-	require.Equal(t, 10, len(as))
+	require.Equal(t, 9, len(as))
 	require.Equal(t, 3, len(rs))
 	for _, a := range as {
 		_, ok := dynamicConfigItems[a]
@@ -82,7 +81,6 @@ func TestMergeConfigItems(t *testing.T) {
 	require.Equal(t, newConf.Performance.QueryFeedbackLimit, oldConf.Performance.QueryFeedbackLimit)
 	require.Equal(t, newConf.Performance.PseudoEstimateRatio, oldConf.Performance.PseudoEstimateRatio)
 	require.Equal(t, newConf.OOMAction, oldConf.OOMAction)
-	require.Equal(t, newConf.MemQuotaQuery, oldConf.MemQuotaQuery)
 	require.Equal(t, newConf.TiKVClient.StoreLimit, oldConf.TiKVClient.StoreLimit)
 	require.Equal(t, newConf.Log.SlowThreshold, oldConf.Log.SlowThreshold)
 

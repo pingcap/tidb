@@ -118,13 +118,6 @@ func TestDDLStatementsBackFill(t *testing.T) {
 	}
 }
 
-func TestSchema(t *testing.T) {
-	_, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	ddl.ExportTestSchema(t)
-}
-
 func TestDDLOnCachedTable(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
