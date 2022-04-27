@@ -234,6 +234,27 @@ type ddlCtx struct {
 	}
 }
 
+func (d *ddlCtx) LockSchemaVersion(job *model.Job) {
+	if job == nil {
+		return
+	}
+	ownerID := d.schemaVersionOwner.Load()
+	if ownerID == 0 {
+		d.schemaVersionMu.Lock()
+		d.schemaVersionOwner.Store(job.ID)
+	}
+}
+
+func (d *ddlCtx) UnlockSchemaVersion(job *model.Job) {
+	if job == nil {
+		return
+	}
+	ownerID := d.schemaVersionOwner.Load()
+	if ownerID == job.ID {
+		d.schemaVersionOwner.Store(0)
+		d.schemaVersionMu.Unlock()
+	}
+}
 func (dc *ddlCtx) isOwner() bool {
 	isOwner := dc.ownerManager.IsOwner()
 	logutil.BgLogger().Debug("[ddl] check whether is the DDL owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))

@@ -654,12 +654,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			writeBinlog(d.binlogCli, txn, job)
 			return nil
 		})
-		ownerID := d.schemaVersionOwner.Load()
-		if job != nil && ownerID == job.ID {
-			d.schemaVersionOwner.Store(0)
-			d.schemaVersionMu.Unlock()
-		}
-
+		d.UnlockSchemaVersion(job)
 		if runJobErr != nil {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
@@ -1073,11 +1068,7 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
 func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
-	ownerID := d.schemaVersionOwner.Load()
-	if ownerID == 0 {
-		d.schemaVersionMu.Lock()
-		d.schemaVersionOwner.Store(job.ID)
-	}
+	d.LockSchemaVersion(job)
 	schemaVersion, err := t.GenSchemaVersion()
 	if err != nil {
 		return 0, errors.Trace(err)
