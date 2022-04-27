@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -656,6 +657,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		})
 		ownerID := d.schemaVersionOwner.Load()
 		if ownerID != 0 && ownerID == job.ID {
+			log.Info("fuck unlock", zap.Stack("stack"))
 			d.schemaVersionMu.Unlock()
 			d.schemaVersionOwner.Store(0)
 		}
@@ -1074,7 +1076,8 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
 func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	ownerID := d.schemaVersionOwner.Load()
-	if ownerID == 0 {
+	if ownerID == 0 && job.ID != ownerID {
+		log.Info("fuck lock", zap.Stack("stack"))
 		d.schemaVersionMu.Lock()
 		d.schemaVersionOwner.Store(job.ID)
 	}
