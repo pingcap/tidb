@@ -654,6 +654,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			writeBinlog(d.binlogCli, txn, job)
 			return nil
 		})
+		d.schemaVersionMu.Unlock()
 
 		if runJobErr != nil {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
@@ -1067,7 +1068,8 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(_ *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
+func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
+	d.schemaVersionMu.Lock()
 	schemaVersion, err := t.GenSchemaVersion()
 	if err != nil {
 		return 0, errors.Trace(err)
