@@ -5226,3 +5226,60 @@ func (s *testIntegrationSuite) TestIssue31202(c *C) {
 		"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
 	tk.MustExec("drop table if exists t31202")
 }
+
+func (s *testIntegrationSuite) TestIssue33042(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int primary key, col1 int)")
+	tk.MustExec("create table t2(id int primary key, col1 int)")
+	tk.MustQuery("explain format='brief' SELECT /*+ merge_join(t1, t2)*/ * FROM (t1 LEFT JOIN t2 ON t1.col1=t2.id) order by t2.id;").Check(
+		testkit.Rows(
+			"Sort 12500.00 root  test.t2.id",
+			"└─MergeJoin 12500.00 root  left outer join, left key:test.t1.col1, right key:test.t2.id",
+			"  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+			"  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+			"  └─Sort(Probe) 10000.00 root  test.t1.col1",
+			"    └─TableReader 10000.00 root  data:TableFullScan",
+			"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		),
+	)
+}
+
+// TestDNFCondSelectivityWithConst test selectivity calculation with DNF conditions with one is const.
+// Close https://github.com/pingcap/tidb/issues/31096
+func (s *testIntegrationSuite) TestDNFCondSelectivityWithConst(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1(a int, b int, c int);")
+	testKit.MustExec("insert into t1 value(10,10,10)")
+	for i := 0; i < 7; i++ {
+		testKit.MustExec("insert into t1 select * from t1")
+	}
+	testKit.MustExec("insert into t1 value(1,1,1)")
+	testKit.MustExec("analyze table t1")
+
+	testKit.MustQuery("explain select * from t1 where a=1 or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
+		"[└─Selection_6 1.99 cop[tikv]  or(eq(test.t1.a, 1), eq(test.t1.b, 1))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where 0=1 or a=1 or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
+		"[└─Selection_6 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where null or a=1 or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
+		"[└─Selection_6 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where a=1 or false or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
+		"[└─Selection_6 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(0, eq(test.t1.b, 1)))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where a=1 or b=1 or \"false\";").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
+		"[└─Selection_6 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 0))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where 1=1 or a=1 or b=1;").Check(testkit.Rows("TableReader_7 129.00 root  data:Selection_6]\n" +
+		"[└─Selection_6 129.00 cop[tikv]  or(1, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where a=1 or b=1 or 1=1;").Check(testkit.Rows("TableReader_7 129.00 root  data:Selection_6]\n" +
+		"[└─Selection_6 129.00 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 1))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustExec("drop table if exists t1")
+}
