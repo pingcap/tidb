@@ -82,6 +82,9 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 			}
 		}
 
+		// With START TRANSACTION, autocommit remains disabled until you end
+		// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+		// reverts to its previous state.
 		sessVars.SetInTxn(true)
 		if _, err := p.activeTxn(); err != nil {
 			return err
