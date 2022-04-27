@@ -16,6 +16,9 @@ package distsql
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"google.golang.org/grpc/metadata"
+	"strconv"
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -97,6 +100,11 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		EventCb:                    eventCb,
 		EnableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
 	}
+
+	if kvReq.StoreType == kv.TiFlash {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashMaxThreads, strconv.FormatInt(sctx.GetSessionVars().TiflashMaxThreads, 10))
+	}
+
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")

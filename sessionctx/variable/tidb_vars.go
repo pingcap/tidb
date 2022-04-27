@@ -326,6 +326,8 @@ const (
 	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
 	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
 
+	TiFlashMaxThreads = "max_threads"
+
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -743,6 +745,7 @@ const (
 	DefTiDBAllowMPPExecution                     = true
 	DefTiDBHashExchangeWithNewCollation          = true
 	DefTiDBEnforceMPPExecution                   = false
+	DefTiFlashMaxThreads                         = -1
 	DefTiDBMPPStoreFailTTL                       = "60s"
 	DefTiDBTxnMode                               = ""
 	DefTiDBRowFormatV1                           = 1

@@ -125,6 +125,10 @@ var defaultSysVars = []*SysVar{
 		s.enforceMPPExecution = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiFlashMaxThreads, Type: TypeInt, Value: strconv.Itoa(config.GetGlobalConfig().Performance.TiFlashMaxThreads), MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.TiflashMaxThreads = TidbOptInt64(val, DefTiFlashMaxThreads)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		err := setSnapshotTS(s, val)
 		if err != nil {
