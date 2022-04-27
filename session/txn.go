@@ -376,6 +376,12 @@ func (txn *LazyTxn) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
+func (txn *LazyTxn) RollbackToCheckpoint(cp *kv.MemCheckpoint) {
+	txn.flushStmtBuf()
+	txn.Transaction.RollbackToCheckpoint(cp)
+	txn.cleanup()
+}
+
 // LockKeys Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	failpoint.Inject("beforeLockKeys", func() {})

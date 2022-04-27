@@ -241,6 +241,8 @@ type Transaction interface {
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// clear allowed flag
 	ClearDiskFullOpt()
+
+	RollbackToCheckpoint(*MemCheckpoint)
 }
 
 // AssertionProto is an interface defined for the assertion protocol.

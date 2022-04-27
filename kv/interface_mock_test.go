@@ -145,6 +145,10 @@ func (t *mockTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
 	// TODO nothing
 }
 
+func (txn *mockTxn) RollbackToCheckpoint(cp *MemCheckpoint) {
+	// TODO nothing
+}
+
 func (t *mockTxn) ClearDiskFullOpt() {
 	// TODO nothing
 }

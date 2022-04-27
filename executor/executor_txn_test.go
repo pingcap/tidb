@@ -421,19 +421,27 @@ func TestTxnSavepoint1(t *testing.T) {
 		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
 		{sql: "commit"},
 		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "delete from t"},
 	}
-	for idx, ca := range cases {
-		comment := fmt.Sprintf("idx: %v, %#v", idx, ca)
-		if ca.result == nil {
-			if ca.err == "" {
-				tk.MustExec(ca.sql)
-			} else {
-				err := tk.ExecToErr(ca.sql)
-				require.Error(t, err, comment)
-				require.Equal(t, ca.err, err.Error(), comment)
-			}
+	for i := 0; i < 2; i++ {
+		if i == 0 {
+			tk.MustExec("set session tidb_txn_mode='optimistic';")
 		} else {
-			tk.MustQuery(ca.sql).Check(testkit.Rows(ca.result...))
+			tk.MustExec("set session tidb_txn_mode='pessimistic';")
+		}
+		for idx, ca := range cases {
+			comment := fmt.Sprintf("idx: %v, %#v", idx, ca)
+			if ca.result == nil {
+				if ca.err == "" {
+					tk.MustExec(ca.sql)
+				} else {
+					err := tk.ExecToErr(ca.sql)
+					require.Error(t, err, comment)
+					require.Equal(t, ca.err, err.Error(), comment)
+				}
+			} else {
+				tk.MustQuery(ca.sql).Check(testkit.Rows(ca.result...))
+			}
 		}
 	}
 }
@@ -450,7 +458,11 @@ func TestRollbackToSavepoint0(t *testing.T) {
 	tk.MustExec("savepoint s1")
 	tk.MustExec("insert into t values (2,2)")
 	tk.MustExec("rollback to s1")
-	//tk.MustExec("insert into t values (2,2)")
+	tk.MustExec("insert into t values (2,2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustExec("rollback to s1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	tk.MustExec("commit")
 }
 
 func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {

@@ -799,7 +799,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 		savepointName := strings.ToLower(s.SavepointName)
 		for idx, sp := range sessVars.TxnCtx.Savepoints {
 			if savepointName == sp.Name {
-				txn.GetMemBuffer().RevertToCheckpoint(sp.Cp)
+				txn.RollbackToCheckpoint(sp.Cp)
 				sessVars.TxnCtx.Savepoints = sessVars.TxnCtx.Savepoints[:idx+1]
 				return nil
 			}

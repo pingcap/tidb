@@ -78,6 +78,10 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	return txn.extractKeyErr(err)
 }
 
+func (txn *tikvTxn) RollbackToCheckpoint(cp *kv.MemCheckpoint) {
+	txn.GetMemBuffer().RevertToCheckpoint(cp)
+}
+
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 	return &tikvSnapshot{txn.KVTxn.GetSnapshot(), txn.snapshotInterceptor}
