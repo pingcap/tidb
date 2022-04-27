@@ -15,6 +15,7 @@
 package ddltest
 
 import (
+	goctx "context"
 	"database/sql"
 	"database/sql/driver"
 	"flag"
@@ -30,7 +31,6 @@ import (
 	"testing"
 	"time"
 
-	goctx "context"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"

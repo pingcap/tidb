@@ -15,11 +15,11 @@
 package expression_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"testing"
 
-	"context"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
