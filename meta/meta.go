@@ -497,8 +497,7 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 	}
 	idx.Columns = append(idx.Columns, &model.IndexColumn{Name: model.NewCIStr("job_id"), Length: types.UnspecifiedLength})
 	col.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	col.Flag |= mysql.NotNullFlag
-	col.Flag |= mysql.PriKeyFlag
+	col.SetFlag(col.GetFlag() | mysql.NotNullFlag | mysql.PriKeyFlag)
 	col2.FieldType = *types.NewFieldType(mysql.TypeLonglong)
 	col3.FieldType = *types.NewFieldType(mysql.TypeLonglong)
 	col4.FieldType = *types.NewFieldType(mysql.TypeLonglong)
@@ -575,7 +574,7 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 		Version: 1,
 	}
 	reorgCol.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	reorgCol.Flag |= mysql.NotNullFlag
+	reorgCol.SetFlag(reorgCol.GetFlag() | mysql.NotNullFlag)
 	reorgCol2.FieldType = *types.NewFieldType(mysql.TypeLonglong)
 	reorgCol3.FieldType = *types.NewFieldType(mysql.TypeLonglong)
 	reorgCol4.FieldType = *types.NewFieldType(mysql.TypeBlob)
@@ -657,12 +656,10 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 	historyIdx.Columns = append(idx.Columns, &model.IndexColumn{Name: model.NewCIStr("job_id"), Length: types.UnspecifiedLength})
 	historyIdx2.Columns = append(historyIdx2.Columns, &model.IndexColumn{Name: model.NewCIStr("job_seq"), Length: types.UnspecifiedLength})
 	historyTblCol1.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	historyTblCol1.Flag |= mysql.NotNullFlag
-	historyTblCol1.Flag |= mysql.PriKeyFlag
+	historyTblCol1.SetFlag(historyTblCol1.GetFlag() | mysql.NotNullFlag | mysql.PriKeyFlag)
 	historyTblCol2.FieldType = *types.NewFieldType(mysql.TypeBlob)
 	historyTblCol3.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	historyTblCol1.Flag |= mysql.NotNullFlag
-	historyTblCol1.Flag |= mysql.UniqueFlag
+	historyTblCol3.SetFlag(historyTblCol1.GetFlag() | mysql.NotNullFlag | mysql.UniqueFlag)
 
 	historyTbl, err := m.GenGlobalID()
 	if err != nil {
