@@ -343,7 +343,7 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 			}
 		}
 	}
-	logutil.BgLogger().Info("updateTiFlashStores finished", zap.Int("TiFlash store count", len(pollTiFlashContext.TiFlashStores)))
+	logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(pollTiFlashContext.TiFlashStores)))
 	return nil
 }
 
