@@ -22,12 +22,18 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
+// EnterNewTxnType is the type to enter a new txn
 type EnterNewTxnType int
 
 const (
+	// EnterNewTxnDefault means to enter a new txn. Its behavior is more straight-forward
+	// just starting a new txn right now without any scenario assumptions.
 	EnterNewTxnDefault EnterNewTxnType = iota
+	// EnterNewTxnWithBeginStmt indicates to enter a new txn when execute 'BEGIN' or 'START TRANSACTION'
 	EnterNewTxnWithBeginStmt
+	// EnterNewTxnBeforeStmt indicates to enter a new txn before each statement when the txn is not present
 	EnterNewTxnBeforeStmt
+	// EnterNewTxnWithReplaceProvider indicates to replace the current provider. Now only stale read are using this
 	EnterNewTxnWithReplaceProvider
 )
 
