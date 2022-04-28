@@ -45,7 +45,7 @@ func TestCreateTables(t *testing.T) {
 	client.SetBatchDdlSize(1)
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
-	intField.Charset = "binary"
+	intField.SetCharset("binary")
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{
 			DB: dbSchema,
@@ -115,7 +115,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
-	intField.Charset = "binary"
+	intField.SetCharset("binary")
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{
 			DB: dbSchema,
