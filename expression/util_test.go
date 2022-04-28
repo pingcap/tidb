@@ -221,7 +221,7 @@ func TestGetStrIntFromConstant(t *testing.T) {
 	_, _, err := GetStringFromConstant(mock.NewContext(), col)
 	require.Error(t, err)
 
-	con := &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
+	con := &Constant{RetType: types.NewFieldType(mysql.TypeNull)}
 	_, isNull, err := GetStringFromConstant(mock.NewContext(), con)
 	require.NoError(t, err)
 	require.True(t, isNull)
@@ -230,7 +230,7 @@ func TestGetStrIntFromConstant(t *testing.T) {
 	ret, _, _ := GetStringFromConstant(mock.NewContext(), con)
 	require.Equal(t, "1", ret)
 
-	con = &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
+	con = &Constant{RetType: types.NewFieldType(mysql.TypeNull)}
 	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
 	require.True(t, isNull)
 
@@ -346,7 +346,7 @@ func TestHashGroupKey(t *testing.T) {
 	for i := 0; i < len(tNames); i++ {
 		ft := eType2FieldType(eTypes[i])
 		if eTypes[i] == types.ETDecimal {
-			ft.Flen = 0
+			ft.SetFlen(0)
 		}
 		colExpr := &Column{Index: 0, RetType: ft}
 		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
@@ -384,20 +384,20 @@ func TestDisableParseJSONFlag4Expr(t *testing.T) {
 	var expr Expression
 	expr = &Column{RetType: newIntFieldType()}
 	ft := expr.GetType()
-	ft.Flag |= mysql.ParseToJSONFlag
+	ft.AddFlag(mysql.ParseToJSONFlag)
 	DisableParseJSONFlag4Expr(expr)
-	require.True(t, mysql.HasParseToJSONFlag(ft.Flag))
+	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 
 	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
 	ft = expr.GetType()
-	ft.Flag |= mysql.ParseToJSONFlag
+	ft.AddFlag(mysql.ParseToJSONFlag)
 	DisableParseJSONFlag4Expr(expr)
-	require.True(t, mysql.HasParseToJSONFlag(ft.Flag))
+	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 	expr = &ScalarFunction{RetType: newIntFieldType()}
 	ft = expr.GetType()
-	ft.Flag |= mysql.ParseToJSONFlag
+	ft.AddFlag(mysql.ParseToJSONFlag)
 	DisableParseJSONFlag4Expr(expr)
-	require.False(t, mysql.HasParseToJSONFlag(ft.Flag))
+	require.False(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 }
 
 func TestSQLDigestTextRetriever(t *testing.T) {

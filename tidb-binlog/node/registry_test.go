@@ -15,6 +15,7 @@
 package node
 
 import (
+	"context"
 	"path"
 	"testing"
 	"time"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
-	"golang.org/x/net/context"
 )
 
 var nodePrefix = path.Join(DefaultRootPath, NodePrefix[PumpNode])

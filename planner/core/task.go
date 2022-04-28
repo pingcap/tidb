@@ -178,17 +178,17 @@ func (t *copTask) finishIndexPlan() {
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	is := p.(*PhysicalIndexScan)
-	if !is.underInnerIndexJoin { // no need to accumulate seek cost for IndexJoin
-		t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
-	}
+	t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
 
 	if t.tablePlan == nil {
 		return
 	}
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, is.Index.Unique)
-	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
+	for p = t.tablePlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	ts := p.(*PhysicalTableScan)
+	t.cst += cnt * ts.getScanRowSize() * sessVars.GetScanFactor(tableInfo)
 }
 
 func (t *copTask) getStoreType() kv.StoreType {
@@ -293,16 +293,15 @@ func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 	}
 	t := &rootTask{
 		p:   p,
-		cst: p.GetCost(outerTask, innerTask),
+		cst: p.GetCost(outerTask.count(), innerTask.count(), outerTask.cost(), innerTask.cost()),
 	}
 	p.cost = t.cost()
 	return t
 }
 
 // GetCost computes the cost of index merge join operator and its children.
-func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
+func (p *PhysicalIndexMergeJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64) float64 {
 	var cpuCost float64
-	outerCnt, innerCnt := outerTask.count(), innerTask.count()
 	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
 	// is always empty, we can simply tell whether outer filter is empty using the
@@ -358,8 +357,8 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	// So the memory cost consider the results size for each batch.
 	memoryCost := innerConcurrency * (batchSize * avgProbeCnt) * sessVars.MemoryFactor
 
-	innerPlanCost := outerCnt * innerTask.cost()
-	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
+	innerPlanCost := outerCnt * innerCost
+	return outerCost + innerPlanCost + cpuCost + memoryCost
 }
 
 func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
@@ -372,16 +371,15 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
 	}
 	t := &rootTask{
 		p:   p,
-		cst: p.GetCost(outerTask, innerTask),
+		cst: p.GetCost(outerTask.count(), innerTask.count(), outerTask.cost(), innerTask.cost()),
 	}
 	p.cost = t.cost()
 	return t
 }
 
 // GetCost computes the cost of index merge join operator and its children.
-func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
+func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64) float64 {
 	var cpuCost float64
-	outerCnt, innerCnt := outerTask.count(), innerTask.count()
 	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
 	// is always empty, we can simply tell whether outer filter is empty using the
@@ -435,8 +433,8 @@ func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
 	// since the executor is pipelined and not all workers are always in full load.
 	memoryCost := concurrency * (batchSize * distinctFactor) * innerCnt * sessVars.MemoryFactor
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
-	innerPlanCost := outerCnt * innerTask.cost()
-	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
+	innerPlanCost := outerCnt * innerCost
+	return outerCost + innerPlanCost + cpuCost + memoryCost
 }
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
@@ -616,29 +614,29 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 	// all the string type are mapped to the same type in TiFlash, so
 	// do not need convert for string types
-	if types.IsString(tp.Tp) && types.IsString(rtp.Tp) {
+	if types.IsString(tp.GetType()) && types.IsString(rtp.GetType()) {
 		return false
 	}
-	if tp.Tp != rtp.Tp {
+	if tp.GetType() != rtp.GetType() {
 		return true
 	}
-	if tp.Tp != mysql.TypeNewDecimal {
+	if tp.GetType() != mysql.TypeNewDecimal {
 		return false
 	}
-	if tp.Decimal != rtp.Decimal {
+	if tp.GetDecimal() != rtp.GetDecimal() {
 		return true
 	}
-	// for Decimal type, TiFlash have 4 different impl based on the required precision
-	if tp.Flen >= 0 && tp.Flen <= 9 && rtp.Flen >= 0 && rtp.Flen <= 9 {
+	// for decimal type, TiFlash have 4 different impl based on the required precision
+	if tp.GetFlen() >= 0 && tp.GetFlen() <= 9 && rtp.GetFlen() >= 0 && rtp.GetFlen() <= 9 {
 		return false
 	}
-	if tp.Flen > 9 && tp.Flen <= 18 && rtp.Flen > 9 && rtp.Flen <= 18 {
+	if tp.GetFlen() > 9 && tp.GetFlen() <= 18 && rtp.GetFlen() > 9 && rtp.GetFlen() <= 18 {
 		return false
 	}
-	if tp.Flen > 18 && tp.Flen <= 38 && rtp.Flen > 18 && rtp.Flen <= 38 {
+	if tp.GetFlen() > 18 && tp.GetFlen() <= 38 && rtp.GetFlen() > 18 && rtp.GetFlen() <= 38 {
 		return false
 	}
-	if tp.Flen > 38 && tp.Flen <= 65 && rtp.Flen > 38 && rtp.Flen <= 65 {
+	if tp.GetFlen() > 38 && tp.GetFlen() <= 65 && rtp.GetFlen() > 38 && rtp.GetFlen() <= 65 {
 		return false
 	}
 	return true
@@ -646,27 +644,27 @@ func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 
 func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool, bool) {
 	commonType := types.AggFieldType([]*types.FieldType{lType, rType})
-	if commonType.Tp == mysql.TypeNewDecimal {
+	if commonType.GetType() == mysql.TypeNewDecimal {
 		lExtend := 0
 		rExtend := 0
-		cDec := rType.Decimal
-		if lType.Decimal < rType.Decimal {
-			lExtend = rType.Decimal - lType.Decimal
-		} else if lType.Decimal > rType.Decimal {
-			rExtend = lType.Decimal - rType.Decimal
-			cDec = lType.Decimal
+		cDec := rType.GetDecimal()
+		if lType.GetDecimal() < rType.GetDecimal() {
+			lExtend = rType.GetDecimal() - lType.GetDecimal()
+		} else if lType.GetDecimal() > rType.GetDecimal() {
+			rExtend = lType.GetDecimal() - rType.GetDecimal()
+			cDec = lType.GetDecimal()
 		}
-		lLen, rLen := lType.Flen+lExtend, rType.Flen+rExtend
+		lLen, rLen := lType.GetFlen()+lExtend, rType.GetFlen()+rExtend
 		cLen := mathutil.Max(lLen, rLen)
 		cLen = mathutil.Min(65, cLen)
-		commonType.Decimal = cDec
-		commonType.Flen = cLen
+		commonType.SetDecimal(cDec)
+		commonType.SetFlen(cLen)
 	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {
-		if mysql.IsIntegerType(commonType.Tp) {
+		if mysql.IsIntegerType(commonType.GetType()) {
 			// If the target type is int, both TiFlash and Mysql only support cast to Int64
 			// so we need to promote the type to Int64
-			commonType.Tp = mysql.TypeLonglong
-			commonType.Flen = mysql.MaxIntWidth
+			commonType.SetType(mysql.TypeLonglong)
+			commonType.SetFlen(mysql.MaxIntWidth)
 		}
 	}
 	return commonType, needConvert(lType, commonType), needConvert(rType, commonType)
@@ -748,13 +746,13 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 		rKey := rTask.hashCols[i]
 		if lMask[i] {
 			cType := cTypes[i].Clone()
-			cType.Flag = lKey.Col.RetType.Flag
+			cType.SetFlag(lKey.Col.RetType.GetFlag())
 			lCast := expression.BuildCastFunction(p.ctx, lKey.Col, cType)
 			lKey = &property.MPPPartitionColumn{Col: appendExpr(lProj, lCast), CollateID: lKey.CollateID}
 		}
 		if rMask[i] {
 			cType := cTypes[i].Clone()
-			cType.Flag = rKey.Col.RetType.Flag
+			cType.SetFlag(rKey.Col.RetType.GetFlag())
 			rCast := expression.BuildCastFunction(p.ctx, rKey.Col, cType)
 			rKey = &property.MPPPartitionColumn{Col: appendExpr(rProj, rCast), CollateID: rKey.CollateID}
 		}
@@ -1075,13 +1073,11 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		ts := tp.(*PhysicalTableScan)
 
 		// net seek cost
-		if !ts.underInnerIndexJoin { // no need to accumulate net seek cost for IndexJoin
-			switch ts.StoreType {
-			case kv.TiKV:
-				t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
-			case kv.TiFlash:
-				t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
-			}
+		switch ts.StoreType {
+		case kv.TiKV:
+			t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
+		case kv.TiFlash:
+			t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
 		}
 
 		prevColumnLen := len(ts.Columns)
@@ -1464,7 +1460,7 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		if len(cop.rootTaskConds) == 0 && cop.getStoreType() == kv.TiFlash && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
+		if len(cop.rootTaskConds) == 0 && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
 			copTask := attachPlan2Task(p, cop)
 			copTask.addCost(p.GetCost(t.count()))
 			p.cost = copTask.cost()
@@ -1479,7 +1475,6 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 			return mpp
 		}
 	}
-	// TODO: support projection push down for TiKV.
 	t = t.convertToRootTask(p.ctx)
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count()))
@@ -1780,7 +1775,9 @@ func BuildFinalModeAggregation(
 					finalAggFunc.Name = ast.AggFuncSum
 				} else {
 					ft := types.NewFieldType(mysql.TypeLonglong)
-					ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
+					ft.SetFlen(21)
+					ft.SetCharset(charset.CharsetBin)
+					ft.SetCollate(charset.CollationBin)
 					partial.Schema.Append(&expression.Column{
 						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 						RetType:  ft,
@@ -1791,8 +1788,9 @@ func BuildFinalModeAggregation(
 			}
 			if finalAggFunc.Name == ast.AggFuncApproxCountDistinct {
 				ft := types.NewFieldType(mysql.TypeString)
-				ft.Charset, ft.Collate = charset.CharsetBin, charset.CollationBin
-				ft.Flag |= mysql.NotNullFlag
+				ft.SetCharset(charset.CharsetBin)
+				ft.SetCollate(charset.CollationBin)
+				ft.AddFlag(mysql.NotNullFlag)
 				partial.Schema.Append(&expression.Column{
 					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 					RetType:  ft,
@@ -2058,6 +2056,7 @@ func computePartialCursorOffset(name string) int {
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
+	final := p
 	if cop, ok := t.(*copTask); ok {
 		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
 		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
@@ -2069,6 +2068,9 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		} else {
 			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
+			if finalAgg != nil {
+				final = finalAgg.(*PhysicalStreamAgg)
+			}
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -2085,7 +2087,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
-				cop.addCost(p.GetCost(inputRows, false))
+				cop.addCost(partialAgg.(*PhysicalStreamAgg).GetCost(inputRows, false))
 				partialAgg.SetCost(cop.cost())
 			}
 			t = cop.convertToRootTask(p.ctx)
@@ -2098,7 +2100,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	} else {
 		attachPlan2Task(p, t)
 	}
-	t.addCost(p.GetCost(inputRows, true))
+	t.addCost(final.GetCost(inputRows, true))
 	t.plan().SetCost(t.cost())
 	return t
 }
@@ -2188,7 +2190,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				}
 				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 					Col:       col,
-					CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
+					CollateID: property.GetCollateIDByNameForPartition(col.GetType().GetCollate()),
 				})
 			}
 		}
@@ -2262,10 +2264,14 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
+	final := p
 	if cop, ok := t.(*copTask); ok {
 		if len(cop.rootTaskConds) == 0 {
 			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
+			if finalAgg != nil {
+				final = finalAgg.(*PhysicalHashAgg)
+			}
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -2282,7 +2288,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
-				cop.addCost(p.GetCost(inputRows, false, false))
+				cop.addCost(partialAgg.(*PhysicalHashAgg).GetCost(inputRows, false, false))
 			}
 			// In `newPartialAggregate`, we are using stats of final aggregation as stats
 			// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
@@ -2315,7 +2321,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// hash aggregation, it would cause under-estimation as the reason mentioned in comment above.
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
-	t.addCost(p.GetCost(inputRows, true, false))
+	t.addCost(final.GetCost(inputRows, true, false))
 	t.plan().SetCost(t.cost())
 	return t
 }
@@ -2486,7 +2492,7 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
 	if collate.NewCollationEnabled() && !t.p.SCtx().GetSessionVars().HashExchangeWithNewCollation && prop.MPPPartitionTp == property.HashType {
 		for _, col := range prop.MPPPartitionCols {
-			if types.IsString(col.Col.RetType.Tp) {
+			if types.IsString(col.Col.RetType.GetType()) {
 				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
 				return &mppTask{cst: math.MaxFloat64}
 			}

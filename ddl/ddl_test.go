@@ -19,9 +19,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -34,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+const testLease = 5 * time.Millisecond
 
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
@@ -55,7 +59,7 @@ func (d *ddl) generalWorker() *worker {
 
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
-	return getRangeEndKey(store, priority, t, startHandle, endHandle)
+	return getRangeEndKey(NewJobContext(), store, priority, t, startHandle, endHandle)
 }
 
 func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
@@ -108,10 +112,6 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
 }
 
-func checkHistoryJob(t *testing.T, job *model.Job) {
-	require.Equal(t, job.State, model.JobStateSynced)
-}
-
 func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -133,99 +133,6 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 	if args.db != nil && len(args.tblIDs) == 0 {
 		return
 	}
-}
-
-func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{unique, model.NewCIStr(indexName),
-			[]*ast.IndexPartSpecification{{
-				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
-				Length: types.UnspecifiedLength}}},
-	}
-}
-
-func testCreatePrimaryKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
-	job := buildCreateIdxJob(dbInfo, tblInfo, true, "primary", colName)
-	job.Type = model.ActionAddPrimaryKey
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func testCreateIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
-	job := buildCreateIdxJob(dbInfo, tblInfo, unique, indexName, colName)
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func testAddColumn(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddColumn,
-		Args:       args,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func testAddColumns(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddColumns,
-		Args:       args,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
-	tp := model.ActionDropIndex
-	if indexName == "primary" {
-		tp = model.ActionDropPrimaryKey
-	}
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       tp,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{model.NewCIStr(indexName)},
-	}
-}
-
-func testDropIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
-	job := buildDropIdxJob(dbInfo, tblInfo, indexName)
-
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
 }
 
 func TestGetIntervalFromPolicy(t *testing.T) {
@@ -507,4 +414,116 @@ func TestNotifyDDLJob(t *testing.T) {
 		require.FailNow(t, "should not get the general job notification")
 	default:
 	}
+}
+
+func testSchemaInfo(d *ddl, name string) (*model.DBInfo, error) {
+	dbInfo := &model.DBInfo{
+		Name: model.NewCIStr(name),
+	}
+	genIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		return nil, err
+	}
+	dbInfo.ID = genIDs[0]
+	return dbInfo, nil
+}
+
+func testCreateSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.DoDDLJob(ctx, job))
+
+	v := getSchemaVer(t, ctx)
+	dbInfo.State = model.StatePublic
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
+	dbInfo.State = model.StateNone
+	return job
+}
+
+func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
+	return &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+}
+
+func testDropSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
+	job := buildDropSchemaJob(dbInfo)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+	ver := getSchemaVer(t, ctx)
+	return job, ver
+}
+
+func isDDLJobDone(test *testing.T, t *meta.Meta) bool {
+	job, err := t.GetDDLJobByIdx(0)
+	require.NoError(test, err)
+	if job == nil {
+		return true
+	}
+
+	time.Sleep(testLease)
+	return false
+}
+
+func testCheckSchemaState(test *testing.T, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
+	isDropped := true
+
+	for {
+		err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			info, err := t.GetDatabase(dbInfo.ID)
+			require.NoError(test, err)
+
+			if state == model.StateNone {
+				isDropped = isDDLJobDone(test, t)
+				if !isDropped {
+					return nil
+				}
+				require.Nil(test, info)
+				return nil
+			}
+
+			require.Equal(test, info.Name, dbInfo.Name)
+			require.Equal(test, info.State, state)
+			return nil
+		})
+		require.NoError(test, err)
+
+		if isDropped {
+			break
+		}
+	}
+}
+
+func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error) {
+	var tblInfo *model.TableInfo
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		tblInfo, err1 = t.GetTable(schemaID, tableID)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tblInfo == nil {
+		return nil, errors.New("table not found")
+	}
+	alloc := autoid.NewAllocator(d.store, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return tbl, nil
 }

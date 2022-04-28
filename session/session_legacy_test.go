@@ -21,7 +21,6 @@ import (
 	"net"
 	"os"
 	"path"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,12 +29,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-units"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -55,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -93,8 +89,6 @@ var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
 var _ = SerialSuites(&testTxnStateSerialSuite{})
-var _ = SerialSuites(&testStatisticsSuite{})
-var _ = SerialSuites(&testTiDBAsLibrary{})
 
 type testSessionSuiteBase struct {
 	cluster testutils.Cluster
@@ -122,14 +116,6 @@ type testSessionSerialSuite struct {
 type testBackupRestoreSuite struct {
 	testSessionSuiteBase
 }
-
-// testStatisticsSuite contains test about statistics which need running with real TiKV.
-// Only tests under /session will be run with real TiKV so we put them here instead of /statistics.
-type testStatisticsSuite struct {
-	testSessionSuiteBase
-}
-
-type testTiDBAsLibrary struct{}
 
 func clearStorage(store kv.Storage) error {
 	txn, err := store.Begin()
@@ -261,6 +247,11 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 }
 
 func createStorage(t *testing.T) (kv.Storage, func()) {
+	store, _, clean := createStorageAndDomain(t)
+	return store, clean
+}
+
+func createStorageAndDomain(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	if *withTiKV {
 		initPdAddrs()
 		pdAddr := <-pdAddrChan
@@ -276,13 +267,13 @@ func createStorage(t *testing.T) (kv.Storage, func()) {
 		dom, err := session.BootstrapSession(store)
 		require.NoError(t, err)
 
-		return store, func() {
+		return store, dom, func() {
 			dom.Close()
 			require.NoError(t, store.Close())
 			pdAddrChan <- pdAddr
 		}
 	}
-	return newTestkit.CreateMockStore(t)
+	return newTestkit.CreateMockStoreAndDomain(t)
 }
 
 type mockBinlogPump struct {
@@ -643,7 +634,11 @@ func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	varName := "max_allowed_packet"
-	varValue := "67108864" // This is the default value for max_allowed_packet
+	varValue := strconv.FormatUint(variable.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
+
+	// The value of max_allowed_packet should be a multiple of 1024,
+	// so the setting of varValue1 and varValue2 would be truncated to varValue0
+	varValue0 := "4194304"
 	varValue1 := "4194305"
 	varValue2 := "4194306"
 
@@ -661,25 +656,25 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	c.Assert(err, IsNil)
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue1)
+	c.Assert(v, Equals, varValue0)
 	c.Assert(tk.Se.CommitTxn(context.TODO()), IsNil)
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	se1 := tk1.Se.(variable.GlobalVarAccessor)
 	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue1)
+	c.Assert(v, Equals, varValue0)
 	err = se1.SetGlobalSysVar(varName, varValue2)
 	c.Assert(err, IsNil)
 	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue2)
+	c.Assert(v, Equals, varValue0)
 	c.Assert(tk1.Se.CommitTxn(context.TODO()), IsNil)
 
 	// Make sure the change is visible to any client that accesses that global variable.
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue2)
+	c.Assert(v, Equals, varValue0)
 
 	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
 	tk1.MustExec("set @@global.max_execution_time = 100")
@@ -1678,8 +1673,8 @@ func (s *testSessionSuite) TestResultField(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(fields), Equals, 1)
 	field := fields[0].Column
-	c.Assert(field.Tp, Equals, mysql.TypeLonglong)
-	c.Assert(field.Flen, Equals, 21)
+	c.Assert(field.GetType(), Equals, mysql.TypeLonglong)
+	c.Assert(field.GetFlen(), Equals, 21)
 }
 
 func (s *testSessionSuite) TestResultType(c *C) {
@@ -1691,7 +1686,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).IsNull(0), IsTrue)
-	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
+	c.Assert(rs.Fields()[0].Column.FieldType.GetType(), Equals, mysql.TypeVarString)
 }
 
 func (s *testSessionSuite) TestFieldText(c *C) {
@@ -3790,46 +3785,21 @@ func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set global tidb_enable_local_txn = on;")
-	tk.MustExec("drop table if exists t1;")
-	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("create placement policy p1 leader_constraints='[+zone=dc-1]'")
+	tk.MustExec("create placement policy p2 leader_constraints='[+zone=dc-2]'")
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (100),
-	PARTITION p1 VALUES LESS THAN (200)
+	PARTITION p0 VALUES LESS THAN (100) placement policy p1,
+	PARTITION p1 VALUES LESS THAN (200) placement policy p2
 );`)
-	// Config the Placement Rules
-	is := s.dom.InfoSchema()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	setBundle := func(parName, dc string) {
-		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
-		c.Assert(err, IsNil)
-		groupID := placement.GroupID(pid)
-		is.SetBundle(&placement.Bundle{
-			ID: groupID,
-			Rules: []*placement.Rule{
-				{
-					GroupID: groupID,
-					Role:    placement.Leader,
-					Count:   1,
-					Constraints: []placement.Constraint{
-						{
-							Key:    placement.DCLabelKey,
-							Op:     placement.In,
-							Values: []string{dc},
-						},
-						{
-							Key:    placement.EngineLabelKey,
-							Op:     placement.NotIn,
-							Values: []string{placement.EngineLabelTiFlash},
-						},
-					},
-				},
-			},
-		})
-	}
-	setBundle("p0", "dc-1")
-	setBundle("p1", "dc-2")
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop placement policy if exists p1")
+		tk.MustExec("drop placement policy if exists p2")
+	}()
 
 	// set txn_scope to global
 	tk.MustExec(fmt.Sprintf("set @@session.txn_scope = '%s';", kv.GlobalTxnScope))
@@ -3991,7 +3961,7 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	tk.MustExec("create table tmp123(id int)")
 	tk.MustQuery("select * from tmp123;")
 	haveRateLimitAction := false
-	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
+	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(false)
 	for ; action != nil; action = action.GetFallback() {
 		if action.GetPriority() == memory.DefRateLimitPriority {
 			haveRateLimitAction = true
@@ -4011,7 +3981,7 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	result.Check(testkit.Rows("0"))
 
 	haveRateLimitAction = false
-	action = tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
+	action = tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(false)
 	for ; action != nil; action = action.GetFallback() {
 		if action.GetPriority() == memory.DefRateLimitPriority {
 			haveRateLimitAction = true
@@ -5053,167 +5023,6 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
-	tk := testkit.NewTestKit(c, store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
-	tk.MustExec("delete from mysql.stats_meta")
-	tk.MustExec("delete from mysql.stats_histograms")
-	tk.MustExec("delete from mysql.stats_buckets")
-	do.StatsHandle().Clear()
-}
-
-func (s *testStatisticsSuite) TestNewCollationStatsWithPrefixIndex(c *C) {
-	defer s.cleanEnv(c, s.store, s.dom)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a varchar(40) collate utf8mb4_general_ci, index ia3(a(3)), index ia10(a(10)), index ia(a))")
-	tk.MustExec("insert into t values('aaAAaaaAAAabbc'), ('AaAaAaAaAaAbBC'), ('AAAaabbBBbbb'), ('AAAaabbBBbbbccc'), ('aaa'), ('Aa'), ('A'), ('ab')")
-	tk.MustExec("insert into t values('b'), ('bBb'), ('Bb'), ('bA'), ('BBBB'), ('BBBBBDDDDDdd'), ('bbbbBBBBbbBBR'), ('BBbbBBbbBBbbBBRRR')")
-	h := s.dom.StatsHandle()
-	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
-
-	tk.MustExec("set @@session.tidb_analyze_version=1")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	tk.MustExec("analyze table t")
-	tk.MustExec("explain select * from t where a = 'aaa'")
-	c.Assert(h.LoadNeededHistograms(), IsNil)
-	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 0 1 1 \x00A \x00A 0",
-		"test t  a 0 1 2 1 \x00A\x00A \x00A\x00A 0",
-		"test t  a 0 10 12 1 \x00B\x00B\x00B \x00B\x00B\x00B 0",
-		"test t  a 0 11 13 1 \x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B 0",
-		"test t  a 0 12 14 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 0",
-		"test t  a 0 13 15 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 0",
-		"test t  a 0 14 16 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 0",
-		"test t  a 0 2 3 1 \x00A\x00A\x00A \x00A\x00A\x00A 0",
-		"test t  a 0 3 5 2 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 0",
-		"test t  a 0 4 6 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 0",
-		"test t  a 0 5 7 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 0",
-		"test t  a 0 6 8 1 \x00A\x00B \x00A\x00B 0",
-		"test t  a 0 7 9 1 \x00B \x00B 0",
-		"test t  a 0 8 10 1 \x00B\x00A \x00B\x00A 0",
-		"test t  a 0 9 11 1 \x00B\x00B \x00B\x00B 0",
-		"test t  ia 1 0 1 1 \x00A \x00A 0",
-		"test t  ia 1 1 2 1 \x00A\x00A \x00A\x00A 0",
-		"test t  ia 1 10 12 1 \x00B\x00B\x00B \x00B\x00B\x00B 0",
-		"test t  ia 1 11 13 1 \x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B 0",
-		"test t  ia 1 12 14 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 0",
-		"test t  ia 1 13 15 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 0",
-		"test t  ia 1 14 16 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 0",
-		"test t  ia 1 2 3 1 \x00A\x00A\x00A \x00A\x00A\x00A 0",
-		"test t  ia 1 3 5 2 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 0",
-		"test t  ia 1 4 6 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 0",
-		"test t  ia 1 5 7 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 0",
-		"test t  ia 1 6 8 1 \x00A\x00B \x00A\x00B 0",
-		"test t  ia 1 7 9 1 \x00B \x00B 0",
-		"test t  ia 1 8 10 1 \x00B\x00A \x00B\x00A 0",
-		"test t  ia 1 9 11 1 \x00B\x00B \x00B\x00B 0",
-		"test t  ia10 1 0 1 1 \x00A \x00A 0",
-		"test t  ia10 1 1 2 1 \x00A\x00A \x00A\x00A 0",
-		"test t  ia10 1 10 13 1 \x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B 0",
-		"test t  ia10 1 11 15 2 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B 0",
-		"test t  ia10 1 12 16 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D 0",
-		"test t  ia10 1 2 3 1 \x00A\x00A\x00A \x00A\x00A\x00A 0",
-		"test t  ia10 1 3 5 2 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A 0",
-		"test t  ia10 1 4 7 2 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B 0",
-		"test t  ia10 1 5 8 1 \x00A\x00B \x00A\x00B 0",
-		"test t  ia10 1 6 9 1 \x00B \x00B 0",
-		"test t  ia10 1 7 10 1 \x00B\x00A \x00B\x00A 0",
-		"test t  ia10 1 8 11 1 \x00B\x00B \x00B\x00B 0",
-		"test t  ia10 1 9 12 1 \x00B\x00B\x00B \x00B\x00B\x00B 0",
-		"test t  ia3 1 0 1 1 \x00A \x00A 0",
-		"test t  ia3 1 1 2 1 \x00A\x00A \x00A\x00A 0",
-		"test t  ia3 1 2 7 5 \x00A\x00A\x00A \x00A\x00A\x00A 0",
-		"test t  ia3 1 3 8 1 \x00A\x00B \x00A\x00B 0",
-		"test t  ia3 1 4 9 1 \x00B \x00B 0",
-		"test t  ia3 1 5 10 1 \x00B\x00A \x00B\x00A 0",
-		"test t  ia3 1 6 11 1 \x00B\x00B \x00B\x00B 0",
-		"test t  ia3 1 7 16 5 \x00B\x00B\x00B \x00B\x00B\x00B 0",
-	))
-	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
-	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 15 0 1 0.8411764705882353",
-		"1 1 8 0 1 0",
-		"1 2 13 0 1 0",
-		"1 3 15 0 1 0",
-	))
-
-	tk.MustExec("set @@session.tidb_analyze_version=2")
-	h = s.dom.StatsHandle()
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	tk.MustExec("analyze table t")
-	tk.MustExec("explain select * from t where a = 'aaa'")
-	c.Assert(h.LoadNeededHistograms(), IsNil)
-	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows())
-	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 \x00A 1",
-		"test t  a 0 \x00A\x00A 1",
-		"test t  a 0 \x00A\x00A\x00A 1",
-		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
-		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 1",
-		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 1",
-		"test t  a 0 \x00A\x00B 1",
-		"test t  a 0 \x00B 1",
-		"test t  a 0 \x00B\x00A 1",
-		"test t  a 0 \x00B\x00B 1",
-		"test t  a 0 \x00B\x00B\x00B 1",
-		"test t  a 0 \x00B\x00B\x00B\x00B 1",
-		"test t  a 0 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 1",
-		"test t  a 0 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 1",
-		"test t  a 0 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 1",
-		"test t  ia 1 \x00A 1",
-		"test t  ia 1 \x00A\x00A 1",
-		"test t  ia 1 \x00A\x00A\x00A 1",
-		"test t  ia 1 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
-		"test t  ia 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 1",
-		"test t  ia 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 1",
-		"test t  ia 1 \x00A\x00B 1",
-		"test t  ia 1 \x00B 1",
-		"test t  ia 1 \x00B\x00A 1",
-		"test t  ia 1 \x00B\x00B 1",
-		"test t  ia 1 \x00B\x00B\x00B 1",
-		"test t  ia 1 \x00B\x00B\x00B\x00B 1",
-		"test t  ia 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 1",
-		"test t  ia 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 1",
-		"test t  ia 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 1",
-		"test t  ia10 1 \x00A 1",
-		"test t  ia10 1 \x00A\x00A 1",
-		"test t  ia10 1 \x00A\x00A\x00A 1",
-		"test t  ia10 1 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A 2",
-		"test t  ia10 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B 2",
-		"test t  ia10 1 \x00A\x00B 1",
-		"test t  ia10 1 \x00B 1",
-		"test t  ia10 1 \x00B\x00A 1",
-		"test t  ia10 1 \x00B\x00B 1",
-		"test t  ia10 1 \x00B\x00B\x00B 1",
-		"test t  ia10 1 \x00B\x00B\x00B\x00B 1",
-		"test t  ia10 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B 2",
-		"test t  ia10 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D 1",
-		"test t  ia3 1 \x00A 1",
-		"test t  ia3 1 \x00A\x00A 1",
-		"test t  ia3 1 \x00A\x00A\x00A 5",
-		"test t  ia3 1 \x00A\x00B 1",
-		"test t  ia3 1 \x00B 1",
-		"test t  ia3 1 \x00B\x00A 1",
-		"test t  ia3 1 \x00B\x00B 1",
-		"test t  ia3 1 \x00B\x00B\x00B 5",
-	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 15 0 2 0.8411764705882353",
-		"1 1 8 0 2 0",
-		"1 2 13 0 2 0",
-		"1 3 15 0 2 0",
-	))
-}
-
 func (s *testSessionSuite) TestAuthPluginForUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER 'tapfu1' IDENTIFIED WITH mysql_native_password BY 'tapfu1'")
@@ -5913,33 +5722,6 @@ func (s *testSessionSuite) TestTemporaryTableInterceptor(c *C) {
 	val, err := snap.Get(context.Background(), k)
 	c.Assert(err, IsNil)
 	c.Assert(val, BytesEquals, []byte("v1"))
-}
-
-func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
-	initAndCloseTiDB := func() {
-		store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-		c.Assert(err, IsNil)
-		defer store.Close()
-
-		dom, err := session.BootstrapSession(store)
-		//nolint:staticcheck
-		defer dom.Close()
-		c.Assert(err, IsNil)
-	}
-
-	runtime.GC()
-	memStat := runtime.MemStats{}
-	runtime.ReadMemStats(&memStat)
-	oldHeapInUse := memStat.HeapInuse
-
-	for i := 0; i < 20; i++ {
-		initAndCloseTiDB()
-	}
-
-	runtime.GC()
-	runtime.ReadMemStats(&memStat)
-	// before the fix, initAndCloseTiDB for 20 times will cost 900 MB memory, so we test for a quite loose upper bound.
-	c.Assert(memStat.HeapInuse-oldHeapInUse, Less, uint64(300*units.MiB))
 }
 
 func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
