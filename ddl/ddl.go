@@ -259,28 +259,22 @@ type ddlCtx struct {
 }
 
 func (dc *ddlCtx) SetSchemaVersion(job *model.Job, t *meta.Meta) (_ int64, err error) {
-	if dc.lockSchemaVersion(job) {
-		err = kv.RunInNewTxn(context.Background(), dc.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			var err error
-			m := meta.NewMeta(txn)
-			dc.schemaVersion, err = m.GenSchemaVersion()
-			return err
-		})
-		if err != nil {
-			return 0, err
-		}
+	dc.lockSchemaVersion(job)
+	err = kv.RunInNewTxn(context.Background(), dc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		var err error
+		m := meta.NewMeta(txn)
+		dc.schemaVersion, err = m.GenSchemaVersion()
+		return err
+	})
+	if err != nil {
+		return 0, err
 	}
 	return dc.schemaVersion, nil
 }
 
-func (dc *ddlCtx) lockSchemaVersion(job *model.Job) bool {
-	ownerID := dc.schemaVersionOwner.Load()
-	if ownerID != job.ID {
-		dc.schemaVersionMu.Lock()
-		dc.schemaVersionOwner.Store(job.ID)
-		return true
-	}
-	return false
+func (dc *ddlCtx) lockSchemaVersion(job *model.Job) {
+	dc.schemaVersionMu.Lock()
+	dc.schemaVersionOwner.Store(job.ID)
 }
 
 func (dc *ddlCtx) ResetSchemaVersion(job *model.Job) {
