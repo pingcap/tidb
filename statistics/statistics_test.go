@@ -675,3 +675,43 @@ func SubTestHistogramProtoConversion() func(*testing.T) {
 		require.True(t, HistogramEqual(col, h, true))
 	}
 }
+
+func TestPruneTopN(t *testing.T) {
+	var topnIn, topnOut []TopNMeta
+	var totalNDV, nullCnt, sampleRows, totalRows int64
+
+	// case 1
+	topnIn = []TopNMeta{{[]byte{1}, 100_000}, {[]byte{2}, 10}}
+	totalNDV = 2
+	nullCnt = 0
+	sampleRows = 100_010
+	totalRows = 500_050
+	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	require.Equal(t, topnIn, topnOut)
+
+	// case 2
+	topnIn = []TopNMeta{
+		{[]byte{1}, 30_000},
+		{[]byte{2}, 30_000},
+		{[]byte{3}, 20_000},
+		{[]byte{4}, 20_000},
+	}
+	totalNDV = 5
+	nullCnt = 0
+	sampleRows = 100_000
+	totalRows = 10_000_000
+	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	require.Equal(t, topnIn, topnOut)
+
+	// case 3
+	topnIn = nil
+	for i := 0; i < 100; i++ {
+		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 1_000})
+	}
+	totalNDV = 100
+	nullCnt = 0
+	sampleRows = 100_000
+	totalRows = 10_000_000
+	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	require.Equal(t, topnIn, topnOut)
+}
