@@ -183,12 +183,27 @@ SplitRegions:
 	return nil
 }
 
-func (rs *RegionSplitter) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
+func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64) (bool, error) {
 	regionInfo, err := rs.client.GetRegionByID(ctx, regionID)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	return regionInfo != nil, nil
+	// the region hasn't get ready.
+	if regionInfo == nil {
+		return false, nil
+	}
+
+	// check whether the region is healthy and report.
+	// TODO: the log may be too verbose. we should use Prometheus metrics once it get ready for BR.
+	for _, peer := range regionInfo.PendingPeers {
+		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
+	}
+	for _, peer := range regionInfo.DownPeers {
+		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
+	}
+	// we ignore down peers for they are (normally) hard to be fixed in reasonable time.
+	// (or once there is a peer down, we may get stuck at waiting region get ready.)
+	return len(regionInfo.PendingPeers) == 0, nil
 }
 
 func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID uint64) (bool, error) {
@@ -216,7 +231,7 @@ func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID 
 func (rs *RegionSplitter) waitForSplit(ctx context.Context, regionID uint64) {
 	interval := SplitCheckInterval
 	for i := 0; i < SplitCheckMaxRetryTimes; i++ {
-		ok, err := rs.hasRegion(ctx, regionID)
+		ok, err := rs.hasHealthyRegion(ctx, regionID)
 		if err != nil {
 			log.Warn("wait for split failed", zap.Error(err))
 			return
@@ -420,11 +435,18 @@ func PaginateScanRegion(
 	}
 
 	var regions []*RegionInfo
-	err := utils.WithRetry(ctx, func() error {
+	var err error
+	// we don't need to return multierr. since there only 3 times retry.
+	// in most case 3 times retry have the same error. so we just return the last error.
+	// actually we'd better remove all multierr in br/lightning.
+	// because it's not easy to check multierr equals normal error.
+	// see https://github.com/pingcap/tidb/issues/33419.
+	_ = utils.WithRetry(ctx, func() error {
 		regions = []*RegionInfo{}
 		scanStartKey := startKey
 		for {
-			batch, err := client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			var batch []*RegionInfo
+			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -440,7 +462,7 @@ func PaginateScanRegion(
 				break
 			}
 		}
-		if err := CheckRegionConsistency(startKey, endKey, regions); err != nil {
+		if err = CheckRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
 			return err
 		}
