@@ -387,7 +387,7 @@ func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	return cancelOnlyNotHandledJob(job)
+	return cancelOnlyNotHandledJob(job, model.StatePublic)
 }
 
 func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
@@ -420,9 +420,9 @@ func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
-func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
+func cancelOnlyNotHandledJob(job *model.Job, initialState model.SchemaState) (ver int64, err error) {
 	// We can only cancel the not handled job.
-	if job.SchemaState == model.StateNone {
+	if job.SchemaState == initialState {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	}
@@ -437,7 +437,7 @@ func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	return cancelOnlyNotHandledJob(job)
+	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -472,13 +472,15 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackTruncateTable(t, job)
 	case model.ActionModifyColumn:
 		ver, err = rollingbackModifyColumn(w, d, t, job)
+	case model.ActionDropForeignKey:
+		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
-		model.ActionDropForeignKey, model.ActionRenameTable, model.ActionRenameTables,
+		model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
 		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement:
-		ver, err = cancelOnlyNotHandledJob(job)
+		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
