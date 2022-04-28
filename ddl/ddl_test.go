@@ -16,6 +16,8 @@ package ddl
 
 import (
 	"context"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/meta/autoid"
 	"testing"
 	"time"
 
@@ -34,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+const testLease = 5 * time.Millisecond
 
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
@@ -542,4 +546,29 @@ func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state
 		}
 		return nil
 	}))
+}
+
+func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error) {
+	var tblInfo *model.TableInfo
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		tblInfo, err1 = t.GetTable(schemaID, tableID)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tblInfo == nil {
+		return nil, errors.New("table not found")
+	}
+	alloc := autoid.NewAllocator(d.store, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return tbl, nil
 }
