@@ -399,9 +399,13 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 
 func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64, maxAutoRandom uint64) error {
 	logger := log.With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
-	if randomBase > maxAutoRandom {
-		logger.Warn("auto_random out of the maximum value TiDB supports, automatically set to the max", zap.Uint64("auto_random", randomBase))
+	if randomBase == maxAutoRandom+1 {
+		// insert a tuple with key maxAutoRandom
 		randomBase = maxAutoRandom
+	} else if randomBase > maxAutoRandom {
+		// TiDB does nothing when inserting an overflow value
+		logger.Warn("auto_random out of the maximum value TiDB supports")
+		return nil
 	}
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")

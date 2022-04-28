@@ -26,9 +26,12 @@ check_result() {
     run_sql 'SHOW TABLES IN db;'
     check_contains 'Tables_in_db: test'
     check_contains 'Tables_in_db: test1'
+    check_contains 'Tables_in_db: test2'
     run_sql 'SELECT count(*) FROM db.test;'
     check_contains 'count(*): 2'
     run_sql 'SELECT count(*) FROM db.test1;'
+    check_contains 'count(*): 2'
+    run_sql 'SELECT count(*) FROM db.test2;'
     check_contains 'count(*): 2'
 }
 
@@ -40,13 +43,23 @@ cleanup() {
 
 cleanup
 
-# db.test contains key that is less than int64 - 1
-# while db.test1 contains key that equals int64 - 1
+# auto_random_max = 2^{64-1-10}-1
+# db.test contains key auto_random_max - 1
+# db.test1 contains key auto_random_max
+# db.test2 contains key auto_random_max + 1 (overflow)
 run_lightning --sorted-kv-dir "$TEST_DIR/sst" --config "tests/$TEST_NAME/config.toml" --log-file "$TEST_DIR/lightning.log"
 check_result
-# successfully insert: max key has not reached maximum
+# successfully insert: d.test auto_random key has not reached maximum
 run_sql 'INSERT INTO db.test(b) VALUES(11);'
-# fail for insertion: db.test1 has key int64 - 1
+# fail for further insertion
+run_sql 'INSERT INTO db.test(b) VALUES(22);' 2>&1 | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
+check_contains 'ERROR'
+# fail: db.test1 has key auto_random_max
+run_sql 'INSERT INTO db.test1(b) VALUES(11);'
 run_sql 'INSERT INTO db.test1(b) VALUES(22);' 2>&1 | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
 check_contains 'ERROR'
+# successfully insert for overflow key
+run_sql 'INSERT INTO db.test2(b) VALUES(33);'
+run_sql 'INSERT INTO db.test2(b) VALUES(44);'
+run_sql 'INSERT INTO db.test2(b) VALUES(55);'
 cleanup
