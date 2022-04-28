@@ -38,8 +38,10 @@ func TestDDLStatsInfo(t *testing.T) {
 	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
 	tblInfo, err := testTableInfo(store, "t", 2)
 	require.NoError(t, err)
+	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
 	ctx := testkit.NewTestKit(t, store).Session()
-	testCreateTable(t, ctx, d, dbInfo, tblInfo)
+	err = ctx.NewTxn(context.Background())
+	require.NoError(t, err)
 
 	m := testGetTable(t, domain, tblInfo.ID)
 	// insert t values (1, 1), (2, 2), (3, 3)

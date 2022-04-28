@@ -224,6 +224,8 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(t, store, tJob1.ID, true)
 	tbl1 := testGetTable(t, domain, tblInfo1.ID)
+	err = tk.Session().NewTxn(context.Background())
+	require.NoError(t, err)
 	for i := 1; i <= 100; i++ {
 		_, err := tbl1.AddRecord(tk.Session(), types.MakeDatums(i, i, i))
 		require.NoError(t, err)
@@ -236,6 +238,8 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(t, store, tJob2.ID, true)
 	tbl2 := testGetTable(t, domain, tblInfo2.ID)
+	err = tk2.Session().NewTxn(context.Background())
+	require.NoError(t, err)
 	for i := 1; i <= 1034; i++ {
 		_, err := tbl2.AddRecord(tk2.Session(), types.MakeDatums(i, i, i))
 		require.NoError(t, err)
