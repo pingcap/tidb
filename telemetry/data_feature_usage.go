@@ -34,6 +34,7 @@ type featureUsage struct {
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
 	ClusterIndex         *ClusterIndexUsage    `json:"clusterIndex"`
+	NewClusterIndex      *NewClusterIndexUsage `json:"newClusterIndex"`
 	TemporaryTable       bool                  `json:"temporaryTable"`
 	CTE                  *m.CTEUsageCounter    `json:"cte"`
 	CachedTable          bool                  `json:"cachedTable"`
@@ -52,7 +53,7 @@ type placementPolicyUsage struct {
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	var usage featureUsage
 	var err error
-	usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx)
+	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
@@ -109,8 +110,20 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 // while avoiding circle dependency with domain package.
 var GetDomainInfoSchema func(sessionctx.Context) infoschema.InfoSchema
 
+// ClusterIndexUsage records the usage info of all the tables, no more than 10k tables, Deprecated
+type ClusterIndexUsage map[string]TableClusteredInfo
+
+// TableClusteredInfo records the usage info of clusterindex of each table
+// CLUSTERED, NON_CLUSTERED, NA
+type TableClusteredInfo struct {
+	IsClustered   bool   `json:"isClustered"`   // True means CLUSTERED, False means NON_CLUSTERED
+	ClusterPKType string `json:"clusterPKType"` // INT means clustered PK type is int
+	// NON_INT means clustered PK type is not int
+	// NA means this field is no meaningful information
+}
+
 // ClusterIndexUsage records the cluster index usage info of all the tables
-type ClusterIndexUsage struct {
+type NewClusterIndexUsage struct {
 	// The number of user's tables with clustered index enabled.
 	NumClusteredTables uint64 `json:"numClusteredTables"`
 	// The number of user's tables.
@@ -118,8 +131,9 @@ type ClusterIndexUsage struct {
 }
 
 // getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
-func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
-	var usage ClusterIndexUsage
+func getClusterIndexUsageInfo(ctx sessionctx.Context) (ncu *NewClusterIndexUsage, cu *ClusterIndexUsage, err error) {
+	var newUsage NewClusterIndexUsage
+	usage := make(ClusterIndexUsage)
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
 	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
@@ -128,7 +142,7 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 		FROM information_schema.tables
 		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	defer func() {
@@ -146,7 +160,7 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 
 	err = ctx.RefreshTxnCtx(context.TODO())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// check ClusterIndex information for each table
@@ -156,11 +170,11 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 			continue
 		}
 		if row.GetString(0) == "CLUSTERED" {
-			usage.NumClusteredTables++
+			newUsage.NumClusteredTables++
 		}
 	}
-	usage.NumTotalTables = uint64(len(rows))
-	return &usage, nil
+	newUsage.NumTotalTables = uint64(len(rows))
+	return &newUsage, &usage, nil
 }
 
 // TxnUsage records the usage info of transaction related features, including
