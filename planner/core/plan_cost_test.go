@@ -116,6 +116,37 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t use index(b) where b+200 < 1000",            // pushed down to lookup index-side
 		"select * from t use index(b) where c+200 < 1000",            // pushed down to lookup table-side
 		"select * from t use index(b) where mod(b+c, 200) < 100",     // not pushed down
+		// aggregation
+		"select /*+ hash_agg() */ count(*) from t use index(primary) where a < 200",
+		"select /*+ hash_agg() */ sum(a) from t use index(primary) where a < 200",
+		"select /*+ hash_agg() */ avg(a), b from t use index(primary) where a < 200 group by b",
+		"select /*+ stream_agg() */ count(*) from t use index(primary) where a < 200",
+		"select /*+ stream_agg() */ sum(a) from t use index(primary) where a < 200",
+		"select /*+ stream_agg() */ avg(a), b from t use index(primary) where a < 200 group by b",
+		"select /*+ stream_agg() */ avg(d), c from t use index(cd) group by c",
+		// limit
+		"select * from t use index(primary) where a < 200 limit 10", // table-scan + limit
+		"select * from t use index(primary) where a = 200  limit 10",
+		"select a, b, d from t use index(primary) where a < 200 limit 10",
+		"select a, b, d from t use index(primary) where a = 200 limit 10",
+		"select a from t use index(primary) where a < 200 limit 10",
+		"select a from t use index(primary) where a = 200 limit 10",
+		"select b from t use index(b) where b < 200 limit 10", // index-scan + limit
+		"select b from t use index(b) where b = 200 limit 10",
+		"select c, d from t use index(cd) where c < 200 limit 10",
+		"select c, d from t use index(cd) where c = 200 limit 10",
+		"select c, d from t use index(cd) where c = 200 and d < 200 limit 10",
+		"select d from t use index(cd) where c < 200 limit 10",
+		"select d from t use index(cd) where c = 200 limit 10",
+		"select d from t use index(cd) where c = 200 and d < 200 limit 10",
+		"select * from t use index(b) where b < 200 limit 10", // look-up + limit
+		"select * from t use index(b) where b = 200 limit 10",
+		"select a, b from t use index(cd) where c < 200 limit 10",
+		"select a, b from t use index(cd) where c = 200 limit 10",
+		"select a, b from t use index(cd) where c = 200 and d < 200 limit 10",
+		"select * from t use index(cd) where c < 200 limit 10",
+		"select * from t use index(cd) where c = 200 limit 10",
+		"select * from t use index(cd) where c = 200 and d < 200 limit 10",
 		// sort
 		"select * from t use index(primary) where a < 200 order by a", // table-scan + sort
 		"select * from t use index(primary) where a = 200  order by a",
