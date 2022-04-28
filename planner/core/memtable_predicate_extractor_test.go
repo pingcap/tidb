@@ -1427,7 +1427,7 @@ func TestPredicateQuery(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int, abclmn int);")
-
+	tk.MustExec("create table abclmn(a int);")
 	tk.MustQuery("show columns from t like 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("show columns from t like 'ABCLMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
 	tk.MustQuery("show columns from t like 'abc%'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
@@ -1448,4 +1448,13 @@ func TestPredicateQuery(t *testing.T) {
 
 	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)
 	tk.MustGetErrCode("show columns from t like `id`", errno.ErrBadField)
+
+	tk.MustQuery("show tables like 't'").Check(testkit.Rows("t"))
+	tk.MustQuery("show tables like 'T'").Check(testkit.Rows("t"))
+	tk.MustQuery("show tables like 'ABCLMN'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show tables like 'ABC%'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show tables like '%lmn'").Check(testkit.Rows("abclmn"))
+	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
+	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
+	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
 }
