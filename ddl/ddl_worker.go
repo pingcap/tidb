@@ -799,7 +799,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
 
 	if job.IsCancelled() {
-		defer d.UnlockSchemaVersion(job)
+		defer d.ResetSchemaVersion(job)
 		w.sessForJob.StmtRollback()
 		err = w.finishDDLJob(t, job)
 		if err != nil {
@@ -838,14 +838,14 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	err = w.UpdateDDLJob(t, job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sessForJob.RollbackTxn(context.TODO())
-		d.UnlockSchemaVersion(job)
+		d.ResetSchemaVersion(job)
 		w.unlockSeqNum()
 		return err
 	}
 	writeBinlog(d.binlogCli, txn, job)
 	w.sessForJob.StmtCommit()
 	err = w.sessForJob.CommitTxn(w.ctx)
-	d.UnlockSchemaVersion(job)
+	d.ResetSchemaVersion(job)
 	if err != nil {
 		log.Error("sessForJob.CommitTxn", zap.Error(err))
 		w.unlockSeqNum()
@@ -1005,7 +1005,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 			time.Sleep(GetWaitTimeWhenErrorOccurred())
 		}
-		d.UnlockSchemaVersion(job)
+		d.ResetSchemaVersion(job)
 
 		if err != nil {
 			if w.lockSeqNum {
@@ -1414,7 +1414,7 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
 func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
-	schemaVersion, err := d.GenSchemaVersion(job, t)
+	schemaVersion, err := d.SetSchemaVersion(job, t)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

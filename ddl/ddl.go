@@ -258,7 +258,7 @@ type ddlCtx struct {
 	}
 }
 
-func (dc *ddlCtx) GenSchemaVersion(job *model.Job, t *meta.Meta) (_ int64, err error) {
+func (dc *ddlCtx) SetSchemaVersion(job *model.Job, t *meta.Meta) (_ int64, err error) {
 	if dc.lockSchemaVersion(job) {
 		dc.schemaVersion, err = t.GenSchemaVersion()
 		if err != nil {
@@ -278,7 +278,7 @@ func (dc *ddlCtx) lockSchemaVersion(job *model.Job) bool {
 	return false
 }
 
-func (dc *ddlCtx) UnlockSchemaVersion(job *model.Job) {
+func (dc *ddlCtx) ResetSchemaVersion(job *model.Job) {
 	if job == nil {
 		return
 	}
