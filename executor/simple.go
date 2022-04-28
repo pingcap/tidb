@@ -786,6 +786,12 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
+		if len(spec.User.Username) > auth.UserNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
+		}
+		if len(spec.User.Hostname) > auth.HostNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
+		}
 		if len(users) > 0 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
@@ -1081,6 +1087,12 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
+		if len(newUser.Username) > auth.UserNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
+		}
+		if len(newUser.Hostname) > auth.HostNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
+		}
 		exists, err := userExistsInternal(sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
 			return err
@@ -1596,8 +1608,20 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 }
 
 func (e *SimpleExec) autoNewTxn() bool {
+	// Some statements cause an implicit commit
+	// See https://dev.mysql.com/doc/refman/5.7/en/implicit-commit.html
 	switch e.Statement.(type) {
-	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt:
+	// Data definition language (DDL) statements that define or modify database objects.
+	// (handled in DDL package)
+	// Statements that implicitly use or modify tables in the mysql database.
+	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt, *ast.RevokeRoleStmt, *ast.GrantRoleStmt:
+		return true
+	// Transaction-control and locking statements.  BEGIN, LOCK TABLES, SET autocommit = 1 (if the value is not already 1), START TRANSACTION, UNLOCK TABLES.
+	// (handled in other place)
+	// Data loading statements. LOAD DATA
+	// (handled in other place)
+	// Administrative statements. TODO: ANALYZE TABLE, CACHE INDEX, CHECK TABLE, FLUSH, LOAD INDEX INTO CACHE, OPTIMIZE TABLE, REPAIR TABLE, RESET (but not RESET PERSIST).
+	case *ast.FlushStmt:
 		return true
 	}
 	return false

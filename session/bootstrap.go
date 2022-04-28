@@ -37,10 +37,12 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -80,6 +82,8 @@ const (
 		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_role_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Drop_role_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -89,8 +93,6 @@ const (
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -396,6 +398,24 @@ const (
 		UNIQUE KEY table_version (table_id, version),
 		KEY table_create_time (table_id, create_time)
 	);`
+	// CreateAnalyzeJobs stores the analyze jobs.
+	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
+		id BIGINT(64) UNSIGNED NOT NULL AUTO_INCREMENT,
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		table_schema CHAR(64) NOT NULL DEFAULT '',
+		table_name CHAR(64) NOT NULL DEFAULT '',
+		partition_name CHAR(64) NOT NULL DEFAULT '',
+		job_info TEXT NOT NULL,
+		processed_rows BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		start_time TIMESTAMP,
+		end_time TIMESTAMP,
+		state ENUM('pending', 'running', 'finished', 'failed') NOT NULL,
+		fail_reason TEXT,
+		instance CHAR(64) NOT NULL comment 'address of the TiDB instance executing the analyze job',
+		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
+		PRIMARY KEY (id),
+		KEY (update_time)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -583,13 +603,17 @@ const (
 	version84 = 84
 	// version85 updates bindings with status 'using' in mysql.bind_info table to 'enabled' status
 	version85 = 85
-	// version86 changes global variable `tidb_enable_top_sql` value from false to true.
+	// version86 update mysql.tables_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References').
 	version86 = 86
+	// version87 adds the mysql.analyze_jobs table
+	version87 = 87
+	// version88 fixes the issue https://github.com/pingcap/tidb/issues/33650.
+	version88 = 88
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version86
+var currentBootstrapVersion int64 = version88
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -679,6 +703,8 @@ var (
 		upgradeToVer84,
 		upgradeToVer85,
 		upgradeToVer86,
+		upgradeToVer87,
+		upgradeToVer88,
 	}
 )
 
@@ -1336,6 +1362,11 @@ func upgradeToVer54(s Session, ver int64) {
 	// the tidb-server restarts.
 	// If it's a newly deployed cluster, we do not need to write the value into
 	// mysql.tidb, since no compatibility problem will happen.
+
+	// This bootstrap task becomes obsolete in TiDB 5.0+, because it appears that the
+	// default value of mem-quota-query changes back to 1GB. In TiDB 6.1+ mem-quota-query
+	// is no longer a config option, but instead a system variable (tidb_mem_quota_query).
+
 	if ver <= version38 {
 		writeMemoryQuotaQuery(s)
 	}
@@ -1759,8 +1790,22 @@ func upgradeToVer86(s Session, ver int64) {
 	if ver >= version86 {
 		return
 	}
-	// Enable Top SQL by default after upgrade
-	mustExecute(s, "set @@global.tidb_enable_top_sql = 1")
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
+}
+
+func upgradeToVer87(s Session, ver int64) {
+	if ver >= version87 {
+		return
+	}
+	doReentrantDDL(s, CreateAnalyzeJobs)
+}
+
+func upgradeToVer88(s Session, ver int64) {
+	if ver >= version88 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_slave_priv` `Repl_slave_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Execute_priv`")
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_client_priv` `Repl_client_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`")
 }
 
 func writeOOMAction(s Session) {
@@ -1853,6 +1898,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsHistory)
 	// Create stats_meta_history table.
 	mustExecute(s, CreateStatsMetaHistory)
+	// Create analyze_jobs table.
+	mustExecute(s, CreateAnalyzeJobs)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1869,10 +1916,10 @@ func doDMLWorks(s Session) {
 			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
 		}
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`, u.Username)
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`, u.Username)
 	} else {
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
 	}
 
 	// Init global system variables table.
@@ -1915,10 +1962,6 @@ func doDMLWorks(s Session) {
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
-
-			if v.GlobalConfigName != "" {
-				domain.GetDomain(s).NotifyGlobalConfigChange(v.GlobalConfigName, variable.OnOffToTrueFalse(vVal))
-			}
 		}
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
@@ -1976,4 +2019,33 @@ func oldPasswordUpgrade(pass string) (string, error) {
 	hash2 := auth.Sha1Hash(hash1)
 	newpass := fmt.Sprintf("*%X", hash2)
 	return newpass, nil
+}
+
+// rebuildAllPartitionValueMapAndSorted rebuilds all value map and sorted info for list column partitions with InfoSchema.
+func rebuildAllPartitionValueMapAndSorted(s *session) {
+	type partitionExpr interface {
+		PartitionExpr() (*tables.PartitionExpr, error)
+	}
+
+	p := parser.New()
+	is := s.GetInfoSchema().(infoschema.InfoSchema)
+	for _, dbInfo := range is.AllSchemas() {
+		for _, t := range is.SchemaTables(dbInfo.Name) {
+			pi := t.Meta().GetPartitionInfo()
+			if pi == nil || pi.Type != model.PartitionTypeList {
+				continue
+			}
+
+			pe, err := t.(partitionExpr).PartitionExpr()
+			if err != nil {
+				panic("partition table gets partition expression failed")
+			}
+			for _, cp := range pe.ColPrunes {
+				if err = cp.RebuildPartitionValueMapAndSorted(p); err != nil {
+					logutil.BgLogger().Warn("build list column partition value map and sorted failed")
+					break
+				}
+			}
+		}
+	}
 }

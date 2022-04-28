@@ -121,7 +121,6 @@ type Meta struct {
 // If the current Meta needs to handle a job, jobListKey is the type of the job's list.
 func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
-	txn.SetOption(kv.SyncLog, struct{}{})
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	listKey := DefaultJobListKey

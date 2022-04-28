@@ -130,13 +130,6 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
 	pos += 4
 
-	if topsqlstate.TopSQLEnabled() {
-		preparedStmt, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
-		if preparedStmt != nil && preparedStmt.SQLDigest != nil {
-			ctx = topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest, "", nil, false)
-		}
-	}
-
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
@@ -288,7 +281,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	if topsqlstate.TopSQLEnabled() {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
-			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil, false)
+			ctx = topsql.AttachAndRegisterSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, false)
 		}
 	}
 	sql := ""

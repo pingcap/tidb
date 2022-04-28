@@ -24,9 +24,17 @@ import (
 const (
 	// states used for the TableCounter labels
 	TableStatePending   = "pending"
-	TableStateWritten   = "written"
 	TableStateImported  = "imported"
 	TableStateCompleted = "completed"
+
+	BytesStateTotalRestore   = "total_restore" // total source data bytes needs to restore
+	BytesStateRestored       = "restored"      // source data bytes restored during restore engine
+	BytesStateRestoreWritten = "written"       // bytes written during restore engine
+	BytesStateImported       = "imported"      // bytes imported during import engine
+
+	ProgressPhaseTotal   = "total"   // total restore progress(not include post-process, like checksum and analyze)
+	ProgressPhaseRestore = "restore" // restore engine progress
+	ProgressPhaseImport  = "import"  // import engine progress
 
 	// results used for the TableCounter labels
 	TableResultSuccess = "success"
@@ -193,6 +201,14 @@ var (
 			Help:      "disk/memory size currently occupied by intermediate files in local backend",
 		}, []string{"medium"},
 	)
+
+	ProgressGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "lightning",
+			Name:      "progress",
+			Help:      "progress of lightning phase",
+		}, []string{"phase"},
+	)
 )
 
 //nolint:gochecknoinits // TODO: refactor
@@ -216,6 +232,7 @@ func init() {
 	prometheus.MustRegister(ChunkParserReadBlockSecondsHistogram)
 	prometheus.MustRegister(ApplyWorkerSecondsHistogram)
 	prometheus.MustRegister(LocalStorageUsageBytesGauge)
+	prometheus.MustRegister(ProgressGauge)
 }
 
 func RecordTableCount(status string, err error) {

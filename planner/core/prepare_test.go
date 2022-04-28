@@ -1064,8 +1064,8 @@ func TestPrepareCacheForPartition(t *testing.T) {
 	tk := testkit.NewTestKitWithSession(t, store, se)
 
 	tk.MustExec("use test")
-	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
-		tk.MustExec("set @@tidb_partition_prune_mode = '" + val + "'")
+	for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
+		tk.MustExec("set @@tidb_partition_prune_mode = '" + pruneMode + "'")
 		// Test for PointGet and IndexRead.
 		tk.MustExec("drop table if exists t_index_read")
 		tk.MustExec("create table t_index_read (id int, k int, c varchar(10), primary key (id, k)) partition by hash(id+k) partitions 10")
@@ -1166,6 +1166,22 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows("hij"))
 		tk.MustExec("set @id=100")
 		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows())
+
+		// https://github.com/pingcap/tidb/issues/33031
+		tk.MustExec(`drop table if exists Issue33031`)
+		tk.MustExec(`CREATE TABLE Issue33031 (COL1 int(16) DEFAULT '29' COMMENT 'NUMERIC UNIQUE INDEX', COL2 bigint(20) DEFAULT NULL, UNIQUE KEY UK_COL1 (COL1)) PARTITION BY RANGE (COL1) (PARTITION P0 VALUES LESS THAN (0))`)
+		tk.MustExec(`insert into Issue33031 values(-5, 7)`)
+		tk.MustExec(`prepare stmt from 'select *,? from Issue33031 where col2 < ? and col1 in (?, ?)'`)
+		tk.MustExec(`set @a=111, @b=1, @c=2, @d=22`)
+		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows())
+		tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
+		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
+		if pruneMode == string(variable.Dynamic) {
+			// When the temporary disabling of prepared plan cache for dynamic partition prune mode is disabled, change this to 1!
+			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+		} else {
+			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+		}
 	}
 }
 
@@ -1809,7 +1825,27 @@ func TestIssue29565(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 	tk.MustExec(`set @a=5408499810319315618, @b=-9999999999999999999999999999999999999999999999999999999`)
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("-9999999999999999999999999999999999999999999999999999999"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @a=7309027171262036496, @b=-9798213896406520625`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestIssue31730(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists PK_S_MULTI_37;`)
+	tk.MustExec(`CREATE TABLE PK_S_MULTI_37 (COL1 decimal(55,0) NOT NULL, COL2 decimal(55,0) NOT NULL,PRIMARY KEY (COL1, COL2) /*T![clustered_index] NONCLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`insert into PK_S_MULTI_37 values(-9999999999999999999999999999999999999999999999, 1);`)
+	tk.MustExec(`prepare stmt from 'SELECT SUM(COL1+?), col2 FROM PK_S_MULTI_37 GROUP BY col2';`)
+	tk.MustExec(`set @a=1;`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("-9999999999999999999999999999999999999999999998 1"))
 }
 
 func TestIssue28828(t *testing.T) {
@@ -2392,6 +2428,7 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("create database test_plan_cache")
 	tk.MustExec("use test_plan_cache")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@tidb_enable_list_partition = 1")
 
 	type testcase struct {
 		t1Create string
@@ -2501,7 +2538,8 @@ func TestPartitionTable(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			tk.MustExec(fmt.Sprintf("set @a=%v", tc.varGener()))
 			result1 := tk.MustQuery("execute stmt1 using @a").Sort().Rows()
-			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			// When https://github.com/pingcap/tidb/pull/33098 is reverted this should be 1 again
+			tk.MustQuery("select @@last_plan_from_cache /* i=" + strconv.Itoa(i) + " prepared statement: (t1) " + tc.query + "\n-- create table: " + tc.t1Create + "*/").Check(testkit.Rows("0"))
 			tk.MustQuery("execute stmt2 using @a").Sort().Check(result1)
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 		}
@@ -2612,10 +2650,16 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
 
 		var rscan, rlookup, rpoint, rbatch [][]interface{}
+		var expectedFromPlanCache string
 		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
 			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexscan using @mina, @maxa`, tbl)).Sort()
+			if id == 2 {
+				expectedFromPlanCache = "1"
+			} else {
+				expectedFromPlanCache = "0"
+			}
 			if i > 0 {
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+				tk.MustQuery(`select @@last_plan_from_cache /* table: ` + tbl + " */").Check(testkit.Rows(expectedFromPlanCache))
 			}
 			if id == 0 {
 				rscan = scan.Rows()
@@ -2625,7 +2669,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 
 			lookup := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexlookup using @mina, @maxa`, tbl)).Sort()
 			if i > 0 {
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(expectedFromPlanCache))
 			}
 			if id == 0 {
 				rlookup = lookup.Rows()
@@ -2637,7 +2681,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 			if tbl == `tnormalPK` && i > 0 {
 				// PlanCache cannot support PointGet now since we haven't relocated partition after rebuilding range.
 				// Please see Execute.rebuildRange for more details.
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(expectedFromPlanCache))
 			}
 			if id == 0 {
 				rpoint = point.Rows()
@@ -2647,7 +2691,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 
 			batch := tk.MustQuery(fmt.Sprintf(`execute stmt%v_batchget_idx using @a0, @a1, @a2`, tbl)).Sort()
 			if i > 0 {
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(expectedFromPlanCache))
 			}
 			if id == 0 {
 				rbatch = batch.Rows()

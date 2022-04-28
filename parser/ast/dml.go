@@ -14,8 +14,6 @@
 package ast
 
 import (
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
@@ -33,6 +31,7 @@ var (
 	_ DMLNode = &ShowStmt{}
 	_ DMLNode = &LoadDataStmt{}
 	_ DMLNode = &SplitRegionStmt{}
+	_ DMLNode = &NonTransactionalDeleteStmt{}
 
 	_ Node = &Assignment{}
 	_ Node = &ByItem{}
@@ -119,7 +118,9 @@ func (*Join) resultSet() {}
 // We get (t1 join t3) left join t2, the semantics is correct.
 func NewCrossJoin(left, right ResultSetNode) (n *Join) {
 	rj, ok := right.(*Join)
-	if !ok || rj.Right == nil {
+	// don't break the explicit parents name scope constraints.
+	// this kind of join re-order can be done in logical-phase after the name resolution.
+	if !ok || rj.Right == nil || rj.ExplicitParens {
 		return &Join{Left: left, Right: right, Tp: CrossJoin}
 	}
 
@@ -286,14 +287,7 @@ func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 		ctx.WritePlain(".")
 	} else if ctx.DefaultDB != "" {
 		// Try CTE, for a CTE table name, we shouldn't write the database name.
-		ok := false
-		for _, name := range ctx.CTENames {
-			if strings.EqualFold(name, n.Name.String()) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
+		if !ctx.IsCTETableName(n.Name.L) {
 			ctx.WriteName(ctx.DefaultDB)
 			ctx.WritePlain(".")
 		}
@@ -1121,7 +1115,7 @@ func (n *WithClause) Restore(ctx *format.RestoreCtx) error {
 		if n.IsRecursive {
 			// If the CTE is recursive, we should make it visible for the CTE's query.
 			// Otherwise, we should put it to stack after building the CTE's query.
-			ctx.CTENames = append(ctx.CTENames, cte.Name.L)
+			ctx.RecordCTEName(cte.Name.L)
 		}
 		if len(cte.ColNameList) > 0 {
 			ctx.WritePlain(" (")
@@ -1139,7 +1133,7 @@ func (n *WithClause) Restore(ctx *format.RestoreCtx) error {
 			return err
 		}
 		if !n.IsRecursive {
-			ctx.CTENames = append(ctx.CTENames, cte.Name.L)
+			ctx.RecordCTEName(cte.Name.L)
 		}
 	}
 	ctx.WritePlain(" ")
@@ -1165,10 +1159,7 @@ func (n *WithClause) Accept(v Visitor) (Node, bool) {
 // Restore implements Node interface.
 func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.WithBeforeBraces {
-		l := len(ctx.CTENames)
-		defer func() {
-			ctx.CTENames = ctx.CTENames[:l]
-		}()
+		defer ctx.RestoreCTEFunc()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -1516,10 +1507,7 @@ type SetOprSelectList struct {
 // Restore implements Node interface.
 func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		l := len(ctx.CTENames)
-		defer func() {
-			ctx.CTENames = ctx.CTENames[:l]
-		}()
+		defer ctx.RestoreCTEFunc()()
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
 		}
@@ -1620,10 +1608,7 @@ func (*SetOprStmt) resultSet() {}
 // Restore implements Node interface.
 func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		l := len(ctx.CTENames)
-		defer func() {
-			ctx.CTENames = ctx.CTENames[:l]
-		}()
+		defer ctx.RestoreCTEFunc()()
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore UnionStmt.With")
 		}
@@ -2205,10 +2190,7 @@ type DeleteStmt struct {
 // Restore implements Node interface.
 func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		l := len(ctx.CTENames)
-		defer func() {
-			ctx.CTENames = ctx.CTENames[:l]
-		}()
+		defer ctx.RestoreCTEFunc()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
@@ -2349,6 +2331,70 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+const (
+	NoDryRun = iota
+	DryRunQuery
+	DryRunSplitDml
+)
+
+type NonTransactionalDeleteStmt struct {
+	dmlNode
+
+	DryRun      int         // 0: no dry run, 1: dry run the query, 2: dry run split DMLs
+	ShardColumn *ColumnName // if it's nil, the handle column is automatically chosen for it
+	Limit       uint64
+	DeleteStmt  *DeleteStmt
+}
+
+// Restore implements Node interface.
+func (n *NonTransactionalDeleteStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SPLIT ")
+	if n.ShardColumn != nil {
+		ctx.WriteKeyWord("ON ")
+		if err := n.ShardColumn.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		ctx.WritePlain(" ")
+	}
+	ctx.WriteKeyWord("LIMIT ")
+	ctx.WritePlainf("%d ", n.Limit)
+	if n.DryRun == DryRunSplitDml {
+		ctx.WriteKeyWord("DRY RUN ")
+	}
+	if n.DryRun == DryRunQuery {
+		ctx.WriteKeyWord("DRY RUN QUERY ")
+	}
+	if err := n.DeleteStmt.Restore(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *NonTransactionalDeleteStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*NonTransactionalDeleteStmt)
+	if n.ShardColumn != nil {
+		node, ok := n.ShardColumn.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ShardColumn = node.(*ColumnName)
+	}
+	if n.DeleteStmt != nil {
+		node, ok := n.DeleteStmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.DeleteStmt = node.(*DeleteStmt)
+	}
+	return v.Leave(n)
+}
+
 // UpdateStmt is a statement to update columns of existing rows in tables with new values.
 // See https://dev.mysql.com/doc/refman/5.7/en/update.html
 type UpdateStmt struct {
@@ -2369,10 +2415,7 @@ type UpdateStmt struct {
 // Restore implements Node interface.
 func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
-		l := len(ctx.CTENames)
-		defer func() {
-			ctx.CTENames = ctx.CTENames[:l]
-		}()
+		defer ctx.RestoreCTEFunc()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err

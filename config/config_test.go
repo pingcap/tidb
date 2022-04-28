@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -106,9 +105,6 @@ func TestNullableBoolUnmarshal(t *testing.T) {
 func TestLogConfig(t *testing.T) {
 	var conf Config
 	configFile := "log_config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
-
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func() {
@@ -179,9 +175,6 @@ func TestConfig(t *testing.T) {
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Log.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	configFile := "config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
-
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -217,7 +210,6 @@ enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
-mem-quota-query = 10000
 max-index-length = 3080
 index-limit = 70
 table-column-count-limit = 4000
@@ -292,7 +284,6 @@ grpc-max-send-msg-size = 40960
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.MaxServerConnections)
-	require.Equal(t, int64(10000), conf.MemQuotaQuery)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)
@@ -327,7 +318,14 @@ grpc-max-send-msg-size = 40960
 [log.file]
 log-rotate = true
 [performance]
-mem-profile-interval="1m"`)
+mem-profile-interval="1m"
+[stmt-summary]
+enable=false
+enable-internal-query=true
+max-stmt-count=1000
+max-sql-length=1024
+refresh-interval=100
+history-size=100`)
 	require.NoError(t, err)
 	err = conf.Load(configFile)
 	tmp := err.(*ErrConfigValidationFailed)
@@ -371,7 +369,7 @@ spilled-file-encryption-method = "aes128-ctr"
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
 
-	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	configFile = "config.toml.example"
 	require.NoError(t, conf.Load(configFile))
 
 	// Make sure the example config is the same as default config except `auto_tls`.
@@ -391,7 +389,6 @@ spilled-file-encryption-method = "aes128-ctr"
 
 	// Test for TLS config.
 	certFile := "cert.pem"
-	certFile = filepath.Join(filepath.Dir(localFile), certFile)
 	f, err = os.Create(certFile)
 	require.NoError(t, err)
 	_, err = f.WriteString(`-----BEGIN CERTIFICATE-----
@@ -417,7 +414,6 @@ c933WW1E0hCtvuGxWFIFtoJMQoyH0Pl4ACmY/6CokCCZKDInrPdhhf3MGRjkkw==
 	require.NoError(t, f.Close())
 
 	keyFile := "key.pem"
-	keyFile = filepath.Join(filepath.Dir(localFile), keyFile)
 	f, err = os.Create(keyFile)
 	require.NoError(t, err)
 	_, err = f.WriteString(`-----BEGIN RSA PRIVATE KEY-----
@@ -651,8 +647,7 @@ func TestTcpNoDelay(t *testing.T) {
 
 func TestConfigExample(t *testing.T) {
 	conf := NewConfig()
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile := filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	configFile := "config.toml.example"
 	metaData, err := toml.DecodeFile(configFile, conf)
 	require.NoError(t, err)
 	keys := metaData.Keys()

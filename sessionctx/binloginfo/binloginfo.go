@@ -21,8 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-tools/tidb-binlog/node"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -30,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/tidb-binlog/node"
+	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"

@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -340,15 +340,39 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 	return mapper
 }
 
+//batchInsertSize is the every insert values size limit.Used in such as DumpIndexUsageToKV,DumpColStatsUsageToKV
+const batchInsertSize = 10
+
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
 	ctx := context.Background()
 	mapper := h.sweepIdxUsageList()
+	type FullIndexUsageInformation struct {
+		id          GlobalIndexID
+		information IndexUsageInformation
+	}
+	indexInformationSlice := make([]FullIndexUsageInformation, 0, len(mapper))
 	for id, value := range mapper {
-		const sql = `insert into mysql.SCHEMA_INDEX_USAGE values (%?, %?, %?, %?, %?) on duplicate key update query_count=query_count+%?, rows_selected=rows_selected+%?, last_used_at=greatest(last_used_at, %?)`
-		_, _, err := h.execRestrictedSQL(ctx, sql, id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
-		if err != nil {
-			return err
+		indexInformationSlice = append(indexInformationSlice, FullIndexUsageInformation{id: id, information: value})
+	}
+	for i := 0; i < len(mapper); i += batchInsertSize {
+		end := i + batchInsertSize
+		if end > len(mapper) {
+			end = len(mapper)
+		}
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "insert into mysql.SCHEMA_INDEX_USAGE (table_id,index_id,query_count,rows_selected,last_used_at) values")
+		for j := i; j < end; j++ {
+			index := indexInformationSlice[j]
+			sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)", index.id.TableID, index.id.IndexID,
+				index.information.QueryCount, index.information.RowsSelected, index.information.LastUsedAt)
+			if j < end-1 {
+				sqlexec.MustFormatSQL(sql, ",")
+			}
+		}
+		sqlexec.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
+		if _, _, err := h.execRestrictedSQL(ctx, sql.String()); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -377,7 +401,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
-	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
+	tbl, ok := h.statsCache.Load().(statsCache).Get(id)
 	if !ok {
 		// No need to dump if the stats is invalid.
 		return false
@@ -573,7 +597,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 			if fb.Tp == statistics.PkType {
 				err = h.DumpFeedbackToKV(fb)
 			} else {
-				t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
+				t, ok := h.statsCache.Load().(statsCache).Get(fb.PhysicalID)
 				if !ok {
 					continue
 				}
@@ -737,50 +761,32 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	}
 
 	for _, ptbl := range tables {
-		// this func lets `defer` works normally, where `Close()` should be called before any return
-		err = func() error {
-			tbl := ptbl.GetInt64(0)
-			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%? order by hist_id, is_index"
-			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tbl)
+		tableID, histID, isIndex := ptbl.GetInt64(0), int64(-1), int64(-1)
+		for {
+			// fetch at most 100000 rows each time to avoid OOM
+			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id = %? and is_index >= %? and hist_id > %? order by is_index, hist_id limit 100000"
+			rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, histID, isIndex)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			defer terror.Call(rc.Close)
-			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
-			var rows []chunk.Row
-			for {
-				req := rc.NewChunk(nil)
-				iter := chunk.NewIterator4Chunk(req)
-				err := rc.Next(context.TODO(), req)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if req.NumRows() == 0 {
-					if len(rows) > 0 {
-						if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+			if len(rows) == 0 {
+				break
+			}
+			startIdx := 0
+			for i, row := range rows {
+				if row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
+					if i > 0 {
+						if err = h.handleSingleHistogramUpdate(is, rows[startIdx:i]); err != nil {
 							return errors.Trace(err)
 						}
 					}
-					break
-				}
-				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-					// len(rows) > 100000 limits the rows to avoid OOM
-					if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex || len(rows) > 100000 {
-						if len(rows) > 0 {
-							if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
-								return errors.Trace(err)
-							}
-						}
-						tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-						rows = rows[:0]
-					}
-					rows = append(rows, row)
+					histID, isIndex = row.GetInt64(1), row.GetInt64(2)
+					startIdx = i
 				}
 			}
-			return nil
-		}()
-		if err != nil {
-			return err
+			if err = h.handleSingleHistogramUpdate(is, rows[startIdx:]); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -911,8 +917,8 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
 	})
 	// Use batch insert to reduce cost.
-	for i := 0; i < len(pairs); i += 10 {
-		end := i + 10
+	for i := 0; i < len(pairs); i += batchInsertSize {
+		end := i + batchInsertSize
 		if end > len(pairs) {
 			end = len(pairs)
 		}
@@ -1046,11 +1052,22 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		return false
 	}
 	pruneMode := h.CurrentPruneMode()
+	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
+	rd.Shuffle(len(dbs), func(i, j int) {
+		dbs[i], dbs[j] = dbs[j], dbs[i]
+	})
 	for _, db := range dbs {
 		if util.IsMemOrSysDB(strings.ToLower(db)) {
 			continue
 		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
+		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
+		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
+		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
+		// TODO: Design a priority queue to place the table which needs analyze most in the front.
+		rd.Shuffle(len(tbls), func(i, j int) {
+			tbls[i], tbls[j] = tbls[j], tbls[i]
+		})
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			if tblInfo.IsView() {
@@ -1190,7 +1207,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(), sql, params...)
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(h.serverIDGetter), sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -1305,7 +1322,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return
 	}
@@ -1346,7 +1363,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
-	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return nil
 	}
@@ -1357,7 +1374,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	if !tablePseudo {
 		return nil
 	}
-	isIndex := q.Hist.Tp.Tp == mysql.TypeBlob
+	isIndex := q.Hist.Tp.GetType() == mysql.TypeBlob
 	id := q.Hist.ID
 	if isIndex && (t.Indices[id] == nil || !t.Indices[id].NotAccurate()) {
 		return nil

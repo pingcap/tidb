@@ -1,5 +1,10 @@
-ddl TestModifyColumn
-util/cpuprofile TestGetCPUProfile
-executor TestDefaultValForAnalyze
+ddl TestModifyColumnTypeWhenInterception
 executor TestPBMemoryLeak
-executor TestInvalidReadCacheTable
+executor TestIndexJoin31494
+server TestGetSchemaStorage
+executor TestIn
+ddl TestModifyColumn
+executor TestDefaultValForAnalyze
+session testPessimisticSuite.TestDeadlock
+ddl TestCreateTable
+executor TestFlushPrivileges

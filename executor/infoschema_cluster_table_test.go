@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -188,6 +189,16 @@ func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool
 	return rs, ok
 }
 
+func (sm *mockSessionManager) StoreInternalSession(se interface{}) {
+}
+
+func (sm *mockSessionManager) DeleteInternalSession(se interface{}) {
+}
+
+func (sm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
+	return nil
+}
+
 func (sm *mockSessionManager) Kill(_ uint64, _ bool) {}
 
 func (sm *mockSessionManager) KillAllConnections() {}
@@ -319,7 +330,8 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	s.Require().Len(rows, 30)
+	result := 31
+	s.Require().Len(rows, result)
 
 	// More tests about the privileges.
 	tk.MustExec("create user 'testuser'@'localhost'")
@@ -345,12 +357,12 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 		Hostname: "localhost",
 	}, nil, nil))
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("30"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
 
 	s.Require().True(tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser3",
 		Hostname: "localhost",
 	}, nil, nil))
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("30"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
 }

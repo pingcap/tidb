@@ -753,7 +753,7 @@ func TestStringBuiltin(t *testing.T) {
 	// for convert
 	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
 	result.Check(testkit.Rows("123 中文 中文 中文 中文"))
-	// Charset 866 does not have a default collation configured currently, so this will return error.
+	// charset 866 does not have a default collation configured currently, so this will return error.
 	err = tk.ExecToErr(`select convert("123" using "866");`)
 	require.Error(t, err, "[parser:1115]Unknown character set: '866'")
 	// Test case in issue #4436.
@@ -2580,7 +2580,7 @@ func TestColumnInfoModified(t *testing.T) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
-	require.Equal(t, mysql.TypeLong, col.Tp)
+	require.Equal(t, mysql.TypeLong, col.GetType())
 }
 
 func TestIssues(t *testing.T) {
@@ -2796,8 +2796,8 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	// Row Keys
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000002B5F72800000000000A5D3' )")
 	result.Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"43"}`))
-	result = tk.MustQuery("select tidb_decode_key( '7480000000000000325f7205bff199999999999a013131000000000000f9' )")
-	result.Check(testkit.Rows(`{"handle":"{1.1, 11}","table_id":50}`))
+	result = tk.MustQuery("select tidb_decode_key( '74800000000000ffff5f7205bff199999999999a013131000000000000f9' )")
+	result.Check(testkit.Rows(`{"handle":"{1.1, 11}","table_id":65535}`))
 
 	// Index Keys
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
@@ -3498,29 +3498,33 @@ func TestExprPushdown(t *testing.T) {
 
 	// case 1, index scan without double read, some filters can not be pushed to cop task
 	rows := tk.MustQuery("explain format = 'brief' select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[2][4]))
+	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
+	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
 	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("511 411111"))
 	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 2, index scan without double read, none of the filters can be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[0][4]))
 	tk.MustQuery("select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("411111 511"))
 	tk.MustQuery("select count(col1) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 3, index scan with double read, some filters can not be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
-	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), like(test.t.col2, "5%", 92)`, fmt.Sprintf("%v", rows[2][4]))
+	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
+	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
 	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 4, index scan with double read, none of the filters can be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
-	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[2][4]))
+	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[1][4]))
 	tk.MustQuery("select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(id) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 }
@@ -3705,7 +3709,7 @@ func TestDatetimeMicrosecond(t *testing.T) {
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 DAY_MICROSECOND);`).Check(
 		testkit.Rows("2007-03-28 22:08:27.800000"))
 
-	// For Decimal
+	// For decimal
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE);`).Check(
 		testkit.Rows("2007-03-29 00:10:28"))
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE_SECOND);`).Check(
@@ -5400,6 +5404,16 @@ func TestIssue19892(t *testing.T) {
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2000-01-00 00:00:00'"))
 		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 	}
+	tk.MustExec("drop table if exists table_20220419;")
+	tk.MustExec(`CREATE TABLE table_20220419 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  lastLoginDate datetime NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec("set sql_mode='';")
+	tk.MustExec("insert into table_20220419 values(1,'0000-00-00 00:00:00');")
+	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';")
+	tk.MustGetErrMsg("insert into table_20220419(lastLoginDate) select lastLoginDate from table_20220419;", "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00'")
 }
 
 // The actual results do not agree with the test results, It should be modified after the test suite is updated
@@ -7073,4 +7087,17 @@ func TestIssue32488(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
 	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
 	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+}
+
+func TestIssue33397(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;")
+	tk.MustExec("insert into t values(''), ('');")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
+	result := tk.MustQuery("select compress(a) from t").Rows()
+	require.Equal(t, [][]interface{}{{""}, {""}}, result)
 }

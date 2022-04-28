@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -32,10 +33,12 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -186,12 +189,15 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name             string
-	UsingVars        []expression.Expression
-	PrepareParams    []types.Datum
-	ExecID           uint32
-	SnapshotTS       uint64
-	IsStaleness      bool
+	Name          string
+	UsingVars     []expression.Expression
+	PrepareParams []types.Datum
+	ExecID        uint32
+	// Deprecated: SnapshotTS now is only used for asserting after refactoring stale read, it will be removed later.
+	SnapshotTS uint64
+	// Deprecated: IsStaleness now is only used for asserting after refactoring stale read, it will be removed later.
+	IsStaleness bool
+	// Deprecated: ReadReplicaScope now is only used for asserting after refactoring stale read, it will be removed later.
 	ReadReplicaScope string
 	Stmt             ast.StmtNode
 	StmtType         string
@@ -266,17 +272,30 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
 	}
-	snapshotTS, readReplicaScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
+
+	// Just setting `e.SnapshotTS`, `e.ReadReplicaScope` and `e.IsStaleness` with the return value of `handleExecuteBuilderOption`
+	// for asserting the stale read context after refactoring is exactly the same with the previous logic.
+	snapshotTS, readReplicaScope, isStaleness, err := handleExecuteBuilderOption(sctx, preparedObj)
 	if err != nil {
 		return err
 	}
-	if isStaleness {
-		is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
-		if err != nil {
-			return errors.Trace(err)
+	e.SnapshotTS = snapshotTS
+	e.ReadReplicaScope = readReplicaScope
+	e.IsStaleness = isStaleness
+
+	failpoint.Inject("assertStaleReadForOptimizePreparedPlan", func() {
+		staleread.AssertStmtStaleness(sctx, isStaleness)
+		if isStaleness {
+			is2, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
+			if err != nil {
+				panic(err)
+			}
+
+			if is.SchemaMetaVersion() != is2.SchemaMetaVersion() {
+				panic(fmt.Sprintf("%d != %d", is.SchemaMetaVersion(), is2.SchemaMetaVersion()))
+			}
 		}
-		sctx.GetSessionVars().StmtCtx.IsStaleness = true
-	}
+	})
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -311,14 +330,12 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if err != nil {
 		return err
 	}
-	e.SnapshotTS = snapshotTS
-	e.ReadReplicaScope = readReplicaScope
-	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
 	return nil
 }
 
-func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
+// Deprecated: it will be removed later. Now it is only used for asserting
+func handleExecuteBuilderOption(sctx sessionctx.Context,
 	preparedObj *CachedPrepareStmt) (snapshotTS uint64, readReplicaScope string, isStaleness bool, err error) {
 	snapshotTS = 0
 	readReplicaScope = oracle.GlobalTxnScope
@@ -487,7 +504,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					sctx.PreparedPlanCache().Delete(cacheKey)
 					break
 				}
-				if !cachedVal.UserVarTypes.Equal(tps) {
+				if !cachedVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
 					continue
 				}
 				planValid := true
@@ -564,7 +581,7 @@ REBUILD:
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
 			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
-				if cacheVal.UserVarTypes.Equal(tps) {
+				if cacheVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
 					hitVal = true
 					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
@@ -849,7 +866,7 @@ func convertConstant2Datum(sc *stmtctx.StatementContext, con *expression.Constan
 		return nil, err
 	}
 	// The converted result must be same as original datum.
-	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.Collate))
+	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.GetCollate()))
 	if err != nil || cmp != 0 {
 		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
 	}
@@ -866,10 +883,10 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 				pkCols = append(pkCols, pkCol)
 				// We need to consider the prefix index.
 				// For example: when we have 'a varchar(50), index idx(a(10))'
-				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.Flen = 10'.
+				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.flen = 10'.
 				// In 'hasPrefix' function from 'util/ranger/ranger.go' file,
 				// we use 'columnLength == types.UnspecifiedLength' to check whether we have prefix index.
-				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.Flen {
+				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.GetFlen() {
 					pkColsLen = append(pkColsLen, types.UnspecifiedLength)
 				} else {
 					pkColsLen = append(pkColsLen, colInfo.Length)
@@ -1387,19 +1404,14 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		var storeType string
 		switch x.StoreType {
 		case kv.TiKV, kv.TiFlash, kv.TiDB:
 			// expected do nothing
 		default:
 			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
-		storeType = x.StoreType.Name()
-		taskName := "cop"
-		if x.BatchCop {
-			taskName = "batchCop"
-		}
-		err = e.explainPlanInRowFormat(x.tablePlan, taskName+"["+storeType+"]", "", childIndent, true)
+		taskName := x.ReadReqType.Name() + "[" + x.StoreType.Name() + "]"
+		err = e.explainPlanInRowFormat(x.tablePlan, taskName, "", childIndent, true)
 	case *PhysicalIndexReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
 	case *PhysicalIndexLookUpReader:
@@ -1524,7 +1536,12 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
-		estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
+		if p.SCtx().GetSessionVars().EnableNewCostInterface {
+			planCost, _ := pp.GetPlanCost(property.RootTaskType)
+			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
+		} else {
+			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
+		}
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {

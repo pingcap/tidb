@@ -521,12 +521,12 @@ func TestCollation(t *testing.T) {
 	rs, err := tk.Exec("show collation;")
 	require.NoError(t, err)
 	fields := rs.Fields()
-	require.Equal(t, mysql.TypeVarchar, fields[0].Column.Tp)
-	require.Equal(t, mysql.TypeVarchar, fields[1].Column.Tp)
-	require.Equal(t, mysql.TypeLonglong, fields[2].Column.Tp)
-	require.Equal(t, mysql.TypeVarchar, fields[3].Column.Tp)
-	require.Equal(t, mysql.TypeVarchar, fields[4].Column.Tp)
-	require.Equal(t, mysql.TypeLonglong, fields[5].Column.Tp)
+	require.Equal(t, mysql.TypeVarchar, fields[0].Column.GetType())
+	require.Equal(t, mysql.TypeVarchar, fields[1].Column.GetType())
+	require.Equal(t, mysql.TypeLonglong, fields[2].Column.GetType())
+	require.Equal(t, mysql.TypeVarchar, fields[3].Column.GetType())
+	require.Equal(t, mysql.TypeVarchar, fields[4].Column.GetType())
+	require.Equal(t, mysql.TypeLonglong, fields[5].Column.GetType())
 }
 
 func TestShowTableStatus(t *testing.T) {
@@ -1602,6 +1602,13 @@ func TestShowVar(t *testing.T) {
 			require.Equal(t, variable.GetSysVar(variable.VersionComment), line[len("version_comment "):])
 		}
 	}
+
+	// Test case insensitive case for show session variables
+	tk.MustExec("SET @@SQL_MODE='NO_BACKSLASH_ESCAPES'")
+	tk.MustQuery("SHOW SESSION VARIABLES like 'sql_mode'").Check(
+		testkit.RowsWithSep("|", "sql_mode|NO_BACKSLASH_ESCAPES"))
+	tk.MustQuery("SHOW SESSION VARIABLES like 'SQL_MODE'").Check(
+		testkit.RowsWithSep("|", "sql_mode|NO_BACKSLASH_ESCAPES"))
 }
 
 func TestIssue19507(t *testing.T) {

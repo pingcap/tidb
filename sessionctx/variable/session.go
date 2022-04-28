@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -731,6 +731,9 @@ type SessionVars struct {
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
 
+	// AllowProjectionPushDown enables pushdown projection on TiKV.
+	AllowProjectionPushDown bool
+
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
 
@@ -1020,10 +1023,17 @@ type SessionVars struct {
 	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
+	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
+	EnableNewCostInterface bool
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
 	RcReadCheckTS bool
+	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
+	RemoveOrderbyInSubquery bool
+
+	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
+	MaxAllowedPacket uint64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1259,6 +1269,8 @@ func NewSessionVars() *SessionVars {
 		Rng:                         utilMath.NewWithTime(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
+		MaxAllowedPacket:            DefMaxAllowedPacket,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1276,7 +1288,7 @@ func NewSessionVars() *SessionVars {
 		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:      config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaQuery:      DefTiDBMemQuotaQuery,
 		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
 	}
 	vars.BatchSize = BatchSize{

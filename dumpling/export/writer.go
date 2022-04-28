@@ -99,6 +99,8 @@ func (w *Writer) handleTask(task Task) error {
 		return w.WriteTableMeta(t.DatabaseName, t.TableName, t.CreateTableSQL)
 	case *TaskViewMeta:
 		return w.WriteViewMeta(t.DatabaseName, t.ViewName, t.CreateTableSQL, t.CreateViewSQL)
+	case *TaskSequenceMeta:
+		return w.WriteSequenceMeta(t.DatabaseName, t.SequenceName, t.CreateSequenceSQL)
 	case *TaskPolicyMeta:
 		return w.WritePolicyMeta(t.PolicyName, t.CreatePolicySQL)
 	case *TaskTableData:
@@ -162,6 +164,16 @@ func (w *Writer) WriteViewMeta(db, view, createTableSQL, createViewSQL string) e
 		return err
 	}
 	return writeMetaToFile(tctx, db, createViewSQL, w.extStorage, fileNameView+".sql", conf.CompressType)
+}
+
+// WriteSequenceMeta writes sequence meta to a file
+func (w *Writer) WriteSequenceMeta(db, sequence, createSQL string) error {
+	tctx, conf := w.tctx, w.conf
+	fileName, err := (&outputFileNamer{DB: db, Table: sequence}).render(conf.OutputFileTemplate, outputFileTemplateSequence)
+	if err != nil {
+		return err
+	}
+	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
 }
 
 // WriteTableData writes table data to a file with retry
