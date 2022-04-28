@@ -158,8 +158,10 @@ func (m *ownerManager) RequireOwner(ctx context.Context) error {
 			time.Sleep(1 * time.Second)
 		}
 		url := fmt.Sprintf("http://%s:%d/ddl/owner/resign", owner.IP, owner.StatusPort)
-		logutil.BgLogger().Warn("resign owner: " + url)
-		_, _ = http.Post(url, "text/plain", nil)
+		_, err = http.Post(url, "text/plain", nil)
+		if err != nil {
+			logutil.BgLogger().Warn("resign owner meet error", zap.Error(err))
+		}
 		// wait for new election.
 		time.Sleep(500 * time.Millisecond)
 	}
