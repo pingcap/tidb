@@ -33,7 +33,6 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
@@ -308,12 +307,6 @@ func NewRestoreControllerWithPauser(
 
 	var backend backend.Backend
 	switch cfg.TikvImporter.Backend {
-	case config.BackendImporter:
-		var err error
-		backend, err = importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-		if err != nil {
-			return nil, errors.Annotate(err, "open importer backend failed")
-		}
 	case config.BackendTiDB:
 		backend = tidb.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate, errorMgr)
 	case config.BackendLocal:
@@ -352,7 +345,7 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var metaBuilder metaMgrBuilder
-	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendImporter
+	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal
 	switch {
 	case isSSTImport && cfg.TikvImporter.IncrementalImport:
 		metaBuilder = &dbMetaMgrBuilder{
@@ -793,10 +786,6 @@ func verifyCheckpoint(cfg *config.Config, taskCp *checkpoints.TaskCheckpoint) er
 
 		if cfg.TikvImporter.Backend == config.BackendLocal && cfg.TikvImporter.SortedKVDir != taskCp.SortedKVDir {
 			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "mydumper.sorted-kv-dir", cfg.TikvImporter.SortedKVDir, taskCp.SortedKVDir)
-		}
-
-		if cfg.TikvImporter.Backend == config.BackendImporter && cfg.TikvImporter.Addr != taskCp.ImporterAddr {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tikv-importer.addr", cfg.TikvImporter.Backend, taskCp.Backend)
 		}
 
 		if cfg.TiDB.Host != taskCp.TiDBHost {
@@ -1596,8 +1585,7 @@ func (tr *TableRestore) restoreTable(
 		versionInfo := version.ParseServerInfo(versionStr)
 
 		// "show table next_row_id" is only available after tidb v4.0.0
-		if versionInfo.ServerVersion.Major >= 4 &&
-			(rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
+		if versionInfo.ServerVersion.Major >= 4 && rc.isLocalBackend() {
 			// first, insert a new-line into meta table
 			if err = metaMgr.InitTableMeta(ctx); err != nil {
 				return false, err
