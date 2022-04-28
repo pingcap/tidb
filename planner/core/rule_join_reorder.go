@@ -21,6 +21,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/tracing"
@@ -73,6 +74,8 @@ func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	var err error
 	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
+	// TODO: determine the leading number
+	leadingNum := int64(0)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
@@ -83,12 +86,22 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
 			ctx:        ctx,
 			otherConds: otherConds,
+			eqEdges:    eqEdges,
+			leading:    leadingNum > 0,
 		}
+		p = curJoinGroup[0]
+		curJoinGroup = curJoinGroup[1:]
+		for leadingNum > 1 {
+			usedEdges := baseGroupSolver.checkConnection(p, curJoinGroup[0])
+			p, baseGroupSolver.otherConds = baseGroupSolver.makeJoin(p, curJoinGroup[0], usedEdges)
+			curJoinGroup = curJoinGroup[1:]
+			leadingNum--
+		}
+		curJoinGroup = append(curJoinGroup, p)
 		originalSchema := p.Schema()
 		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
-				eqEdges:                        eqEdges,
 			}
 			p, err = groupSolver.solve(curJoinGroup, tracer)
 		} else {
@@ -96,7 +109,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
 			dpSolver.newJoin = dpSolver.newJoinWithEdges
-			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges), tracer)
+			p, err = dpSolver.solve(curJoinGroup, tracer)
 		}
 		if err != nil {
 			return nil, err
@@ -139,6 +152,8 @@ type baseSingleGroupJoinOrderSolver struct {
 	ctx          sessionctx.Context
 	curJoinGroup []*jrNode
 	otherConds   []expression.Expression
+	eqEdges      []*expression.ScalarFunction
+	leading      bool
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
@@ -160,19 +175,38 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 				resultJoinGroup = append(resultJoinGroup, cartesianJoinGroup[i])
 				break
 			}
-			newJoin := s.newCartesianJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1])
-			for i := len(s.otherConds) - 1; i >= 0; i-- {
-				cols := expression.ExtractColumns(s.otherConds[i])
-				if newJoin.schema.ColumnsIndices(cols) != nil {
-					newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
-					s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
-				}
-			}
+			newJoin, remainOtherConds := s.makeJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil)
+			s.otherConds = remainOtherConds
 			resultJoinGroup = append(resultJoinGroup, newJoin)
 		}
 		cartesianJoinGroup, resultJoinGroup = resultJoinGroup, cartesianJoinGroup
 	}
 	return cartesianJoinGroup[0]
+}
+
+func (s *baseSingleGroupJoinOrderSolver) checkConnection(lChild, rChild LogicalPlan) (usedEdges []*expression.ScalarFunction) {
+	for _, edge := range s.eqEdges {
+		lCol := edge.GetArgs()[0].(*expression.Column)
+		rCol := edge.GetArgs()[1].(*expression.Column)
+		if lChild.Schema().Contains(lCol) && rChild.Schema().Contains(rCol) {
+			usedEdges = append(usedEdges, edge)
+		} else if rChild.Schema().Contains(lCol) && lChild.Schema().Contains(rCol) {
+			newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+			usedEdges = append(usedEdges, newSf)
+		}
+	}
+	return
+}
+
+func (s *baseSingleGroupJoinOrderSolver) makeJoin(lChild, rChild LogicalPlan, eqEdges []*expression.ScalarFunction) (LogicalPlan, []expression.Expression) {
+	remainOtherConds := make([]expression.Expression, len(s.otherConds))
+	copy(remainOtherConds, s.otherConds)
+	var otherConds []expression.Expression
+	mergedSchema := expression.MergeSchema(lChild.Schema(), rChild.Schema())
+	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		return expression.ExprFromSchema(expr, mergedSchema)
+	})
+	return s.newJoinWithEdges(lChild, rChild, eqEdges, otherConds), remainOtherConds
 }
 
 func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild LogicalPlan) *LogicalJoin {

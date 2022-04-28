@@ -37,7 +37,8 @@ type joinGroupNonEqEdge struct {
 	expr       expression.Expression
 }
 
-func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expression.Expression, tracer *joinReorderTrace) (LogicalPlan, error) {
+func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
+	eqConds := expression.ScalarFuncs2Exprs(s.eqEdges)
 	for _, node := range joinGroup {
 		_, err := node.recursiveDeriveStats(nil)
 		if err != nil {

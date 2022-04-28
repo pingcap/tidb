@@ -75,6 +75,8 @@ const (
 
 	// HintStraightJoin causes TiDB to join tables in the order in which they appear in the FROM clause.
 	HintStraightJoin = "straight_join"
+	// HintLeading specifies the set of tables to be used as the prefix in the execution plan.
+	HintLeading = "leading"
 
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
@@ -3514,12 +3516,14 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		timeRangeHint                                                                   ast.HintTimeRange
 		limitHints                                                                      limitHintInfo
 		straightJoinOrder                                                               bool
+		leadingJoinOrder                                                                []hintTableInfo
+		hasLeadingHint                                                                  bool
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
-			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintIndexMerge:
+			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				b.pushHintWithoutTableWarning(hint)
 				continue
@@ -3618,6 +3622,17 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			limitHints.preferLimitToCop = true
 		case HintStraightJoin:
 			straightJoinOrder = true
+		case HintLeading:
+			if !hasLeadingHint {
+				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+				hasLeadingHint = true
+			} else {
+				// If there are more leading hints, all leading hints will be invalid.
+				leadingJoinOrder = leadingJoinOrder[:0]
+				// Append warning if there are invalid index names.
+				errMsg := fmt.Sprintf("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+			}
 		default:
 			// ignore hints that not implemented
 		}
@@ -3635,6 +3650,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		timeRangeHint:             timeRangeHint,
 		limitHints:                limitHints,
 		straightJoinOrder:         straightJoinOrder,
+		leadingJoinOrder:          leadingJoinOrder,
 	})
 }
 
@@ -3655,6 +3671,7 @@ func (b *PlanBuilder) popTableHints() {
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintBCJ, TiDBBroadCastJoin, hintInfo.broadcastJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintLeading, "", hintInfo.leadingJoinOrder)
 	b.appendUnmatchedStorageHintWarning(hintInfo.tiflashTables, hintInfo.tikvTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
 }
