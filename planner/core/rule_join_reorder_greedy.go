@@ -154,22 +154,3 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 	})
 	return s.newJoinWithEdges(leftPlan, rightPlan, usedEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds
 }
-
-func (s *joinReorderGreedySolver) insertIntoCurJoinGroup(node *jrNode) {
-	insertIdx := 0
-	for ; insertIdx < len(s.curJoinGroup); insertIdx++ {
-		if s.curJoinGroup[insertIdx].cumCost > node.cumCost {
-			break
-		}
-	}
-	s.curJoinGroup = append(s.curJoinGroup[:insertIdx], append([]*jrNode{node}, s.curJoinGroup[insertIdx:]...)...)
-}
-
-func (s *joinReorderGreedySolver) deleteEqCond(eqConds []*expression.ScalarFunction, eqCond *expression.ScalarFunction) []*expression.ScalarFunction {
-	for i := len(eqConds) - 1; i >= 0; i-- {
-		if eqConds[i] == eqCond {
-			eqConds = append(eqConds[0:i], eqConds[i+1:]...)
-		}
-	}
-	return eqConds
-}

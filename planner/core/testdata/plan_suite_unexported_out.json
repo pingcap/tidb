@@ -941,11 +941,11 @@
   {
     "Name": "TestJoinReOrder",
     "Cases": [
-      "Join{Join{DataScan(t5)->DataScan(t6)}(test.t.d,test.t.d)->Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.b)->Join{DataScan(t3)->DataScan(t4)}(test.t.c,test.t.a)}(test.t.c,test.t.d)(test.t.a,test.t.b)}->Projection->Projection",
-      "Join{Join{Join{DataScan(t2)->DataScan(t3)}->Join{DataScan(t4)->DataScan(t5)}}->Join{Join{DataScan(t6)->DataScan(t7)}->Join{DataScan(t1)->DataScan(t8)}(test.t.a,test.t.a)}}->Projection->Projection",
-      "Join{Join{DataScan(t2)->DataScan(t3)}(test.t.a,test.t.a)->Join{DataScan(t4)->Join{DataScan(t5)->DataScan(t1)}(test.t.a,test.t.a)}(test.t.a,test.t.a)}(test.t.a,test.t.a)(test.t.a,test.t.a)(test.t.a,test.t.a)(test.t.a,test.t.a)->Projection->Projection",
+      "Join{Join{Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.b)->DataScan(t3)}(test.t.a,test.t.b)->DataScan(t4)}(test.t.c,test.t.a)(test.t.c,test.t.d)->Join{DataScan(t5)->DataScan(t6)}(test.t.d,test.t.d)}->Projection",
+      "Join{Join{Join{Join{DataScan(t1)->DataScan(t8)}(test.t.a,test.t.a)->DataScan(t2)}->Join{DataScan(t3)->DataScan(t4)}}->Join{Join{DataScan(t5)->DataScan(t6)}->DataScan(t7)}}->Projection->Projection",
+      "Join{Join{Join{Join{DataScan(t5)->DataScan(t1)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t3)}(test.t.a,test.t.a)(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)(test.t.a,test.t.a)(test.t.a,test.t.a)->Projection->Projection",
       "Join{Join{Join{DataScan(t3)->DataScan(t1)}->Join{DataScan(t2)->DataScan(t4)}}->DataScan(t5)}->Projection->Projection",
-      "Apply{DataScan(o)->Join{DataScan(t2)->Join{DataScan(t1)->DataScan(t3)}(test.t.a,test.t.a)}(test.t.a,test.t.a)->Projection->Projection}->Projection",
+      "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection}->Projection",
       "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(t3)}->Projection}->Projection"
     ]
   },
@@ -960,7 +960,7 @@
       "DataScan(t1)->Aggr(approx_count_distinct(test.t.a, test.t.b))->Projection",
       "DataScan(t1)->Projection",
       "DataScan(t2)->Projection",
-      "Join{Join{DataScan(t1)->DataScan(t3)->TopN([test.t.b true],0,1)}(test.t.b,test.t.b)->DataScan(t2)}(test.t.a,test.t.a)->Projection->TopN([test.t.b true],0,1)->Aggr(max(test.t.b))->Projection",
+      "Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t3)->TopN([test.t.b true],0,1)}(test.t.b,test.t.b)->TopN([test.t.b true],0,1)->Aggr(max(test.t.b))->Projection",
       "DataScan(t1)->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Sort->Projection",
       "DataScan(a)->Projection"
