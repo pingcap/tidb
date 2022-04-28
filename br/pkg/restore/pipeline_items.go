@@ -289,7 +289,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			// hence the checksum would fail.
 			done := b.registerTableIsRestoring(result.TablesToSend)
 			pool.ApplyOnErrorGroup(eg, func() error {
-				err := SplitRanges(ectx, b.client, result.Ranges, result.RewriteRules, b.updateCh)
+				err := SplitRanges(ectx, b.client, result.Ranges, result.RewriteRules, b.updateCh, false)
 				if err != nil {
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 					return err
