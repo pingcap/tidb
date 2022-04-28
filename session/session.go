@@ -1142,8 +1142,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
-		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
-		// Chunk RPC protocol may have memory leak issue not solved.
+		// Internal session uses default format to prevent memory leak problem.
 		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
@@ -1165,8 +1164,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
-		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
-		// Chunk RPC protocol may have memory leak issue not solved.
+		// Internal session uses default format to prevent memory leak problem.
 		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
