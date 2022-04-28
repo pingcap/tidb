@@ -16,14 +16,14 @@ package ddl
 
 import (
 	"context"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/meta/autoid"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
