@@ -122,7 +122,7 @@ type TableClusteredInfo struct {
 	// NA means this field is no meaningful information
 }
 
-// ClusterIndexUsage records the cluster index usage info of all the tables
+// NewClusterIndexUsage records the cluster index usage info of all the tables
 type NewClusterIndexUsage struct {
 	// The number of user's tables with clustered index enabled.
 	NumClusteredTables uint64 `json:"numClusteredTables"`
