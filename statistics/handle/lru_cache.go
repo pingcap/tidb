@@ -131,11 +131,14 @@ func (l *internalLRUCache) put(tblID int64, tbl *statistics.Table, tblMemUsage *
 	}
 	insertCols := make([]*lruCacheItem, 0)
 	for colID, col := range tbl.Columns {
-		insertCols = append(insertCols, &lruCacheItem{
-			tblID:       tblID,
-			column:      col,
-			colMemUsage: tblMemUsage.ColumnsMemUsage[colID],
-		})
+		// Here indicates only the column which trackingMemUsage is larger than 0 can be push into list.
+		if tblMemUsage.ColumnsMemUsage[colID].TrackingMemUsage() > 0 {
+			insertCols = append(insertCols, &lruCacheItem{
+				tblID:       tblID,
+				column:      col,
+				colMemUsage: tblMemUsage.ColumnsMemUsage[colID],
+			})
+		}
 	}
 	l.insertElements(insertCols, element)
 	l.elements[tblID] = element
