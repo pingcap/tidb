@@ -3201,7 +3201,7 @@ func GetStartTSFromSession(se interface{}) uint64 {
 		startTS = txnInfo.StartTS
 	}
 
-	logutil.BgLogger().Info(
+	logutil.BgLogger().Debug(
 		"GetStartTSFromSession getting startTS of internal session",
 		zap.Uint64("startTS", startTS), zap.Time("start time", oracle.GetTimeFromTS(startTS)))
 

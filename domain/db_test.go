@@ -92,7 +92,7 @@ func TestNormalSessionPool(t *testing.T) {
 }
 
 func TestAbnormalSessionPool(t *testing.T) {
-	lease := 50 * time.Millisecond
+	lease := 100 * time.Millisecond
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
