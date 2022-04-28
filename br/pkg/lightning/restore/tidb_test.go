@@ -435,6 +435,10 @@ func TestAlterAutoRandom(t *testing.T) {
 	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345, 288230376151711743)
 	require.NoError(t, err)
 
+	// insert 288230376151711743 and try rebase to 288230376151711744
+	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 288230376151711744, 288230376151711743)
+	require.NoError(t, err)
+
 	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1, 288230376151711743)
 	require.NoError(t, err)
 }
