@@ -103,7 +103,6 @@ type Config struct {
 	Lease            string `toml:"lease" json:"lease"`
 	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool   `toml:"split-table" json:"split-table"`
-	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
 	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction        string `toml:"oom-action" json:"oom-action"`
@@ -624,7 +623,6 @@ var defaultConf = Config{
 	RunDDL:                       true,
 	SplitTable:                   true,
 	Lease:                        "45s",
-	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,

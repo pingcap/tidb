@@ -198,7 +198,16 @@ require (
 	google.golang.org/protobuf v1.27.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
+	modernc.org/y v1.0.1
 	sigs.k8s.io/yaml v1.2.0 // indirect
+)
+
+require (
+	github.com/cznic/strutil v0.0.0-20181122101858-275e90344537
+	modernc.org/golex v1.0.1 // indirect
+	modernc.org/parser v1.0.2 // indirect
+	modernc.org/sortutil v1.0.0 // indirect
+	modernc.org/strutil v1.1.0 // indirect
 )
 
 replace github.com/pingcap/tidb/parser => ./parser

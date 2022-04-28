@@ -683,7 +683,11 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-
+	{Scope: ScopeGlobal, Name: TiDBTokenLimit, Value: strconv.Itoa(DefTiDBTokenLimit), Type: TypeInt, MinValue: 1, MaxValue: 1000, SetGlobal: func(s *SessionVars, val string) error {
+		ival, _ := strconv.Atoi(val)
+		TokenLimit.Store((int32)(ival))
+		return nil
+	}},
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		result, err := strconv.ParseUint(val, 10, 64)

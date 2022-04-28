@@ -201,7 +201,6 @@ unrecognized-option-test = true
 	require.NoError(t, err)
 
 	_, err = f.WriteString(`
-token-limit = 0
 enable-table-lock = true
 alter-primary-key = true
 delay-clean-table-lock = 5
@@ -276,7 +275,6 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint(6000), conf.TiKVClient.RegionCacheTTL)
 	require.Equal(t, int64(0), conf.TiKVClient.StoreLimit)
 	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
-	require.Equal(t, uint(1000), conf.TokenLimit)
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)

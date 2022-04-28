@@ -449,9 +449,6 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmDdlLease] {
 		cfg.Lease = *ddlLease
 	}
-	if actualFlags[nmTokenLimit] {
-		cfg.TokenLimit = uint(*tokenLimit)
-	}
 	if actualFlags[nmPluginLoad] {
 		cfg.Plugin.Load = *pluginLoad
 	}

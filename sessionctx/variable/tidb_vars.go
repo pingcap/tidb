@@ -668,6 +668,8 @@ const (
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
+	// TiDBTokenLimit is the number of sessions that can execute concurrently
+	TiDBTokenLimit = "tidb_token_limit"
 )
 
 // TiDB intentional limits
@@ -840,6 +842,7 @@ const (
 	DefTiDBGCMaxWaitTime                         = 24 * 60 * 60
 	DefMaxAllowedPacket                   uint64 = 67108864
 	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
+	DefTiDBTokenLimit                            = 1000
 )
 
 // Process global variables.
@@ -847,6 +850,7 @@ var (
 	ProcessGeneralLog           = atomic.NewBool(false)
 	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
 	EnablePProfSQLCPU           = atomic.NewBool(false)
+	TokenLimit                  = atomic.NewInt32(1000)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
