@@ -2839,7 +2839,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	if store.Name() == "TiKV" {
+	if dom.GetEtcdClient() != nil {
+		// We only want telemetry data in production-like clusters. When TiDB is deployed over other engines,
+		// for example, unistore engine (used for local tests), we just skip it. Its etcd client is nil.
 		dom.TelemetryReportLoop(ses[5])
 		dom.TelemetryRotateSubWindowLoop(ses[5])
 	}
