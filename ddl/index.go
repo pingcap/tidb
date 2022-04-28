@@ -704,7 +704,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
 	job.SchemaState = indexInfo.State
 	return ver, errors.Trace(err)
