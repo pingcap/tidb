@@ -191,7 +191,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededColumnTask, readerCtx *StatsReade
 	}
 	col := task.TableColumnID
 	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.GetByQuery(col.TableID)
+	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
 		h.writeToResultChan(task.ResultCh, col)
 		return nil, nil
@@ -371,7 +371,7 @@ func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.GetByQuery(col.TableID)
+	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
 		return true
 	}
