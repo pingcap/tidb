@@ -272,7 +272,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 		{"t", "u"},
 		{"u", "v", "w", "x"},
 	}
-	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'q'}, {'s'}, {'u'}, {'x'}}, regionIDs[1])
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'q'}, {'s'}, {'u'}}, regionIDs[1])
 	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("n", "o", "p", "s", "t", "v", "w", "x"), req, nil)
