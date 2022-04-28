@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sort"
 
@@ -505,7 +504,6 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range"))
 	}
 	if t.invalid() {
-		logutil.BgLogger().Warn(fmt.Sprintf("logicPlan=%s", logic.ExplainInfo()))
 		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 
