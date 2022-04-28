@@ -599,14 +599,23 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 		}
 	}
 
-	allStores := cache.GetTiFlashMPPStores()
-	nodeNum := len(allStores)
+	mppStores, err := cache.GetTiFlashMPPStores(bo.TiKVBackoffer())
+	if err != nil {
+		return nil, err
+	}
+	nodeNum := len(mppStores)
 	if nodeNum == 0 {
-		panic("tiflash stores num is zero")
+		return nil, errors.New("Number of tiflash_mpp node is zero")
 	}
 
+	var logMsg string
+	for i, s := range mppStores {
+		logMsg += fmt.Sprintf("store[%d]: %s, ", i, s.GetAddr())
+	}
+	logutil.BgLogger().Info(fmt.Sprintf("nodeNum: %v. ", nodeNum) + logMsg)
+
 	hasher := consistent.New()
-	for _, store := range allStores {
+	for _, store := range mppStores {
 		hasher.Add(store.GetAddr())
 	}
 	copTaskNumForEachNode := len(tasks)/nodeNum + 1
@@ -648,12 +657,6 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 		panic(fmt.Sprintf("handled %v tasks, but expect %v, len(taskCtxMap): %v, nodeNum: %v, copTaskNumForEachNode: %v",
 			handledNum, len(tasks), len(taskCtxMap), nodeNum, copTaskNumForEachNode))
 	}
-
-	var logMsg string
-	for i, s := range allStores {
-		logMsg += fmt.Sprintf("store[%d]: %s, ", i, s.GetAddr())
-	}
-	logutil.BgLogger().Info(fmt.Sprintf("nodeNum: %v. ", nodeNum) + logMsg)
 
 	for _, batchTask := range res {
 		logMsg := fmt.Sprintf("batchCopTask Addr: %s", batchTask.storeAddr)

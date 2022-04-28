@@ -322,7 +322,8 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 			if index < 10 || log.GetLevel() <= zap.DebugLevel {
 				logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
 			}
-			// m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+			m.store.GetRegionCache().InvalidateTiFlashMPPStores()
 		}
 	}
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
