@@ -126,7 +126,12 @@ Simulate a simple bulk delete scenario.
 
 ### Compatibility Tests
 
-No need.
+Theoretically the feature won't break any compatibility in peripheral tools. 
+But we will perform simple tests to see if they work with non-transactional DMLs:
+
+- BR backup and restore
+- TiCDC synchronization
+- tidb-binlog synchronization
 
 ### Benchmark Tests
 
