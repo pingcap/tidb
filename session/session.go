@@ -2839,8 +2839,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	dom.TelemetryReportLoop(ses[5])
-	dom.TelemetryRotateSubWindowLoop(ses[5])
+	if store.Name() == "TiKV" {
+		dom.TelemetryReportLoop(ses[5])
+		dom.TelemetryRotateSubWindowLoop(ses[5])
+	}
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
