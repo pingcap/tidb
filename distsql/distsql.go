@@ -16,8 +16,6 @@ package distsql
 
 import (
 	"context"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"google.golang.org/grpc/metadata"
 	"strconv"
 	"unsafe"
 
@@ -28,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/metadata"
 )
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
