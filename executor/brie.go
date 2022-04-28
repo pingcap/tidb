@@ -505,6 +505,11 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 func (gs *tidbGlueSession) Close() {
 }
 
+// GetGlobalVariables implements glue.Session.
+func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
+}
+
 // Open implements glue.Glue
 func (gs *tidbGlueSession) Open(string, pd.SecurityOption) (kv.Storage, error) {
 	return gs.se.GetStore(), nil
