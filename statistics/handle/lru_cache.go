@@ -61,10 +61,18 @@ func newInternalLRUCache(capacity int64) *internalLRUCache {
 	}
 }
 
-func (l *internalLRUCache) Get(key int64) (*statistics.Table, bool) {
+// GetByQuery implements the statsCacheInner
+func (l *internalLRUCache) GetByQuery(key int64) (*statistics.Table, bool) {
 	l.Lock()
 	defer l.Unlock()
 	return l.get(key, true)
+}
+
+// Get implements the statsCacheInner
+func (l *internalLRUCache) Get(key int64) (*statistics.Table, bool) {
+	l.Lock()
+	defer l.Unlock()
+	return l.get(key, false)
 }
 
 func (l *internalLRUCache) get(key int64, move bool) (*statistics.Table, bool) {
@@ -80,6 +88,14 @@ func (l *internalLRUCache) get(key int64, move bool) (*statistics.Table, bool) {
 	return element.tbl, true
 }
 
+// PutByQuery implements the statsCacheInner
+func (l *internalLRUCache) PutByQuery(key int64, value *statistics.Table) {
+	l.Lock()
+	defer l.Unlock()
+	l.put(key, value, value.MemoryUsage(), true, true)
+}
+
+// Put implements the statsCacheInner
 func (l *internalLRUCache) Put(key int64, value *statistics.Table) {
 	l.Lock()
 	defer l.Unlock()
@@ -130,6 +146,7 @@ func (l *internalLRUCache) put(tblID int64, tbl *statistics.Table, tblMemUsage *
 	}
 }
 
+// Del implements the statsCacheInner
 func (l *internalLRUCache) Del(key int64) {
 	l.Lock()
 	defer l.Unlock()
@@ -238,7 +255,8 @@ func (l *internalLRUCache) Copy() statsCacheInner {
 	for node != nil {
 		tblID := node.Value.(*lruCacheItem).tblID
 		tblElement := l.elements[tblID]
-		l.put(tblID, tblElement.tbl, tblElement.tblMemUsage, false, false)
+		newCache.put(tblID, tblElement.tbl, tblElement.tblMemUsage, false, false)
+		node = node.Prev()
 	}
 	return newCache
 }
