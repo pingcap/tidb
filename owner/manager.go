@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"strconv"
 	"sync"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util"
@@ -60,6 +62,8 @@ type Manager interface {
 	ResignOwner(ctx context.Context) error
 	// Cancel cancels this etcd ownerManager campaign.
 	Cancel()
+	// RequireOwner requires the ownerManager is owner.
+	RequireOwner(ctx context.Context) error
 }
 
 const (
@@ -120,6 +124,44 @@ func (m *ownerManager) IsOwner() bool {
 func (m *ownerManager) Cancel() {
 	m.cancel()
 	m.wg.Wait()
+}
+
+// RequireOwner implements Manager.Cancel interface.
+func (m *ownerManager) RequireOwner(ctx context.Context) error {
+	var allServerInfo map[string]*infosync.ServerInfo
+	var err error
+	for !m.IsOwner() {
+		select {
+		case <-ctx.Done():
+			return errors.Trace(ctx.Err())
+		default:
+		}
+		if allServerInfo == nil {
+			allServerInfo, err = infosync.GetAllServerInfo(context.Background())
+			logutil.BgLogger().Warn("get all server info error", zap.Error(err))
+			// wait 1 seconds and try again.
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ownerID, err := m.GetOwnerID(ctx)
+		cancel()
+		if err != nil {
+			logutil.BgLogger().Warn("get owner info error", zap.Error(err))
+			continue
+		}
+		owner, ok := allServerInfo[ownerID]
+		if !ok {
+			logutil.BgLogger().Warn("member updated, try again")
+			time.Sleep(1 * time.Second)
+		}
+		url := fmt.Sprintf("http://%s:%d/ddl/owner/resign", owner.IP, owner.StatusPort)
+		logutil.BgLogger().Warn("resign owner: " + url)
+		_, _ = http.Post(url, "text/plain", nil)
+		// wait for new election.
+		time.Sleep(500 * time.Millisecond)
+	}
+	return nil
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
