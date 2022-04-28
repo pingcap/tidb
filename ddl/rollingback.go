@@ -37,8 +37,8 @@ func updateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo
 	}
 
 	for _, col := range nullCols {
-		col.Flag |= mysql.NotNullFlag
-		col.Flag &^= mysql.PreventNullInsertFlag
+		col.AddFlag(mysql.NotNullFlag)
+		col.DelFlag(mysql.PreventNullInsertFlag)
 	}
 	return nil
 }
@@ -56,7 +56,7 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		}
 		for _, col := range nullCols {
 			// Field PreventNullInsertFlag flag reset.
-			col.Flag &^= mysql.PreventNullInsertFlag
+			col.DelFlag(mysql.PreventNullInsertFlag)
 		}
 	}
 
@@ -128,7 +128,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 		if job.SchemaState == model.StateNone {
 			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
 			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
-			if jp.modifyColumnTp == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].Flag|mysql.PreventNullInsertFlag != 0 {
+			if jp.modifyColumnTp == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
 				job.State = model.JobStateRollingback
 				return ver, dbterror.ErrCancelledDDLJob
 			}

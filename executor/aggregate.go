@@ -575,9 +575,9 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 		// This check is used to avoid error during the execution of `EncodeDecimal`.
-		if item.GetType().Tp == mysql.TypeNewDecimal {
+		if item.GetType().GetType() == mysql.TypeNewDecimal {
 			newTp := *tp
-			newTp.Flen = 0
+			newTp.SetFlen(0)
 			tp = &newTp
 		}
 		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
@@ -1666,14 +1666,14 @@ func (e *vecGroupChecker) getFirstAndLastRowDatum(item expression.Expression, ch
 		if !firstRowIsNull {
 			// make a copy to avoid DATA RACE
 			firstDatum := string([]byte(firstRowVal))
-			firstRowDatum.SetString(firstDatum, tp.Collate)
+			firstRowDatum.SetString(firstDatum, tp.GetCollate())
 		} else {
 			firstRowDatum.SetNull()
 		}
 		if !lastRowIsNull {
 			// make a copy to avoid DATA RACE
 			lastDatum := string([]byte(lastRowVal))
-			lastRowDatum.SetString(lastDatum, tp.Collate)
+			lastRowDatum.SetString(lastDatum, tp.GetCollate())
 		} else {
 			lastRowDatum.SetNull()
 		}
