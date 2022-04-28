@@ -118,7 +118,7 @@ func TestColumnAdd(t *testing.T) {
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable = tbl
-		case model.StateNone:
+		case model.StatePublic:
 			if first {
 				first = false
 			} else {
