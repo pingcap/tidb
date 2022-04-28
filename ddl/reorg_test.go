@@ -249,7 +249,8 @@ func TestReorgOwner(t *testing.T) {
 	tblInfo, err := testTableInfo(d1, "t", 3)
 	require.NoError(t, err)
 	testCreateTable(t, ctx, d1, dbInfo, tblInfo)
-	tbl := testGetTable(t, d1, dbInfo.ID, tblInfo.ID)
+	tbl, err := testGetTableWithError(d1, dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
 
 	num := 10
 	for i := 0; i < num; i++ {

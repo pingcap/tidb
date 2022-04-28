@@ -228,7 +228,7 @@ func TestSimple(t *testing.T) {
 	ct, ok := st.(*ast.CreateTableStmt)
 	require.True(t, ok)
 	for _, col := range ct.Cols {
-		require.Equal(t, uint(0), col.Tp.Flag&mysql.UnsignedFlag)
+		require.Equal(t, uint(0), col.Tp.GetFlag()&mysql.UnsignedFlag)
 	}
 
 	// for issue #4006
@@ -5167,9 +5167,9 @@ func TestDDLStatements(t *testing.T) {
 	stmts, _, err := p.Parse(createTableStr, "", "")
 	require.NoError(t, err)
 	stmt := stmts[0].(*ast.CreateTableStmt)
-	require.True(t, mysql.HasBinaryFlag(stmt.Cols[0].Tp.Flag))
+	require.True(t, mysql.HasBinaryFlag(stmt.Cols[0].Tp.GetFlag()))
 	for _, colDef := range stmt.Cols[1:] {
-		require.False(t, mysql.HasBinaryFlag(colDef.Tp.Flag))
+		require.False(t, mysql.HasBinaryFlag(colDef.Tp.GetFlag()))
 	}
 	for _, tblOpt := range stmt.Options {
 		switch tblOpt.Tp {
@@ -5187,9 +5187,9 @@ func TestDDLStatements(t *testing.T) {
 	require.NoError(t, err)
 	stmt = stmts[0].(*ast.CreateTableStmt)
 	for _, colDef := range stmt.Cols {
-		require.Equal(t, charset.CharsetBin, colDef.Tp.Charset)
-		require.Equal(t, charset.CollationBin, colDef.Tp.Collate)
-		require.True(t, mysql.HasBinaryFlag(colDef.Tp.Flag))
+		require.Equal(t, charset.CharsetBin, colDef.Tp.GetCharset())
+		require.Equal(t, charset.CollationBin, colDef.Tp.GetCollate())
+		require.True(t, mysql.HasBinaryFlag(colDef.Tp.GetFlag()))
 	}
 	// Test set collate for all column types
 	createTableStr = `CREATE TABLE t (
@@ -6062,8 +6062,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 			}
 		}
 		for _, col := range node.Cols {
-			col.Tp.Charset = strings.ToUpper(col.Tp.Charset)
-			col.Tp.Collate = strings.ToUpper(col.Tp.Collate)
+			col.Tp.SetCharset(strings.ToUpper(col.Tp.GetCharset()))
+			col.Tp.SetCollate(strings.ToUpper(col.Tp.GetCollate()))
 
 			for i, option := range col.Options {
 				if option.Tp == 0 && option.Expr == nil && option.Stored == false && option.Refer == nil {
