@@ -771,6 +771,13 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
+	// only upgrade from under version88 should require owner.
+	if ver <= version88 {
+		ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+		err := domain.GetDomain(s).DDL().OwnerManager().RequireOwner(ctx)
+		cancelFunc()
+		terror.MustNil(err)
+	}
 	// Do upgrade works then update bootstrap version.
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)

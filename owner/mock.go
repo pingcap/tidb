@@ -86,3 +86,7 @@ func (m *mockManager) ResignOwner(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (m *mockManager) RequireOwner(context.Context) error {
+	return nil
+}

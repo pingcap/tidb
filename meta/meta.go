@@ -141,6 +141,13 @@ func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 func InitMetaTable(store kv.Storage) error {
 	return kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := NewMeta(txn)
+		v, err := t.txn.HGet(mInitDDLTable, []byte("asd"))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(v) != 0 {
+			return nil
+		}
 		id, err := t.CreateMySQLSchema()
 		if err != nil {
 			return err
