@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -60,12 +59,11 @@ func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
 			// It is used in `SHOW COLUMNS FROM t LIKE `abc``.
 			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
 			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
-			if !collate.NewCollationEnabled() && stringutil.IsExactMatch(patTypes) {
+			if stringutil.IsExactMatch(patTypes) {
 				e.Field = strings.ToLower(string(patValue))
 				return true
 			}
-			// (?i) mean to be case-insensitive.
-			e.FieldPatterns = "(?i)" + stringutil.CompileLike2Regexp(string(patValue))
+			e.FieldPatterns = strings.ToLower(string(patValue))
 			return true
 		case *ast.ColumnNameExpr:
 			// It is used in `SHOW COLUMNS FROM t LIKE abc`.
@@ -109,17 +107,24 @@ func (e *ShowTablesTableExtractor) Extract(show *ast.ShowStmt) bool {
 		pattern := show.Pattern
 		switch pattern.Pattern.(type) {
 		case *driver.ValueExpr:
-			// It is used in `SHOW TABLE in t LIKE `abc``.
+			// It is used in `SHOW COLUMNS FROM t LIKE `abc``.
 			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
 			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
 			if stringutil.IsExactMatch(patTypes) {
 				e.Field = strings.ToLower(string(patValue))
 				return true
 			}
-			// (?i) mean to be case-insensitive.
-			e.FieldPatterns = "(?i)" + stringutil.CompileLike2Regexp(string(patValue))
+			e.FieldPatterns = strings.ToLower(string(patValue))
 			return true
+		case *ast.ColumnNameExpr:
+			// It is used in `SHOW COLUMNS FROM t LIKE abc`.
+			// MySQL do not support this syntax and return the error.
+			return false
 		}
+	} else if show.Column != nil && show.Column.Name.L != "" {
+		// it is used in `DESCRIBE t COLUMN`.
+		e.Field = show.Column.Name.L
+		return true
 	}
 	return false
 }
