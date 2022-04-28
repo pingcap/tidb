@@ -94,13 +94,6 @@ func (s *schemaValidator) IsStarted() bool {
 	return isStarted
 }
 
-func (s *schemaValidator) LatestSchemaVersion() int64 {
-	s.mux.RLock()
-	latestSchemaVer := s.latestSchemaVer
-	s.mux.RUnlock()
-	return latestSchemaVer
-}
-
 func (s *schemaValidator) Stop() {
 	logutil.BgLogger().Info("the schema validator stops")
 	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorStop).Inc()

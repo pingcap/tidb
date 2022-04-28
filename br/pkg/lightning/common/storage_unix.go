@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build !windows
-// +build !windows
 
 // TODO: Deduplicate this implementation with DM!
 

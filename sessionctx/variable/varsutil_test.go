@@ -80,7 +80,6 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.ExecutorConcurrency)
 	require.Equal(t, DefMaxChunkSize, vars.MaxChunkSize)
 	require.Equal(t, DefDMLBatchSize, vars.DMLBatchSize)
-	require.Equal(t, config.GetGlobalConfig().MemQuotaQuery, vars.MemQuotaQuery)
 	require.Equal(t, int64(DefTiDBMemQuotaApplyCache), vars.MemQuotaApplyCache)
 	require.Equal(t, DefOptWriteRowID, vars.AllowWriteRowID)
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)

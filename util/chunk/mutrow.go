@@ -82,13 +82,13 @@ func MutRowFromTypes(types []*types.FieldType) MutRow {
 }
 
 func zeroValForType(tp *types.FieldType) interface{} {
-	switch tp.Tp {
+	switch tp.GetType() {
 	case mysql.TypeFloat:
 		return float32(0)
 	case mysql.TypeDouble:
 		return float64(0)
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		if mysql.HasUnsignedFlag(tp.Flag) {
+		if mysql.HasUnsignedFlag(tp.GetFlag()) {
 			return uint64(0)
 		}
 		return int64(0)

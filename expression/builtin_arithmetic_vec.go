@@ -99,8 +99,8 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 			}
 		} else if err == nil {
 			_, frac = to.PrecisionAndFrac()
-			if frac < b.baseBuiltinFunc.tp.Decimal {
-				if err = to.Round(&to, b.baseBuiltinFunc.tp.Decimal, types.ModeHalfUp); err != nil {
+			if frac < b.baseBuiltinFunc.tp.GetDecimal() {
+				if err = to.Round(&to, b.baseBuiltinFunc.tp.GetDecimal(), types.ModeHalfUp); err != nil {
 					return err
 				}
 			}
@@ -395,8 +395,8 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *ch
 	resulti64s := result.Int64s()
 
 	forceToSigned := b.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
 
 	errType := "BIGINT UNSIGNED"
 	signed := forceToSigned || (!isLHSUnsigned && !isRHSUnsigned)
@@ -594,8 +594,8 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 		num[i] = buf[i].Decimals()
 	}
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
 	isUnsigned := isLHSUnsigned || isRHSUnsigned
 
 	result.ResizeInt64(n, false)
@@ -757,8 +757,8 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 	rhsI64s := rhsBuf.Int64s()
 	resultI64s := result.Int64s()
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
@@ -888,8 +888,8 @@ func (b *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 	rhi64s := rh.Int64s()
 	resulti64s := result.Int64s()
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
