@@ -225,6 +225,7 @@ type ddl struct {
 type ddlCtx struct {
 	schemaVersionMu    sync.Mutex
 	schemaVersionOwner atomicutil.Int64
+	schemaVersion      int64
 	uuid               string
 	store              kv.Storage
 	ownerManager       owner.Manager
@@ -257,12 +258,24 @@ type ddlCtx struct {
 	}
 }
 
-func (dc *ddlCtx) LockSchemaVersion(job *model.Job) {
+func (dc *ddlCtx) GenSchemaVersion(job *model.Job, t *meta.Meta) (_ int64, err error) {
+	if dc.lockSchemaVersion(job) {
+		dc.schemaVersion, err = t.GenSchemaVersion()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return dc.schemaVersion, nil
+}
+
+func (dc *ddlCtx) lockSchemaVersion(job *model.Job) bool {
 	ownerID := dc.schemaVersionOwner.Load()
 	if ownerID == 0 {
 		dc.schemaVersionMu.Lock()
 		dc.schemaVersionOwner.Store(job.ID)
+		return true
 	}
+	return false
 }
 
 func (dc *ddlCtx) UnlockSchemaVersion(job *model.Job) {
@@ -271,6 +284,7 @@ func (dc *ddlCtx) UnlockSchemaVersion(job *model.Job) {
 	}
 	ownerID := dc.schemaVersionOwner.Load()
 	if ownerID == job.ID {
+		dc.schemaVersion = 0
 		dc.schemaVersionOwner.Store(0)
 		dc.schemaVersionMu.Unlock()
 	}
