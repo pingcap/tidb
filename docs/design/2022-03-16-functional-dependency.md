@@ -88,7 +88,7 @@ mysql> explain  select t1.a, count(t2.b), t1.c  from t1 join t2 on t2.a=t1.a whe
 
 Analysis:
 
-When building the FD through these logical operators, we are calling a function of ExtractFD recursively from the root node of the logical plan tree. When the call down to the leaf node (actually source table for both join side), for the inner side, the FD from the datasource of base table of t2 are nil because they have no basic key constraint. While for outer side, since there is a filter on the datasource of base table t1, we got FD as {} -> {t1.c}. Because t1.c can only be constant 1 behind the filter. Up to next level, the join condition t1=t2 will build the equivalence for point-set of {t1.a, t2.a} == {t1.a, t2.a}. Finally, when arriving the root aggregate node, we will build strict FD from group-by point-set {t2.a} to select aggregate function {count(t2.b)} reasonably. Consequently, we get FD as {} -> {t1.c} & {t1.a, t2.a} == {t1.a, t2.a} & {t2.a} -> {count(t2.b)}.
+When building the FD through these logical operators, we call `ExtractFD()` recursively from the root node of the logical plan tree. When the call down to the leaf node (actually source table for both join side), for the inner side, the FD from the datasource of base table of t2 are nil because they have no basic key constraint. While for outer side, since there is a filter on the datasource of base table t1, we got FD as {} -> {t1.c}. Because t1.c can only be constant 1 behind the filter. Up to next level, the join condition t1=t2 will build the equivalence for point-set of {t1.a, t2.a} == {t1.a, t2.a}. Finally, when arriving the root aggregate node, we will build strict FD from group-by point-set {t2.a} to select aggregate function {count(t2.b)} reasonably. Consequently, we get FD as {} -> {t1.c} & {t1.a, t2.a} == {t1.a, t2.a} & {t2.a} -> {count(t2.b)}.
 
 Application:
 
@@ -130,10 +130,10 @@ Logical join must be the most difficult part to infer with, because the presence
 
 For outer join, we need to consider more, because outer join will choose the connection method based on the position of the join conditions and the presence of the join key.
 
-* only inner side condition           --- apply inner filter after the cartesian product is made, which means no supplied-null row will be appended on the inner side.
+* only inner side condition           --- apply inner filter after the cartesian product is made, which means no supplied-null row will be appended on the inner side if any row is preserved; or all rows are supplied-null if all rows are filtered out.
 * has outer condition or join key     --- apply all of this filter as matching judgement on the process of cartesian product, which means supplied-null row will be appended on the inner side when matching is failed.
 
-both cases will keep all rows from the outer side, but the time to apply the filter depends on where the conditions come from, which leading whether append the null rows on the inner side. So what's the big deal between this two? the former one can be seen as a inner join, but the later can only keep the FD from the outer side join, inner side's FD and filter FD has many complicated rules to infer with, we are not going to expand all of this here.
+Although both cases will keep all rows from the outer side, but how to derive FDs from both side depends on where the conditions come from, what the columns used by the conditions are, and what the attributes the conditions can provide. We can treat the former one as an inner join, but for the later one, we can only keep the FD from the outer table of join, and inner side's FD and filter FD has many complicated rules to infer with, we are not going to expand all of this here.
 
 ## References
 
