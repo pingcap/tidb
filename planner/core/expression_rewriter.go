@@ -936,7 +936,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection
-		er.b.optFlag |= flagJoinReOrder
+		tableHints := er.b.TableHints()
+		if tableHints == nil || !tableHints.joinOrderHint.straightJoin {
+			er.b.optFlag |= flagJoinReOrder
+		}
 		// Build distinct for the inner query.
 		agg, err := er.b.buildDistinct(np, np.Schema().Len())
 		if err != nil {
