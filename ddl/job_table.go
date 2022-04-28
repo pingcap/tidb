@@ -270,7 +270,7 @@ func (d *ddl) generalDDLJob(sctx sessionctx.Context) bool {
 		logutil.BgLogger().Warn("[ddl] get general worker fail", zap.Error(err))
 	}
 	if wk == nil {
-		logutil.BgLogger().Info("[ddl] no general worker available now")
+		logutil.BgLogger().Debug("[ddl] no general worker available now")
 		return false
 	}
 	job, err := d.getGeneralJob(sctx)
