@@ -122,7 +122,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 }
 
 func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
-	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
+	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
 		if col.Hidden {
 			return errors.Trace(dbterror.ErrWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
@@ -130,7 +130,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// JSON column cannot index.
-	if col.FieldType.Tp == mysql.TypeJSON {
+	if col.FieldType.GetType() == mysql.TypeJSON {
 		if col.Hidden {
 			return dbterror.ErrFunctionalIndexOnJSONOrGeometryFunction
 		}
@@ -138,7 +138,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
-	if types.IsTypeBlob(col.FieldType.Tp) {
+	if types.IsTypeBlob(col.FieldType.GetType()) {
 		if indexColumnLen == types.UnspecifiedLength {
 			if col.Hidden {
 				return dbterror.ErrFunctionalIndexOnBlob
@@ -151,14 +151,14 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// Length can only be specified for specifiable types.
-	if indexColumnLen != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
+	if indexColumnLen != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.GetType()) {
 		return errors.Trace(dbterror.ErrIncorrectPrefixKey)
 	}
 
 	// Key length must be shorter or equal to the column length.
 	if indexColumnLen != types.UnspecifiedLength &&
-		types.IsTypeChar(col.FieldType.Tp) {
-		if col.Flen < indexColumnLen {
+		types.IsTypeChar(col.FieldType.GetType()) {
+		if col.GetFlen() < indexColumnLen {
 			return errors.Trace(dbterror.ErrIncorrectPrefixKey)
 		}
 		// Length must be non-zero for char.
@@ -167,8 +167,8 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 		}
 	}
 
-	if types.IsString(col.FieldType.Tp) {
-		desc, err := charset.GetCharsetInfo(col.Charset)
+	if types.IsString(col.FieldType.GetType()) {
+		desc, err := charset.GetCharsetInfo(col.GetCharset())
 		if err != nil {
 			return err
 		}
@@ -186,22 +186,22 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	length := types.UnspecifiedLength
 	if colLen != types.UnspecifiedLength {
 		length = colLen
-	} else if col.Flen != types.UnspecifiedLength {
-		length = col.Flen
+	} else if col.GetFlen() != types.UnspecifiedLength {
+		length = col.GetFlen()
 	}
 
-	switch col.Tp {
+	switch col.GetType() {
 	case mysql.TypeBit:
 		return (length + 7) >> 3, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
 		// Different charsets occupy different numbers of bytes on each character.
-		desc, err := charset.GetCharsetInfo(col.Charset)
+		desc, err := charset.GetCharsetInfo(col.GetCharset())
 		if err != nil {
-			return 0, dbterror.ErrUnsupportedCharset.GenWithStackByArgs(col.Charset, col.Collate)
+			return 0, dbterror.ErrUnsupportedCharset.GenWithStackByArgs(col.GetCharset(), col.GetCollate())
 		}
 		return desc.Maxlen * length, nil
 	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeShort:
-		return mysql.DefaultLengthOfMysqlTypes[col.Tp], nil
+		return mysql.DefaultLengthOfMysqlTypes[col.GetType()], nil
 	case mysql.TypeFloat:
 		if length <= mysql.MaxFloatPrecisionLength {
 			return mysql.DefaultLengthOfMysqlTypes[mysql.TypeFloat], nil
@@ -210,13 +210,13 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	case mysql.TypeNewDecimal:
 		return calcBytesLengthForDecimal(length), nil
 	case mysql.TypeYear, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return mysql.DefaultLengthOfMysqlTypes[col.Tp], nil
+		return mysql.DefaultLengthOfMysqlTypes[col.GetType()], nil
 	default:
 		return length, nil
 	}
 }
 
-// Decimal using a binary format that packs nine decimal (base 10) digits into four bytes.
+// decimal using a binary format that packs nine decimal (base 10) digits into four bytes.
 func calcBytesLengthForDecimal(m int) int {
 	return (m / 9 * 4) + ((m%9)+1)/2
 }
@@ -243,28 +243,28 @@ func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, indexPartSp
 func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	if indexInfo.Primary {
 		for _, col := range indexInfo.Columns {
-			tblInfo.Columns[col.Offset].Flag |= mysql.PriKeyFlag
+			tblInfo.Columns[col.Offset].AddFlag(mysql.PriKeyFlag)
 		}
 		return
 	}
 
 	col := indexInfo.Columns[0]
 	if indexInfo.Unique && len(indexInfo.Columns) == 1 {
-		tblInfo.Columns[col.Offset].Flag |= mysql.UniqueKeyFlag
+		tblInfo.Columns[col.Offset].AddFlag(mysql.UniqueKeyFlag)
 	} else {
-		tblInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
+		tblInfo.Columns[col.Offset].AddFlag(mysql.MultipleKeyFlag)
 	}
 }
 
 func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	if indexInfo.Primary {
 		for _, col := range indexInfo.Columns {
-			tblInfo.Columns[col.Offset].Flag &= ^mysql.PriKeyFlag
+			tblInfo.Columns[col.Offset].DelFlag(mysql.PriKeyFlag)
 		}
 	} else if indexInfo.Unique && len(indexInfo.Columns) == 1 {
-		tblInfo.Columns[indexInfo.Columns[0].Offset].Flag &= ^mysql.UniqueKeyFlag
+		tblInfo.Columns[indexInfo.Columns[0].Offset].DelFlag(mysql.UniqueKeyFlag)
 	} else {
-		tblInfo.Columns[indexInfo.Columns[0].Offset].Flag &= ^mysql.MultipleKeyFlag
+		tblInfo.Columns[indexInfo.Columns[0].Offset].DelFlag(mysql.MultipleKeyFlag)
 	}
 
 	col := indexInfo.Columns[0]
@@ -346,7 +346,7 @@ func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*m
 	nullCols := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
 	for _, colName := range indexInfo.Columns {
 		col := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
-		if !mysql.HasNotNullFlag(col.Flag) || mysql.HasPreventNullInsertFlag(col.Flag) {
+		if !mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag()) {
 			nullCols = append(nullCols, col)
 		}
 	}
@@ -932,7 +932,7 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	cols := tblInfo.Columns
 	for _, idxCol := range indexInfo.Columns {
-		flag := cols[idxCol.Offset].Flag
+		flag := cols[idxCol.Offset].GetFlag()
 		if !mysql.HasAutoIncrementFlag(flag) {
 			continue
 		}

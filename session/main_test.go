@@ -76,13 +76,12 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func GetClusteredIndexSuiteData() testdata.TestData {
-	return testDataMap["clustered_index_suite"]
-}
-
-// TODO: remove once `session` tests migrated to testify
 func TestT(t *testing.T) {
 	check.TestingT(t)
+}
+
+func GetClusteredIndexSuiteData() testdata.TestData {
+	return testDataMap["clustered_index_suite"]
 }
 
 func createStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
