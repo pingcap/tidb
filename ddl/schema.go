@@ -241,7 +241,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
 	default:
 		// We can't enter here.
-		err = errors.Errorf("invalid db state %v", dbInfo.State)
+		return ver, errors.Trace(errors.Errorf("invalid db state %v", dbInfo.State))
 	}
 	job.SchemaState = dbInfo.State
 	return ver, errors.Trace(err)

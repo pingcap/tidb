@@ -309,14 +309,14 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		}
 		if tblInfo.IsSequence() {
 			if err = t.DropSequence(job.SchemaID, job.TableID); err != nil {
-				break
+				return ver, errors.Trace(err)
 			}
 		} else {
 			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
-				break
+				return ver, errors.Trace(err)
 			}
 			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
-				break
+				return ver, errors.Trace(err)
 			}
 		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
@@ -327,7 +327,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
+		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
 	}
 	job.SchemaState = tblInfo.State
 	return ver, errors.Trace(err)
