@@ -138,10 +138,12 @@ func (m *ownerManager) RequireOwner(ctx context.Context) error {
 		}
 		if allServerInfo == nil {
 			allServerInfo, err = infosync.GetAllServerInfo(context.Background())
-			logutil.BgLogger().Warn("get all server info error", zap.Error(err))
-			// wait 1 seconds and try again.
-			time.Sleep(1 * time.Second)
-			continue
+			if err != nil {
+				logutil.BgLogger().Warn("get all server info error", zap.Error(err))
+				// wait 1 seconds and try again.
+				time.Sleep(1 * time.Second)
+				continue
+			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		ownerID, err := m.GetOwnerID(ctx)
