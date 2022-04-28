@@ -944,8 +944,6 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
 func (rc *Controller) listenCheckpointUpdates() {
-	defer rc.checkpointsWg.Done()
-
 	var lock sync.Mutex
 	coalesed := make(map[string]*checkpoints.TableCheckpointDiff)
 	var waiters []chan<- error
@@ -996,8 +994,8 @@ func (rc *Controller) listenCheckpointUpdates() {
 		lock.Unlock()
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		failpoint.Inject("FailIfImportedChunk", func(val failpoint.Value) {
-			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Checksum.SumKVS() >= uint64(val.(int)) {
+		failpoint.Inject("FailIfImportedChunk", func() {
+			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Pos >= merger.EndOffset {
 				rc.checkpointsWg.Done()
 				rc.checkpointsWg.Wait()
 				panic("forcing failure due to FailIfImportedChunk")
@@ -1025,14 +1023,23 @@ func (rc *Controller) listenCheckpointUpdates() {
 		})
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		failpoint.Inject("KillIfImportedChunk", func(val failpoint.Value) {
-			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Checksum.SumKVS() >= uint64(val.(int)) {
+		failpoint.Inject("KillIfImportedChunk", func() {
+			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Pos >= merger.EndOffset {
+				rc.checkpointsWg.Done()
+				rc.checkpointsWg.Wait()
 				if err := common.KillMySelf(); err != nil {
 					log.L().Warn("KillMySelf() failed to kill itself", log.ShortError(err))
 				}
+				for scp := range rc.saveCpCh {
+					if scp.waitCh != nil {
+						scp.waitCh <- context.Canceled
+					}
+				}
+				failpoint.Return()
 			}
 		})
 	}
+	rc.checkpointsWg.Done()
 }
 
 // buildRunPeriodicActionAndCancelFunc build the runPeriodicAction func and a cancel func
@@ -2233,15 +2240,21 @@ func (cr *chunkRestore) deliverLoop(
 		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)
 		// No need to apply a lock since this is the only thread updating `cr.chunk.**`.
-		// In local mode, we should write these checkpoint after engine flushed.
+		// In local mode, we should write these checkpoints after engine flushed.
 		cr.chunk.Checksum.Add(&dataChecksum)
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = currOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
+		// currOffset may be less than endOffset even if we have read all rows of this chunk.
+		// Update chunk offset to endOffset, so that we don't need to restore this chunk
+		// when recovering from checkpoint.
+		if channelClosed {
+			cr.chunk.Chunk.Offset = cr.chunk.Chunk.EndOffset
+		}
 
 		metric.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
 
-		if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
+		if channelClosed || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
 			// No need to save checkpoint if nothing was delivered.
 			dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataEngine, indexEngine)
 		}
@@ -2304,6 +2317,7 @@ func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *chec
 			Pos:               chunk.Chunk.Offset,
 			RowID:             chunk.Chunk.PrevRowIDMax,
 			ColumnPermutation: chunk.ColumnPermutation,
+			EndOffset:         chunk.Chunk.EndOffset,
 		},
 	}
 }

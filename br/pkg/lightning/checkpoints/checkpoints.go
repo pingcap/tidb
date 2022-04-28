@@ -432,6 +432,7 @@ type ChunkCheckpointMerger struct {
 	Pos               int64
 	RowID             int64
 	ColumnPermutation []int
+	EndOffset         int64 // For test only.
 }
 
 func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
