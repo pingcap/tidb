@@ -2801,15 +2801,6 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 					"end_key":   "7480000000000000ff3a5f720000000000fa",
 				}),
 			},
-			{
-				ID:       "schema/test/test_label",
-				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
-				RuleType: "key-range",
-				Data: convert(map[string]interface{}{
-					"start_key": "aaaaa",
-					"end_key":   "bbbbb",
-				}),
-			},
 		}
 		err = nil
 	})
