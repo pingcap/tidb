@@ -106,6 +106,7 @@ import (
 	hintLimitToCop            "LIMIT_TO_COP"
 	hintForceIndex            "FORCE_INDEX"
 	hintStraightJoin          "STRAIGHT_JOIN"
+	hintLeading               "LEADING"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -540,6 +541,7 @@ SupportedTableLevelOptimizerHintName:
 |	"NO_SWAP_JOIN_INPUTS"
 |	"INL_MERGE_JOIN"
 |	"HASH_JOIN"
+|	"LEADING"
 
 UnsupportedIndexLevelOptimizerHintName:
 	"INDEX_MERGE"
@@ -646,6 +648,7 @@ Identifier:
 |	"NTH_PLAN"
 |	"FORCE_INDEX"
 |	"STRAIGHT_JOIN"
+|	"LEADING"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"
