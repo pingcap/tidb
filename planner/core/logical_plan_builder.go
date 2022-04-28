@@ -677,7 +677,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	// Add join reorder flag regardless of inner join or outer join.
 	tableHints := b.TableHints()
-	if tableHints == nil || !tableHints.joinOrderHint.straightJoin {
+	if tableHints == nil || !tableHints.straightJoinOrder {
 		b.optFlag = b.optFlag | flagJoinReOrder
 	}
 
@@ -3513,7 +3513,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		aggHints                                                                        aggHintInfo
 		timeRangeHint                                                                   ast.HintTimeRange
 		limitHints                                                                      limitHintInfo
-		joinOrderHint                                                                   joinOrderInfo
+		straightJoinOrder                                                               bool
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -3617,7 +3617,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		case HintLimitToCop:
 			limitHints.preferLimitToCop = true
 		case HintStraightJoin:
-			joinOrderHint.straightJoin = true
+			straightJoinOrder = true
 		default:
 			// ignore hints that not implemented
 		}
@@ -3634,7 +3634,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		indexMergeHintList:        indexMergeHintList,
 		timeRangeHint:             timeRangeHint,
 		limitHints:                limitHints,
-		joinOrderHint:             joinOrderHint,
+		straightJoinOrder:         straightJoinOrder,
 	})
 }
 

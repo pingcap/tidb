@@ -937,7 +937,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection
 		tableHints := er.b.TableHints()
-		if tableHints == nil || !tableHints.joinOrderHint.straightJoin {
+		if tableHints == nil || !tableHints.straightJoinOrder {
 			er.b.optFlag |= flagJoinReOrder
 		}
 		// Build distinct for the inner query.
