@@ -67,6 +67,7 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -299,6 +300,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if trace.IsEnabled() {
 		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
+	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CAS(false, true) {
+		registerSQLAndPlanInExecForTopSQL(sessVars)
+	}
 	err := e.Next(ctx, req)
 
 	if err != nil {
@@ -318,6 +322,16 @@ type CancelDDLJobsExec struct {
 	cursor int
 	jobIDs []int64
 	errs   []error
+}
+
+// Open implements the Executor Open interface.
+func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
+	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
+	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+		e.errs, err = admin.CancelJobs(txn, e.jobIDs)
+		return
+	})
+	return errInTxn
 }
 
 // Next implements the Executor Next interface.
@@ -462,6 +476,7 @@ type DDLJobRetriever struct {
 	is             infoschema.InfoSchema
 	activeRoles    []*auth.RoleIdentity
 	cacheJobs      []*model.Job
+	TZLoc          *time.Location
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
@@ -510,9 +525,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		tableName = getTableName(e.is, job.TableID)
 	}
 
-	createTime := ts2Time(job.StartTS)
-	startTime := ts2Time(job.RealStartTS)
-	finishTime := ts2Time(finishTS)
+	createTime := ts2Time(job.StartTS, e.TZLoc)
+	startTime := ts2Time(job.RealStartTS, e.TZLoc)
+	finishTime := ts2Time(finishTS, e.TZLoc)
 
 	// Check the privilege.
 	if checker != nil && !checker.RequestVerification(e.activeRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
@@ -541,11 +556,11 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendString(11, job.State.String())
 }
 
-func ts2Time(timestamp uint64) types.Time {
+func ts2Time(timestamp uint64, loc *time.Location) types.Time {
 	duration := time.Duration(math.Pow10(9-types.DefaultFsp)) * time.Nanosecond
 	t := model.TSConvert2Time(timestamp)
 	t.Truncate(duration)
-	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.DefaultFsp)
+	return types.NewTime(types.FromGoTime(t.In(loc)), mysql.TypeDatetime, types.DefaultFsp)
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
@@ -929,21 +944,47 @@ type SelectLockExec struct {
 	Lock *ast.SelectLockInfo
 	keys []kv.Key
 
+	// The children may be a join of multiple tables, so we need a map.
 	tblID2Handle map[int64][]plannercore.HandleCols
 
-	// All the partition tables in the children of this executor.
-	partitionedTable []table.PartitionedTable
+	// When SelectLock work on a partition table, we need the partition ID
+	// (Physical Table ID) instead of the 'logical' table ID to calculate
+	// the lock KV. In that case, the Physical Table ID is extracted
+	// from the row key in the store and as an extra column in the chunk row.
 
-	// When SelectLock work on the partition table, we need the partition ID
-	// instead of table ID to calculate the lock KV. In that case, partition ID is store as an
-	// extra column in the chunk row.
-	// tblID2PIDColumnIndex stores the column index in the chunk row. The children may be join
-	// of multiple tables, so the map struct is used.
-	tblID2PIDColumnIndex map[int64]int
+	// tblID2PhyTblIDCol is used for partitioned tables.
+	// The child executor need to return an extra column containing
+	// the Physical Table ID (i.e. from which partition the row came from)
+	// Used during building
+	tblID2PhysTblIDCol map[int64]*expression.Column
+
+	// Used during execution
+	// Map from logic tableID to column index where the physical table id is stored
+	// For dynamic prune mode, model.ExtraPhysTblID columns are requested from
+	// storage and used for physical table id
+	// For static prune mode, model.ExtraPhysTblID is still sent to storage/Protobuf
+	// but could be filled in by the partitions TableReaderExecutor
+	// due to issues with chunk handling between the TableReaderExecutor and the
+	// SelectReader result.
+	tblID2PhysTblIDColIdx map[int64]int
 }
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
+	if len(e.tblID2PhysTblIDCol) > 0 {
+		e.tblID2PhysTblIDColIdx = make(map[int64]int)
+		cols := e.Schema().Columns
+		for i := len(cols) - 1; i >= 0; i-- {
+			if cols[i].ID == model.ExtraPhysTblID {
+				for tblID, col := range e.tblID2PhysTblIDCol {
+					if cols[i].UniqueID == col.UniqueID {
+						e.tblID2PhysTblIDColIdx[tblID] = i
+						break
+					}
+				}
+			}
+		}
+	}
 	return e.baseExecutor.Open(ctx)
 }
 
@@ -962,23 +1003,17 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-
-			for id, cols := range e.tblID2Handle {
-				physicalID := id
-				if len(e.partitionedTable) > 0 {
-					// Replace the table ID with partition ID.
-					// The partition ID is returned as an extra column from the table reader.
-					if offset, ok := e.tblID2PIDColumnIndex[id]; ok {
-						physicalID = row.GetInt64(offset)
-					}
-				}
-
+			for tblID, cols := range e.tblID2Handle {
 				for _, col := range cols {
 					handle, err := col.BuildHandle(row)
 					if err != nil {
 						return err
 					}
-					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, handle))
+					physTblID := tblID
+					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
+						physTblID = row.GetInt64(physTblColIdx)
+					}
+					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 				}
 			}
 		}
@@ -991,16 +1026,8 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
 
-	if len(e.tblID2Handle) > 0 {
-		for id := range e.tblID2Handle {
-			e.updateDeltaForTableID(id)
-		}
-	}
-	if len(e.partitionedTable) > 0 {
-		for _, p := range e.partitionedTable {
-			pid := p.Meta().ID
-			e.updateDeltaForTableID(pid)
-		}
+	for id := range e.tblID2Handle {
+		e.updateDeltaForTableID(id)
 	}
 
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime, len(e.keys)), e.keys...)
@@ -1240,7 +1267,7 @@ func init() {
 			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
 
-		e := &executorBuilder{is: is, ctx: sctx}
+		e := newExecutorBuilder(sctx, is, nil, oracle.GlobalTxnScope)
 		exec := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -1775,7 +1802,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
+			sc.IsSQLRegistered.Store(true)
+			topsql.AttachAndRegisterSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
 			if s.LockInfo == nil {
@@ -1858,6 +1886,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
+		// Try to mark the `RCCheckTS` flag for the first time execution of in-transaction read requests
+		// using read-consistency isolation level.
+		if NeedSetRCCheckTSFlag(ctx, stmt) {
+			sc.RCCheckTS = true
+		}
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
@@ -1922,6 +1955,18 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	return
 }
 
+// registerSQLAndPlanInExecForTopSQL register the sql and plan information if it doesn't register before execution.
+// This uses to catch the running SQL when Top SQL is enabled in execution.
+func registerSQLAndPlanInExecForTopSQL(sessVars *variable.SessionVars) {
+	stmtCtx := sessVars.StmtCtx
+	normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
+	topsql.RegisterSQL(normalizedSQL, sqlDigest, sessVars.InRestrictedSQL)
+	normalizedPlan, planDigest := stmtCtx.GetPlanDigest()
+	if len(normalizedPlan) > 0 {
+		topsql.RegisterPlan(normalizedPlan, planDigest)
+	}
+}
+
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.
 func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
 	sc.InUpdateStmt = true
@@ -1954,7 +1999,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 				return err
 			}
 			// Handle the bad null error.
-			if (mysql.HasNotNullFlag(columns[idx].Flag) || mysql.HasPreventNullInsertFlag(columns[idx].Flag)) && castDatum.IsNull() {
+			if (mysql.HasNotNullFlag(columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(columns[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(columns[idx])
 			}
 			virCols.AppendDatum(i, &castDatum)
@@ -1964,17 +2009,13 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	return nil
 }
 
-func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && topsqlstate.TopSQLEnabled() {
-		snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
+	if snapshot == nil {
+		return
 	}
-}
-
-// setRPCInterceptorOfExecCounterForTxn binds an interceptor for client-go to count
-// the number of SQL executions of each TiKV.
-func setRPCInterceptorOfExecCounterForTxn(vars *variable.SessionVars, snapshot kv.Snapshot) {
-	if snapshot != nil && topsqlstate.TopSQLEnabled() && vars.StmtCtx.KvExecCounter != nil {
-		snapshot.SetOption(kv.RPCInterceptor, vars.StmtCtx.KvExecCounter.RPCInterceptor())
+	snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+	if sc.KvExecCounter != nil {
+		snapshot.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
 	}
 }
 
@@ -1982,4 +2023,14 @@ func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
 		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
+}
+
+// NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
+func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
+	sessionVars := ctx.GetSessionVars()
+	if sessionVars.ConnectionID > 0 && sessionVars.RcReadCheckTS && sessionVars.InTxn() &&
+		sessionVars.IsPessimisticReadConsistency() && !sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
+		return true
+	}
+	return false
 }

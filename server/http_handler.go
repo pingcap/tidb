@@ -464,12 +464,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	// Construct field type.
 	defaultDecimal := 6
-	ft := &types.FieldType{
-		Tp:      byte(colTp),
-		Flag:    uint(colFlag),
-		Flen:    int(colLen),
-		Decimal: defaultDecimal,
-	}
+	ft := types.NewFieldTypeBuilderP().SetType(byte(colTp)).SetFlag(uint(colFlag)).SetFlen(int(colLen)).SetDecimal(defaultDecimal).BuildP()
 	// Decode a column.
 	m := make(map[int64]*types.FieldType, 1)
 	m[colID] = ft
@@ -1295,7 +1290,7 @@ func (h ddlResignOwnerHandler) resignDDLOwner() error {
 // ServeHTTP handles request of resigning ddl owner.
 func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
-		writeError(w, errors.Errorf("This api only support POST method."))
+		writeError(w, errors.Errorf("This api only support POST method"))
 		return
 	}
 
@@ -2110,7 +2105,7 @@ func (h *testHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Requ
 // ServeHTTP handles request of resigning ddl owner.
 func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
-		writeError(w, errors.Errorf("This api only support POST method."))
+		writeError(w, errors.Errorf("This api only support POST method"))
 		return
 	}
 

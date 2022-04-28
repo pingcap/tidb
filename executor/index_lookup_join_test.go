@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
@@ -471,9 +470,6 @@ func TestIssue27893(t *testing.T) {
 }
 
 func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

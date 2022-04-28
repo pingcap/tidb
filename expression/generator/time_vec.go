@@ -108,7 +108,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 
 {{ if or (eq .SigName "builtinAddStringAndStringSig") (eq .SigName "builtinSubStringAndStringSig") }}
 	arg1Type := b.args[1].GetType()
-	if mysql.HasBinaryFlag(arg1Type.Flag) {
+	if mysql.HasBinaryFlag(arg1Type.GetFlag()) {
 		result.Reserve{{ .Output.TypeNameInColumn }}(n)
 		for i := 0; i < n; i++ {
 			result.AppendNull()
@@ -175,12 +175,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 		{{ else }}
 		sc := b.ctx.GetSessionVars().StmtCtx
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
-		arg1time, err := arg1Duration.ConvertToTime(sc, mysql.TypeDatetime)
-		if err != nil {
-			return err
-		}
-		tmpDuration := arg0.Sub(sc, &arg1time)
-		output, err := tmpDuration.ConvertToTime(sc, arg0.Type())
+		output, err := arg0.Add(sc, arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
 			return err
@@ -205,12 +200,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			}
 			return err
 		}
-		arg1time, err := arg1Duration.ConvertToTime(sc, mysql.TypeDatetime)
-		if err != nil {
-			return err
-		}
-		tmpDuration := arg0.Sub(sc, &arg1time)
-		output, err := tmpDuration.ConvertToTime(sc, mysql.TypeDatetime)
+		output, err := arg0.Add(sc, arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
 			return err
@@ -242,7 +232,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 		{{ end }}
 	{{ else if or (eq .SigName "builtinAddStringAndDurationSig") (eq .SigName "builtinSubStringAndDurationSig") }}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		fsp1 := b.args[1].GetType().Decimal
+		fsp1 := b.args[1].GetType().GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
@@ -309,8 +299,8 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			}
 		}
 	{{ else if or (eq .SigName "builtinAddDateAndDurationSig") (eq .SigName "builtinSubDateAndDurationSig") }}
-		fsp0 := b.args[0].GetType().Decimal
-		fsp1 := b.args[1].GetType().Decimal
+		fsp0 := b.args[0].GetType().GetDecimal()
+		fsp1 := b.args[1].GetType().GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		{{ if eq $.FuncName "AddTime" }}
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
@@ -323,7 +313,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 		output := sum.String()
 	{{ else if or (eq .SigName "builtinAddDateAndStringSig") (eq .SigName "builtinSubDateAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
-		fsp0 := b.args[0].GetType().Decimal
+		fsp0 := b.args[0].GetType().GetDecimal()
 		{{ if eq $.FuncName "AddTime" }}
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
 		{{ else }}
@@ -436,7 +426,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			{{ if $BIsDuration }} lhsDur, _, lhsIsDuration,
 			{{- else if $BIsTime }} _, lhsTime, lhsIsDuration,
 			{{- else if $BIsString }} lhsDur, lhsTime, lhsIsDuration,
-			{{- end }}  err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.Decimal)
+			{{- end }}  err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.GetDecimal())
 			if err != nil  {
 				return err
 			}
@@ -462,7 +452,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			{{ if $AIsDuration }} rhsDur, _, rhsIsDuration,
 			{{- else if $AIsTime }}_, rhsTime, rhsIsDuration,
 			{{- else if $AIsString }} rhsDur, rhsTime, rhsIsDuration,
-			{{- end}}  err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.Decimal)
+			{{- end}}  err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.GetDecimal())
 			if err != nil  {
 				return err
 			}

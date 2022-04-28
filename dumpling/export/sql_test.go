@@ -11,8 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -365,6 +363,46 @@ func TestShowCreateView(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n", createTableSQL)
 	require.Equal(t, "DROP TABLE IF EXISTS `v`;\nDROP VIEW IF EXISTS `v`;\nSET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\nSET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\nSET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\nSET character_set_client = utf8;\nSET character_set_results = utf8;\nSET collation_connection = utf8_general_ci;\nCREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`;\nSET character_set_client = @PREV_CHARACTER_SET_CLIENT;\nSET character_set_results = @PREV_CHARACTER_SET_RESULTS;\nSET collation_connection = @PREV_COLLATION_CONNECTION;\n", createViewSQL)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestShowCreateSequence(t *testing.T) {
+	conf := defaultConfigForTest(t)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	tctx := tcontext.Background().WithLogger(appLogger)
+	baseConn := newBaseConn(conn, true, nil)
+
+	conf.ServerInfo.ServerType = version.ServerTypeTiDB
+	mock.ExpectQuery("SHOW CREATE SEQUENCE `test`.`s`").
+		WillReturnRows(sqlmock.NewRows([]string{"Sequence", "Create Sequence"}).
+			AddRow("s", "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	mock.ExpectQuery("SHOW TABLE `test`.`s` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "s", nil, 1001, "SEQUENCE"))
+
+	createSequenceSQL, err := ShowCreateSequence(tctx, baseConn, "test", "s", conf)
+	require.NoError(t, err)
+	require.Equal(t, "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;\nSELECT SETVAL(`s`,1001);\n", createSequenceSQL)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	conf.ServerInfo.ServerType = version.ServerTypeMariaDB
+	mock.ExpectQuery("SHOW CREATE SEQUENCE `test`.`s`").
+		WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).
+			AddRow("s", "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	mock.ExpectQuery("SELECT NEXT_NOT_CACHED_VALUE FROM `test`.`s`").
+		WillReturnRows(sqlmock.NewRows([]string{"next_not_cached_value"}).
+			AddRow(1001))
+
+	createSequenceSQL, err = ShowCreateSequence(tctx, baseConn, "test", "s", conf)
+	require.NoError(t, err)
+	require.Equal(t, "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;\nSELECT SETVAL(`s`,1001);\n", createSequenceSQL)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -1266,9 +1304,7 @@ func buildMockNewRows(mock sqlmock.Sqlmock, columns []string, driverValues [][]d
 }
 
 func readRegionCsvDriverValues(t *testing.T) [][]driver.Value {
-	// nolint: dogsled
-	_, filename, _, _ := runtime.Caller(0)
-	csvFilename := path.Join(path.Dir(filename), "region_results.csv")
+	csvFilename := "region_results.csv"
 	file, err := os.Open(csvFilename)
 	require.NoError(t, err)
 	csvReader := csv.NewReader(file)

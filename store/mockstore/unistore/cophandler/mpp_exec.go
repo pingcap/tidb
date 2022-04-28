@@ -123,6 +123,9 @@ type tableScanExec struct {
 
 	decoder *rowcodec.ChunkDecoder
 	desc    bool
+
+	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
+	physTblIDColIdx *int
 }
 
 func (e *tableScanExec) SkipValue() bool { return false }
@@ -136,6 +139,10 @@ func (e *tableScanExec) Process(key, value []byte) error {
 	err = e.decoder.DecodeToChunk(value, handle, e.chk)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if e.physTblIDColIdx != nil {
+		tblID := tablecodec.DecodeTableID(key)
+		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
 	e.rowCnt++
 
@@ -241,6 +248,9 @@ type indexScanExec struct {
 	colInfos   []rowcodec.ColInfo
 	numIdxCols int
 	hdlStatus  tablecodec.HandleStatus
+
+	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
+	physTblIDColIdx *int
 }
 
 func (e *indexScanExec) SkipValue() bool { return false }
@@ -274,6 +284,10 @@ func (e *indexScanExec) Process(key, value []byte) error {
 				return errors.Trace(err)
 			}
 		}
+	}
+	if e.physTblIDColIdx != nil {
+		tblID := tablecodec.DecodeTableID(key)
+		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
 	if e.chk.IsFull() {
 		e.chunks = append(e.chunks, e.chk)
@@ -880,7 +894,7 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 		aggCtxs := e.getContexts(gk)
 		for i, agg := range e.aggExprs {
 			result := agg.GetResult(aggCtxs[i])
-			if e.fieldTypes[i].Tp == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
+			if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
 				var err error
 				result, err = result.ConvertTo(e.sc, e.fieldTypes[i])
 				if err != nil {

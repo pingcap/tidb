@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter"
 	"github.com/stretchr/testify/require"
@@ -267,7 +268,7 @@ func MustPrewritePut(pk, key []byte, val []byte, startTs uint64, store *TestStor
 func MustPrewritePutLockErr(pk, key []byte, val []byte, startTs uint64, store *TestStore) {
 	err := PrewriteOptimistic(pk, key, val, startTs, lockTTL, startTs, false, [][]byte{}, store)
 	require.Error(store.t, err)
-	lockedErr := err.(*ErrLocked)
+	lockedErr := err.(*kverrors.ErrLocked)
 	require.NotNil(store.t, lockedErr)
 }
 
@@ -298,7 +299,7 @@ func MustPrewriteInsertAlreadyExists(pk, key []byte, val []byte, startTs uint64,
 	}
 	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
 	require.Error(store.t, err)
-	existErr := err.(*ErrKeyAlreadyExists)
+	existErr := err.(*kverrors.ErrKeyAlreadyExists)
 	require.NotNil(store.t, existErr)
 }
 
@@ -312,7 +313,7 @@ func MustPrewriteOpCheckExistAlreadyExist(pk, key []byte, startTs uint64, store 
 	}
 	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
 	require.Error(store.t, err)
-	existErr := err.(*ErrKeyAlreadyExists)
+	existErr := err.(*kverrors.ErrKeyAlreadyExists)
 	require.NotNil(store.t, existErr)
 }
 
@@ -635,7 +636,7 @@ func TestCheckTxnStatus(t *testing.T) {
 	lockTTL := uint64(100)
 	minCommitTs := uint64(20)
 	err = PrewriteOptimistic(pk, pk, val, startTs, lockTTL, minCommitTs, false, [][]byte{}, store)
-	require.ErrorIs(t, err, ErrAlreadyRollback)
+	require.ErrorIs(t, err, kverrors.ErrAlreadyRollback)
 
 	// Prewrite a large txn
 	startTs = 2
@@ -1721,7 +1722,7 @@ func TestAssertion(t *testing.T) {
 			return
 		}
 		require.NotNil(t, err)
-		e, ok := errors.Cause(err).(*ErrAssertionFailed)
+		e, ok := errors.Cause(err).(*kverrors.ErrAssertionFailed)
 		require.True(t, ok)
 		require.Equal(t, startTs, e.StartTS)
 		require.Equal(t, key, e.Key)
@@ -1799,4 +1800,94 @@ func TestAssertion(t *testing.T) {
 	err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k33"), []byte("v33"), 20, 100, []bool{false}, 10,
 		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
 	require.Nil(t, err)
+}
+
+func getConflictErr(res []*kvrpcpb.KvPair) *kvrpcpb.WriteConflict {
+	for _, pair := range res {
+		if pair.Error != nil && pair.Error.Conflict != nil {
+			return pair.Error.Conflict
+		}
+	}
+	return nil
+}
+
+func TestRcReadCheckTS(t *testing.T) {
+	store, clean := NewTestStore("TestRcReadCheckTS", "TestRcReadCheckTS", t)
+	defer clean()
+
+	// Prepare.
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	MustPrewriteOptimistic(k1, k1, v1, 1, 100, 0, store)
+	MustCommit(k1, 1, 2, store)
+
+	k2 := []byte("tk2")
+	v2 := []byte("v2")
+	MustPrewriteOptimistic(k2, k2, v2, 5, 100, 0, store)
+	MustCommit(k2, 5, 6, store)
+
+	k3 := []byte("tk3")
+	v3 := []byte("v3")
+	MustPrewriteOptimistic(k3, k3, v3, 10, 100, 0, store)
+
+	// Test point get with RcReadCheckTS.
+	reqCtx := store.newReqCtx()
+	reqCtx.rpcCtx.ResolvedLocks = nil
+	reqCtx.rpcCtx.CommittedLocks = nil
+	reqCtx.rpcCtx.IsolationLevel = kvrpcpb.IsolationLevel_RCCheckTS
+	val, err := store.MvccStore.Get(reqCtx, k1, 3)
+	require.Nil(t, err)
+	require.Equal(t, v1, val)
+
+	_, err = store.MvccStore.Get(reqCtx, k2, 3)
+	require.NotNil(t, err)
+	e, ok := errors.Cause(err).(*kverrors.ErrConflict)
+	require.True(t, ok)
+	require.Equal(t, uint64(3), e.StartTS)
+	require.Equal(t, uint64(5), e.ConflictTS)
+	require.Equal(t, uint64(6), e.ConflictCommitTS)
+
+	_, err = store.MvccStore.Get(reqCtx, k3, 3)
+	require.NotNil(t, err)
+	e, ok = errors.Cause(err).(*kverrors.ErrConflict)
+	require.True(t, ok)
+	require.Equal(t, uint64(3), e.StartTS)
+	require.Equal(t, uint64(10), e.ConflictTS)
+
+	// Test scan and reverse scan.
+	scanReq := &kvrpcpb.ScanRequest{
+		Context:  reqCtx.rpcCtx,
+		StartKey: []byte("a"),
+		Limit:    100,
+		Version:  3,
+		EndKey:   []byte("z"),
+	}
+
+	// The error is reported from more recent version.
+	scanRes := store.MvccStore.Scan(reqCtx, scanReq)
+	conflictErr := getConflictErr(scanRes)
+	require.NotNil(t, conflictErr)
+	require.Equal(t, uint64(3), conflictErr.StartTs)
+	require.Equal(t, uint64(5), conflictErr.ConflictTs)
+	require.Equal(t, uint64(6), conflictErr.ConflictCommitTs)
+
+	// The error is reported from lock.
+	scanReq.Version = 15
+	scanRes = store.MvccStore.Scan(reqCtx, scanReq)
+	conflictErr = getConflictErr(scanRes)
+	require.NotNil(t, conflictErr)
+	require.Equal(t, uint64(15), conflictErr.StartTs)
+	require.Equal(t, uint64(10), conflictErr.ConflictTs)
+
+	// Test reverse scan.
+	scanReq.Version = 3
+	scanReq.Reverse = true
+	scanRes = store.MvccStore.Scan(reqCtx, scanReq)
+	conflictErr = getConflictErr(scanRes)
+	require.NotNil(t, conflictErr)
+
+	scanReq.Version = 15
+	scanRes = store.MvccStore.Scan(reqCtx, scanReq)
+	conflictErr = getConflictErr(scanRes)
+	require.NotNil(t, conflictErr)
 }

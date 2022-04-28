@@ -20,11 +20,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -297,6 +297,10 @@ func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []stri
 }
 
 func TestCheckActRowsWithUnistore(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = true
+	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	// testSuite1 use default mockstore which is unistore
@@ -386,11 +390,11 @@ func TestExplainStatementsSummary(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustQuery("desc select * from information_schema.statements_summary").Check(testkit.Rows(
 		`MemTableScan_4 10000.00 root table:STATEMENTS_SUMMARY `))
-	tk.MustQuery("desc select * from information_schema.statements_summary where digest is null").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest is null").Check(testkit.RowsWithSep("|",
 		`Selection_5|8000.00|root| isnull(Column#5)`, `└─MemTableScan_6|10000.00|root|table:STATEMENTS_SUMMARY|`))
-	tk.MustQuery("desc select * from information_schema.statements_summary where digest = 'abcdefg'").Check(testutil.RowsWithSep(" ",
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest = 'abcdefg'").Check(testkit.RowsWithSep(" ",
 		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["abcdefg"]`))
-	tk.MustQuery("desc select * from information_schema.statements_summary where digest in ('a','b','c')").Check(testutil.RowsWithSep(" ",
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest in ('a','b','c')").Check(testkit.RowsWithSep(" ",
 		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["a","b","c"]`))
 }
 

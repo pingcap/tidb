@@ -55,6 +55,7 @@ func TestMain(m *testing.M) {
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
 		// TODO: figure the reason and shorten this list
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
@@ -75,13 +76,12 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func GetClusteredIndexSuiteData() testdata.TestData {
-	return testDataMap["clustered_index_suite"]
-}
-
-// TODO: remove once `session` tests migrated to testify
 func TestT(t *testing.T) {
 	check.TestingT(t)
+}
+
+func GetClusteredIndexSuiteData() testdata.TestData {
+	return testDataMap["clustered_index_suite"]
 }
 
 func createStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {

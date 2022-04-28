@@ -185,7 +185,7 @@ loopCreate:
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
-		return []string{}, err
+		return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
 	}
 
 	var res strings.Builder
@@ -210,7 +210,7 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 			node.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {
-			return []string{}, err
+			return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
 		}
 		ctx.WritePlain(";")
 		retStmts = append(retStmts, res.String())
@@ -253,7 +253,7 @@ func LoadSchemaInfo(
 		for _, tbl := range schema.Tables {
 			tblInfo, ok := tableMap[strings.ToLower(tbl.Name)]
 			if !ok {
-				return nil, errors.Errorf("table '%s' schema not found", tbl.Name)
+				return nil, common.ErrSchemaNotExists.GenWithStackByArgs(tbl.DB, tbl.Name)
 			}
 			tableName := tblInfo.Name.String()
 			if tblInfo.State != model.StatePublic {

@@ -78,6 +78,10 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
+	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	maxWriteAndIngestRetryTimes = 30
+	maxRetryBackoffTime         = 30 * time.Second
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -87,6 +91,8 @@ const (
 	// lower the max-key-count to avoid tikv trigger region auto split
 	regionMaxKeyCount      = 1_280_000
 	defaultRegionSplitSize = 96 * units.MiB
+	// The max ranges count in a batch to split and scatter.
+	maxBatchSplitRanges = 4096
 
 	propRangeIndex = "tikv.range_index"
 
@@ -256,9 +262,9 @@ func NewLocalBackend(
 
 	pdCtl, err := pdutil.NewPdController(ctx, cfg.TiDB.PdAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
-		return backend.MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
+		return backend.MakeBackend(nil), common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
-	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig())
+	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig(), false)
 
 	shouldCreate := true
 	if cfg.Checkpoint.Enable {
@@ -274,7 +280,7 @@ func NewLocalBackend(
 	if shouldCreate {
 		err = os.Mkdir(localFile, 0o700)
 		if err != nil {
-			return backend.MakeBackend(nil), errors.Annotate(err, "invalid sorted-kv-dir for local backend, please change the config or delete the path")
+			return backend.MakeBackend(nil), common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(localFile)
 		}
 	}
 
@@ -282,20 +288,20 @@ func NewLocalBackend(
 	if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		duplicateDB, err = openDuplicateDB(localFile)
 		if err != nil {
-			return backend.MakeBackend(nil), errors.Annotate(err, "open duplicate db failed")
+			return backend.MakeBackend(nil), common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
 	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(cfg.TiDB.PdAddr, ","), tls.TLSConfig())
 	if err != nil {
-		return backend.MakeBackend(nil), err
+		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()))
 	pdCliForTiKV := &tikvclient.CodecPDClient{Client: pdCtl.GetPDClient()}
 	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
-		return backend.MakeBackend(nil), err
+		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, rangeConcurrency)
 	duplicateDetection := cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone
@@ -331,7 +337,7 @@ func NewLocalBackend(
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
 	}
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
-		return backend.MakeBackend(nil), err
+		return backend.MakeBackend(nil), common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
 	return backend.MakeBackend(local), nil
@@ -710,6 +716,10 @@ func (local *local) WriteToTiKV(
 	regionSplitSize int64,
 	regionSplitKeys int64,
 ) ([]*sst.SSTMeta, Range, rangeStats, error) {
+	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
+		failpoint.Return(nil, Range{}, rangeStats{},
+			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
+	})
 	if local.checkTiKVAvaliable {
 		for _, peer := range region.Region.GetPeers() {
 			var e error
@@ -1095,7 +1105,7 @@ WriteAndIngest:
 			err = local.writeAndIngestPairs(ctx, engine, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
-				if common.IsContextCanceledError(err) {
+				if !utils.IsRetryableError(err) {
 					return err
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -1142,7 +1152,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if common.IsContextCanceledError(err) {
+			if !utils.IsRetryableError(err) {
 				return err
 			}
 
@@ -1239,7 +1249,7 @@ loopWrite:
 			engine.importedKVSize.Add(rangeStats.totalBytes)
 			engine.importedKVCount.Add(rangeStats.count)
 			engine.finishedRanges.add(finishedRange)
-			metric.BytesCounter.WithLabelValues(metric.TableStateImported).Add(float64(rangeStats.totalBytes))
+			metric.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
 		}
 		return errors.Trace(err)
 	}
@@ -1276,16 +1286,22 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				wg.Done()
 			}()
 			var err error
-			// max retry backoff time: 2+4+8+16=30s
+			// max retry backoff time: 2+4+8+16+30*26=810s
 			backOffTime := time.Second
-			for i := 0; i < maxRetryTimes; i++ {
+			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
 				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
 				}
+				if !utils.IsRetryableError(err) {
+					break
+				}
 				log.L().Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
 				backOffTime *= 2
+				if backOffTime > maxRetryBackoffTime {
+					backOffTime = maxRetryBackoffTime
+				}
 				select {
 				case <-time.After(backOffTime):
 				case <-ctx.Done():
@@ -1305,6 +1321,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	// wait for all sub tasks finish to avoid panic. if we return on the first error,
 	// the outer tasks may close the pebble db but some sub tasks still read from the db
 	wg.Wait()
+	if allErr == nil {
+		return ctx.Err()
+	}
 	return allErr
 }
 
@@ -1347,7 +1366,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionByRanges(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize)
+			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}

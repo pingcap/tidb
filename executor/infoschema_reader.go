@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,13 +51,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/keydecoder"
@@ -81,6 +81,7 @@ type memtableRetriever struct {
 	rowIdx      int
 	retrieved   bool
 	initialized bool
+	extractor   plannercore.MemTablePredicateExtractor
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -114,7 +115,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
-			e.setDataForAnalyzeStatus(sctx)
+			err = e.setDataForAnalyzeStatus(sctx)
 		case infoschema.TableTiDBIndexes:
 			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
@@ -161,7 +162,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableAttributes:
-			err = e.setDataForAttributes(sctx)
+			err = e.setDataForAttributes(sctx, is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
 		}
@@ -381,7 +382,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.Name.O,         // TABLE_SCHEMA
@@ -418,7 +419,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 		for i, key := range index.Columns {
 			col := nameToCol[key.Name.L]
 			nullable := "YES"
-			if mysql.HasNotNullFlag(col.Flag) {
+			if mysql.HasNotNullFlag(col.GetFlag()) {
 				nullable = ""
 			}
 
@@ -512,13 +513,17 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
+	loc := sctx.GetSessionVars().TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			if collation == "" {
 				collation = mysql.DefaultCollationName
 			}
-			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime().In(loc)), createTimeTp, types.DefaultFsp)
 
 			createOptions := ""
 
@@ -676,7 +681,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return
 	}
-	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []*regexp.Regexp
+	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []collate.WildcardPattern
 	var tableSchemaFilterEnable,
 		tableNameFilterEnable, columnsFilterEnable bool
 	if !extractor.SkipRequest {
@@ -684,21 +689,24 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		tableNameFilterEnable = extractor.TableName.Count() > 0
 		columnsFilterEnable = extractor.ColumnName.Count() > 0
 		if len(extractor.TableSchemaPatterns) > 0 {
-			tableSchemaRegexp = make([]*regexp.Regexp, len(extractor.TableSchemaPatterns))
+			tableSchemaRegexp = make([]collate.WildcardPattern, len(extractor.TableSchemaPatterns))
 			for i, pattern := range extractor.TableSchemaPatterns {
-				tableSchemaRegexp[i] = regexp.MustCompile(pattern)
+				tableSchemaRegexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+				tableSchemaRegexp[i].Compile(pattern, byte('\\'))
 			}
 		}
 		if len(extractor.TableNamePatterns) > 0 {
-			tableNameRegexp = make([]*regexp.Regexp, len(extractor.TableNamePatterns))
+			tableNameRegexp = make([]collate.WildcardPattern, len(extractor.TableNamePatterns))
 			for i, pattern := range extractor.TableNamePatterns {
-				tableNameRegexp[i] = regexp.MustCompile(pattern)
+				tableNameRegexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+				tableNameRegexp[i].Compile(pattern, byte('\\'))
 			}
 		}
 		if len(extractor.ColumnNamePatterns) > 0 {
-			columnsRegexp = make([]*regexp.Regexp, len(extractor.ColumnNamePatterns))
+			columnsRegexp = make([]collate.WildcardPattern, len(extractor.ColumnNamePatterns))
 			for i, pattern := range extractor.ColumnNamePatterns {
-				columnsRegexp[i] = regexp.MustCompile(pattern)
+				columnsRegexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+				columnsRegexp[i].Compile(pattern, byte('\\'))
 			}
 		}
 	}
@@ -718,64 +726,64 @@ ForColumnsTag:
 				continue
 			}
 			for _, re := range tableSchemaRegexp {
-				if !re.MatchString(schema.Name.L) {
+				if !re.DoMatch(schema.Name.L) {
 					continue ForColumnsTag
 				}
 			}
 			for _, re := range tableNameRegexp {
-				if !re.MatchString(tbl.Name.L) {
+				if !re.DoMatch(tbl.Name.L) {
 					continue ForColumnsTag
 				}
 			}
 			for _, re := range columnsRegexp {
-				if !re.MatchString(col.Name.L) {
+				if !re.DoMatch(col.Name.L) {
 					continue ForColumnsTag
 				}
 			}
 		}
 
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
-		colLen, decimal := col.Flen, col.Decimal
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
+		colLen, decimal := col.GetFlen(), col.GetDecimal()
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.GetType())
 		if decimal == types.UnspecifiedLength {
 			decimal = defaultDecimal
 		}
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen
 		}
-		if col.Tp == mysql.TypeSet {
+		if col.GetType() == mysql.TypeSet {
 			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
 			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.Elems {
+			for _, ele := range col.GetElems() {
 				colLen += len(ele)
 			}
-			if len(col.Elems) != 0 {
-				colLen += (len(col.Elems) - 1)
+			if len(col.GetElems()) != 0 {
+				colLen += (len(col.GetElems()) - 1)
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if col.Tp == mysql.TypeEnum {
+			charOctLen = calcCharOctLength(colLen, col.GetCharset())
+		} else if col.GetType() == mysql.TypeEnum {
 			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
 			// the longest string in the enum is 'cdef'
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.Elems {
+			for _, ele := range col.GetElems() {
 				if len(ele) > colLen {
 					colLen = len(ele)
 				}
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if types.IsString(col.Tp) {
+			charOctLen = calcCharOctLength(colLen, col.GetCharset())
+		} else if types.IsString(col.GetType()) {
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if types.IsTypeFractionable(col.Tp) {
+			charOctLen = calcCharOctLength(colLen, col.GetCharset())
+		} else if types.IsTypeFractionable(col.GetType()) {
 			datetimePrecision = decimal
-		} else if types.IsTypeNumeric(col.Tp) {
+		} else if types.IsTypeNumeric(col.GetType()) {
 			numericPrecision = colLen
-			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
+			if col.GetType() != mysql.TypeFloat && col.GetType() != mysql.TypeDouble {
 				numericScale = decimal
 			} else if decimal != -1 {
 				numericScale = decimal
@@ -786,26 +794,31 @@ ForColumnsTag:
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
+			if col.GetType() == mysql.TypeBit {
+				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
+				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
+				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+			}
 		}
 		record := types.MakeDatums(
-			infoschema.CatalogVal,                // TABLE_CATALOG
-			schema.Name.O,                        // TABLE_SCHEMA
-			tbl.Name.O,                           // TABLE_NAME
-			col.Name.O,                           // COLUMN_NAME
-			i+1,                                  // ORIGINAL_POSITION
-			columnDefault,                        // COLUMN_DEFAULT
-			columnDesc.Null,                      // IS_NULLABLE
-			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
-			charMaxLen,                           // CHARACTER_MAXIMUM_LENGTH
-			charOctLen,                           // CHARACTER_OCTET_LENGTH
-			numericPrecision,                     // NUMERIC_PRECISION
-			numericScale,                         // NUMERIC_SCALE
-			datetimePrecision,                    // DATETIME_PRECISION
-			columnDesc.Charset,                   // CHARACTER_SET_NAME
-			columnDesc.Collation,                 // COLLATION_NAME
-			columnType,                           // COLUMN_TYPE
-			columnDesc.Key,                       // COLUMN_KEY
-			columnDesc.Extra,                     // EXTRA
+			infoschema.CatalogVal, // TABLE_CATALOG
+			schema.Name.O,         // TABLE_SCHEMA
+			tbl.Name.O,            // TABLE_NAME
+			col.Name.O,            // COLUMN_NAME
+			i+1,                   // ORIGINAL_POSITION
+			columnDefault,         // COLUMN_DEFAULT
+			columnDesc.Null,       // IS_NULLABLE
+			types.TypeToStr(col.GetType(), col.GetCharset()), // DATA_TYPE
+			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
+			charOctLen,           // CHARACTER_OCTET_LENGTH
+			numericPrecision,     // NUMERIC_PRECISION
+			numericScale,         // NUMERIC_SCALE
+			datetimePrecision,    // DATETIME_PRECISION
+			columnDesc.Charset,   // CHARACTER_SET_NAME
+			columnDesc.Collation, // COLLATION_NAME
+			columnType,           // COLUMN_TYPE
+			columnDesc.Key,       // COLUMN_KEY
+			columnDesc.Extra,     // EXTRA
 			strings.ToLower(privileges.PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)), // PRIVILEGES
 			columnDesc.Comment,      // COLUMN_COMMENT
 			col.GeneratedExprString, // GENERATION_EXPRESSION
@@ -983,7 +996,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 			if tb.PKIsHandle {
 				var pkCol *model.ColumnInfo
 				for _, col := range tb.Cols() {
-					if mysql.HasPriKeyFlag(col.Flag) {
+					if mysql.HasPriKeyFlag(col.GetFlag()) {
 						pkCol = col
 						break
 					}
@@ -1386,7 +1399,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				record := types.MakeDatums(
 					infoschema.CatalogVal,        // CONSTRAINT_CATALOG
 					schema.Name.O,                // CONSTRAINT_SCHEMA
@@ -1469,7 +1482,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (err error) {
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
@@ -1478,22 +1491,60 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) e
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	regionsInfo, err := tikvHelper.GetRegionsInfo()
-	if err != nil {
-		return err
+	requestByTableRange := false
+	allRegionsInfo := helper.NewRegionsInfo()
+	if e.extractor != nil {
+		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
+		if ok && len(extractor.GetTablesID()) > 0 {
+			for _, tableID := range extractor.GetTablesID() {
+				regionsInfo, err := e.getRegionsInfoForSingleTable(tikvHelper, tableID)
+				if err != nil {
+					return err
+				}
+				allRegionsInfo = allRegionsInfo.Merge(regionsInfo)
+			}
+			requestByTableRange = true
+		}
+	}
+	if !requestByTableRange {
+		allRegionsInfo, err = tikvHelper.GetRegionsInfo()
+		if err != nil {
+			return err
+		}
 	}
 	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
-	for i := range regionsInfo.Regions {
-		tableList := tableInfos[regionsInfo.Regions[i].ID]
+	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, allSchemas)
+	for i := range allRegionsInfo.Regions {
+		tableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(tableList) == 0 {
-			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], nil)
+			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], nil)
 		}
 		for j := range tableList {
-			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], &tableList[j])
+			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &tableList[j])
 		}
 	}
 	return nil
+}
+
+func (e *memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, tableID int64) (*helper.RegionsInfo, error) {
+	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
+	sRegion, err := helper.GetRegionByKey(codec.EncodeBytes(nil, sk))
+	if err != nil {
+		return nil, err
+	}
+	eRegion, err := helper.GetRegionByKey(codec.EncodeBytes(nil, ek))
+	if err != nil {
+		return nil, err
+	}
+	sk, err = hex.DecodeString(sRegion.StartKey)
+	if err != nil {
+		return nil, err
+	}
+	ek, err = hex.DecodeString(eRegion.EndKey)
+	if err != nil {
+		return nil, err
+	}
+	return helper.GetRegionsInfoByRange(sk, ek)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) {
@@ -1512,6 +1563,8 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 		} else {
 			row[6].SetInt64(0)
 		}
+	} else {
+		row[6].SetInt64(0)
 	}
 	row[9].SetInt64(region.Epoch.ConfVer)
 	row[10].SetInt64(region.Epoch.Version)
@@ -1625,6 +1678,18 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 					schema.Name.O,         // TABLE_SCHEMA
 					tbl.Name.O,            // TABLE_NAME
 					ctype,                 // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
+			//  TiDB includes foreign key information for compatibility but foreign keys are not yet enforced.
+			for _, fk := range tbl.ForeignKeys {
+				record := types.MakeDatums(
+					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
+					schema.Name.O,             // CONSTRAINT_SCHEMA
+					fk.Name.O,                 // CONSTRAINT_NAME
+					schema.Name.O,             // TABLE_SCHEMA
+					tbl.Name.O,                // TABLE_NAME
+					infoschema.ForeignKeyType, // CONSTRAINT_TYPE
 				)
 				rows = append(rows, record)
 			}
@@ -1797,41 +1862,70 @@ func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error 
 }
 
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
-func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum) {
+func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+	const maxAnalyzeJobs = 30
+	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	chunkRows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, maxAnalyzeJobs)
+	if err != nil {
+		return nil, err
+	}
 	checker := privilege.GetPrivilegeManager(sctx)
-	for _, job := range statistics.GetAllAnalyzeJobs() {
-		job.Lock()
+	for _, chunkRow := range chunkRows {
+		dbName := chunkRow.GetString(0)
+		tableName := chunkRow.GetString(1)
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.AllPrivMask) {
+			continue
+		}
+		partitionName := chunkRow.GetString(2)
+		jobInfo := chunkRow.GetString(3)
+		processedRows := chunkRow.GetInt64(4)
 		var startTime, endTime interface{}
-		if job.StartTime.IsZero() {
-			startTime = nil
-		} else {
-			startTime = types.NewTime(types.FromGoTime(job.StartTime), mysql.TypeDatetime, 0)
+		if !chunkRow.IsNull(5) {
+			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
+			if err != nil {
+				return nil, err
+			}
+			startTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
-		if job.EndTime.IsZero() {
-			endTime = nil
-		} else {
-			endTime = types.NewTime(types.FromGoTime(job.EndTime), mysql.TypeDatetime, 0)
+		if !chunkRow.IsNull(6) {
+			t, err := chunkRow.GetTime(6).GoTime(time.UTC)
+			if err != nil {
+				return nil, err
+			}
+			endTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
-		if checker == nil || checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
-			rows = append(rows, types.MakeDatums(
-				job.DBName,        // TABLE_SCHEMA
-				job.TableName,     // TABLE_NAME
-				job.PartitionName, // PARTITION_NAME
-				job.JobInfo,       // JOB_INFO
-				job.RowCount,      // ROW_COUNT
-				startTime,         // START_TIME
-				endTime,           // END_TIME
-				job.State,         // STATE
-			))
+		state := chunkRow.GetEnum(7).String()
+		var failReason interface{}
+		if !chunkRow.IsNull(8) {
+			failReason = chunkRow.GetString(8)
 		}
-		job.Unlock()
+		instance := chunkRow.GetString(9)
+		var procID interface{}
+		if !chunkRow.IsNull(10) {
+			procID = chunkRow.GetUint64(10)
+		}
+		rows = append(rows, types.MakeDatums(
+			dbName,        // TABLE_SCHEMA
+			tableName,     // TABLE_NAME
+			partitionName, // PARTITION_NAME
+			jobInfo,       // JOB_INFO
+			processedRows, // ROW_COUNT
+			startTime,     // START_TIME
+			endTime,       // END_TIME
+			state,         // STATE
+			failReason,    // FAIL_REASON
+			instance,      // INSTANCE
+			procID,        // PROCESS_ID
+		))
 	}
 	return
 }
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
-func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
-	e.rows = dataForAnalyzeStatusHelper(sctx)
+func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) (err error) {
+	e.rows, err = dataForAnalyzeStatusHelper(sctx)
+	return
 }
 
 // setDataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
@@ -2716,9 +2810,9 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 			if column.Name.O == "TIFLASH_INSTANCE" {
 				continue
 			}
-			if column.Tp == mysql.TypeVarchar {
+			if column.GetType() == mysql.TypeVarchar {
 				row[index].SetString(fields[index], mysql.DefaultCollationName)
-			} else if column.Tp == mysql.TypeLonglong {
+			} else if column.GetType() == mysql.TypeLonglong {
 				if fields[index] == notNumber {
 					continue
 				}
@@ -2727,7 +2821,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 					return nil, errors.Trace(err)
 				}
 				row[index].SetInt64(value)
-			} else if column.Tp == mysql.TypeDouble {
+			} else if column.GetType() == mysql.TypeDouble {
 				if fields[index] == notNumber {
 					continue
 				}
@@ -2751,9 +2845,10 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	return rows, nil
 }
 
-func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is infoschema.InfoSchema) error {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rules, err := infosync.GetAllLabelRules(context.TODO())
+	skipValidateTable := false
 	failpoint.Inject("mockOutputOfAttributes", func() {
 		convert := func(i interface{}) []interface{} {
 			return []interface{}{i}
@@ -2768,8 +2863,27 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 					"end_key":   "7480000000000000ff3a5f720000000000fa",
 				}),
 			},
+			{
+				ID:       "invalidIDtest",
+				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				RuleType: "key-range",
+				Data: convert(map[string]interface{}{
+					"start_key": "7480000000000000ff395f720000000000fa",
+					"end_key":   "7480000000000000ff3a5f720000000000fa",
+				}),
+			},
+			{
+				ID:       "schema/test/test_label",
+				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				RuleType: "key-range",
+				Data: convert(map[string]interface{}{
+					"start_key": "aaaaa",
+					"end_key":   "bbbbb",
+				}),
+			},
 		}
 		err = nil
+		skipValidateTable = true
 	})
 
 	if err != nil {
@@ -2779,10 +2893,21 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 	rows := make([][]types.Datum, 0, len(rules))
 	for _, rule := range rules {
 		skip := true
-		dbName, tableName, err := checkRule(rule)
+		dbName, tableName, partitionName, err := checkRule(rule)
 		if err != nil {
-			return err
+			logutil.BgLogger().Warn("check table-rule failed", zap.String("ID", rule.ID), zap.Error(err))
+			continue
 		}
+		tableID, err := decodeTableIDFromRule(rule)
+		if err != nil {
+			logutil.BgLogger().Warn("decode table ID from rule failed", zap.String("ID", rule.ID), zap.Error(err))
+			continue
+		}
+
+		if !skipValidateTable && tableOrPartitionNotExist(dbName, tableName, partitionName, is, tableID) {
+			continue
+		}
+
 		if tableName != "" && dbName != "" && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.SelectPriv)) {
 			skip = false
 		}
@@ -2851,7 +2976,7 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 	return nil
 }
 
-func checkRule(rule *label.Rule) (dbName, tableName string, err error) {
+func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {
 	s := strings.Split(rule.ID, "/")
 	if len(s) < 3 {
 		err = errors.Errorf("invalid label rule ID: %v", rule.ID)
@@ -2871,5 +2996,55 @@ func checkRule(rule *label.Rule) (dbName, tableName string, err error) {
 	}
 	dbName = s[1]
 	tableName = s[2]
+	if len(s) > 3 {
+		partitionName = s[3]
+	}
 	return
+}
+
+func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
+	if len(rule.Data) == 0 {
+		err = errors.New(fmt.Sprintf("there is no data in rule %s", rule.ID))
+		return
+	}
+	data := rule.Data[0]
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		err = errors.New(fmt.Sprintf("get the label rules %s failed", rule.ID))
+		return
+	}
+	key, err := hex.DecodeString(fmt.Sprintf("%s", dataMap["start_key"]))
+	if err != nil {
+		err = errors.New(fmt.Sprintf("decode key from start_key %s in rule %s failed", dataMap["start_key"], rule.ID))
+		return
+	}
+	_, bs, err := codec.DecodeBytes(key, nil)
+	if err == nil {
+		key = bs
+	}
+	tableID = tablecodec.DecodeTableID(key)
+	if tableID == 0 {
+		err = errors.New(fmt.Sprintf("decode tableID from key %s in rule %s failed", key, rule.ID))
+		return
+	}
+	return
+}
+
+func tableOrPartitionNotExist(dbName string, tableName string, partitionName string, is infoschema.InfoSchema, tableID int64) (tableNotExist bool) {
+	if len(partitionName) == 0 {
+		curTable, _ := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+		if curTable == nil {
+			return true
+		}
+		curTableID := curTable.Meta().ID
+		if curTableID != tableID {
+			return true
+		}
+	} else {
+		_, _, partInfo := is.FindTableByPartitionID(tableID)
+		if partInfo == nil {
+			return true
+		}
+	}
+	return false
 }

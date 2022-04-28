@@ -41,7 +41,7 @@ TABLE_NAME="t"
 # drop database on mysql
 run_sql "drop database if exists \`$DB_NAME\`;"
 # build data on mysql
-run_sql "create database $DB_NAME;"
+run_sql "create database $DB_NAME DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 
 # load 50MB data into MySQL
 (cd "$(dirname "$0")" && GO111MODULE=on go build -o out)

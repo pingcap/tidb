@@ -188,8 +188,6 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetPriority(getTiKVPriority(val.(int)))
 	case kv.NotFillCache:
 		txn.KVTxn.GetSnapshot().SetNotFillCache(val.(bool))
-	case kv.SyncLog:
-		txn.EnableForceSyncLog()
 	case kv.Pessimistic:
 		txn.SetPessimistic(val.(bool))
 	case kv.SnapshotTS:

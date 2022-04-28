@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -126,8 +126,8 @@ func TestValidator(t *testing.T) {
 			errors.New("[types:1074]Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
 		{"alter table t add column c varchar(4294967295) CHARACTER SET ascii", true,
 			errors.New("[types:1074]Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
-		{"create table t", false, ddl.ErrTableMustHaveColumns},
-		{"create table t (unique(c))", false, ddl.ErrTableMustHaveColumns},
+		{"create table t", false, dbterror.ErrTableMustHaveColumns},
+		{"create table t (unique(c))", false, dbterror.ErrTableMustHaveColumns},
 
 		{"create table `t ` (a int)", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
@@ -223,7 +223,7 @@ func TestValidator(t *testing.T) {
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
-		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")},
+		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, dbterror.ErrViewSelectClause.GenWithStackByArgs("INFO")},
 		{"CREATE VIEW V AS SELECT 5 FOR UPDATE", false, nil},
 		{"CREATE VIEW V AS SELECT 5 LOCK IN SHARE MODE", false, nil},
 
@@ -250,11 +250,11 @@ func TestValidator(t *testing.T) {
 		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
 
 		// issue 21082
-		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, dbterror.ErrUnknownEngine},
 		{"CREATE TABLE t (a int) ENGINE=InnoDB;", false, nil},
 		{"CREATE TABLE t (a int);", false, nil},
 		{"ALTER TABLE t ENGINE=InnoDB;", false, nil},
-		{"ALTER TABLE t ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"ALTER TABLE t ENGINE=Unknown;", false, dbterror.ErrUnknownEngine},
 
 		// issue 20295
 		// issue 11193
@@ -340,4 +340,27 @@ func TestErrKeyPart0(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("alter table t add index (b(0))")
 	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
+}
+
+// For issue #30328
+func TestLargeVarcharAutoConv(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000))", false,
+		errors.New("[types:1074]Column length too big for column 'a' (max = 65535); use BLOB or TEXT instead"))
+
+	tk.MustExec("SET sql_mode = 'NO_ENGINE_SUBSTITUTION'")
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000));", false, nil)
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000) charset utf8mb4);", false, nil)
+	warnCnt := tk.Session().GetSessionVars().StmtCtx.WarningCount()
+	// It is only 3. For the first stmt, charset of column b is not resolved, so ddl will append a warning for it
+	require.Equal(t, uint16(3), warnCnt)
+	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	for i := range warns {
+		require.True(t, terror.ErrorEqual(warns[i].Err, dbterror.ErrAutoConvert))
+	}
 }

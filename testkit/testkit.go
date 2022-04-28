@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build !codes
-// +build !codes
 
 package testkit
 
@@ -22,18 +21,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
@@ -212,7 +206,13 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 		parserWarns := warns[len(prevWarns):]
 		var rs0 sqlexec.RecordSet
 		for i, stmt := range stmts {
-			rs, err := tk.session.ExecuteStmt(ctx, stmt)
+			var rs sqlexec.RecordSet
+			var err error
+			if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
+				rs, err = session.HandleNonTransactionalDelete(ctx, s, tk.Session())
+			} else {
+				rs, err = tk.Session().ExecuteStmt(ctx, stmt)
+			}
 			if i == 0 {
 				rs0 = rs
 			}
@@ -272,19 +272,32 @@ func (tk *TestKit) RefreshConnectionID() {
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
-	tk.require.Error(err)
+	tk.require.Errorf(err, "sql: %s", sql)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	tk.require.Truef(ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	tk.require.Truef(ok, "sql: %s, expect type 'terror.Error', but obtain '%T': %v", sql, originErr, originErr)
 	sqlErr := terror.ToSQLError(tErr)
-	tk.require.Equalf(errCode, int(sqlErr.Code), "Assertion failed, origin err:\n  %v", sqlErr)
+	tk.require.Equalf(errCode, int(sqlErr.Code), "sql: %s, Assertion failed, origin err:\n  %v", sql, sqlErr)
 }
 
-// MustGetErrMsg executes a sql statement and assert it's error message.
+// MustGetErrMsg executes a sql statement and assert its error message.
 func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
 	err := tk.ExecToErr(sql)
+	tk.require.EqualError(err, errStr)
+}
+
+// MustContainErrMsg executes a sql statement and assert its error message containing errStr.
+func (tk *TestKit) MustContainErrMsg(sql string, errStr interface{}) {
+	err := tk.ExecToErr(sql)
 	tk.require.Error(err)
-	tk.require.Equal(errStr, err.Error())
+	tk.require.Contains(err.Error(), errStr)
+}
+
+// MustMatchErrMsg executes a sql statement and assert its error message matching errRx.
+func (tk *TestKit) MustMatchErrMsg(sql string, errRx interface{}) {
+	err := tk.ExecToErr(sql)
+	tk.require.Error(err)
+	tk.require.Regexp(errRx, err.Error())
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).
@@ -349,31 +362,6 @@ func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
 	f()
 }
 
-// MockGC is used to make GC work in the test environment.
-func MockGC(tk *TestKit) (string, string, string, func()) {
-	originGC := ddl.IsEmulatorGCEnable()
-	resetGC := func() {
-		if originGC {
-			ddl.EmulatorGCEnable()
-		} else {
-			ddl.EmulatorGCDisable()
-		}
-	}
-
-	// disable emulator GC.
-	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
-	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	// clear GC variables first.
-	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
-	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
-}
-
 func containGlobal(rs *Result) bool {
 	partitionNameCol := 2
 	for i := range rs.rows {
@@ -396,17 +384,6 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 		return false
 	}
 	return true
-}
-
-// TestGetTableByName gets table by name for test.
-func TestGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	require.NoError(t, err)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	require.NoError(t, err)
-	return tbl
 }
 
 // CheckLastMessage checks last message after executing MustExec

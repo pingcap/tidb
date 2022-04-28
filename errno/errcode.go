@@ -657,6 +657,7 @@ const (
 	ErrBinlogUnsafeLimit                                     = 1668
 	ErrBinlogUnsafeInsertDelayed                             = 1669
 	ErrBinlogUnsafeAutoincColumns                            = 1671
+	ErrBinlogUnsafeSystemFunction                            = 1674
 	ErrBinlogUnsafeNontransAfterTrans                        = 1675
 	ErrMessageAndStatement                                   = 1676
 	ErrInsideTransactionPreventsSwitchBinlogFormat           = 1679
@@ -899,6 +900,7 @@ const (
 	ErrWrongKeyColumnFunctionalIndex                         = 3761
 	ErrFunctionalIndexOnField                                = 3762
 	ErrGeneratedColumnRowValueIsNotAllowed                   = 3764
+	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
@@ -1016,6 +1018,7 @@ const (
 	ErrInconsistentHandle                  = 8139
 	ErrInconsistentIndexedValue            = 8140
 	ErrAssertionFailed                     = 8141
+	ErrInstanceScope                       = 8142
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

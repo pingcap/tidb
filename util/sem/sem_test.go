@@ -102,5 +102,7 @@ func TestIsInvisibleSysVar(t *testing.T) {
 	assert.True(IsInvisibleSysVar(variable.TiDBEnableTelemetry))
 	assert.True(IsInvisibleSysVar(variable.TiDBRowFormatVersion))
 	assert.True(IsInvisibleSysVar(variable.TiDBRedactLog))
-	assert.True(IsInvisibleSysVar(variable.TiDBSlowLogMasking))
+	assert.True(IsInvisibleSysVar(variable.TiDBTopSQLMaxTimeSeriesCount))
+	assert.True(IsInvisibleSysVar(variable.TiDBTopSQLMaxTimeSeriesCount))
+	assert.True(IsInvisibleSysVar(tidbAuditRetractLog))
 }

@@ -120,7 +120,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 	// Deliver nothing.
 
 	cfg := &config.Config{}
-	rc := &Controller{cfg: cfg, backend: importer, diskQuotaLock: newDiskQuotaLock()}
+	rc := &Controller{cfg: cfg, backend: importer}
 
 	kvsCh := make(chan []deliveredKVs, 1)
 	kvsCh <- []deliveredKVs{}
@@ -216,7 +216,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	}()
 
 	cfg := &config.Config{}
-	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer, diskQuotaLock: newDiskQuotaLock()}
+	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer}
 
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	require.NoError(s.T(), err)
@@ -403,7 +403,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	defer kvEncoder.Close()
 
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
-	require.Equal(s.T(), "in file db.table.2.sql:0 at offset 4: column count mismatch, expected 3, got 2", err.Error())
+	require.Equal(s.T(), "[Lightning:Restore:ErrEncodeKV]encode kv error in file db.table.2.sql:0 at offset 4: column count mismatch, expected 3, got 2", err.Error())
 	require.Len(s.T(), kvsCh, 0)
 }
 
@@ -557,11 +557,10 @@ func (s *chunkRestoreSuite) TestRestore() {
 
 	saveCpCh := make(chan saveCp, 2)
 	err = s.cr.restore(ctx, s.tr, 0, dataWriter, indexWriter, &Controller{
-		cfg:           s.cfg,
-		saveCpCh:      saveCpCh,
-		backend:       importer,
-		pauser:        DeliverPauser,
-		diskQuotaLock: newDiskQuotaLock(),
+		cfg:      s.cfg,
+		saveCpCh: saveCpCh,
+		backend:  importer,
+		pauser:   DeliverPauser,
 	})
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)

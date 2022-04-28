@@ -89,40 +89,6 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-// IsJobRollbackable checks whether the job can be rollback.
-func IsJobRollbackable(job *model.Job) bool {
-	switch job.Type {
-	case model.ActionDropIndex, model.ActionDropPrimaryKey, model.ActionDropIndexes:
-		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
-		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
-		// know the type of index here, we consider all indices except primary index as non-rollbackable.
-		// TODO: distinguish normal index and expression index so that we can rollback `DropIndex` for normal index in WriteOnly state.
-		// TODO: make DropPrimaryKey rollbackable in WriteOnly, it need to deal with some tests.
-		if job.SchemaState == model.StateDeleteOnly ||
-			job.SchemaState == model.StateDeleteReorganization ||
-			job.SchemaState == model.StateWriteOnly {
-			return false
-		}
-	case model.ActionDropSchema, model.ActionDropTable, model.ActionDropSequence:
-		// To simplify the rollback logic, cannot be canceled in the following states.
-		if job.SchemaState == model.StateWriteOnly ||
-			job.SchemaState == model.StateDeleteOnly {
-			return false
-		}
-	case model.ActionAddTablePartition:
-		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly
-	case model.ActionDropColumn, model.ActionDropColumns, model.ActionDropTablePartition,
-		model.ActionRebaseAutoID, model.ActionShardRowID,
-		model.ActionTruncateTable, model.ActionAddForeignKey,
-		model.ActionDropForeignKey, model.ActionRenameTable,
-		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
-		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
-		model.ActionModifyTableAutoIdCache, model.ActionModifySchemaDefaultPlacement:
-		return job.SchemaState == model.StateNone
-	}
-	return true
-}
-
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
@@ -140,51 +106,52 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		return nil, errors.Trace(err)
 	}
 	jobs := append(generalJobs, addIdxJobs...)
-
+	jobsMap := make(map[int64]int)
 	for i, id := range ids {
-		found := false
-		for j, job := range jobs {
-			if id != job.ID {
-				logutil.BgLogger().Debug("the job that needs to be canceled isn't equal to current job",
-					zap.Int64("need to canceled job ID", id),
-					zap.Int64("current job ID", job.ID))
-				continue
-			}
-			found = true
-			// These states can't be cancelled.
-			if job.IsDone() || job.IsSynced() {
-				errs[i] = ErrCancelFinishedDDLJob.GenWithStackByArgs(id)
-				continue
-			}
-			// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
-			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
-				continue
-			}
-			if !IsJobRollbackable(job) {
-				errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
-				continue
-			}
+		jobsMap[id] = i
+	}
+	for j, job := range jobs {
+		i, ok := jobsMap[job.ID]
+		if !ok {
+			logutil.BgLogger().Debug("the job that needs to be canceled isn't equal to current job",
+				zap.Int64("need to canceled job ID", job.ID),
+				zap.Int64("current job ID", job.ID))
+			continue
+		}
+		delete(jobsMap, job.ID)
+		// These states can't be cancelled.
+		if job.IsDone() || job.IsSynced() {
+			errs[i] = ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
+		if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
+			continue
+		}
+		if !job.IsRollbackable() {
+			errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
 
-			job.State = model.JobStateCancelling
-			// Make sure RawArgs isn't overwritten.
-			err := json.Unmarshal(job.RawArgs, &job.Args)
-			if err != nil {
-				errs[i] = errors.Trace(err)
-				continue
-			}
-			if j >= len(generalJobs) {
-				offset := int64(j - len(generalJobs))
-				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
-			} else {
-				err = t.UpdateDDLJob(int64(j), job, true)
-			}
-			if err != nil {
-				errs[i] = errors.Trace(err)
-			}
+		job.State = model.JobStateCancelling
+		// Make sure RawArgs isn't overwritten.
+		err := json.Unmarshal(job.RawArgs, &job.Args)
+		if err != nil {
+			errs[i] = errors.Trace(err)
+			continue
 		}
-		if !found {
-			errs[i] = ErrDDLJobNotFound.GenWithStackByArgs(id)
+		if j >= len(generalJobs) {
+			offset := int64(j - len(generalJobs))
+			err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
+		} else {
+			err = t.UpdateDDLJob(int64(j), job, true)
 		}
+		if err != nil {
+			errs[i] = errors.Trace(err)
+		}
+	}
+	for id, i := range jobsMap {
+		errs[i] = ErrDDLJobNotFound.GenWithStackByArgs(id)
 	}
 	return errs, nil
 }
@@ -403,7 +370,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
-				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().GetOriginDefaultValue() == nil {
+				if mysql.HasNotNullFlag(col.GetFlag()) && col.ToInfo().GetOriginDefaultValue() == nil {
 					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
