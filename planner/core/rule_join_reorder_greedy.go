@@ -26,10 +26,6 @@ type joinReorderGreedySolver struct {
 	*baseSingleGroupJoinOrderSolver
 	eqEdges   []*expression.ScalarFunction
 	joinTypes []JoinType
-	// Maintain the order for plans of the outerJoin. [a,b] indicate a must join before b
-	directedEdges []directedEdge
-	// A map maintain eqCond and eqConds which must join after the eqCond
-	priorityMap map[*expression.ScalarFunction][]*expression.ScalarFunction
 }
 
 // solve reorders the join nodes in the group based on a greedy algorithm.
@@ -65,37 +61,34 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
 
-	var cartesianGroup = make([]LogicalPlan, 0, 1)
-	err := s.constructConnectedJoinTree(tracer)
-	if err != nil {
-		return nil, err
-	}
-	for i := range s.curJoinGroup {
-		cartesianGroup = append(cartesianGroup, s.curJoinGroup[i].p)
+	var cartesianGroup []LogicalPlan
+	for len(s.curJoinGroup) > 0 {
+		newNode, err := s.constructConnectedJoinTree(tracer)
+		if err != nil {
+			return nil, err
+		}
+		cartesianGroup = append(cartesianGroup, newNode.p)
 	}
 
 	return s.makeBushyJoin(cartesianGroup), nil
 }
 
-func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) error {
-	curIndex := 0
-	for curIndex < len(s.curJoinGroup)-1 {
-		curJoinTree := s.curJoinGroup[curIndex]
-		s.curJoinGroup = append(s.curJoinGroup[0:curIndex], s.curJoinGroup[curIndex:]...)
+func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
+	curJoinTree := s.curJoinGroup[0]
+	s.curJoinGroup = s.curJoinGroup[1:]
+	for {
 		bestCost := math.MaxFloat64
 		bestIdx := -1
 		var finalRemainOthers []expression.Expression
 		var bestJoin LogicalPlan
-		var finalUsedEdges []*expression.ScalarFunction
-		for i := curIndex + 1; i < len(s.curJoinGroup); i++ {
-			node := s.curJoinGroup[i]
-			newJoin, remainOthers, joinedEdges := s.checkConnectionAndMakeJoin(curJoinTree, node)
+		for i, node := range s.curJoinGroup {
+			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
 			if newJoin == nil {
 				continue
 			}
 			_, err := newJoin.recursiveDeriveStats(nil)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
 			tracer.appendLogicalJoinCost(newJoin, curCost)
@@ -104,42 +97,24 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 				bestJoin = newJoin
 				bestIdx = i
 				finalRemainOthers = remainOthers
-				finalUsedEdges = joinedEdges
 			}
 		}
 		// If we could find more join node, meaning that the sub connected graph have been totally explored.
 		if bestJoin == nil {
-			curIndex++
-			continue
+			break
 		}
 		curJoinTree = &jrNode{
 			p:       bestJoin,
 			cumCost: bestCost,
 		}
 		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
-		s.curJoinGroup = append(s.curJoinGroup[:curIndex], s.curJoinGroup[curIndex+1:]...)
-		s.insertIntoCurJoinGroup(curJoinTree)
 		s.otherConds = finalRemainOthers
-		// delete from priorityMap
-		for _, eqCond := range finalUsedEdges {
-			for key := range s.priorityMap {
-				eqConds := s.priorityMap[key]
-				deletedEqConds := s.deleteEqCond(eqConds, eqCond)
-				if len(deletedEqConds) != len(eqConds) {
-					s.priorityMap[key] = deletedEqConds
-					curIndex = 0
-				}
-			}
-		}
 	}
-	return nil
+	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode *jrNode) (LogicalPlan, []expression.Expression, []*expression.ScalarFunction) {
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan LogicalPlan) (LogicalPlan, []expression.Expression) {
 	var usedEdges []*expression.ScalarFunction
-	var joinedEdges []*expression.ScalarFunction
-	leftPlan := leftNode.p
-	rightPlan := rightNode.p
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
 	joinType := InnerJoin
@@ -147,16 +122,9 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 		lCol := edge.GetArgs()[0].(*expression.Column)
 		rCol := edge.GetArgs()[1].(*expression.Column)
 		if leftPlan.Schema().Contains(lCol) && rightPlan.Schema().Contains(rCol) {
-			if len(s.priorityMap[edge]) > 0 {
-				return nil, nil, nil
-			}
-			usedEdges = append(usedEdges, edge)
-			joinedEdges = append(joinedEdges, edge)
 			joinType = s.joinTypes[idx]
+			usedEdges = append(usedEdges, edge)
 		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
-			if len(s.priorityMap[edge]) > 0 {
-				return nil, nil, nil
-			}
 			joinType = s.joinTypes[idx]
 			if joinType != InnerJoin {
 				rightPlan, leftPlan = leftPlan, rightPlan
@@ -165,11 +133,10 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 				newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
 				usedEdges = append(usedEdges, newSf)
 			}
-			joinedEdges = append(joinedEdges, edge)
 		}
 	}
 	if len(usedEdges) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
 	var otherConds []expression.Expression
 	var leftConds []expression.Expression
@@ -185,7 +152,7 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
-	return s.newJoinWithEdges(leftPlan, rightPlan, usedEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds, joinedEdges
+	return s.newJoinWithEdges(leftPlan, rightPlan, usedEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds
 }
 
 func (s *joinReorderGreedySolver) insertIntoCurJoinGroup(node *jrNode) {
