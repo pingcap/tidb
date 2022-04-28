@@ -243,6 +243,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
+	if e.ctx.GetSessionVars().InRestrictedSQL {
+		return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
+	}
 	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema), handle.WithTableStatsByQuery())
 }
 
