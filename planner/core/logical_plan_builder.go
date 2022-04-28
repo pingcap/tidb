@@ -4049,9 +4049,9 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 	var statsTbl *statistics.Table
 	if pid == tblInfo.ID || ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo, handle.WithGetTableStatsByQuery())
+		statsTbl = statsHandle.GetTableStats(tblInfo, handle.WithTableStatsByQuery())
 	} else {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithGetTableStatsByQuery())
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
 	}
 
 	// 2. table row count from statistics is zero.

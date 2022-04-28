@@ -242,7 +242,7 @@ func DurationToTS(d time.Duration) uint64 {
 }
 
 // Update reads stats meta from store and updates the stats map.
-func (h *Handle) Update(is infoschema.InfoSchema) error {
+func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	oldCache := h.statsCache.Load().(statsCache)
 	lastVersion := oldCache.version
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
@@ -299,7 +299,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion))
+	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
 	return nil
 }
 
@@ -515,16 +515,16 @@ func (h *Handle) GetMemConsumed() (size int64) {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...GetTableStatsOpt) *statistics.Table {
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...TableStatsOpt) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID, opts...)
 }
 
 // GetPartitionStats retrieves the partition stats from cache.
-func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...GetTableStatsOpt) *statistics.Table {
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...TableStatsOpt) *statistics.Table {
 	statsCache := h.statsCache.Load().(statsCache)
 	var tbl *statistics.Table
 	var ok bool
-	option := &getTableStatsOption{}
+	option := &tableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
 	}
@@ -2053,16 +2053,16 @@ func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
 	return err
 }
 
-type getTableStatsOption struct {
+type tableStatsOption struct {
 	byQuery bool
 }
 
-// GetTableStatsOpt used to edit getTableStatsOption
-type GetTableStatsOpt func(*getTableStatsOption)
+// TableStatsOpt used to edit getTableStatsOption
+type TableStatsOpt func(*tableStatsOption)
 
-// WithGetTableStatsByQuery indicates Get table stats for user query
-func WithGetTableStatsByQuery() GetTableStatsOpt {
-	return func(option *getTableStatsOption) {
+// WithTableStatsByQuery indicates user needed
+func WithTableStatsByQuery() TableStatsOpt {
+	return func(option *tableStatsOption) {
 		option.byQuery = true
 	}
 }
