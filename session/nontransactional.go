@@ -197,7 +197,7 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 
 		// if the first job failed, there is a large chance that all jobs will fail. So return early.
 		if i == 0 && jobs[i].err != nil {
-			return nil, errors.Wrap(jobs[i].err, "Early return: error occurred in the first job. All jobs are canceled")
+			return nil, errors.Annotate(jobs[i].err, "Early return: error occurred in the first job. All jobs are canceled")
 		}
 	}
 	return splitStmts, nil
@@ -271,7 +271,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 		format.RestoreBracketAroundBinaryOperation|
 		format.RestoreStringWithoutCharset, &sb))
 	if err != nil {
-		job.err = err
+		job.err = errors.Annotate(err, "Failed to restore delete statement")
 		return ""
 	}
 	deleteSQL := sb.String()
@@ -436,7 +436,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 			format.RestoreBracketAroundBinaryOperation|
 			format.RestoreStringWithoutCharset, &sb))
 		if err != nil {
-			return nil, "", nil, errors.Trace(err)
+			return nil, "", nil, errors.Annotate(err, "Failed to restore where clause in non-transactional delete")
 		}
 	} else {
 		sb.WriteString("TRUE")

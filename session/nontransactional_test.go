@@ -401,3 +401,22 @@ func TestNonTransactionalDeleteAlias(t *testing.T) {
 		tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("5"))
 	}
 }
+
+func TestNonTransactionalDeleteShardOnUnsupportedTypes(t *testing.T) {
+	// When some day the test fail because such types are supported, we can update related docs and consider remove the test.
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a set('e0', 'e1', 'e2'), b int, key(a))")
+	tk.MustExec("insert into t values ('e2,e0', 3)")
+	err := tk.ExecToErr("split on a limit 1 delete from t")
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("create table t2(a enum('e0', 'e1', 'e2'), b int, key(a))")
+	tk.MustExec("insert into t2 values ('e0', 1)")
+	err = tk.ExecToErr("split on a limit 1 delete from t2")
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("1"))
+}
