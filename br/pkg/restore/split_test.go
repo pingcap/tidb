@@ -465,60 +465,40 @@ FindRegion:
 	return true
 }
 
-<<<<<<< HEAD
 func (s *testRangeSuite) TestNeedSplit(c *C) {
+	for _, isRawKv := range []bool{false, true} {
+		s.testNeedSplit(c, isRawKv)
+	}
+}
+
+func (s *testRangeSuite) testNeedSplit(c *C, isRawKv bool) {
+	encode := func(in []byte) []byte {
+		if isRawKv {
+			return in
+		}
+		return codec.EncodeBytes([]byte{}, in)
+	}
+
 	regions := []*restore.RegionInfo{
 		{
 			Region: &metapb.Region{
-				StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-				EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-=======
-func TestNeedSplit(t *testing.T) {
-	for _, isRawKv := range []bool{false, true} {
-		encode := func(in []byte) []byte {
-			if isRawKv {
-				return in
-			}
-			return codec.EncodeBytes([]byte{}, in)
-		}
-
-		regions := []*restore.RegionInfo{
-			{
-				Region: &metapb.Region{
-					StartKey: encode([]byte("b")),
-					EndKey:   encode([]byte("d")),
-				},
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
+				StartKey: encode([]byte("b")),
+				EndKey:   encode([]byte("d")),
 			},
-		}
-		// Out of region
-		require.Nil(t, restore.NeedSplit([]byte("a"), regions, isRawKv))
-		// Region start key
-		require.Nil(t, restore.NeedSplit([]byte("b"), regions, isRawKv))
-		// In region
-		region := restore.NeedSplit([]byte("c"), regions, isRawKv)
-		require.Equal(t, 0, bytes.Compare(region.Region.GetStartKey(), encode([]byte("b"))))
-		require.Equal(t, 0, bytes.Compare(region.Region.GetEndKey(), encode([]byte("d"))))
-		// Region end key
-		require.Nil(t, restore.NeedSplit([]byte("d"), regions, isRawKv))
-		// Out of region
-		require.Nil(t, restore.NeedSplit([]byte("e"), regions, isRawKv))
+		},
 	}
-<<<<<<< HEAD
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("a"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("a"), regions, isRawKv), IsNil)
 	// Region start key
-	c.Assert(restore.NeedSplit([]byte("b"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("b"), regions, isRawKv), IsNil)
 	// In region
-	region := restore.NeedSplit([]byte("c"), regions)
-	c.Assert(bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytes([]byte{}, []byte("b"))), Equals, 0)
-	c.Assert(bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytes([]byte{}, []byte("d"))), Equals, 0)
+	region := restore.NeedSplit([]byte("c"), regions, isRawKv)
+	c.Assert(bytes.Compare(region.Region.GetStartKey(), encode([]byte("b"))), Equals, 0)
+	c.Assert(bytes.Compare(region.Region.GetEndKey(), encode([]byte("d"))), Equals, 0)
 	// Region end key
-	c.Assert(restore.NeedSplit([]byte("d"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("d"), regions, isRawKv), IsNil)
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
-=======
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
+	c.Assert(restore.NeedSplit([]byte("e"), regions, isRawKv), IsNil)
 }
 
 func (s *testRangeSuite) TestRegionConsistency(c *C) {

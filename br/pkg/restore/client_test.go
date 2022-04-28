@@ -30,7 +30,6 @@ var defaultKeepaliveCfg = keepalive.ClientParameters{
 	Timeout: 10 * time.Second,
 }
 
-<<<<<<< HEAD
 type testRestoreClientSuite struct {
 	mock *mock.Cluster
 }
@@ -46,15 +45,9 @@ func (s *testRestoreClientSuite) TearDownTest(c *C) {
 	s.mock.Stop()
 	testleak.AfterTest(c)()
 }
-=======
-func TestCreateTables(t *testing.T) {
-	m := mc
-	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg, false)
-	require.NoError(t, err)
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 
 func (s *testRestoreClientSuite) TestCreateTables(c *C) {
-	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
+	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg, false)
 	c.Assert(err, IsNil)
 
 	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
@@ -108,33 +101,19 @@ func (s *testRestoreClientSuite) TestCreateTables(c *C) {
 	}
 }
 
-<<<<<<< HEAD
 func (s *testRestoreClientSuite) TestIsOnline(c *C) {
 
-	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
+	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg, false)
 	c.Assert(err, IsNil)
-=======
-func TestIsOnline(t *testing.T) {
-	m := mc
-	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg, false)
-	require.NoError(t, err)
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 
 	c.Assert(client.IsOnline(), IsFalse)
 	client.EnableOnline()
 	c.Assert(client.IsOnline(), IsTrue)
 }
 
-<<<<<<< HEAD
 func (s *testRestoreClientSuite) TestPreCheckTableClusterIndex(c *C) {
-=======
-func TestPreCheckTableClusterIndex(t *testing.T) {
-	m := mc
-	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg, false)
-	require.NoError(t, err)
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 
-	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
+	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg, false)
 	c.Assert(err, IsNil)
 
 	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
@@ -226,13 +205,8 @@ func (s *testRestoreClientSuite) TestPreCheckTableTiFlashReplicas(c *C) {
 
 	client, err := restore.NewRestoreClient(gluetidb.New(), fakePDClient{
 		stores: mockStores,
-<<<<<<< HEAD
-	}, s.mock.Storage, nil, defaultKeepaliveCfg)
+	}, s.mock.Storage, nil, defaultKeepaliveCfg, false)
 	c.Assert(err, IsNil)
-=======
-	}, m.Storage, nil, defaultKeepaliveCfg, false)
-	require.NoError(t, err)
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 
 	tables := make([]*metautil.Table, 4)
 	for i := 0; i < len(tables); i++ {
