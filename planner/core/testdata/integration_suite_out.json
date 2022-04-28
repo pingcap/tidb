@@ -5284,7 +5284,7 @@
           "      │   └─Projection 10000.00 mpp[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, cast(test.t.c4, decimal(40,20))->Column#27",
           "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
           "      └─Projection(Probe) 15593.77 mpp[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5",
-          "        └─HashJoin(Probe) 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t.c5, test.t.c3)]",
+          "        └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t.c5, test.t.c3)]",
           "          ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#25, collate: binary]",
           "          │   └─Projection 10000.00 mpp[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, cast(test.t.c3, decimal(40,20))->Column#25",
