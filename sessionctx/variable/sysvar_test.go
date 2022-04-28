@@ -964,7 +964,7 @@ func TestTiDBQueryLogMaxLen(t *testing.T) {
 	newVal = -2
 	expected = 0
 	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
-    // expected to set to min value
+	// expected to set to min value
 	require.Equal(t, val, fmt.Sprintf("%d", expected))
 	require.NoError(t, err)
 }

@@ -932,7 +932,7 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 		length := len(sql)
 		maxQueryLen := variable.QueryLogMaxLen.Load()
 		if maxQueryLen <= 0 {
-			return QueryReplacer.Replace(sql)  // no limit
+			return QueryReplacer.Replace(sql) // no limit
 		}
 		if int32(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
