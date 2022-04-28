@@ -16,6 +16,7 @@ package cophandler
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"math/rand"
 	"sort"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
-	"golang.org/x/net/context"
 )
 
 // handleCopAnalyzeRequest handles coprocessor analyze request.

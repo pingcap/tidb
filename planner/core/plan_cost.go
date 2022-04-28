@@ -280,12 +280,41 @@ func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType) (float64, err
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalStreamAgg) GetPlanCost(taskType property.TaskType) (float64, error) {
-	return 0, errors.New("not implemented")
+	if p.planCostInit {
+		return p.planCost, nil
+	}
+	childCost, err := p.children[0].GetPlanCost(taskType)
+	if err != nil {
+		return 0, err
+	}
+	p.planCost = childCost
+	p.planCost += p.GetCost(p.children[0].StatsCount(), taskType == property.RootTaskType)
+	p.planCostInit = true
+	return p.planCost, nil
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalHashAgg) GetPlanCost(taskType property.TaskType) (float64, error) {
-	return 0, errors.New("not implemented")
+	if p.planCostInit {
+		return p.planCost, nil
+	}
+	childCost, err := p.children[0].GetPlanCost(taskType)
+	if err != nil {
+		return 0, err
+	}
+	p.planCost = childCost
+	switch taskType {
+	case property.RootTaskType:
+		p.planCost += p.GetCost(p.children[0].StatsCount(), true, false)
+	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+		p.planCost += p.GetCost(p.children[0].StatsCount(), false, false)
+	case property.MppTaskType:
+		return 0, errors.New("not implemented")
+	default:
+		return 0, errors.Errorf("unknown task type %v", taskType)
+	}
+	p.planCostInit = true
+	return p.planCost, nil
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.

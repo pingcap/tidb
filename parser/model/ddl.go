@@ -541,18 +541,13 @@ func (job *Job) IsRollbackable() bool {
 			job.SchemaState == StateWriteOnly {
 			return false
 		}
-	case ActionDropSchema, ActionDropTable, ActionDropSequence:
-		// To simplify the rollback logic, cannot be canceled in the following states.
-		if job.SchemaState == StateWriteOnly ||
-			job.SchemaState == StateDeleteOnly {
-			return false
-		}
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
-	case ActionDropColumn, ActionDropColumns, ActionDropTablePartition,
-		ActionRebaseAutoID, ActionShardRowID,
-		ActionTruncateTable, ActionAddForeignKey,
-		ActionDropForeignKey, ActionRenameTable,
+	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
+		ActionDropForeignKey, ActionDropTablePartition:
+		return job.SchemaState == StatePublic
+	case ActionDropColumns, ActionRebaseAutoID, ActionShardRowID,
+		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
 		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
 		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
