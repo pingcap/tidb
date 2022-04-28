@@ -194,11 +194,11 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t use index(cd) where c = 200 order by c limit 10",
 		"select * from t use index(cd) where c = 200 and d < 200 order by c, d limit 10",
 		// point get
-		"select * from t where a = 1", // generated in FastPlan Optimization
+		"select * from t where a = 1", // generated in fast plan optimization
 		"select * from t where a in (1, 2, 3, 4, 5)",
 		"select * from t where k = 1",
 		"select * from t where k in (1, 2, 3, 4, 5)",
-		"select * from t where a=1 and mod(a, b)=2", // generated in Physical Plan Optimization
+		"select * from t where a=1 and mod(a, b)=2", // generated in physical plan optimization
 		"select * from t where a in (1, 2, 3, 4, 5) and mod(a, b)=2",
 		"select * from t where k=1 and mod(k, b)=2",
 		"select * from t where k in (1, 2, 3, 4, 5) and mod(k, b)=2",
