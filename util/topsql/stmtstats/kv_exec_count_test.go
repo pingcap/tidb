@@ -17,11 +17,13 @@ package stmtstats
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestKvExecCounter(t *testing.T) {
+	state.EnableTopSQL()
 	stats := CreateStatementStats()
 	counter := stats.CreateKvExecCounter([]byte("SQL-1"), []byte(""))
 	interceptor := counter.RPCInterceptor()

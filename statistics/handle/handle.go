@@ -242,7 +242,7 @@ func DurationToTS(d time.Duration) uint64 {
 }
 
 // Update reads stats meta from store and updates the stats map.
-func (h *Handle) Update(is infoschema.InfoSchema) error {
+func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	oldCache := h.statsCache.Load().(statsCache)
 	lastVersion := oldCache.version
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
@@ -299,7 +299,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion))
+	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
 	return nil
 }
 
@@ -515,14 +515,24 @@ func (h *Handle) GetMemConsumed() (size int64) {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
-	return h.GetPartitionStats(tblInfo, tblInfo.ID)
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...TableStatsOpt) *statistics.Table {
+	return h.GetPartitionStats(tblInfo, tblInfo.ID, opts...)
 }
 
 // GetPartitionStats retrieves the partition stats from cache.
-func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...TableStatsOpt) *statistics.Table {
 	statsCache := h.statsCache.Load().(statsCache)
-	tbl, ok := statsCache.Get(pid)
+	var tbl *statistics.Table
+	var ok bool
+	option := &tableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
+	if option.byQuery {
+		tbl, ok = statsCache.GetByQuery(pid)
+	} else {
+		tbl, ok = statsCache.Get(pid)
+	}
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
@@ -740,7 +750,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 		if histID != colInfo.ID {
 			continue
 		}
-		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
+		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets if:
 		// 1. Lease > 0, and:
 		// 2. this column is not handle, and:
@@ -762,7 +772,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Info:       colInfo,
 				Count:      count + nullCount,
 				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
@@ -787,7 +797,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				TopN:       topN,
 				FMSketch:   fmSketch,
 				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
 				StatsVer:   statsVer,
 				Loaded:     true,
@@ -1277,9 +1287,9 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			// When there's new collation data, the length of bounds of histogram(the collate key) might be
-			// longer than the FieldType.Flen of this column.
+			// longer than the FieldType.flen of this column.
 			// We change it to TypeBlob to bypass the length check here.
-			if tp.EvalType() == types.ETString && tp.Tp != mysql.TypeEnum && tp.Tp != mysql.TypeSet {
+			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
 			lowerBound, err = d.ConvertTo(sc, tp)
@@ -2041,4 +2051,18 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) err
 func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
 	_, _, err := h.execRestrictedSQL(context.TODO(), "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 	return err
+}
+
+type tableStatsOption struct {
+	byQuery bool
+}
+
+// TableStatsOpt used to edit getTableStatsOption
+type TableStatsOpt func(*tableStatsOption)
+
+// WithTableStatsByQuery indicates user needed
+func WithTableStatsByQuery() TableStatsOpt {
+	return func(option *tableStatsOption) {
+		option.byQuery = true
+	}
 }
