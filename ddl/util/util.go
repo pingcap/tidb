@@ -284,7 +284,6 @@ func contextDone(ctx context.Context, err error) error {
 	return nil
 }
 
-
 // GetTimeZone gets the session location's zone name and offset.
 func GetTimeZone(sctx sessionctx.Context) (string, int) {
 	loc := sctx.GetSessionVars().Location()

@@ -141,11 +141,11 @@ func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 func InitMetaTable(store kv.Storage) error {
 	return kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := NewMeta(txn)
-		v, err := t.txn.HGet(mInitDDLTable, []byte("asd"))
+		exists, err := t.CheckDDLTableExists()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if len(v) != 0 {
+		if exists {
 			return nil
 		}
 		id, err := t.CreateMySQLSchema()
@@ -691,7 +691,16 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 		return err
 	}
 
-	return m.txn.Set(mInitDDLTable, []byte("asd"))
+	return m.txn.Set(mInitDDLTable, []byte("some value"))
+}
+
+// CheckDDLTableExists check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckDDLTableExists() (bool, error) {
+	v, err := m.txn.Get(mInitDDLTable)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return len(v) != 0, nil
 }
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
