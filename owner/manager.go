@@ -157,8 +157,8 @@ func (m *ownerManager) RequireOwner(ctx context.Context) error {
 			logutil.BgLogger().Warn("member updated, try again")
 			time.Sleep(1 * time.Second)
 		}
-		url := fmt.Sprintf("http://%s:%d/ddl/owner/resign", owner.IP, owner.StatusPort) // #nosec
-		_, err = http.Post(url, "text/plain", nil)
+		url := fmt.Sprintf("http://%s:%d/ddl/owner/resign", owner.IP, owner.StatusPort)
+		_, err = http.Post(url, "text/plain", nil) // #nosec
 		if err != nil {
 			logutil.BgLogger().Warn("resign owner meet error", zap.Error(err))
 		}
