@@ -791,7 +791,7 @@ func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.MPPPartiti
 		if col, ok := item.(*expression.Column); ok {
 			groupByCols = append(groupByCols, &property.MPPPartitionColumn{
 				Col:       col,
-				CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
+				CollateID: property.GetCollateIDByNameForPartition(col.GetType().GetCollate()),
 			})
 		}
 	}
@@ -1361,7 +1361,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	isUnsigned := false
 	if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
-			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
+			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
 	} else if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
@@ -1432,7 +1432,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.getPKIsHandleCol()
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
+		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
 			alreadyHandle := false
 			for _, col := range path.IdxCols {
 				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
@@ -1533,7 +1533,7 @@ func getPKIsHandleColFromSchema(cols []*model.ColumnInfo, schema *expression.Sch
 		return nil
 	}
 	for i, col := range cols {
-		if mysql.HasPriKeyFlag(col.Flag) {
+		if mysql.HasPriKeyFlag(col.GetFlag()) {
 			return schema.Columns[i]
 		}
 	}

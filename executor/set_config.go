@@ -186,7 +186,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var i int64
 		i, isNull, err = val.EvalInt(ctx, chunk.Row{})
 		if err == nil && !isNull {
-			if mysql.HasIsBooleanFlag(val.GetType().Flag) {
+			if mysql.HasIsBooleanFlag(val.GetType().GetFlag()) {
 				str = "true"
 				if i == 0 {
 					str = "false"

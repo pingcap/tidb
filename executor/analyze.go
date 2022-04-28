@@ -488,7 +488,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	} else {
 		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
 	}
-	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
+	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
 		SetStartTS(e.snapshot).
@@ -682,7 +682,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 	var ranges []*ranger.Range
 	if hc := colExec.handleCols; hc != nil {
 		if hc.IsInt() {
-			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.Flag))
+			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.GetFlag()))
 		} else {
 			ranges = ranger.FullNotNullRange()
 		}
@@ -861,7 +861,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
-	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
+	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
@@ -1387,8 +1387,8 @@ workLoop:
 					// When it's new collation data, we need to use its collate key instead of original value because only
 					// the collate key can ensure the correct ordering.
 					// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
-					if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
-						val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
+					if ft.EvalType() == types.ETString && ft.GetType() != mysql.TypeEnum && ft.GetType() != mysql.TypeSet {
+						val.SetBytes(collate.GetCollator(ft.GetCollate()).Key(val.GetString()))
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   val,
@@ -2293,7 +2293,7 @@ type analyzePKIncrementalExec struct {
 func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.AnalyzeResults {
 	var maxVal types.Datum
 	pkInfo := colExec.handleCols.GetCol(0)
-	if mysql.HasUnsignedFlag(pkInfo.RetType.Flag) {
+	if mysql.HasUnsignedFlag(pkInfo.RetType.GetFlag()) {
 		maxVal = types.NewUintDatum(math.MaxUint64)
 	} else {
 		maxVal = types.NewIntDatum(math.MaxInt64)
