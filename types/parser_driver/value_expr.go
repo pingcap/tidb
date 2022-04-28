@@ -85,7 +85,7 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindNull:
 		ctx.WriteKeyWord("NULL")
 	case types.KindInt64:
-		if n.Type.Flag&mysql.IsBooleanFlag != 0 {
+		if n.Type.GetFlag()&mysql.IsBooleanFlag != 0 {
 			if n.GetInt64() > 0 {
 				ctx.WriteKeyWord("TRUE")
 			} else {
@@ -103,11 +103,11 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindString:
 		// This part is used to process flag HasStringWithoutDefaultCharset, which means if we have this flag and the
 		// charset is mysql.DefaultCharset, we don't need to write the default.
-		if n.Type.Charset != "" &&
+		if n.Type.GetCharset() != "" &&
 			!ctx.Flags.HasStringWithoutCharset() &&
-			(!ctx.Flags.HasStringWithoutDefaultCharset() || n.Type.Charset != mysql.DefaultCharset) {
+			(!ctx.Flags.HasStringWithoutDefaultCharset() || n.Type.GetCharset() != mysql.DefaultCharset) {
 			ctx.WritePlain("_")
-			ctx.WriteKeyWord(n.Type.Charset)
+			ctx.WriteKeyWord(n.Type.GetCharset())
 		}
 		// Replace '\' to '\\' regardless of sql_mode "NO_BACKSLASH_ESCAPES", which is the same as MySQL.
 		ctx.WriteString(strings.ReplaceAll(n.GetString(), "\\", "\\\\"))
@@ -116,7 +116,7 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindMysqlDecimal:
 		ctx.WritePlain(n.GetMysqlDecimal().String())
 	case types.KindBinaryLiteral:
-		if n.Type.Flag&mysql.UnsignedFlag != 0 {
+		if n.Type.GetFlag()&mysql.UnsignedFlag != 0 {
 			ctx.WritePlainf("x'%x'", n.GetBytes())
 		} else {
 			ctx.WritePlain(n.GetBinaryLiteral().ToBitLiteralString(true))
@@ -149,7 +149,7 @@ func (n *ValueExpr) Format(w io.Writer) {
 	case types.KindNull:
 		s = "NULL"
 	case types.KindInt64:
-		if n.Type.Flag&mysql.IsBooleanFlag != 0 {
+		if n.Type.GetFlag()&mysql.IsBooleanFlag != 0 {
 			if n.GetInt64() > 0 {
 				s = "TRUE"
 			} else {
@@ -169,7 +169,7 @@ func (n *ValueExpr) Format(w io.Writer) {
 	case types.KindMysqlDecimal:
 		s = n.GetMysqlDecimal().String()
 	case types.KindBinaryLiteral:
-		if n.Type.Flag&mysql.UnsignedFlag != 0 {
+		if n.Type.GetFlag()&mysql.UnsignedFlag != 0 {
 			s = fmt.Sprintf("x'%x'", n.GetBytes())
 		} else {
 			s = n.GetBinaryLiteral().ToBitLiteralString(true)
@@ -186,7 +186,7 @@ func newValueExpr(value interface{}, charset string, collate string) ast.ValueEx
 		return ve
 	}
 	ve := &ValueExpr{}
-	// We need to keep the ve.Type.Collate equals to ve.Datum.collation.
+	// We need to keep the ve.Type.GetCollate() equals to ve.Datum.collation.
 	types.DefaultTypeForValue(value, &ve.Type, charset, collate)
 	ve.Datum.SetValue(value, &ve.Type)
 	ve.projectionOffset = -1

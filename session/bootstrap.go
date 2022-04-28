@@ -37,10 +37,12 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -1357,6 +1359,11 @@ func upgradeToVer54(s Session, ver int64) {
 	// the tidb-server restarts.
 	// If it's a newly deployed cluster, we do not need to write the value into
 	// mysql.tidb, since no compatibility problem will happen.
+
+	// This bootstrap task becomes obsolete in TiDB 5.0+, because it appears that the
+	// default value of mem-quota-query changes back to 1GB. In TiDB 6.1+ mem-quota-query
+	// is no longer a config option, but instead a system variable (tidb_mem_quota_query).
+
 	if ver <= version38 {
 		writeMemoryQuotaQuery(s)
 	}
@@ -2001,4 +2008,33 @@ func oldPasswordUpgrade(pass string) (string, error) {
 	hash2 := auth.Sha1Hash(hash1)
 	newpass := fmt.Sprintf("*%X", hash2)
 	return newpass, nil
+}
+
+// rebuildAllPartitionValueMapAndSorted rebuilds all value map and sorted info for list column partitions with InfoSchema.
+func rebuildAllPartitionValueMapAndSorted(s *session) {
+	type partitionExpr interface {
+		PartitionExpr() (*tables.PartitionExpr, error)
+	}
+
+	p := parser.New()
+	is := s.GetInfoSchema().(infoschema.InfoSchema)
+	for _, dbInfo := range is.AllSchemas() {
+		for _, t := range is.SchemaTables(dbInfo.Name) {
+			pi := t.Meta().GetPartitionInfo()
+			if pi == nil || pi.Type != model.PartitionTypeList {
+				continue
+			}
+
+			pe, err := t.(partitionExpr).PartitionExpr()
+			if err != nil {
+				panic("partition table gets partition expression failed")
+			}
+			for _, cp := range pe.ColPrunes {
+				if err = cp.RebuildPartitionValueMapAndSorted(p); err != nil {
+					logutil.BgLogger().Warn("build list column partition value map and sorted failed")
+					break
+				}
+			}
+		}
+	}
 }

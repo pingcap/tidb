@@ -382,7 +382,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.Name.O,         // TABLE_SCHEMA
@@ -419,7 +419,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 		for i, key := range index.Columns {
 			col := nameToCol[key.Name.L]
 			nullable := "YES"
-			if mysql.HasNotNullFlag(col.Flag) {
+			if mysql.HasNotNullFlag(col.GetFlag()) {
 				nullable = ""
 			}
 
@@ -743,47 +743,47 @@ ForColumnsTag:
 		}
 
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
-		colLen, decimal := col.Flen, col.Decimal
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
+		colLen, decimal := col.GetFlen(), col.GetDecimal()
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.GetType())
 		if decimal == types.UnspecifiedLength {
 			decimal = defaultDecimal
 		}
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen
 		}
-		if col.Tp == mysql.TypeSet {
+		if col.GetType() == mysql.TypeSet {
 			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
 			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.Elems {
+			for _, ele := range col.GetElems() {
 				colLen += len(ele)
 			}
-			if len(col.Elems) != 0 {
-				colLen += (len(col.Elems) - 1)
+			if len(col.GetElems()) != 0 {
+				colLen += (len(col.GetElems()) - 1)
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if col.Tp == mysql.TypeEnum {
+			charOctLen = calcCharOctLength(colLen, col.GetCharset())
+		} else if col.GetType() == mysql.TypeEnum {
 			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
 			// the longest string in the enum is 'cdef'
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.Elems {
+			for _, ele := range col.GetElems() {
 				if len(ele) > colLen {
 					colLen = len(ele)
 				}
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if types.IsString(col.Tp) {
+			charOctLen = calcCharOctLength(colLen, col.GetCharset())
+		} else if types.IsString(col.GetType()) {
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if types.IsTypeFractionable(col.Tp) {
+			charOctLen = calcCharOctLength(colLen, col.GetCharset())
+		} else if types.IsTypeFractionable(col.GetType()) {
 			datetimePrecision = decimal
-		} else if types.IsTypeNumeric(col.Tp) {
+		} else if types.IsTypeNumeric(col.GetType()) {
 			numericPrecision = colLen
-			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
+			if col.GetType() != mysql.TypeFloat && col.GetType() != mysql.TypeDouble {
 				numericScale = decimal
 			} else if decimal != -1 {
 				numericScale = decimal
@@ -794,31 +794,31 @@ ForColumnsTag:
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
-			if col.Tp == mysql.TypeBit {
+			if col.GetType() == mysql.TypeBit {
 				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
 				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
 				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
 			}
 		}
 		record := types.MakeDatums(
-			infoschema.CatalogVal,                // TABLE_CATALOG
-			schema.Name.O,                        // TABLE_SCHEMA
-			tbl.Name.O,                           // TABLE_NAME
-			col.Name.O,                           // COLUMN_NAME
-			i+1,                                  // ORIGINAL_POSITION
-			columnDefault,                        // COLUMN_DEFAULT
-			columnDesc.Null,                      // IS_NULLABLE
-			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
-			charMaxLen,                           // CHARACTER_MAXIMUM_LENGTH
-			charOctLen,                           // CHARACTER_OCTET_LENGTH
-			numericPrecision,                     // NUMERIC_PRECISION
-			numericScale,                         // NUMERIC_SCALE
-			datetimePrecision,                    // DATETIME_PRECISION
-			columnDesc.Charset,                   // CHARACTER_SET_NAME
-			columnDesc.Collation,                 // COLLATION_NAME
-			columnType,                           // COLUMN_TYPE
-			columnDesc.Key,                       // COLUMN_KEY
-			columnDesc.Extra,                     // EXTRA
+			infoschema.CatalogVal, // TABLE_CATALOG
+			schema.Name.O,         // TABLE_SCHEMA
+			tbl.Name.O,            // TABLE_NAME
+			col.Name.O,            // COLUMN_NAME
+			i+1,                   // ORIGINAL_POSITION
+			columnDefault,         // COLUMN_DEFAULT
+			columnDesc.Null,       // IS_NULLABLE
+			types.TypeToStr(col.GetType(), col.GetCharset()), // DATA_TYPE
+			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
+			charOctLen,           // CHARACTER_OCTET_LENGTH
+			numericPrecision,     // NUMERIC_PRECISION
+			numericScale,         // NUMERIC_SCALE
+			datetimePrecision,    // DATETIME_PRECISION
+			columnDesc.Charset,   // CHARACTER_SET_NAME
+			columnDesc.Collation, // COLLATION_NAME
+			columnType,           // COLUMN_TYPE
+			columnDesc.Key,       // COLUMN_KEY
+			columnDesc.Extra,     // EXTRA
 			strings.ToLower(privileges.PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)), // PRIVILEGES
 			columnDesc.Comment,      // COLUMN_COMMENT
 			col.GeneratedExprString, // GENERATION_EXPRESSION
@@ -996,7 +996,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 			if tb.PKIsHandle {
 				var pkCol *model.ColumnInfo
 				for _, col := range tb.Cols() {
-					if mysql.HasPriKeyFlag(col.Flag) {
+					if mysql.HasPriKeyFlag(col.GetFlag()) {
 						pkCol = col
 						break
 					}
@@ -1399,7 +1399,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				record := types.MakeDatums(
 					infoschema.CatalogVal,        // CONSTRAINT_CATALOG
 					schema.Name.O,                // CONSTRAINT_SCHEMA
@@ -2810,9 +2810,9 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 			if column.Name.O == "TIFLASH_INSTANCE" {
 				continue
 			}
-			if column.Tp == mysql.TypeVarchar {
+			if column.GetType() == mysql.TypeVarchar {
 				row[index].SetString(fields[index], mysql.DefaultCollationName)
-			} else if column.Tp == mysql.TypeLonglong {
+			} else if column.GetType() == mysql.TypeLonglong {
 				if fields[index] == notNumber {
 					continue
 				}
@@ -2821,7 +2821,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 					return nil, errors.Trace(err)
 				}
 				row[index].SetInt64(value)
-			} else if column.Tp == mysql.TypeDouble {
+			} else if column.GetType() == mysql.TypeDouble {
 				if fields[index] == notNumber {
 					continue
 				}
