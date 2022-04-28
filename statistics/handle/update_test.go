@@ -353,7 +353,7 @@ func TestUpdatePartition(t *testing.T) {
 		}
 		// assert WithGetTableStatsByQuery get the same result
 		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID, handle.WithGetTableStatsByQuery())
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID, handle.WithTableStatsByQuery())
 			require.Equal(t, int64(3), statsTbl.ModifyCount)
 			require.Equal(t, int64(0), statsTbl.Count)
 			require.Equal(t, int64(0), statsTbl.Columns[bColID].TotColSize)
