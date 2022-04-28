@@ -275,7 +275,7 @@ func TestScatterFinishInTime(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
+	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -331,7 +331,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
+	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -466,26 +466,39 @@ FindRegion:
 }
 
 func (s *testRangeSuite) TestNeedSplit(c *C) {
+	for _, isRawKv := range []bool{false, true} {
+		s.testNeedSplit(c, isRawKv)
+	}
+}
+
+func (s *testRangeSuite) testNeedSplit(c *C, isRawKv bool) {
+	encode := func(in []byte) []byte {
+		if isRawKv {
+			return in
+		}
+		return codec.EncodeBytes([]byte{}, in)
+	}
+
 	regions := []*restore.RegionInfo{
 		{
 			Region: &metapb.Region{
-				StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-				EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+				StartKey: encode([]byte("b")),
+				EndKey:   encode([]byte("d")),
 			},
 		},
 	}
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("a"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("a"), regions, isRawKv), IsNil)
 	// Region start key
-	c.Assert(restore.NeedSplit([]byte("b"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("b"), regions, isRawKv), IsNil)
 	// In region
-	region := restore.NeedSplit([]byte("c"), regions)
-	c.Assert(bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytes([]byte{}, []byte("b"))), Equals, 0)
-	c.Assert(bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytes([]byte{}, []byte("d"))), Equals, 0)
+	region := restore.NeedSplit([]byte("c"), regions, isRawKv)
+	c.Assert(bytes.Compare(region.Region.GetStartKey(), encode([]byte("b"))), Equals, 0)
+	c.Assert(bytes.Compare(region.Region.GetEndKey(), encode([]byte("d"))), Equals, 0)
 	// Region end key
-	c.Assert(restore.NeedSplit([]byte("d"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("d"), regions, isRawKv), IsNil)
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("e"), regions, isRawKv), IsNil)
 }
 
 func (s *testRangeSuite) TestRegionConsistency(c *C) {
