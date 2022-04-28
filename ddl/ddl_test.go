@@ -112,10 +112,6 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
 }
 
-func checkHistoryJob(t *testing.T, job *model.Job) {
-	require.Equal(t, job.State, model.JobStateSynced)
-}
-
 func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -136,19 +132,6 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 	// only for creating schema job
 	if args.db != nil && len(args.tblIDs) == 0 {
 		return
-	}
-}
-
-func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{unique, model.NewCIStr(indexName),
-			[]*ast.IndexPartSpecification{{
-				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
-				Length: types.UnspecifiedLength}}},
 	}
 }
 
@@ -518,34 +501,6 @@ func testCheckSchemaState(test *testing.T, d *ddl, dbInfo *model.DBInfo, state m
 			break
 		}
 	}
-}
-
-func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, d *ddl) *model.Job {
-	job := &model.Job{
-		SchemaID:   schemaID,
-		TableID:    tableID,
-		Type:       tp,
-		Args:       args,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	// TODO: check error detail
-	require.Error(t, d.DoDDLJob(ctx, job))
-	testCheckJobCancelled(t, d.store, job, nil)
-
-	return job
-}
-
-func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state *model.SchemaState) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		historyJob, err := m.GetHistoryDDLJob(job.ID)
-		require.NoError(t, err)
-		require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
-		if state != nil {
-			require.Equal(t, historyJob.SchemaState, *state)
-		}
-		return nil
-	}))
 }
 
 func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error) {
