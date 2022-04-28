@@ -536,43 +536,6 @@ func TestIsNoop(t *testing.T) {
 	require.True(t, sv.IsNoop)
 }
 
-func TestTiDBReadOnly(t *testing.T) {
-	rro := GetSysVar(TiDBRestrictedReadOnly)
-	sro := GetSysVar(TiDBSuperReadOnly)
-
-	vars := NewSessionVars()
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
-
-	// turn on tidb_restricted_read_only should turn on tidb_super_read_only
-	require.NoError(t, mock.SetGlobalSysVar(rro.Name, "ON"))
-	result, err := mock.GetGlobalSysVar(sro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "ON", result)
-
-	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
-	err = mock.SetGlobalSysVar(sro.Name, "OFF")
-	require.Error(t, err)
-	require.Equal(t, "can't turn off tidb_super_read_only when tidb_restricted_read_only is on", err.Error())
-
-	// turn off tidb_restricted_read_only won't affect tidb_super_read_only
-	require.NoError(t, mock.SetGlobalSysVar(rro.Name, "OFF"))
-	result, err = mock.GetGlobalSysVar(rro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", result)
-
-	result, err = mock.GetGlobalSysVar(sro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "ON", result)
-
-	// it is ok to turn off tidb_super_read_only now
-	require.NoError(t, mock.SetGlobalSysVar(sro.Name, "OFF"))
-	result, err = mock.GetGlobalSysVar(sro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", result)
-}
-
 func TestInstanceScopedVars(t *testing.T) {
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
@@ -819,6 +782,14 @@ func TestLcTimeNamesReadOnly(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestLcMessagesReadOnly(t *testing.T) {
+	sv := GetSysVar("lc_messages")
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	_, err := sv.Validate(vars, "newvalue", ScopeGlobal)
+	require.Error(t, err)
+}
+
 func TestDDLWorkers(t *testing.T) {
 	svWorkerCount, svBatchSize := GetSysVar(TiDBDDLReorgWorkerCount), GetSysVar(TiDBDDLReorgBatchSize)
 	vars := NewSessionVars()
@@ -946,4 +917,32 @@ func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
 	_, err = sv.Validate(vars, "1.5", ScopeSession)
 	require.Error(t, err)
 	require.EqualError(t, err, "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
+}
+
+func TestTiDBMemQuotaQuery(t *testing.T) {
+	sv := GetSysVar(TiDBMemQuotaQuery)
+	vars := NewSessionVars()
+
+	for _, scope := range []ScopeFlag{ScopeGlobal, ScopeSession} {
+		newVal := 32 * 1024 * 1024
+		val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
+		require.Equal(t, val, "33554432")
+		require.NoError(t, err)
+
+		// out of range
+		newVal = 129 * 1024 * 1024 * 1024
+		expected := 128 * 1024 * 1024 * 1024
+		val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
+		// expected to truncate
+		require.Equal(t, val, fmt.Sprintf("%d", expected))
+		require.NoError(t, err)
+
+		// min value out of range
+		newVal = 10
+		expected = 128
+		val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
+		// expected to truncate
+		require.Equal(t, val, fmt.Sprintf("%d", expected))
+		require.NoError(t, err)
+	}
 }

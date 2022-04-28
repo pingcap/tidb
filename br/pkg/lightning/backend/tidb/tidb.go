@@ -637,13 +637,14 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 			if strings.Contains(columnExtra, "auto_increment") {
 				flag |= mysql.AutoIncrementFlag
 			}
+
+			ft := types.FieldType{}
+			ft.SetFlag(flag)
 			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
-				Name:   model.NewCIStr(columnName),
-				Offset: curColOffset,
-				State:  model.StatePublic,
-				FieldType: types.FieldType{
-					Flag: flag,
-				},
+				Name:                model.NewCIStr(columnName),
+				Offset:              curColOffset,
+				State:               model.StatePublic,
+				FieldType:           ft,
 				GeneratedExprString: generationExpr,
 			})
 			curColOffset++
@@ -669,9 +670,9 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 					if col.Name.O == info.Column {
 						switch info.Type {
 						case "AUTO_INCREMENT":
-							col.Flag |= mysql.AutoIncrementFlag
+							col.AddFlag(mysql.AutoIncrementFlag)
 						case "AUTO_RANDOM":
-							col.Flag |= mysql.PriKeyFlag
+							col.AddFlag(mysql.PriKeyFlag)
 							tbl.PKIsHandle = true
 							// set a stub here, since we don't really need the real value
 							tbl.AutoRandomBits = 1

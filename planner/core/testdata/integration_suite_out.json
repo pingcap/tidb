@@ -1723,8 +1723,8 @@
       {
         "SQL": "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5)",
         "Plan": [
-          "Selection_6 0.01 0.00 root  eq(test.t2.b, 2), in(test.t2.c, 1, 2, 3, 4, 5)",
-          "└─Point_Get_5 1.00 8.60 root table:t2, index:idx_a(a) "
+          "Selection_6 0.01 8.60 root  eq(test.t2.b, 2), in(test.t2.c, 1, 2, 3, 4, 5)",
+          "└─Point_Get_5 1.00 0.00 root table:t2, index:idx_a(a) "
         ],
         "Warnings": [
           "Note 1105 unique index idx_a of t2 is selected since the path only has point ranges with double scan"
@@ -1780,8 +1780,8 @@
         "SQL": "delete from t1 where f = 2 and g in (3, 4)",
         "Plan": [
           "Delete_4 N/A N/A root  N/A",
-          "└─Selection_7 2.00 0.00 root  in(test.t1.g, 3, 4)",
-          "  └─Point_Get_6 1.00 9.80 root table:t1, index:f(f) "
+          "└─Selection_7 2.00 9.80 root  in(test.t1.g, 3, 4)",
+          "  └─Point_Get_6 1.00 0.00 root table:t1, index:f(f) "
         ],
         "Warnings": [
           "Note 1105 unique index f of t1 is selected since the path only has point ranges with double scan"
