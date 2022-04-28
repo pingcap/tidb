@@ -2737,10 +2737,8 @@ func TestTiDBIsOwnerFunc(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	result := tk.MustQuery("select tidb_is_ddl_owner()")
-	ddlOwnerChecker := tk.Session().DDLOwnerChecker()
-	require.NotNil(t, ddlOwnerChecker)
 	var ret int64
-	if ddlOwnerChecker.IsDDLOwner() {
+	if tk.Session().IsDDLOwner() {
 		ret = 1
 	}
 	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
