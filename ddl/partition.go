@@ -1115,10 +1115,6 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	}
 
 	var physicalTableIDs []int64
-	if job.State == model.JobStateRunning && job.SchemaState == model.StateNone {
-		// Manually set first state.
-		job.SchemaState = model.StatePublic
-	}
 	// In order to skip maintaining the state check in partitionDefinition, TiDB use droppingDefinition instead of state field.
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	originalState := job.SchemaState
@@ -1199,6 +1195,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: tblInfo.Partition.Definitions}})
 		// A background job will be created to delete old partition data.

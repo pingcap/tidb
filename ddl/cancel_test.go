@@ -171,12 +171,11 @@ var allTestCase = []testCancelJob{
 	{"alter table t_partition add partition (partition p6 values less than (8192))", true, model.StateReplicaOnly, true, true, nil},
 	{"alter table t_partition add partition (partition p6 values less than (8192))", false, model.StatePublic, false, true, nil},
 	// Drop partition.
-	// TODO: fix schema state.
-	{"alter table t_partition drop partition p6", true, model.StateNone, true, false, nil},
+	{"alter table t_partition drop partition p6", true, model.StatePublic, true, false, nil},
 	{"alter table t_partition drop partition p6", false, model.StateDeleteOnly, true, false, nil},
 	{"alter table t_partition drop partition p6", false, model.StateDeleteOnly, false, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	{"alter table t_partition drop partition p6", false, model.StateDeleteReorganization, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
-	{"alter table t_partition drop partition p6", false, model.StatePublic, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
+	{"alter table t_partition drop partition p6", false, model.StateNone, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	// Drop indexes.
 	// TODO: fix schema state.
 	{"alter table t drop index mul_idx1, drop index mul_idx2", true, model.StateNone, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},

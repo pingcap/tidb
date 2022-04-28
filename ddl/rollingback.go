@@ -387,7 +387,7 @@ func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	return cancelOnlyNotHandledJob(job, model.StateNone)
+	return cancelOnlyNotHandledJob(job, model.StatePublic)
 }
 
 func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
