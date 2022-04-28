@@ -141,6 +141,11 @@ func TestShowErrors(t *testing.T) {
 	_, _ = tk.Exec(testSQL)
 
 	tk.MustQuery("show errors").Check(testkit.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
+
+	// eliminate previous errors
+	tk.MustExec("select 1")
+	_, _ = tk.Exec("create invalid")
+	tk.MustQuery("show errors").Check(testkit.RowsWithSep("|", "Error|1064|You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near \"invalid\" "))
 }
 
 func TestShowWarningsForExprPushdown(t *testing.T) {
