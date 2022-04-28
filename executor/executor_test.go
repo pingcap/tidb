@@ -9823,7 +9823,6 @@ func (s *testSerialSuite) TestIssue30971(c *C) {
 	}
 }
 
-
 func (s *testSerialSuite) TestEncodingSet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
