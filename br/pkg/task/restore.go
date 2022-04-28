@@ -220,7 +220,7 @@ func CheckNewCollationEnable(
 	storage kv.Storage,
 ) error {
 	if backupNewCollationEnable == "" {
-		log.Warn("new_collations_enabled_on_first_bootstrap not found in backupmeta. "+
+		log.Warn("new_collations_enabled_on_first_bootstrap not found in backupmeta. " +
 			"we assume that this config is as same as backup cluster")
 		return nil
 	}
@@ -242,7 +242,6 @@ func CheckNewCollationEnable(
 	}
 	return nil
 }
-
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
