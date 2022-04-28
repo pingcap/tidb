@@ -666,7 +666,7 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 	historyTblCol1.SetFlag(historyTblCol1.GetFlag() | mysql.NotNullFlag | mysql.PriKeyFlag)
 	historyTblCol2.FieldType = *types.NewFieldType(mysql.TypeBlob)
 	historyTblCol3.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	historyTblCol3.SetFlag(historyTblCol1.GetFlag() | mysql.NotNullFlag | mysql.UniqueFlag)
+	historyTblCol3.SetFlag(historyTblCol3.GetFlag() | mysql.NotNullFlag | mysql.UniqueFlag)
 
 	historyTbl, err := m.GenGlobalID()
 	if err != nil {
