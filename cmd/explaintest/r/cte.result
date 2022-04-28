@@ -771,17 +771,15 @@ b	c
 use test;
 drop table if exists t11111;
 create table t11111 (d int);
-insert into t11111 values (1), (2), (3), (4), (5);
+insert into t11111 values (123), (223), (323);
 drop view if exists v1;
 create view v1 as WITH t123 AS (WITH t11111 AS ( SELECT * FROM t1 ) SELECT ( WITH t2 AS ( SELECT ( WITH t23 AS ( SELECT * FROM t11111 ) SELECT * FROM t23 LIMIT 1 ) FROM t11111 ) SELECT *  FROM t2  LIMIT 1  )  FROM t11111, t2 ) SELECT * FROM t11111;
 use test1;
 select * from test.v1;
 d
-1
-2
-3
-4
-5
+123
+223
+323
 use test;
 drop table if exists t1;
 create table t1 (a int);

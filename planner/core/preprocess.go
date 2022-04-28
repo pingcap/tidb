@@ -116,7 +116,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	v := preprocessor{
 		ctx:                ctx,
 		tableAliasInJoin:   make([]map[string]interface{}, 0),
-		preprocessWith:     &preprocessWith{nameNew: make([]string, 0), nameBeforeOffset: make([]int, 0)},
+		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
 	}
 	for _, optFn := range preprocessOpt {
@@ -178,8 +178,8 @@ type PreprocessExecuteISUpdate struct {
 
 // preprocessWith is used to record info from WITH statements like CTE name.
 type preprocessWith struct {
-	nameNew          []string
-	nameBeforeOffset []int
+	cteCanUsed      []string
+	cteBeforeOffset []int
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -325,10 +325,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkGroupBy(node)
 	case *ast.CommonTableExpression, *ast.SubqueryExpr:
 		with := p.preprocessWith
-		beforeOffset := len(with.nameNew)
-		with.nameBeforeOffset = append(with.nameBeforeOffset, beforeOffset)
+		beforeOffset := len(with.cteCanUsed)
+		with.cteBeforeOffset = append(with.cteBeforeOffset, beforeOffset)
 		if cteNode, exist := node.(*ast.CommonTableExpression); exist && cteNode.IsRecursive {
-			with.nameNew = append(with.nameNew, cteNode.Name.L)
+			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
 		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
@@ -575,16 +575,16 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	case *ast.CommonTableExpression, *ast.SubqueryExpr:
 		with := p.preprocessWith
-		lenWithNameBeforeOffset := len(with.nameBeforeOffset)
-		if lenWithNameBeforeOffset < 1 {
-			p.err = ErrInternal.GenWithStack("len(nameBeforeOffset) is less than one.Maybe it was deleted in somewhere.Should match in Enter and Leave")
+		lenWithCteBeforeOffset := len(with.cteBeforeOffset)
+		if lenWithCteBeforeOffset < 1 {
+			p.err = ErrInternal.GenWithStack("len(cteBeforeOffset) is less than one.Maybe it was deleted in somewhere.Should match in Enter and Leave")
 			break
 		}
-		beforeOffset := with.nameBeforeOffset[lenWithNameBeforeOffset-1]
-		with.nameBeforeOffset = with.nameBeforeOffset[:lenWithNameBeforeOffset-1]
-		with.nameNew = with.nameNew[:beforeOffset]
+		beforeOffset := with.cteBeforeOffset[lenWithCteBeforeOffset-1]
+		with.cteBeforeOffset = with.cteBeforeOffset[:lenWithCteBeforeOffset-1]
+		with.cteCanUsed = with.cteCanUsed[:beforeOffset]
 		if cteNode, exist := x.(*ast.CommonTableExpression); exist {
-			with.nameNew = append(with.nameNew, cteNode.Name.L)
+			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
 		}
 	}
 
@@ -1453,7 +1453,7 @@ func (p *preprocessor) stmtType() string {
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 
-		for _, cte := range p.preprocessWith.nameNew {
+		for _, cte := range p.preprocessWith.cteCanUsed {
 			if cte == tn.Name.L {
 				return
 			}
