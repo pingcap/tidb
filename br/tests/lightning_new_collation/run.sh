@@ -54,6 +54,10 @@ for BACKEND in local importer tidb; do
   run_sql "SELECT j FROM nc.t WHERE s = 'This_Is_Test4'";
   check_contains "j: 4"
 
+  run_sql "SELeCT i, v from nc.ci where v = 'aa';"
+  check_contains "i: 1"
+  check_contains "v: aA"
+
 done
 
 # restart with original config
