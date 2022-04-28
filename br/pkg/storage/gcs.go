@@ -179,12 +179,10 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt == nil {
 		opt = &WalkOption{}
 	}
-
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
-
 	query := &storage.Query{Prefix: prefix}
 	// only need each object's name and size
 	err := query.SetAttrSelection([]string{"Name", "Size"})
@@ -203,7 +201,7 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		// when walk on specify directory, the result include storage.Prefix,
 		// which can not be reuse in other API(Open/Read) directly.
 		// so we use TrimPrefix to filter Prefix for next Open/Read.
-		path := strings.TrimPrefix(attrs.Name, s.gcs.Prefix)
+		path := strings.TrimPrefix(attrs.Name, prefix)
 		if err = fn(path, attrs.Size); err != nil {
 			return errors.Trace(err)
 		}
