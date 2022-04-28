@@ -82,6 +82,8 @@ type PointGetPlan struct {
 	cost               float64
 
 	// required by cost model
+	planCostInit bool
+	planCost     float64
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 }
@@ -315,6 +317,8 @@ type BatchPointGetPlan struct {
 	PartTblID int64
 
 	// required by cost model
+	planCostInit bool
+	planCost     float64
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 }
