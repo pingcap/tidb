@@ -540,7 +540,8 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
 		on := TiDBOptOn(val)
-		if on {
+		// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
+		if on && s.StmtCtx.StmtType == "Set" {
 			err := s.GlobalVarsAccessor.SetGlobalSysVar(TiDBSuperReadOnly, "ON")
 			if err != nil {
 				return err
@@ -549,10 +550,10 @@ var defaultSysVars = []*SysVar{
 		RestrictedReadOnly.Store(on)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBSuperReadOnly, Value: BoolToOnOff(DefTiDBSuperReadOnly), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBSuperReadOnly, Value: BoolToOnOff(DefTiDBSuperReadOnly), Type: TypeBool, Validation: func(s *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
 		on := TiDBOptOn(normalizedValue)
-		if !on {
-			result, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBRestrictedReadOnly)
+		if !on && s.StmtCtx.StmtType == "Set" {
+			result, err := s.GlobalVarsAccessor.GetGlobalSysVar(TiDBRestrictedReadOnly)
 			if err != nil {
 				return normalizedValue, err
 			}
@@ -611,8 +612,7 @@ var defaultSysVars = []*SysVar{
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			return checkGCTxnMaxWaitTime(vars, normalizedValue, originalValue, scope)
 		}, SetGlobal: func(s *SessionVars, val string) error {
-			ival, _ := strconv.Atoi(val)
-			GCMaxWaitTime.Store((int64)(ival))
+			GCMaxWaitTime.Store(TidbOptInt64(val, DefTiDBGCMaxWaitTime))
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBTableCacheLease, Value: strconv.Itoa(DefTiDBTableCacheLease), Type: TypeUnsigned, MinValue: 1, MaxValue: 10, SetGlobal: func(s *SessionVars, sVal string) error {
@@ -663,7 +663,9 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableColumnTracking.Load()), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		v := TiDBOptOn(val)
-		if !v {
+		// If this is a user initiated statement,
+		// we log that column tracking is disabled.
+		if s.StmtCtx.StmtType == "Set" && !v {
 			// Set the location to UTC to avoid time zone interference.
 			disableTime := time.Now().UTC().Format(types.UTCTimeFormat)
 			if err := setTiDBTableValue(s, TiDBDisableColumnTrackingTime, disableTime, "Record the last time tidb_enable_column_tracking is set off"); err != nil {
@@ -680,6 +682,15 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(s *SessionVars, val string) error {
 			tls.RequireSecureTransport.Store(TiDBOptOn(val))
 			return nil
+		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			if vars.StmtCtx.StmtType == "Set" && TiDBOptOn(normalizedValue) {
+				// Refuse to set RequireSecureTransport to ON if the connection
+				// issuing the change is not secure. This helps reduce the chance of users being locked out.
+				if vars.TLSConnectionState == nil {
+					return "", errors.New("require_secure_transport can only be set to ON if the connection issuing the change is secure")
+				}
+			}
+			return normalizedValue, nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBStatsLoadPseudoTimeout, Value: BoolToOnOff(DefTiDBStatsLoadPseudoTimeout), skipInit: true, Type: TypeBool,
