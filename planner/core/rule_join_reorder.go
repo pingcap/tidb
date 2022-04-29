@@ -98,46 +98,41 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		}
 		joinGroupNum := len(curJoinGroup)
 		var leadingJoinGroup []LogicalPlan
-		for _, hintTbl := range hintInfo.leadingJoinOrder {
-			for i, joinGroup := range curJoinGroup {
-				hintMatched := false
-				for _, child := range joinGroup.Children() {
-					tableAlias := extractTableAlias(child, joinGroup.SelectBlockOffset())
+		if hintInfo != nil {
+			for _, hintTbl := range hintInfo.leadingJoinOrder {
+				for i, joinGroup := range curJoinGroup {
+					tableAlias := extractTableAlias(joinGroup, joinGroup.SelectBlockOffset())
 					if tableAlias == nil {
 						continue
 					}
 					if hintTbl.dbName.L == tableAlias.dbName.L && hintTbl.tblName.L == tableAlias.tblName.L && hintTbl.selectOffset == tableAlias.selectOffset {
-						hintMatched = true
+						leadingJoinGroup = append(leadingJoinGroup, joinGroup)
+						curJoinGroup = append(curJoinGroup[:i], curJoinGroup[i+1:]...)
 						break
 					}
 				}
-				if hintMatched {
-					leadingJoinGroup = append(leadingJoinGroup, joinGroup)
-					curJoinGroup = append(curJoinGroup[:i], curJoinGroup[i+1:]...)
-					break
+			}
+			var errMsg string
+			if len(leadingJoinGroup) != len(hintInfo.leadingJoinOrder) {
+				errMsg = fmt.Sprint("leading hint is inapplicable, check if the leading hint table is valid")
+			} else if joinGroupNum <= ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
+				errMsg = fmt.Sprint("leading hint is inapplicable for the DP join reorder algorithm")
+			}
+			if len(errMsg) > 0 {
+				curJoinGroup = append(curJoinGroup, leadingJoinGroup...)
+				leadingJoinGroup = nil
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+			}
+			if leadingJoinGroup != nil {
+				leadingJoin := leadingJoinGroup[0]
+				leadingJoinGroup = leadingJoinGroup[1:]
+				for len(leadingJoinGroup) > 0 {
+					usedEdges := baseGroupSolver.checkConnection(leadingJoin, leadingJoinGroup[0])
+					leadingJoin, baseGroupSolver.otherConds = baseGroupSolver.makeJoin(leadingJoin, leadingJoinGroup[0], usedEdges)
+					leadingJoinGroup = leadingJoinGroup[1:]
 				}
+				baseGroupSolver.leadingJoinGroup = leadingJoin
 			}
-		}
-		var errMsg string
-		if len(leadingJoinGroup) != len(hintInfo.leadingJoinOrder) {
-			errMsg = fmt.Sprint("leading hint is inapplicable, check if the leading hint table is valid")
-		} else if joinGroupNum <= ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
-			errMsg = fmt.Sprint("leading hint is inapplicable for the DP join reorder algorithm")
-		}
-		if len(errMsg) > 0 {
-			curJoinGroup = append(curJoinGroup, leadingJoinGroup...)
-			leadingJoinGroup = nil
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
-		}
-		if leadingJoinGroup != nil {
-			p = leadingJoinGroup[0]
-			leadingJoinGroup = leadingJoinGroup[1:]
-			for len(leadingJoinGroup) > 0 {
-				usedEdges := baseGroupSolver.checkConnection(p, leadingJoinGroup[0])
-				p, baseGroupSolver.otherConds = baseGroupSolver.makeJoin(p, leadingJoinGroup[0], usedEdges)
-				curJoinGroup = leadingJoinGroup[1:]
-			}
-			baseGroupSolver.leadingJoinGroup = p
 		}
 		originalSchema := p.Schema()
 		if joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
