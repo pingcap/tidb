@@ -37,8 +37,24 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 )
 
+func createMockStoreForSchemaTest(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
+	store, err := mockstore.NewMockStore(opts...)
+	require.NoError(t, err)
+	session.DisableStats4Test()
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	dom.SetStatsUpdating(true)
+
+	clean := func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}
+	return store, clean
+}
+
 func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -66,7 +82,7 @@ func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
 }
 
 func TestCommitWhenSchemaChanged(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -90,7 +106,7 @@ func TestCommitWhenSchemaChanged(t *testing.T) {
 }
 
 func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -121,7 +137,7 @@ func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
 }
 
 func TestRetrySchemaChange(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -163,7 +179,7 @@ func TestRetrySchemaChange(t *testing.T) {
 }
 
 func TestRetryMissingUnionScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -239,7 +255,7 @@ func TestTableReaderChunk(t *testing.T) {
 }
 
 func TestInsertExecChunk(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -275,7 +291,7 @@ func TestInsertExecChunk(t *testing.T) {
 }
 
 func TestUpdateExecChunk(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -313,7 +329,7 @@ func TestUpdateExecChunk(t *testing.T) {
 }
 
 func TestDeleteExecChunk(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -344,7 +360,7 @@ func TestDeleteExecChunk(t *testing.T) {
 }
 
 func TestDeleteMultiTableExecChunk(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -460,7 +476,7 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 }
 
 func TestDisableTxnAutoRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -555,7 +571,7 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 }
 
 func TestTxnSize(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -581,7 +597,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 		domain.SchemaOutOfDateRetryInterval.Store(originalRetryInterval)
 	}()
 
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -638,7 +654,7 @@ func TestValidationRecursion(t *testing.T) {
 	}}
 	variable.RegisterSysVar(&sv)
 
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -650,7 +666,7 @@ func TestValidationRecursion(t *testing.T) {
 }
 
 func TestSchemaCheckerSQL(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -724,7 +740,7 @@ func TestSchemaCheckerSQL(t *testing.T) {
 }
 
 func TestSchemaCheckerTempTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
+	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
