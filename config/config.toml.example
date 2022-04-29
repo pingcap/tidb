@@ -59,9 +59,6 @@ compatible-kill-query = false
 # The health check will fail immediately but the server will not start shutting down until the time has elapsed.
 graceful-wait-before-shutdown = 0
 
-# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
-check-mb4-value-in-utf8 = true
-
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 
@@ -139,24 +136,11 @@ format = "text"
 # Enable annotating logs with the full stack error message, if not set, it will be defaulted to false.
 # enable-error-stack = false
 
-# Whether to enable slow query log.
-enable-slow-log = true
-
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
 
-# Queries with execution time greater than this value will be logged. (Milliseconds)
-slow-threshold = 300
-
-# record-plan-in-slow-log is used to enable record query plan in slow log.
-# 0 is disable. 1 is enable.
-record-plan-in-slow-log = 1
-
 # Queries with internal result greater than this value will be logged.
 expensive-threshold = 10000
-
-# Maximum query length recorded in log.
-query-log-max-len = 4096
 
 # File logging.
 [log.file]
@@ -239,14 +223,6 @@ max-procs = 0
 # Memory size quota for tidb server, 0 means unlimited
 server-memory-quota = 0
 
-# The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
-# and less than or equal to 1. The default value is 0.8.
-# If this configuration is set to 0 or 1, it'll disable the alarm.
-# Otherwise, related information will be recorded in the directory `tmp-storage-path/record`.
-# Note: If the configuration `server-memory-quota` is set and larger than 0, the alarm threshold will be
-# `memory-usage-alarm-ratio * server-memory-quota`; otherwise, it'll be `memory-usage-alarm-ratio * system memory size`.
-memory-usage-alarm-ratio = 0.8
-
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
 
@@ -271,10 +247,6 @@ query-feedback-limit = 512
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
 pseudo-estimate-ratio = 0.8
-
-# Force the priority of all statements in a specified priority.
-# The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
-force-priority = "NO_PRIORITY"
 
 # Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
 bind-info-lease = "3s"
@@ -467,3 +439,46 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
+
+# instance scope variables
+# These options are also available as a system variable for online configuration
+# changes to the system variable do not persist to the cluster. You must make changes
+# in this configuration file on each tidb-server.
+[instance]
+
+# tidb_general_log is used to log every query in the server in info level.
+tidb_general_log = false
+
+# tidb_pprof_sql_cpu is used to add label sql label to pprof result.
+tidb_pprof_sql_cpu = false
+
+# ddl_slow_threshold sets log DDL operations whose execution time exceeds the threshold value.
+ddl_slow_threshold = 300
+
+# tidb_expensive_query_time_threshold indicates the time threshold of expensive query.
+tidb_expensive_query_time_threshold = 60
+
+# Force the priority of all statements in a specified priority.
+# The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
+tidb_force_priority = "NO_PRIORITY"
+
+# The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
+# and less than or equal to 1. The default value is 0.8.
+# If this configuration is set to 0 or 1, it'll disable the alarm.
+# Otherwise, related information will be recorded in the directory `tmp-storage-path/record`.
+# Note: If the configuration `server-memory-quota` is set and larger than 0, the alarm threshold will be
+# `tidb_memory_usage_alarm_ratio * server-memory-quota`; otherwise, it'll be `tidb_memory_usage_alarm_ratio * system memory size`.
+tidb_memory_usage_alarm_ratio = 0.8
+
+# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
+tidb_check_mb4_value_in_utf8 = true
+
+# Whether to enable slow query log.
+tidb_enable_slow_log = true
+
+# Queries with execution time greater than this value will be logged. (Milliseconds)
+tidb_slow_log_threshold = 300
+
+# tidb_record_plan_in_slow_log is used to enable record query plan in slow log.
+# 0 is disable. 1 is enable.
+tidb_record_plan_in_slow_log = 1

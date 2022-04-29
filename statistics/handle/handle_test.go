@@ -424,6 +424,10 @@ func TestVersion(t *testing.T) {
 	require.False(t, statsTbl2.Pseudo)
 	// We can read it without analyze again! Thanks for PrevLastVersion.
 	require.NotNil(t, statsTbl2.Columns[int64(3)])
+	// assert WithGetTableStatsByQuery get the same result
+	statsTbl2 = h.GetTableStats(tableInfo2, handle.WithTableStatsByQuery())
+	require.False(t, statsTbl2.Pseudo)
+	require.NotNil(t, statsTbl2.Columns[int64(3)])
 }
 
 func TestLoadHist(t *testing.T) {

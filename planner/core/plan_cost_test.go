@@ -48,7 +48,7 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int primary key, b int, c int, d int, key b(b), key cd(c, d))`)
+	tk.MustExec(`create table t (a int primary key, b int, c int, d int, k int, key b(b), key cd(c, d), unique key(k))`)
 
 	queries := []string{
 		// table-reader
@@ -116,6 +116,37 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t use index(b) where b+200 < 1000",            // pushed down to lookup index-side
 		"select * from t use index(b) where c+200 < 1000",            // pushed down to lookup table-side
 		"select * from t use index(b) where mod(b+c, 200) < 100",     // not pushed down
+		// aggregation
+		"select /*+ hash_agg() */ count(*) from t use index(primary) where a < 200",
+		"select /*+ hash_agg() */ sum(a) from t use index(primary) where a < 200",
+		"select /*+ hash_agg() */ avg(a), b from t use index(primary) where a < 200 group by b",
+		"select /*+ stream_agg() */ count(*) from t use index(primary) where a < 200",
+		"select /*+ stream_agg() */ sum(a) from t use index(primary) where a < 200",
+		"select /*+ stream_agg() */ avg(a), b from t use index(primary) where a < 200 group by b",
+		"select /*+ stream_agg() */ avg(d), c from t use index(cd) group by c",
+		// limit
+		"select * from t use index(primary) where a < 200 limit 10", // table-scan + limit
+		"select * from t use index(primary) where a = 200  limit 10",
+		"select a, b, d from t use index(primary) where a < 200 limit 10",
+		"select a, b, d from t use index(primary) where a = 200 limit 10",
+		"select a from t use index(primary) where a < 200 limit 10",
+		"select a from t use index(primary) where a = 200 limit 10",
+		"select b from t use index(b) where b < 200 limit 10", // index-scan + limit
+		"select b from t use index(b) where b = 200 limit 10",
+		"select c, d from t use index(cd) where c < 200 limit 10",
+		"select c, d from t use index(cd) where c = 200 limit 10",
+		"select c, d from t use index(cd) where c = 200 and d < 200 limit 10",
+		"select d from t use index(cd) where c < 200 limit 10",
+		"select d from t use index(cd) where c = 200 limit 10",
+		"select d from t use index(cd) where c = 200 and d < 200 limit 10",
+		"select * from t use index(b) where b < 200 limit 10", // look-up + limit
+		"select * from t use index(b) where b = 200 limit 10",
+		"select a, b from t use index(cd) where c < 200 limit 10",
+		"select a, b from t use index(cd) where c = 200 limit 10",
+		"select a, b from t use index(cd) where c = 200 and d < 200 limit 10",
+		"select * from t use index(cd) where c < 200 limit 10",
+		"select * from t use index(cd) where c = 200 limit 10",
+		"select * from t use index(cd) where c = 200 and d < 200 limit 10",
 		// sort
 		"select * from t use index(primary) where a < 200 order by a", // table-scan + sort
 		"select * from t use index(primary) where a = 200  order by a",
@@ -162,6 +193,27 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t use index(cd) where c < 200 order by c limit 10",
 		"select * from t use index(cd) where c = 200 order by c limit 10",
 		"select * from t use index(cd) where c = 200 and d < 200 order by c, d limit 10",
+		// join
+		"select /*+ hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a<t2.a+2 and t1.b>1000",
+		"select /*+ merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a<t2.a+2 and t1.b>1000",
+		"select /*+ inl_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b>1000",
+		"select /*+ inl_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
+		"select /*+ inl_hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ inl_hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
+		"select /*+ inl_merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ inl_merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
+		"select * from t t1 where t1.b in (select sum(t2.b) from t t2 where t1.a < t2.a)", // apply
+		// point get
+		"select * from t where a = 1", // generated in fast plan optimization
+		"select * from t where a in (1, 2, 3, 4, 5)",
+		"select * from t where k = 1",
+		"select * from t where k in (1, 2, 3, 4, 5)",
+		"select * from t where a=1 and mod(a, b)=2", // generated in physical plan optimization
+		"select * from t where a in (1, 2, 3, 4, 5) and mod(a, b)=2",
+		"select * from t where k=1 and mod(k, b)=2",
+		"select * from t where k in (1, 2, 3, 4, 5) and mod(k, b)=2",
 		// union all
 		"select * from t use index(primary) union all select * from t use index(primary) where a < 200",
 		"select b from t use index(primary) union all select b from t use index(b) where b < 200",
