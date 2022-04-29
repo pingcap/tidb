@@ -536,43 +536,6 @@ func TestIsNoop(t *testing.T) {
 	require.True(t, sv.IsNoop)
 }
 
-func TestTiDBReadOnly(t *testing.T) {
-	rro := GetSysVar(TiDBRestrictedReadOnly)
-	sro := GetSysVar(TiDBSuperReadOnly)
-
-	vars := NewSessionVars()
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
-
-	// turn on tidb_restricted_read_only should turn on tidb_super_read_only
-	require.NoError(t, mock.SetGlobalSysVar(rro.Name, "ON"))
-	result, err := mock.GetGlobalSysVar(sro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "ON", result)
-
-	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
-	err = mock.SetGlobalSysVar(sro.Name, "OFF")
-	require.Error(t, err)
-	require.Equal(t, "can't turn off tidb_super_read_only when tidb_restricted_read_only is on", err.Error())
-
-	// turn off tidb_restricted_read_only won't affect tidb_super_read_only
-	require.NoError(t, mock.SetGlobalSysVar(rro.Name, "OFF"))
-	result, err = mock.GetGlobalSysVar(rro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", result)
-
-	result, err = mock.GetGlobalSysVar(sro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "ON", result)
-
-	// it is ok to turn off tidb_super_read_only now
-	require.NoError(t, mock.SetGlobalSysVar(sro.Name, "OFF"))
-	result, err = mock.GetGlobalSysVar(sro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", result)
-}
-
 func TestInstanceScopedVars(t *testing.T) {
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
@@ -624,24 +587,24 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, PluginDir)
 	require.NoError(t, err)
-	require.Equal(t, config.GetGlobalConfig().Plugin.Dir, val)
+	require.Equal(t, config.GetGlobalConfig().Instance.PluginDir, val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, PluginLoad)
 	require.NoError(t, err)
-	require.Equal(t, config.GetGlobalConfig().Plugin.Load, val)
+	require.Equal(t, config.GetGlobalConfig().Instance.PluginLoad, val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBSlowLogThreshold)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), val)
+	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBRecordPlanInSlowLog)
 	require.NoError(t, err)
-	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog) == 1
+	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog) == 1
 	require.Equal(t, BoolToOnOff(enabled), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableSlowLog)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog.Load()), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableSlowLog.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBQueryLogMaxLen)
 	require.NoError(t, err)
@@ -649,7 +612,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load()), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
 	require.NoError(t, err)
@@ -661,7 +624,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableCollectExecutionInfo)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
 	require.NoError(t, err)
@@ -872,8 +835,8 @@ func TestInstanceScope(t *testing.T) {
 	for _, sv := range GetSysVars() {
 		require.False(t, sv.HasGlobalScope() && sv.HasInstanceScope(), "sysvar %s has both instance and global scope", sv.Name)
 		if sv.HasInstanceScope() {
-			require.NotNil(t, sv.GetGlobal)
-			require.NotNil(t, sv.SetGlobal)
+			require.Nil(t, sv.GetSession)
+			require.Nil(t, sv.SetSession)
 		}
 	}
 

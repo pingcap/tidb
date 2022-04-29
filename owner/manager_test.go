@@ -16,6 +16,7 @@ package owner_test
 
 import (
 	"context"
+	goctx "context"
 	"fmt"
 	"runtime"
 	"testing"
@@ -32,7 +33,6 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.etcd.io/etcd/tests/v3/integration"
-	goctx "golang.org/x/net/context"
 )
 
 const testLease = 5 * time.Millisecond
