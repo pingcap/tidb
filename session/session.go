@@ -1503,6 +1503,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		s.rollbackOnError(ctx)
+		err = util.SyntaxError(err)
 
 		// Only print log message when this SQL is from the user.
 		// Mute the warning for internal SQLs.
@@ -1512,8 +1513,9 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 			} else {
 				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
 			}
+			s.sessionVars.StmtCtx.AppendError(err)
 		}
-		return nil, util.SyntaxError(err)
+		return nil, err
 	}
 
 	durParse := time.Since(parseStartTime)
