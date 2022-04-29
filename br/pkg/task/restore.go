@@ -45,7 +45,8 @@ const (
 	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
 
-	// FlagStreamRestoreTS is used for log restore.
+	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
+	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restore-ts"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
@@ -144,6 +145,8 @@ type RestoreConfig struct {
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
+	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
+	StartTS   uint64 `json:"start-ts" toml:"start-ts"`
 	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
 }
 
@@ -159,6 +162,9 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 
 // DefineStreamRestoreFlags defines for the restore log command.
 func DefineStreamRestoreFlags(command *cobra.Command) {
+	command.Flags().String(FlagStreamStartTS, "", "the start timestamp which log restore from.\n"+
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+	_ = command.Flags().MarkHidden(flagStreamStartTS)
 	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for log restore.\n"+
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
@@ -167,13 +173,21 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
 func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
-	tsString, err := flags.GetString(FlagStreamRestoreTS)
+	tsString, err := flags.GetString(FlagStreamStartTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
+		return errors.Trace(err)
+	}
+	tsString, err = flags.GetString(FlagStreamRestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
 		return errors.Trace(err)
 	}
+
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
 	}
