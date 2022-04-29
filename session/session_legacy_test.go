@@ -19,8 +19,6 @@ import (
 	"flag"
 	"fmt"
 	"net"
-	"os"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -87,7 +85,6 @@ var _ = Suite(&testSessionSuite3{})
 var _ = Suite(&testSchemaSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
-var _ = SerialSuites(&testBackupRestoreSuite{})
 var _ = SerialSuites(&testTxnStateSerialSuite{})
 
 type testSessionSuiteBase struct {
@@ -110,10 +107,6 @@ type testSessionSuite3 struct {
 }
 
 type testSessionSerialSuite struct {
-	testSessionSuiteBase
-}
-
-type testBackupRestoreSuite struct {
 	testSessionSuiteBase
 }
 
@@ -4191,44 +4184,6 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	// this DDL call will enter deadloop before this fix
 	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil)
 	c.Assert(err.Error(), Equals, "context canceled")
-}
-
-func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
-	// only run BR SQL integration test with tikv store.
-	// TODO move this test to BR integration tests.
-	if *withTiKV {
-		cfg := config.GetGlobalConfig()
-		cfg.Store = "tikv"
-		cfg.Path = s.pdAddr
-		config.StoreGlobalConfig(cfg)
-		tk := testkit.NewTestKitWithInit(c, s.store)
-		tk.MustExec("create database if not exists br")
-		tk.MustExec("use br")
-		tk.MustExec("create table t1(v int)")
-		tk.MustExec("insert into t1 values (1)")
-		tk.MustExec("insert into t1 values (2)")
-		tk.MustExec("insert into t1 values (3)")
-		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
-
-		tk.MustExec("create database if not exists br02")
-		tk.MustExec("use br02")
-		tk.MustExec("create table t1(v int)")
-
-		tmpDir := path.Join(os.TempDir(), "bk1")
-		os.RemoveAll(tmpDir)
-		// backup database to tmp dir
-		tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
-
-		// remove database for recovery
-		tk.MustExec("drop database br")
-		tk.MustExec("drop database br02")
-
-		// restore database with backup data
-		tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
-		tk.MustExec("use br")
-		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
-		tk.MustExec("drop database br")
-	}
 }
 
 func (s *testSessionSuite2) TestIssue19127(c *C) {
