@@ -37,6 +37,7 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 func parseNullTermString(b []byte) (str []byte, remain []byte) {
@@ -318,6 +320,9 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 			tmp = appendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeNewDecimal:
+			if col.Table == "order_item" && (col.Name == "price" || col.Name == "combo_price") && row.GetMyDecimal(i).String() == "1717986.9184" {
+				logutil.BgLogger().Warn(fmt.Sprintf("find inconsistency. table name = %s, value = %s", col.Table, row.GetMyDecimal(i).String()))
+			}
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
