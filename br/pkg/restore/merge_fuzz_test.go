@@ -1,6 +1,5 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 //go:build go1.18
-// +build go1.18
 
 package restore_test
 

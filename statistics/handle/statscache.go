@@ -20,7 +20,9 @@ import (
 
 // statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
 type statsCacheInner interface {
+	GetByQuery(int64) (*statistics.Table, bool)
 	Get(int64) (*statistics.Table, bool)
+	PutByQuery(int64, *statistics.Table)
 	Put(int64, *statistics.Table)
 	Del(int64)
 	Cost() int64
@@ -75,7 +77,11 @@ func (sc statsCache) copy() statsCache {
 }
 
 // update updates the statistics table cache using copy on write.
-func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) statsCache {
+func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) statsCache {
+	option := &tableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
 	newCache := sc.copy()
 	if newVersion == newCache.version {
 		newCache.minorVersion += uint64(1)
@@ -85,7 +91,11 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	}
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		newCache.Put(id, tbl)
+		if option.byQuery {
+			newCache.PutByQuery(id, tbl)
+		} else {
+			newCache.Put(id, tbl)
+		}
 	}
 	for _, id := range deletedIDs {
 		newCache.Del(id)
@@ -98,10 +108,20 @@ type mapCache struct {
 	memUsage int64
 }
 
+// GetByQuery implements statsCacheInner
+func (m *mapCache) GetByQuery(k int64) (*statistics.Table, bool) {
+	return m.Get(k)
+}
+
 // Get implements statsCacheInner
 func (m *mapCache) Get(k int64) (*statistics.Table, bool) {
 	v, ok := m.tables[k]
 	return v.value, ok
+}
+
+// PutByQuery implements statsCacheInner
+func (m *mapCache) PutByQuery(k int64, v *statistics.Table) {
+	m.Put(k, v)
 }
 
 // Put implements statsCacheInner
