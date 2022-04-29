@@ -452,7 +452,7 @@ func (local *local) waitForScatterRegion(ctx context.Context, regionInfo *split.
 			return
 		}
 		if err != nil {
-			if !utils.IsRetryableError(err) {
+			if !common.IsRetryableError(err) {
 				log.L().Warn("wait for scatter region encountered non-retryable error", logutil.Region(regionInfo.Region), zap.Error(err))
 				return
 			}
