@@ -17,11 +17,14 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -173,7 +176,7 @@ func TestConfig(t *testing.T) {
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
-	conf.Log.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
+	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	configFile := "config.toml"
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
@@ -520,6 +523,95 @@ func TestPreparePlanCacheValid(t *testing.T) {
 	for testCase, res := range tests {
 		conf.PreparedPlanCache = testCase
 		require.Equal(t, res, conf.Valid() == nil)
+	}
+}
+
+func TestConflictInstanceConfig(t *testing.T) {
+	var expectedNewName string
+	conf := new(Config)
+	configFile := "config.toml"
+	_, localFile, _, _ := runtime.Caller(0)
+	configFile = filepath.Join(filepath.Dir(localFile), configFile)
+
+	f, err := os.Create(configFile)
+	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
+
+	// ConflictOptions indicates the options existing in both [instance] and some other sessions.
+	// Just receive a warning and keep their respective values.
+	expectedConflictOptions := map[string]InstanceConfigSection{
+		"": {
+			"", map[string]string{"check-mb4-value-in-utf8": "tidb_check_mb4_value_in_utf8"},
+		},
+		"log": {
+			"log", map[string]string{"enable-slow-log": "tidb_enable_slow_log"},
+		},
+		"performance": {
+			"performance", map[string]string{"force-priority": "tidb_force_priority"},
+		},
+	}
+	_, err = f.WriteString("check-mb4-value-in-utf8 = true \n" +
+		"[log] \nenable-slow-log = true \n" +
+		"[performance] \nforce-priority = \"NO_PRIORITY\"\n" +
+		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"")
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	err = conf.Load(configFile)
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "Conflict configuration options exists on both [instance] section and some other sections."))
+	require.False(t, conf.Instance.CheckMb4ValueInUTF8.Load())
+	require.True(t, conf.CheckMb4ValueInUTF8.Load())
+	require.Equal(t, true, conf.Log.EnableSlowLog.Load())
+	require.Equal(t, false, conf.Instance.EnableSlowLog.Load())
+	require.Equal(t, "NO_PRIORITY", conf.Performance.ForcePriority)
+	require.Equal(t, "LOW_PRIORITY", conf.Instance.ForcePriority)
+	require.Equal(t, 0, len(DeprecatedOptions))
+	for _, conflictOption := range ConflictOptions {
+		expectedConflictOption, ok := expectedConflictOptions[conflictOption.SectionName]
+		require.True(t, ok)
+		for oldName, newName := range conflictOption.NameMappings {
+			expectedNewName, ok = expectedConflictOption.NameMappings[oldName]
+			require.True(t, ok)
+			require.Equal(t, expectedNewName, newName)
+		}
+	}
+
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+
+	// DeprecatedOptions indicates the options that should be moved to [instance] section.
+	// The value in conf.Instance.* would be overwritten by the other sections.
+	expectedDeprecatedOptions := map[string]InstanceConfigSection{
+		"": {
+			"", map[string]string{"enable-collect-execution-info": "tidb_enable_collect_execution_info"},
+		},
+		"log": {
+			"log", map[string]string{"slow-threshold": "tidb_slow_log_threshold"},
+		},
+		"performance": {
+			"performance", map[string]string{"memory-usage-alarm-ratio": "tidb_memory_usage_alarm_ratio"},
+		},
+	}
+	_, err = f.WriteString("enable-collect-execution-info = false \n" +
+		"[log] \nslow-threshold = 100 \n" +
+		"[performance] \nmemory-usage-alarm-ratio = 0.5")
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	err = conf.Load(configFile)
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "Some configuration options should be moved to [instance] section."))
+	for _, deprecatedOption := range DeprecatedOptions {
+		expectedDeprecatedOption, ok := expectedDeprecatedOptions[deprecatedOption.SectionName]
+		require.True(t, ok)
+		for oldName, newName := range deprecatedOption.NameMappings {
+			expectedNewName, ok = expectedDeprecatedOption.NameMappings[oldName]
+			require.True(t, ok, fmt.Sprintf("Get unexpected %s.", oldName))
+			require.Equal(t, expectedNewName, newName)
+		}
 	}
 }
 
