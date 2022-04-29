@@ -38,7 +38,7 @@ func TestBackupAndRestore(t *testing.T) {
 
 	cfg := config.GetGlobalConfig()
 	cfg.Store = "tikv"
-	//cfg.Path = pdAddr
+	cfg.Path = "127.0.0.1:2379"
 	config.StoreGlobalConfig(cfg)
 
 	tk := testkit.NewTestKit(t, store)

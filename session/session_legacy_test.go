@@ -72,12 +72,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-var (
-	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
-	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-	pdAddrChan      chan string
-	initPdAddrsOnce sync.Once
-)
+var withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 
 var _ = Suite(&testSessionSuite{})
 var _ = Suite(&testSessionSuite2{})
@@ -165,25 +160,11 @@ func clearETCD(ebd kv.EtcdBackend) error {
 	return nil
 }
 
-func initPdAddrs() {
-	initPdAddrsOnce.Do(func() {
-		addrs := strings.Split(*pdAddrs, ",")
-		pdAddrChan = make(chan string, len(addrs))
-		for _, addr := range addrs {
-			addr = strings.TrimSpace(addr)
-			if addr != "" {
-				pdAddrChan <- addr
-			}
-		}
-	})
-}
-
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	if *withTiKV {
-		initPdAddrs()
-		s.pdAddr = <-pdAddrChan
+		s.pdAddr = "127.0.0.1:2379"
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
@@ -217,9 +198,6 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
-	if *withTiKV {
-		pdAddrChan <- s.pdAddr
-	}
 }
 
 func (s *testSessionSuiteBase) TearDownTest(c *C) {
@@ -246,13 +224,11 @@ func createStorage(t *testing.T) (kv.Storage, func()) {
 
 func createStorageAndDomain(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr := <-pdAddrChan
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
+		store, err := d.Open("tikv://127.0.0.1:2379?disableGC=true")
 		require.NoError(t, err)
 		require.NoError(t, clearStorage(store))
 		require.NoError(t, clearETCD(store.(kv.EtcdBackend)))
@@ -263,7 +239,6 @@ func createStorageAndDomain(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 		return store, dom, func() {
 			dom.Close()
 			require.NoError(t, store.Close())
-			pdAddrChan <- pdAddr
 		}
 	}
 	return newTestkit.CreateMockStoreAndDomain(t)
