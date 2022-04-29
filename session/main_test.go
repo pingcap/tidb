@@ -44,6 +44,10 @@ func TestMain(m *testing.M) {
 
 	testbridge.SetupForCommonTest()
 
+	if flag.Lookup("pd-addrs") == nil {
+		_ = flag.String("pd-addrs", "", "workaroundGoCheckFlags: pd-addrs")
+	}
+
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
 
