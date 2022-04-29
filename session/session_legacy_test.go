@@ -19,8 +19,6 @@ import (
 	"flag"
 	"fmt"
 	"net"
-	"os"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,12 +72,9 @@ import (
 	"google.golang.org/grpc"
 )
 
-var (
-	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
-	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-	pdAddrChan      chan string
-	initPdAddrsOnce sync.Once
-)
+var withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+
+var _ = flag.String("pd-addrs", "127.0.0.1:2379", "workaroundGoCheckFlags: pd-addrs")
 
 var _ = Suite(&testSessionSuite{})
 var _ = Suite(&testSessionSuite2{})
@@ -87,7 +82,6 @@ var _ = Suite(&testSessionSuite3{})
 var _ = Suite(&testSchemaSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
-var _ = SerialSuites(&testBackupRestoreSuite{})
 var _ = SerialSuites(&testTxnStateSerialSuite{})
 
 type testSessionSuiteBase struct {
@@ -110,10 +104,6 @@ type testSessionSuite3 struct {
 }
 
 type testSessionSerialSuite struct {
-	testSessionSuiteBase
-}
-
-type testBackupRestoreSuite struct {
 	testSessionSuiteBase
 }
 
@@ -172,25 +162,11 @@ func clearETCD(ebd kv.EtcdBackend) error {
 	return nil
 }
 
-func initPdAddrs() {
-	initPdAddrsOnce.Do(func() {
-		addrs := strings.Split(*pdAddrs, ",")
-		pdAddrChan = make(chan string, len(addrs))
-		for _, addr := range addrs {
-			addr = strings.TrimSpace(addr)
-			if addr != "" {
-				pdAddrChan <- addr
-			}
-		}
-	})
-}
-
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	if *withTiKV {
-		initPdAddrs()
-		s.pdAddr = <-pdAddrChan
+		s.pdAddr = "127.0.0.1:2379"
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
@@ -224,9 +200,6 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
-	if *withTiKV {
-		pdAddrChan <- s.pdAddr
-	}
 }
 
 func (s *testSessionSuiteBase) TearDownTest(c *C) {
@@ -253,13 +226,11 @@ func createStorage(t *testing.T) (kv.Storage, func()) {
 
 func createStorageAndDomain(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	if *withTiKV {
-		initPdAddrs()
-		pdAddr := <-pdAddrChan
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
+		store, err := d.Open("tikv://127.0.0.1:2379?disableGC=true")
 		require.NoError(t, err)
 		require.NoError(t, clearStorage(store))
 		require.NoError(t, clearETCD(store.(kv.EtcdBackend)))
@@ -270,7 +241,6 @@ func createStorageAndDomain(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 		return store, dom, func() {
 			dom.Close()
 			require.NoError(t, store.Close())
-			pdAddrChan <- pdAddr
 		}
 	}
 	return newTestkit.CreateMockStoreAndDomain(t)
@@ -4191,44 +4161,6 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	// this DDL call will enter deadloop before this fix
 	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil)
 	c.Assert(err.Error(), Equals, "context canceled")
-}
-
-func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
-	// only run BR SQL integration test with tikv store.
-	// TODO move this test to BR integration tests.
-	if *withTiKV {
-		cfg := config.GetGlobalConfig()
-		cfg.Store = "tikv"
-		cfg.Path = s.pdAddr
-		config.StoreGlobalConfig(cfg)
-		tk := testkit.NewTestKitWithInit(c, s.store)
-		tk.MustExec("create database if not exists br")
-		tk.MustExec("use br")
-		tk.MustExec("create table t1(v int)")
-		tk.MustExec("insert into t1 values (1)")
-		tk.MustExec("insert into t1 values (2)")
-		tk.MustExec("insert into t1 values (3)")
-		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
-
-		tk.MustExec("create database if not exists br02")
-		tk.MustExec("use br02")
-		tk.MustExec("create table t1(v int)")
-
-		tmpDir := path.Join(os.TempDir(), "bk1")
-		os.RemoveAll(tmpDir)
-		// backup database to tmp dir
-		tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
-
-		// remove database for recovery
-		tk.MustExec("drop database br")
-		tk.MustExec("drop database br02")
-
-		// restore database with backup data
-		tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
-		tk.MustExec("use br")
-		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
-		tk.MustExec("drop database br")
-	}
 }
 
 func (s *testSessionSuite2) TestIssue19127(c *C) {
