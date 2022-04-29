@@ -168,7 +168,7 @@ outside:
 		// do not retry NotFound error
 		case errors.IsNotFound(err):
 			break outside
-		case utils.IsRetryableError(err):
+		case IsRetryableError(err):
 			logger.Warn(purpose+" failed but going to try again", log.ShortError(err))
 			continue
 		default:
