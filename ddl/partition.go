@@ -122,34 +122,6 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-<<<<<<< HEAD
-=======
-
-		// modify placement settings
-		for _, def := range tblInfo.Partition.AddingDefinitions {
-			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
-				return ver, errors.Trace(err)
-			}
-		}
-
-		if tblInfo.TiFlashReplica != nil {
-			// Must set placement rule, and make sure it succeeds.
-			if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); err != nil {
-				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
-				return ver, errors.Trace(err)
-			}
-		}
-
-		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-
-		if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
 
 		ids := getIDs([]*model.TableInfo{tblInfo})
 		for _, p := range tblInfo.Partition.AddingDefinitions {
@@ -160,7 +132,6 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			return ver, err
 		}
 
->>>>>>> 2810c1d55... ddl: support index regions and updating the existed table rule when changing partition  (#33925)
 		// none -> replica only
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
@@ -224,8 +195,6 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 	return ver, errors.Trace(err)
 }
 
-<<<<<<< HEAD
-=======
 func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) error {
 	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, schemaName, meta.Name.L)
 	oldRule, err := infosync.GetLabelRules(context.TODO(), []string{tableRuleID})
@@ -247,40 +216,6 @@ func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) 
 	return nil
 }
 
-func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
-	var bundles []*placement.Bundle
-
-	// tblInfo do not include added partitions, so we should add them first
-	tblInfo = tblInfo.Clone()
-	p := *tblInfo.Partition
-	p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
-	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
-	tblInfo.Partition = &p
-
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
-		return nil, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
-	}
-
-	// bundle for table should be recomputed because it includes some default configs for partitions
-	tblBundle, err := placement.NewTableBundle(t, tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if tblBundle != nil {
-		bundles = append(bundles, tblBundle)
-	}
-
-	partitionBundles, err := placement.NewPartitionListBundles(t, addingDefinitions)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	bundles = append(bundles, partitionBundles...)
-	return bundles, nil
-}
-
->>>>>>> 2810c1d55... ddl: support index regions and updating the existed table rule when changing partition  (#33925)
 // updatePartitionInfo merge `addingDefinitions` into `Definitions` in the tableInfo.
 func updatePartitionInfo(tblInfo *model.TableInfo) {
 	parInfo := &model.PartitionInfo{}

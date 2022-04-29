@@ -55,15 +55,10 @@ func (s *testDBSuite8) TestAlterTableAttributes(c *C) {
 	c.Assert(err, IsNil)
 
 	// without equal
-<<<<<<< HEAD
 	_, err = tk.Exec(`alter table t1 attributes " merge_option=allow ";`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t1 attributes " merge_option=allow , key=value ";`)
 	c.Assert(err, IsNil)
-=======
-	tk.MustExec(`alter table alter_t attributes " merge_option=allow ";`)
-	tk.MustExec(`alter table alter_t attributes " merge_option=allow , key=value ";`)
->>>>>>> 2810c1d55... ddl: support index regions and updating the existed table rule when changing partition  (#33925)
 }
 
 func (s *testDBSuite8) TestAlterTablePartitionAttributes(c *C) {
@@ -99,14 +94,10 @@ PARTITION BY RANGE (c) (
 	c.Assert(err, IsNil)
 
 	// without equal
-<<<<<<< HEAD
 	_, err = tk.Exec(`alter table t1 partition p1 attributes " merge_option=allow ";`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t1 partition p1 attributes " merge_option=allow , key=value ";`)
 	c.Assert(err, IsNil)
-=======
-	tk.MustExec(`alter table alter_p partition p1 attributes " merge_option=allow ";`)
-	tk.MustExec(`alter table alter_p partition p1 attributes " merge_option=allow , key=value ";`)
 
 	// reset all
 	tk.MustExec(`alter table alter_p partition p0 attributes default;`)
@@ -117,33 +108,32 @@ PARTITION BY RANGE (c) (
 	// add table level attribute
 	tk.MustExec(`alter table alter_p attributes="merge_option=deny";`)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
-	require.Len(t, rows, 1)
+	c.Assert(len(rows), Equals, 1)
 
 	// add a new partition p4
 	tk.MustExec(`alter table alter_p add partition (PARTITION p4 VALUES LESS THAN (60));`)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
-	require.Len(t, rows1, 1)
-	require.NotEqual(t, rows[0][3], rows1[0][3])
+	c.Assert(len(rows1), Equals, 1)
+	c.Assert(rows[0][3], Not(Equals), rows1[0][3])
 
 	// drop the new partition p4
 	tk.MustExec(`alter table alter_p drop partition p4;`)
 	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
-	require.Len(t, rows2, 1)
-	require.Equal(t, rows[0][3], rows2[0][3])
+	c.Assert(len(rows2), Equals, 1)
+	c.Assert(rows[0][3], Equals, rows2[0][3])
 
 	// add a new partition p5
 	tk.MustExec(`alter table alter_p add partition (PARTITION p5 VALUES LESS THAN (80));`)
 	rows3 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
-	require.Len(t, rows3, 1)
-	require.NotEqual(t, rows[0][3], rows3[0][3])
+	c.Assert(len(rows3), Equals, 1)
+	c.Assert(rows[0][3], Not(Equals), rows3[0][3])
 
 	// truncate the new partition p5
 	tk.MustExec(`alter table alter_p truncate partition p5;`)
 	rows4 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
-	require.Len(t, rows4, 1)
-	require.NotEqual(t, rows3[0][3], rows4[0][3])
-	require.NotEqual(t, rows[0][3], rows4[0][3])
->>>>>>> 2810c1d55... ddl: support index regions and updating the existed table rule when changing partition  (#33925)
+	c.Assert(len(rows4), Equals, 1)
+	c.Assert(rows3[0][3], Not(Equals), rows4[0][3])
+	c.Assert(rows[0][3], Not(Equals), rows4[0][3])
 }
 
 func (s *testDBSuite8) TestTruncateTable(c *C) {
@@ -237,7 +227,7 @@ PARTITION BY RANGE (c) (
 	// check table t2's attribute
 	c.Assert(rows1[0][0], Equals, "schema/test/t2")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
-	c.Assert(rows1[0][3], Equals, rows[0][3])
+	c.Assert(rows1[0][3], Not(Equals), rows[0][3])
 	// check partition p0's attribute
 	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
@@ -543,24 +533,13 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`alter table t1 drop partition p0;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
-<<<<<<< HEAD
 	c.Assert(len(rows1), Equals, 2)
 	c.Assert(rows1[0][0], Equals, "schema/test/t1")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
-	c.Assert(rows1[0][3], Equals, rows[0][3])
+	c.Assert(rows1[0][3], Not(Equals), rows[0][3])
 	c.Assert(rows1[1][0], Equals, "schema/test/t1/p1")
 	c.Assert(rows1[1][2], Equals, `"key2=value2"`)
 	c.Assert(rows1[1][3], Equals, rows[2][3])
-=======
-	require.Len(t, rows1, 2)
-	require.Equal(t, "schema/test/part", rows1[0][0])
-	require.Equal(t, `"key=value"`, rows1[0][2])
-	// table attribute only contains three ranges now
-	require.NotEqual(t, rows[0][3], rows1[0][3])
-	require.Equal(t, "schema/test/part/p1", rows1[1][0])
-	require.Equal(t, `"key2=value2"`, rows1[1][2])
-	require.Equal(t, rows[2][3], rows1[1][3])
->>>>>>> 2810c1d55... ddl: support index regions and updating the existed table rule when changing partition  (#33925)
 
 	// truncate partition
 	// partition p1's key range will be updated
@@ -570,7 +549,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(len(rows2), Equals, 2)
 	c.Assert(rows2[0][0], Equals, "schema/test/t1")
 	c.Assert(rows2[0][2], Equals, `"key=value"`)
-	c.Assert(rows2[0][3], Not(Equals), rows1[0][3])
+	c.Assert(rows2[0][3], Equals, rows1[0][3])
 	c.Assert(rows2[1][0], Equals, "schema/test/t1/p1")
 	c.Assert(rows2[1][2], Equals, `"key2=value2"`)
 	c.Assert(rows2[1][3], Not(Equals), rows1[1][3])
