@@ -1148,7 +1148,7 @@ func (c *releaseAllLocksFunctionClass) getFunction(ctx sessionctx.Context, args 
 		return nil, err
 	}
 	sig := &builtinReleaseAllLocksSig{bf}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
