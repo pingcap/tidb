@@ -16,12 +16,12 @@ package core_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/stretchr/testify/require"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
