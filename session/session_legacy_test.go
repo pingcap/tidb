@@ -74,6 +74,8 @@ import (
 
 var withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 
+var _ = flag.String("pd-addrs", "127.0.0.1:2379", "workaroundGoCheckFlags: pd-addrs")
+
 var _ = Suite(&testSessionSuite{})
 var _ = Suite(&testSessionSuite2{})
 var _ = Suite(&testSessionSuite3{})
