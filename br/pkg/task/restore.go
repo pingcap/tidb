@@ -145,8 +145,8 @@ type RestoreConfig struct {
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
-	// [startTs, RestoreTS] is used to `restore log` from StartTs to RestoreTS.
-	StartTs   uint64 `json:"start-ts" toml:"start-ts"`
+	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
+	StartTS   uint64 `json:"start-ts" toml:"start-ts"`
 	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
 }
 
@@ -177,7 +177,7 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.StartTs, err = ParseTSString(tsString); err != nil {
+	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
 		return errors.Trace(err)
 	}
 	tsString, err = flags.GetString(FlagStreamRestoreTS)

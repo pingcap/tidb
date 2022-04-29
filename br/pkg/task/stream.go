@@ -93,7 +93,7 @@ type StreamConfig struct {
 
 	TaskName string `json:"task-name" toml:"task-name"`
 
-	// StartTs usually equals the tso of full-backup, but user can reset it
+	// StartTS usually equals the tso of full-backup, but user can reset it
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	EndTS   uint64 `json:"end-ts" toml:"end-ts"`
 	// SafePointTTL ensures TiKV can scan entries not being GC at [startTS, currentTS]
@@ -371,20 +371,20 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context, safePoint uint64) error 
 	return nil
 }
 
-func (s *streamMgr) getGlobalCheckPointTs(ctx context.Context, ti *stream.Task) (uint64, error) {
+func (s *streamMgr) getGlobalCheckPointTS(ctx context.Context, ti *stream.Task) (uint64, error) {
 	checkPointMap, err := ti.NextBackupTSList(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	var checkPointTs uint64 = math.MaxUint64
-	for _, nextTs := range checkPointMap {
-		if nextTs < checkPointTs {
-			checkPointTs = nextTs
+	var checkPointTS uint64 = math.MaxUint64
+	for _, nextTS := range checkPointMap {
+		if nextTS < checkPointTS {
+			checkPointTS = nextTS
 		}
 	}
 
-	return checkPointTs, nil
+	return checkPointTS, nil
 }
 
 func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
@@ -459,7 +459,7 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
-		// save log startTs to backupmeta file
+		// save log startTS to backupmeta file
 		m.StartVersion = s.cfg.StartTS
 	})
 
@@ -668,11 +668,11 @@ func RunStreamPause(
 		return errors.Annotatef(berrors.ErrKVUnknown, "The task %s is paused already.", cfg.TaskName)
 	}
 
-	globalCheckPointTs, err := streamMgr.getGlobalCheckPointTs(ctx, ti)
+	globalCheckPointTS, err := streamMgr.getGlobalCheckPointTS(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = streamMgr.setGCSafePoint(ctx, globalCheckPointTs); err != nil {
+	if err = streamMgr.setGCSafePoint(ctx, globalCheckPointTS); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -797,7 +797,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	em := color.New(color.Bold).SprintFunc()
 	done := color.New(color.FgGreen).SprintFunc()
 	warn := color.New(color.Bold, color.FgHiRed).SprintFunc()
-	formatTs := func(ts uint64) string {
+	formatTS := func(ts uint64) string {
 		return oracle.GetTimeFromTS(ts).Format("2006-01-02 15:04:05.0000")
 	}
 	if cfg.Until == 0 {
@@ -818,7 +818,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	if cfg.Until < sp {
-		console.Println("According to the log, you have truncated backup data before", em(formatTs(sp)))
+		console.Println("According to the log, you have truncated backup data before", em(formatTS(sp)))
 		if !cfg.SkipPrompt && !console.PromptBool("Continue? ") {
 			return nil
 		}
@@ -842,17 +842,17 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	fileCount := 0
-	minTs := oracle.GoTimeToTS(time.Now())
+	minTS := oracle.GoTimeToTS(time.Now())
 	metas.IterateFilesFullyBefore(cfg.Until, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
-		if d.MaxTs < minTs {
-			minTs = d.MaxTs
+		if d.MaxTs < minTS {
+			minTS = d.MaxTs
 		}
 		fileCount++
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",
 		em(fileCount),
-		em(formatTs(minTs)),
+		em(formatTS(minTS)),
 	)
 	if !cfg.SkipPrompt && !console.PromptBool(warn("Sure? ")) {
 		return nil
@@ -897,23 +897,69 @@ func RunStreamRestore(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	logStartTs, err := getLogStartTs(ctx, cfg)
+	logStartTS, truncateTS, err := getLogStartTS(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	if len(cfg.FullBackupStorage) > 0 {
-		cfg.StartTs, err = getFullBakcupTs(ctx, cfg)
+		cfg.StartTS, err = getFullBakcupTS(ctx, cfg)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if cfg.StartTs < logStartTs {
+		if cfg.StartTS < logStartTS {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
 				"it has gap bewteen full backup ts:%d(%s) and log backup ts:%d(%s)"+
 					"you can \"restore full\" and \"restore point\" separately",
-				cfg.StartTs, oracle.GetTimeFromTS(cfg.StartTs),
-				logStartTs, oracle.GetTimeFromTS(logStartTs))
+				cfg.StartTS, oracle.GetTimeFromTS(cfg.StartTS),
+				logStartTS, oracle.GetTimeFromTS(logStartTS))
 		}
+	}
+
+	if logStartTS < truncateTS {
+		logStartTS = truncateTS
+	}
+	if cfg.RestoreTS == 0 {
+		cfg.RestoreTS = math.MaxUint64
+	}
+	log.Info("start restore on point", zap.Uint64("restore-from", cfg.StartTS),
+		zap.Uint64("restore-to", cfg.RestoreTS), zap.Uint64("log-start-ts", logStartTS))
+	if err := checkLogRange(cfg.StartTS, cfg.RestoreTS, logStartTS); err != nil {
+		return errors.Trace(err)
+	}
+
+	// restore full snapshot.
+	if len(cfg.FullBackupStorage) > 0 {
+		logStorage := cfg.Config.Storage
+		cfg.Config.Storage = cfg.FullBackupStorage
+		if err = RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
+			return errors.Trace(err)
+		}
+		cfg.Config.Storage = logStorage
+	}
+	// restore log.
+	if err := restoreStream(ctx, g, cfg); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// RunStreamRestore start restore job
+func restoreStream(
+	c context.Context,
+	g glue.Glue,
+	cfg *RestoreConfig,
+) error {
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(
+			"restoreStream",
+			opentracing.ChildOf(span.Context()),
+		)
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	client, err := createRestoreClient(ctx, g, cfg)
@@ -929,56 +975,8 @@ func RunStreamRestore(
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = currentTS
 	}
-	client.SetRestoreRangeTS(cfg.StartTs, cfg.RestoreTS)
+	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS)
 	client.SetCurrentTS(currentTS)
-
-	truncateTs, err := client.GetTruncateSafepoint(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if logStartTs < truncateTs {
-		logStartTs = truncateTs
-	}
-	log.Info("start restore on point", zap.Uint64("restore-from", cfg.StartTs),
-		zap.Uint64("restore-to", cfg.RestoreTS), zap.Uint64("log-start-ts", logStartTs))
-	if err := checkLogRange(cfg.StartTs, cfg.RestoreTS, logStartTs); err != nil {
-		return errors.Trace(err)
-	}
-
-	// restore full snapshot.
-	if len(cfg.FullBackupStorage) > 0 {
-		logStorage := cfg.Config.Storage
-		cfg.Config.Storage = cfg.FullBackupStorage
-		if err = RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
-			return errors.Trace(err)
-		}
-		cfg.Config.Storage = logStorage
-	}
-	// restore log.
-	if err := restoreStream(ctx, g, cfg, client); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// RunStreamRestore start restore job
-func restoreStream(
-	c context.Context,
-	g glue.Glue,
-	cfg *RestoreConfig,
-	client *restore.Client,
-) error {
-	ctx, cancelFn := context.WithCancel(c)
-	defer cancelFn()
-
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan(
-			"restoreStream",
-			opentracing.ChildOf(span.Context()),
-		)
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
 
 	// read meta by given ts.
 	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
@@ -997,7 +995,7 @@ func restoreStream(
 	}
 
 	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.StartTs, cfg.RestoreTS)
+	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1095,7 +1093,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig) (
 
 func checkLogRange(restoreFrom, restoreTo, truncateTS uint64) error {
 	// serveral ts constraint：
-	// truncateTs <= restoreFrom <= restoreTo
+	// truncateTS <= restoreFrom <= restoreTo
 	if truncateTS > restoreFrom || restoreFrom > restoreTo {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"restore log from %d(%s) to %d(%s), "+
@@ -1124,29 +1122,34 @@ func countIndices(ts map[int64]*metautil.Table) int64 {
 }
 
 // get the start-ts of starting log backup.
-func getLogStartTs(
+func getLogStartTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
-) (uint64, error) {
+) (uint64, uint64, error) {
 	_, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 	backupMeta := &backuppb.BackupMeta{}
 	if err = backupMeta.Unmarshal(metaData); err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 
-	return backupMeta.GetStartVersion(), nil
+	truncateTS, err := restore.GetTruncateSafepoint(ctx, s)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	return backupMeta.GetStartVersion(), truncateTS, nil
 }
 
-// get the snapshot-ts of full bakcup
-func getFullBakcupTs(
+// getFullBakcupTS gets the snapshot-ts of full bakcup
+func getFullBakcupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, error) {
@@ -1168,22 +1171,22 @@ func getFullBakcupTs(
 	return backupmeta.GetEndVersion(), nil
 }
 
-func getGlobalCheckpointTs(ms []*backuppb.Metadata) uint64 {
+func getGlobalCheckpointTS(ms []*backuppb.Metadata) uint64 {
 	storeMap := make(map[int64]uint64)
 	for _, m := range ms {
-		if resolveTs, exist := storeMap[m.StoreId]; !exist || resolveTs < m.ResolvedTs {
+		if resolveTS, exist := storeMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
 			storeMap[m.StoreId] = m.ResolvedTs
 		}
 	}
 
-	var globalCheckpointTs uint64 = 0
-	for _, resolveTs := range storeMap {
-		if resolveTs < globalCheckpointTs || globalCheckpointTs == 0 {
-			globalCheckpointTs = resolveTs
+	var globalCheckpointTS uint64 = 0
+	for _, resolveTS := range storeMap {
+		if resolveTS < globalCheckpointTS || globalCheckpointTS == 0 {
+			globalCheckpointTS = resolveTS
 		}
 	}
 
-	return globalCheckpointTs
+	return globalCheckpointTS
 }
 
 func initFullBackupTables(

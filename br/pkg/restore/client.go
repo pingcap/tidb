@@ -1816,12 +1816,12 @@ func (rc *Client) RestoreMetaKVFile(
 			return errors.Trace(err)
 		}
 
-		//The commitTs in write CF need be limited on [startTs, restoreTs].
-		//We can restore more key-value in default CF.
-		if file.Cf == "write" {
-			if ts > rc.restoreTs || ts < rc.startTS {
-				continue
-			}
+		// The commitTs in write CF need be limited on [startTs, restoreTs].
+		// We can restore more key-value in default CF.
+		if ts > rc.restoreTs {
+			continue
+		} else if file.Cf == "write" && ts < rc.startTS {
+			continue
 		}
 
 		log.Debug("txn entry", zap.Uint64("key-ts", ts), zap.Int("txnKey-len", len(txnEntry.Key)),
