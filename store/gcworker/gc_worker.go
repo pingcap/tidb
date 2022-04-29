@@ -1973,8 +1973,8 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 func getGCRules(ids []int64, rules map[string]*label.Rule) []string {
 	oldRange := make(map[string]struct{})
 	for _, id := range ids {
-		startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id)))
-		endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id+1)))
+		startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(id)))
+		endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(id+1)))
 		oldRange[startKey+endKey] = struct{}{}
 	}
 
