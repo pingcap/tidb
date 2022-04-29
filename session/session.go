@@ -2761,10 +2761,10 @@ var errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	cfg := config.GetGlobalConfig()
-	if len(cfg.Plugin.Load) > 0 {
+	if len(cfg.Instance.PluginLoad) > 0 {
 		err := plugin.Load(context.Background(), plugin.Config{
-			Plugins:   strings.Split(cfg.Plugin.Load, ","),
-			PluginDir: cfg.Plugin.Dir,
+			Plugins:   strings.Split(cfg.Instance.PluginLoad, ","),
+			PluginDir: cfg.Instance.PluginDir,
 		})
 		if err != nil {
 			return nil, err
@@ -2827,7 +2827,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	if len(cfg.Plugin.Load) > 0 {
+	if len(cfg.Instance.PluginLoad) > 0 {
 		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
 		if err != nil {
 			return nil, err
