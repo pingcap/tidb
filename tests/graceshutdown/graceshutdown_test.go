@@ -140,10 +140,12 @@ func TestGracefulShutdown(t *testing.T) {
 	_, err = conn1.ExecContext(ctx, "insert into t values(1);")
 	require.NoError(t, err)
 
+	done := make(chan struct{})
 	go func() {
-		time.Sleep(1e9)
+		time.Sleep(time.Second)
 		err = stopService("tidb", tidb)
 		require.NoError(t, err)
+		close(done)
 	}()
 
 	sql := `select 1 from t where not (select sleep(3)) ;`
@@ -151,4 +153,5 @@ func TestGracefulShutdown(t *testing.T) {
 	err = conn1.QueryRowContext(ctx, sql).Scan(&a)
 	require.NoError(t, err)
 	require.Equal(t, a, int64(1))
+	<-done
 }
