@@ -876,8 +876,6 @@ func (s *tableRestoreSuite) TestImportKVFailure() {
 }
 
 func (s *tableRestoreSuite) TestTableRestoreMetrics() {
-	// FIXME: use local backend
-	return
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 
@@ -902,6 +900,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	cfg.Mydumper.SourceDir = "."
 	cfg.Mydumper.CSV.Header = false
 	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.SortedKVDir = "/tmp/sorted"
 	tls, err := cfg.ToTLS()
 	require.NoError(s.T(), err)
 
@@ -937,6 +936,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
 		errorMgr:          errormanager.New(nil, cfg),
+		taskMgr:           noopTaskMetaMgr{},
 	}
 	go func() {
 		for scp := range chptCh {
