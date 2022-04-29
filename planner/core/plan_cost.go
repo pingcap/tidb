@@ -176,7 +176,7 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType) (float64, 
 		} else {
 			// cop protocol
 			concurrency = float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
-			rowSize = getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+			rowSize = getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 			seekCost = estimateNetSeekCost(p.tablePlan)
 		}
 
@@ -511,33 +511,6 @@ func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType) (floa
 	p.planCost += p.children[0].StatsCount() * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	p.planCostInit = true
 	return p.planCost, nil
-}
-
-// HistColl may not be propagated to some upper operators, so get HistColl recursively for safety.
-func getHistCollSafely(p PhysicalPlan) *statistics.HistColl {
-	if p.Stats().HistColl != nil {
-		return p.Stats().HistColl
-	}
-	var children []PhysicalPlan
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		children = append(children, x.tablePlan)
-	case *PhysicalIndexReader:
-		children = append(children, x.indexPlan)
-	case *PhysicalIndexLookUpReader:
-		children = append(children, x.tablePlan, x.indexPlan)
-	case *PhysicalIndexMergeReader:
-		children = append(children, x.tablePlan)
-		children = append(children, x.partialPlans...)
-	default:
-		children = append(children, p.Children()...)
-	}
-	for _, c := range children {
-		if hist := getHistCollSafely(c); hist != nil {
-			return hist
-		}
-	}
-	return nil
 }
 
 // estimateNetSeekCost calculates the net seek cost for the plan.
