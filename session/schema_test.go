@@ -37,6 +37,12 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 )
 
+func skipIfWithRealTiKV(t *testing.T) {
+	if *withTiKV {
+		t.Skip("Schema tests has nothing to do with real tikv scenario")
+	}
+}
+
 func createMockStoreForSchemaTest(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
@@ -54,6 +60,8 @@ func createMockStoreForSchemaTest(t *testing.T, opts ...mockstore.MockTiKVStoreO
 }
 
 func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -82,6 +90,8 @@ func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
 }
 
 func TestCommitWhenSchemaChanged(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -106,6 +116,8 @@ func TestCommitWhenSchemaChanged(t *testing.T) {
 }
 
 func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -137,6 +149,8 @@ func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
 }
 
 func TestRetrySchemaChange(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -179,6 +193,8 @@ func TestRetrySchemaChange(t *testing.T) {
 }
 
 func TestRetryMissingUnionScan(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -204,6 +220,8 @@ func TestRetryMissingUnionScan(t *testing.T) {
 }
 
 func TestTableReaderChunk(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	// Since normally a single region mock tikv only returns one partial result we need to manually split the
 	// table to test multiple chunks.
 	var cluster testutils.Cluster
@@ -255,6 +273,8 @@ func TestTableReaderChunk(t *testing.T) {
 }
 
 func TestInsertExecChunk(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -291,6 +311,8 @@ func TestInsertExecChunk(t *testing.T) {
 }
 
 func TestUpdateExecChunk(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -329,6 +351,8 @@ func TestUpdateExecChunk(t *testing.T) {
 }
 
 func TestDeleteExecChunk(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -360,6 +384,8 @@ func TestDeleteExecChunk(t *testing.T) {
 }
 
 func TestDeleteMultiTableExecChunk(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -413,6 +439,8 @@ func TestDeleteMultiTableExecChunk(t *testing.T) {
 }
 
 func TestIndexLookUpReaderChunk(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	// Since normally a single region mock tikv only returns one partial result we need to manually split the
 	// table to test multiple chunks.
 	var cluster testutils.Cluster
@@ -476,6 +504,8 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 }
 
 func TestDisableTxnAutoRetry(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -571,6 +601,8 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 }
 
 func TestTxnSize(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -588,6 +620,8 @@ func TestTxnSize(t *testing.T) {
 }
 
 func TestLoadSchemaFailed(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	originalRetryTime := domain.SchemaOutOfDateRetryTimes.Load()
 	originalRetryInterval := domain.SchemaOutOfDateRetryInterval.Load()
 	domain.SchemaOutOfDateRetryTimes.Store(3)
@@ -645,6 +679,8 @@ func TestLoadSchemaFailed(t *testing.T) {
 }
 
 func TestValidationRecursion(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	// We have to expect that validation functions will call GlobalVarsAccessor.GetGlobalSysVar().
 	// This tests for a regression where GetGlobalSysVar() can not safely call the validation
 	// function because it might cause infinite recursion.
@@ -666,6 +702,8 @@ func TestValidationRecursion(t *testing.T) {
 }
 
 func TestSchemaCheckerSQL(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
@@ -740,6 +778,8 @@ func TestSchemaCheckerSQL(t *testing.T) {
 }
 
 func TestSchemaCheckerTempTable(t *testing.T) {
+	skipIfWithRealTiKV(t)
+
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
