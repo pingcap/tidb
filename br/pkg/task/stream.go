@@ -458,6 +458,11 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 
 func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, nil)
+	metaWriter.Update(func(m *backuppb.BackupMeta) {
+		// save log startTs to backupmeta file
+		m.StartVersion = s.cfg.StartTS
+	})
+
 	schemas, err := backup.BuildFullSchema(s.mgr.GetStorage(), s.cfg.StartTS)
 	if err != nil {
 		return errors.Trace(err)
@@ -892,17 +897,65 @@ func RunStreamRestore(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	StreamStorage := cfg.Config.Storage
+	logStartTs, err := getLogStartTs(ctx, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	if len(cfg.FullBackupStorage) > 0 {
-		cfg.Config.Storage = cfg.FullBackupStorage
-		if err := RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
+		cfg.StartTs, err = getFullBakcupTs(ctx, cfg)
+		if err != nil {
 			return errors.Trace(err)
+		}
+		if cfg.StartTs < logStartTs {
+			return errors.Annotatef(berrors.ErrInvalidArgument,
+				"it has gap bewteen full backup ts:%d(%s) and log backup ts:%d(%s)"+
+					"you can \"restore full\" and \"restore point\" separately",
+				cfg.StartTs, oracle.GetTimeFromTS(cfg.StartTs),
+				logStartTs, oracle.GetTimeFromTS(logStartTs))
 		}
 	}
 
-	cfg.Config.Storage = StreamStorage
-	if err := restoreStream(ctx, g, cmdName, cfg); err != nil {
+	client, err := createRestoreClient(ctx, g, cfg)
+	if err != nil {
+		return errors.Annotate(err, "failed to create restore client")
+	}
+	defer client.Close()
+
+	currentTS, err := client.GetTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RestoreTS == 0 {
+		cfg.RestoreTS = currentTS
+	}
+	client.SetRestoreRangeTS(cfg.StartTs, cfg.RestoreTS)
+	client.SetCurrentTS(currentTS)
+
+	truncateTs, err := client.GetTruncateSafepoint(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if logStartTs < truncateTs {
+		logStartTs = truncateTs
+	}
+	log.Info("start restore on point", zap.Uint64("restore-from", cfg.StartTs),
+		zap.Uint64("restore-to", cfg.RestoreTS), zap.Uint64("log-start-ts", logStartTs))
+	if err := checkLogRange(cfg.StartTs, cfg.RestoreTS, logStartTs); err != nil {
+		return errors.Trace(err)
+	}
+
+	// restore full snapshot.
+	if len(cfg.FullBackupStorage) > 0 {
+		logStorage := cfg.Config.Storage
+		cfg.Config.Storage = cfg.FullBackupStorage
+		if err = RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
+			return errors.Trace(err)
+		}
+		cfg.Config.Storage = logStorage
+	}
+	// restore log.
+	if err := restoreStream(ctx, g, cfg, client); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -912,8 +965,8 @@ func RunStreamRestore(
 func restoreStream(
 	c context.Context,
 	g glue.Glue,
-	cmdName string,
 	cfg *RestoreConfig,
+	client *restore.Client,
 ) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
@@ -927,74 +980,6 @@ func restoreStream(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err != nil {
-			mgr.Close()
-		}
-	}()
-	keepaliveCfg := GetKeepalive(&cfg.Config)
-	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
-	err = client.Init(g, mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer client.Close()
-
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	opts := storage.ExternalStorageOptions{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
-	}
-
-	if err = client.SetStorage(ctx, u, &opts); err != nil {
-		return errors.Trace(err)
-	}
-	client.SetRateLimit(cfg.RateLimit)
-	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrency(uint(cfg.Concurrency))
-	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
-	safePoint := client.GetTruncateSafepoint(ctx)
-	if cfg.RestoreTS < safePoint {
-		// TODO: maybe also filter records less than safePoint.
-		return errors.Annotatef(berrors.ErrInvalidArgument,
-			"the restore ts %d(%s) is truncated, please restore to longer than %d(%s)",
-			cfg.RestoreTS, oracle.GetTimeFromTS(cfg.RestoreTS),
-			safePoint, oracle.GetTimeFromTS(safePoint),
-		)
-	}
-	err = client.LoadRestoreStores(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	client.InitClients(u, false)
-	currentTS, err := mgr.GetTS(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if cfg.RestoreTS == 0 {
-		cfg.RestoreTS = currentTS
-	}
-	client.SetRestoreTs(cfg.RestoreTS)
-	client.SetCurrentTS(currentTS)
-	log.Info("start restore on point", zap.Uint64("restore-ts", cfg.RestoreTS))
-
-	// get full backup meta to generate rewrite rules.
-	fullBackupTables, err := initFullBackupTables(ctx, cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// read meta by given ts.
 	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
 	if err != nil {
@@ -1004,8 +989,15 @@ func restoreStream(
 		log.Info("nothing to restore.")
 		return nil
 	}
+
+	// get full backup meta to generate rewrite rules.
+	fullBackupTables, err := initFullBackupTables(ctx, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, safePoint, cfg.RestoreTS)
+	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.StartTs, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1043,21 +1035,76 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
-	// fix indices.
-	// No need to fix indices if backup stream all of tables, because the index recored has been observed.
-	// pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), !cfg.LogProgress)
-	// err = withProgress(pi, func(p glue.Progress) error {
-	// 	return client.FixIndicesOfTables(ctx, fullBackupTables, p.Inc)
-	// })
-	// if err != nil {
-	// 	return errors.Annotate(err, "failed to fix index for some table")
-	// }
-
 	err = client.CleanUpKVFiles(ctx)
 	if err != nil {
 		return errors.Annotate(err, "failed to clean up")
 	}
+	return nil
+}
 
+func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig) (*restore.Client, error) {
+	var err error
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		if err != nil {
+			mgr.Close()
+		}
+	}()
+
+	keepaliveCfg := GetKeepalive(&cfg.Config)
+	keepaliveCfg.PermitWithoutStream = true
+	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
+	err = client.Init(g, mgr.GetStorage())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		if err != nil {
+			client.Close()
+		}
+	}()
+
+	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	opts := storage.ExternalStorageOptions{
+		NoCredentials:   cfg.NoCreds,
+		SendCredentials: cfg.SendCreds,
+	}
+	if err = client.SetStorage(ctx, u, &opts); err != nil {
+		return nil, errors.Trace(err)
+	}
+	client.SetRateLimit(cfg.RateLimit)
+	client.SetCrypter(&cfg.CipherInfo)
+	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	client.InitClients(u, false)
+
+	err = client.LoadRestoreStores(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return client, nil
+}
+
+func checkLogRange(restoreFrom, restoreTo, truncateTS uint64) error {
+	// serveral ts constraint：
+	// truncateTs <= restoreFrom <= restoreTo
+	if truncateTS > restoreFrom || restoreFrom > restoreTo {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"restore log from %d(%s) to %d(%s), "+
+				" but the current existed log from %d(%s)",
+			restoreFrom, oracle.GetTimeFromTS(restoreFrom),
+			restoreTo, oracle.GetTimeFromTS(restoreTo),
+			truncateTS, oracle.GetTimeFromTS(truncateTS),
+		)
+	}
 	return nil
 }
 
@@ -1076,26 +1123,95 @@ func countIndices(ts map[int64]*metautil.Table) int64 {
 	return result
 }
 
+// get the start-ts of starting log backup.
+func getLogStartTs(
+	ctx context.Context,
+	cfg *RestoreConfig,
+) (uint64, error) {
+	_, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	backupMeta := &backuppb.BackupMeta{}
+	if err = backupMeta.Unmarshal(metaData); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return backupMeta.GetStartVersion(), nil
+}
+
+// get the snapshot-ts of full bakcup
+func getFullBakcupTs(
+	ctx context.Context,
+	cfg *RestoreConfig,
+) (uint64, error) {
+	_, s, err := GetStorage(ctx, cfg.FullBackupStorage, &cfg.Config)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	backupmeta := &backuppb.BackupMeta{}
+	if err = backupmeta.Unmarshal(metaData); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return backupmeta.GetEndVersion(), nil
+}
+
+func getGlobalCheckpointTs(ms []*backuppb.Metadata) uint64 {
+	storeMap := make(map[int64]uint64)
+	for _, m := range ms {
+		if resolveTs, exist := storeMap[m.StoreId]; !exist || resolveTs < m.ResolvedTs {
+			storeMap[m.StoreId] = m.ResolvedTs
+		}
+	}
+
+	var globalCheckpointTs uint64 = 0
+	for _, resolveTs := range storeMap {
+		if resolveTs < globalCheckpointTs || globalCheckpointTs == 0 {
+			globalCheckpointTs = resolveTs
+		}
+	}
+
+	return globalCheckpointTs
+}
+
 func initFullBackupTables(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (map[int64]*metautil.Table, error) {
-	_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
+	var storage string
+	if len(cfg.FullBackupStorage) > 0 {
+		storage = cfg.FullBackupStorage
+	} else {
+		storage = cfg.Storage
+	}
+	_, s, err := GetStorage(ctx, storage, &cfg.Config)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	backupMeta := &backuppb.BackupMeta{}
-	err = backupMeta.Unmarshal(metaData)
-	if err != nil {
+	if err = backupMeta.Unmarshal(metaData); err != nil {
 		return nil, errors.Trace(err)
 	}
-	reader := metautil.NewMetaReader(backupMeta, s, nil)
 
 	// read full backup databases to get map[table]table.Info
+	reader := metautil.NewMetaReader(backupMeta, s, nil)
 	databases, err := utils.LoadBackupTables(ctx, reader)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1119,6 +1235,7 @@ func initFullBackupTables(
 			tables[table.Info.ID] = table
 		}
 	}
+
 	return tables, nil
 }
 
