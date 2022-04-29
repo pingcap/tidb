@@ -38,7 +38,7 @@ import (
 )
 
 func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -66,7 +66,7 @@ func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
 }
 
 func TestCommitWhenSchemaChanged(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -121,7 +121,7 @@ func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
 }
 
 func TestRetrySchemaChange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -460,7 +460,7 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 }
 
 func TestDisableTxnAutoRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -581,7 +581,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 		domain.SchemaOutOfDateRetryInterval.Store(originalRetryInterval)
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -650,7 +650,7 @@ func TestValidationRecursion(t *testing.T) {
 }
 
 func TestSchemaCheckerSQL(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -724,7 +724,7 @@ func TestSchemaCheckerSQL(t *testing.T) {
 }
 
 func TestSchemaCheckerTempTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
