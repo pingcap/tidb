@@ -133,7 +133,7 @@ For outer join, we need to consider more, because outer join will choose the con
 * only inner side condition           --- apply inner filter after the cartesian product is made, which means no supplied-null row will be appended on the inner side if any row is preserved; or all rows are supplied-null if all rows are filtered out.
 * has outer condition or join key     --- apply all of this filter as matching judgement on the process of cartesian product, which means supplied-null row will be appended on the inner side when matching is failed.
 
-Although both cases will keep all rows from the outer side, but how to derive FDs from both side depends on where the conditions come from, what the columns used by the conditions are, and what the attributes the conditions can provide. We can treat the former one as an inner join, but for the later one, we can only keep the FD from the outer table of join, and inner side's FD and filter FD has many complicated rules to infer with, we are not going to expand all of this here.
+Although both cases will keep all rows from the outer side, but how to derive FDs from both sides depends on where the conditions come from, what the columns used by the conditions are, and what the attributes the conditions can provide. We can treat the former one as an inner join, but for the latter one, we can only keep the FD from the outer table of join, and inner side's FD and filter FD has many complicated rules to infer with, we are not going to expand all of this here.
 
 ## References
 
