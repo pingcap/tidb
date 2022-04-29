@@ -110,11 +110,12 @@ func buildTableInfoWithPartition(t *testing.T, d *ddl) (*model.TableInfo, []int6
 
 func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
 	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partNames},
+		SchemaID:    dbInfo.ID,
+		TableID:     tblInfo.ID,
+		SchemaState: model.StatePublic,
+		Type:        model.ActionDropTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{partNames},
 	}
 }
 
