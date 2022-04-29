@@ -209,12 +209,6 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select /*+ inl_merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
 		"select * from t t1 where t1.b in (select sum(t2.b) from t t2 where t1.a < t2.a)", // apply
 		// point get
-		"select * from t where a = 1", // generated in FastPlan Optimization
-		"select * from t where a in (1, 2, 3, 4, 5)",
-		"select * from t where k = 1",
-		"select * from t where k in (1, 2, 3, 4, 5)",
-		"select * from t where a=1 and mod(a, b)=2", // generated in Physical Plan Optimization
-		// point get
 		"select * from t where a = 1", // generated in fast plan optimization
 		"select * from t where a in (1, 2, 3, 4, 5)",
 		"select * from t where k = 1",
