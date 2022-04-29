@@ -2,4 +2,3 @@ server TestTopSQLCPUProfile
 ddl TestModifyColumnTypeWhenInterception
 executor TestIn
 executor TestDefaultValForAnalyze
-
