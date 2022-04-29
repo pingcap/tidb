@@ -24,8 +24,8 @@ import (
 type statsInnerCache struct {
 	sync.RWMutex
 	elements map[int64]*lruMapElement
-	// lru maintains index lru cache
-	lru *innerIndexLruCache
+	// lru maintains item lru cache
+	lru *innerItemLruCache
 }
 
 func newStatsLruCache(c int64) *statsInnerCache {
@@ -37,7 +37,7 @@ func newStatsLruCache(c int64) *statsInnerCache {
 	return s
 }
 
-type innerIndexLruCache struct {
+type innerItemLruCache struct {
 	capacity     int64
 	trackingCost int64
 	elements     map[int64]map[int64]*list.Element
@@ -45,8 +45,8 @@ type innerIndexLruCache struct {
 	onEvict      func(tblID int64)
 }
 
-func newInnerIndexLruCache(c int64) *innerIndexLruCache {
-	return &innerIndexLruCache{
+func newInnerIndexLruCache(c int64) *innerItemLruCache {
+	return &innerItemLruCache{
 		capacity: c,
 		cache:    list.New(),
 		elements: make(map[int64]map[int64]*list.Element, 0),
@@ -54,10 +54,10 @@ func newInnerIndexLruCache(c int64) *innerIndexLruCache {
 }
 
 type lruCacheItem struct {
-	tblID       int64
-	idxID       int64
-	index       *statistics.Index
-	idxMemUsage *statistics.IndexMemUsage
+	tblID         int64
+	id            int64
+	innerItem     statistics.TableCacheItem
+	innerMemUsage statistics.CacheItemMemoryUsage
 }
 
 type lruMapElement struct {
@@ -73,7 +73,7 @@ func (s *statsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
 	if !ok {
 		return nil, false
 	}
-	// move element
+	// move index element
 	for idxID := range element.tblMemUsage.IndicesMemUsage {
 		s.lru.get(tblID, idxID)
 	}
@@ -95,21 +95,37 @@ func (s *statsInnerCache) Get(tblID int64) (*statistics.Table, bool) {
 func (s *statsInnerCache) PutByQuery(tblID int64, tbl *statistics.Table) {
 	s.Lock()
 	defer s.Unlock()
-	s.put(tblID, tbl, true)
+	s.put(tblID, tbl, tbl.MemoryUsage(), true)
 }
 
 // Put implements statsCacheInner
 func (s *statsInnerCache) Put(tblID int64, tbl *statistics.Table) {
 	s.Lock()
 	defer s.Unlock()
-	s.put(tblID, tbl, false)
+	s.put(tblID, tbl, tbl.MemoryUsage(), false)
 }
 
-func (s *statsInnerCache) put(tblID int64, tbl *statistics.Table, needMove bool) {
+func (s *statsInnerCache) put(tblID int64, tbl *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, needMove bool) {
+	element, exist := s.elements[tblID]
+	if exist {
+		s.updateIndices(tblID, tbl, tblMemUsage, needMove)
+		// idx mem usage might be changed before, thus we recalculate the tblMem usage
+		element.tbl = tbl
+		element.tblMemUsage = tbl.MemoryUsage()
+		return
+	}
+	s.updateIndices(tblID, tbl, tblMemUsage, needMove)
+	// mem usage might be changed due to evict, thus we recalculate the tblMem usage
+	s.elements[tblID] = &lruMapElement{
+		tbl:         tbl,
+		tblMemUsage: tbl.MemoryUsage(),
+	}
+}
+
+func (s *statsInnerCache) updateIndices(tblID int64, tbl *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, needMove bool) {
 	element, exist := s.elements[tblID]
 	if exist {
 		oldtbl := element.tbl
-		newTblMem := tbl.MemoryUsage()
 		deletedIdx := make([]int64, 0)
 		for oldIdxID := range oldtbl.Indices {
 			_, exist := tbl.Indices[oldIdxID]
@@ -118,7 +134,7 @@ func (s *statsInnerCache) put(tblID int64, tbl *statistics.Table, needMove bool)
 			}
 		}
 		for idxID, index := range tbl.Indices {
-			idxMem := newTblMem.IndicesMemUsage[idxID]
+			idxMem := tblMemUsage.IndicesMemUsage[idxID]
 			if idxMem.TrackingMemUsage() < 1 {
 				deletedIdx = append(deletedIdx, idxID)
 				continue
@@ -128,20 +144,11 @@ func (s *statsInnerCache) put(tblID int64, tbl *statistics.Table, needMove bool)
 		for _, idxID := range deletedIdx {
 			s.lru.del(tblID, idxID)
 		}
-		// idx mem usage might be changed before, thus we recalculate the tblMem usage
-		element.tbl = tbl
-		element.tblMemUsage = tbl.MemoryUsage()
 		return
 	}
-	tblMem := tbl.MemoryUsage()
 	for idxID, idx := range tbl.Indices {
-		idxMem := tblMem.IndicesMemUsage[idxID]
+		idxMem := tblMemUsage.IndicesMemUsage[idxID]
 		s.lru.put(tblID, idxID, idx, idxMem, true, needMove)
-	}
-	// index mem usage might be changed due to evict, thus we recalculate the tblMem usage
-	s.elements[tblID] = &lruMapElement{
-		tbl:         tbl,
-		tblMemUsage: tbl.MemoryUsage(),
 	}
 }
 
@@ -153,6 +160,7 @@ func (s *statsInnerCache) Del(tblID int64) {
 	if !exist {
 		return
 	}
+	// remove indices
 	for idxID := range element.tblMemUsage.IndicesMemUsage {
 		s.lru.del(tblID, idxID)
 	}
@@ -270,7 +278,7 @@ func (s *statsInnerCache) capacity() int64 {
 	return s.lru.capacity
 }
 
-func (c *innerIndexLruCache) get(tblID, idxID int64) (*lruCacheItem, bool) {
+func (c *innerItemLruCache) get(tblID, idxID int64) (*lruCacheItem, bool) {
 	v, ok := c.elements[tblID]
 	if !ok {
 		return nil, false
@@ -282,7 +290,7 @@ func (c *innerIndexLruCache) get(tblID, idxID int64) (*lruCacheItem, bool) {
 	return ele.Value.(*lruCacheItem), true
 }
 
-func (c *innerIndexLruCache) del(tblID, idxID int64) {
+func (c *innerItemLruCache) del(tblID, idxID int64) {
 	v, ok := c.elements[tblID]
 	if !ok {
 		return
@@ -295,58 +303,58 @@ func (c *innerIndexLruCache) del(tblID, idxID int64) {
 	c.cache.Remove(ele)
 }
 
-func (c *innerIndexLruCache) put(tblID, idxID int64, newIdx *statistics.Index, newIdxMem *statistics.IndexMemUsage,
+func (c *innerItemLruCache) put(tblID, id int64, item statistics.TableCacheItem, itemMem statistics.CacheItemMemoryUsage,
 	needEvict, needMove bool) {
 	defer func() {
 		if needEvict {
 			c.evictIfNeeded()
 		}
 	}()
-	if c.capacity < newIdxMem.TrackingMemUsage() {
-		newIdx.DropEvicted()
-		newIdxMem = newIdx.MemoryUsage()
+	if c.capacity < itemMem.TrackingMemUsage() {
+		item.DropEvicted()
+		itemMem = item.MemoryUsage()
 	}
 	v, ok := c.elements[tblID]
 	if !ok {
 		c.elements[tblID] = make(map[int64]*list.Element)
 		v = c.elements[tblID]
 	}
-	element, exist := v[idxID]
+	element, exist := v[id]
 	if exist {
 		oldItem := element.Value.(*lruCacheItem)
-		oldIdxMemUsage := oldItem.idxMemUsage
-		oldItem.index = newIdx
-		oldItem.idxMemUsage = newIdxMem
-		c.calculateCost(newIdxMem, oldIdxMemUsage)
+		oldMemUsage := oldItem.innerMemUsage
+		oldItem.innerItem = item
+		oldItem.innerMemUsage = itemMem
+		c.calculateCost(itemMem, oldMemUsage)
 		if needMove {
 			c.cache.MoveToFront(element)
 		}
 		return
 	}
 	newItem := &lruCacheItem{
-		tblID:       tblID,
-		idxID:       idxID,
-		index:       newIdx,
-		idxMemUsage: newIdxMem,
+		tblID:         tblID,
+		id:            id,
+		innerItem:     item,
+		innerMemUsage: itemMem,
 	}
 	newElement := c.cache.PushFront(newItem)
-	v[idxID] = newElement
-	c.calculateCost(newIdxMem, &statistics.IndexMemUsage{})
+	v[id] = newElement
+	c.calculateCost(itemMem, &statistics.IndexMemUsage{})
 }
 
-func (c *innerIndexLruCache) evictIfNeeded() {
+func (c *innerItemLruCache) evictIfNeeded() {
 	curr := c.cache.Back()
 	for c.trackingCost > c.capacity {
 		prev := curr.Prev()
 		item := curr.Value.(*lruCacheItem)
-		oldIdxMem := item.idxMemUsage
+		oldMem := item.innerMemUsage
 		// evict cmSketches
-		item.index.DropEvicted()
-		newIdxMem := item.index.MemoryUsage()
-		c.calculateCost(newIdxMem, oldIdxMem)
+		item.innerItem.DropEvicted()
+		newMem := item.innerItem.MemoryUsage()
+		c.calculateCost(newMem, oldMem)
 		// remove from lru
 		c.cache.Remove(curr)
-		delete(c.elements[item.tblID], item.idxID)
+		delete(c.elements[item.tblID], item.id)
 		if c.onEvict != nil {
 			c.onEvict(item.tblID)
 		}
@@ -354,16 +362,16 @@ func (c *innerIndexLruCache) evictIfNeeded() {
 	}
 }
 
-func (c *innerIndexLruCache) calculateCost(newUsage, oldUsage *statistics.IndexMemUsage) {
+func (c *innerItemLruCache) calculateCost(newUsage, oldUsage statistics.CacheItemMemoryUsage) {
 	c.trackingCost += newUsage.TrackingMemUsage() - oldUsage.TrackingMemUsage()
 }
 
-func (c *innerIndexLruCache) copy() *innerIndexLruCache {
+func (c *innerItemLruCache) copy() *innerItemLruCache {
 	newLRU := newInnerIndexLruCache(c.capacity)
 	curr := c.cache.Back()
 	for curr != nil {
 		item := curr.Value.(*lruCacheItem)
-		newLRU.put(item.tblID, item.idxID, item.index, item.idxMemUsage, false, false)
+		newLRU.put(item.tblID, item.id, item.innerItem, item.innerMemUsage, false, false)
 		curr = curr.Prev()
 	}
 	return newLRU

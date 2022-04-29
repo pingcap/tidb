@@ -1093,7 +1093,7 @@ func (c *Column) GetIncreaseFactor(realtimeRowCount int64) float64 {
 
 // MemoryUsage returns the total memory usage of Histogram, CMSketch, FMSketch in Column.
 // We ignore the size of other metadata in Column
-func (c *Column) MemoryUsage() *ColumnMemUsage {
+func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 	var sum int64
 	columnMemUsage := &ColumnMemUsage{
 		ColumnID: c.Info.ID,
@@ -1319,6 +1319,12 @@ type Index struct {
 	LastAnalyzePos types.Datum
 }
 
+// ItemID implements TableCacheItem
+func (idx *Index) ItemID() int64 {
+	return idx.Info.ID
+}
+
+// DropEvicted implements TableCacheItem
 // DropEvicted drops evicted structures
 func (idx *Index) DropEvicted() {
 	idx.CMSketch = nil
@@ -1343,7 +1349,7 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
 // We ignore the size of other metadata in Index.
-func (idx *Index) MemoryUsage() *IndexMemUsage {
+func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 	var sum int64
 	indexMemUsage := &IndexMemUsage{
 		IndexID: idx.Info.ID,
