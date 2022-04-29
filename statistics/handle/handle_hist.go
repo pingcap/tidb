@@ -381,7 +381,7 @@ func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version))
+	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version, WithTableStatsByQuery()))
 }
 
 func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableColumnID) bool {

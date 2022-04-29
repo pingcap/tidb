@@ -647,7 +647,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
 		indexInfo.State = model.StateDeleteOnly
@@ -655,7 +654,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		indexInfo.State = model.StateDeleteReorganization
@@ -663,9 +661,9 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateDeleteReorganization
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
+		indexInfo.State = model.StateNone
 		if len(dependentHiddenCols) > 0 {
 			firstHiddenOffset := dependentHiddenCols[0].Offset
 			for i := 0; i < len(dependentHiddenCols); i++ {
@@ -673,7 +671,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 				adjustColumnInfoInDropColumn(tblInfo, firstHiddenOffset)
 			}
 		}
-
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
 			if idx.Name.L != indexInfo.Name.L {
@@ -707,8 +704,9 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State))
 	}
+	job.SchemaState = indexInfo.State
 	return ver, errors.Trace(err)
 }
 

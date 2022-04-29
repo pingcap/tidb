@@ -82,6 +82,8 @@ const (
 		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_role_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Drop_role_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -91,8 +93,6 @@ const (
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -607,11 +607,13 @@ const (
 	version86 = 86
 	// version87 adds the mysql.analyze_jobs table
 	version87 = 87
+	// version88 fixes the issue https://github.com/pingcap/tidb/issues/33650.
+	version88 = 88
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version87
+var currentBootstrapVersion int64 = version88
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -702,6 +704,7 @@ var (
 		upgradeToVer85,
 		upgradeToVer86,
 		upgradeToVer87,
+		upgradeToVer88,
 	}
 )
 
@@ -1797,6 +1800,14 @@ func upgradeToVer87(s Session, ver int64) {
 	doReentrantDDL(s, CreateAnalyzeJobs)
 }
 
+func upgradeToVer88(s Session, ver int64) {
+	if ver >= version88 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_slave_priv` `Repl_slave_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Execute_priv`")
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_client_priv` `Repl_client_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`")
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1905,10 +1916,10 @@ func doDMLWorks(s Session) {
 			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
 		}
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`, u.Username)
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`, u.Username)
 	} else {
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
 	}
 
 	// Init global system variables table.

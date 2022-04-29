@@ -272,12 +272,12 @@ func (tk *TestKit) RefreshConnectionID() {
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
-	tk.require.Error(err)
+	tk.require.Errorf(err, "sql: %s", sql)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	tk.require.Truef(ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	tk.require.Truef(ok, "sql: %s, expect type 'terror.Error', but obtain '%T': %v", sql, originErr, originErr)
 	sqlErr := terror.ToSQLError(tErr)
-	tk.require.Equalf(errCode, int(sqlErr.Code), "Assertion failed, origin err:\n  %v", sqlErr)
+	tk.require.Equalf(errCode, int(sqlErr.Code), "sql: %s, Assertion failed, origin err:\n  %v", sql, sqlErr)
 }
 
 // MustGetErrMsg executes a sql statement and assert its error message.

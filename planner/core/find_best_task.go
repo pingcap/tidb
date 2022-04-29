@@ -1984,11 +1984,10 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.PartitionInfo = partitionInfo
 		if candidate.path.IsSingleScan {
 			pointGetPlan.accessCols = candidate.path.IdxCols
-			cost = pointGetPlan.GetCost()
 		} else {
 			pointGetPlan.accessCols = ds.TblCols
-			cost = pointGetPlan.GetCost()
 		}
+		cost = pointGetPlan.GetCost()
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -2062,11 +2061,10 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		}
 		if candidate.path.IsSingleScan {
 			batchPointGetPlan.accessCols = candidate.path.IdxCols
-			cost = batchPointGetPlan.GetCost()
 		} else {
 			batchPointGetPlan.accessCols = ds.TblCols
-			cost = batchPointGetPlan.GetCost()
 		}
+		cost = batchPointGetPlan.GetCost()
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()

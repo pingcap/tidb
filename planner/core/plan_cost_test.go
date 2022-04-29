@@ -51,7 +51,7 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int primary key, b int, c int, d int, k int, key b(b), key cd(c, d), unique index(k))`)
+	tk.MustExec(`create table t (a int primary key, b int, c int, d int, k int, key b(b), key cd(c, d), unique key(k))`)
 
 	queries := []string{
 		// table-reader
@@ -214,6 +214,12 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t where k = 1",
 		"select * from t where k in (1, 2, 3, 4, 5)",
 		"select * from t where a=1 and mod(a, b)=2", // generated in Physical Plan Optimization
+		// point get
+		"select * from t where a = 1", // generated in fast plan optimization
+		"select * from t where a in (1, 2, 3, 4, 5)",
+		"select * from t where k = 1",
+		"select * from t where k in (1, 2, 3, 4, 5)",
+		"select * from t where a=1 and mod(a, b)=2", // generated in physical plan optimization
 		"select * from t where a in (1, 2, 3, 4, 5) and mod(a, b)=2",
 		"select * from t where k=1 and mod(k, b)=2",
 		"select * from t where k in (1, 2, 3, 4, 5) and mod(k, b)=2",

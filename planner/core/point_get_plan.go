@@ -82,6 +82,8 @@ type PointGetPlan struct {
 	cost               float64
 
 	// required by cost model
+	planCostInit bool
+	planCost     float64
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 }
@@ -261,13 +263,17 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 
 // GetCost returns cost of the PointGetPlan.
 func (p *PointGetPlan) GetCost() float64 {
+	cols := p.accessCols
+	if cols == nil {
+		return 0 // the cost of PointGet generated in fast plan optimization is always 0
+	}
 	sessVars := p.ctx.GetSessionVars()
 	var rowSize float64
 	cost := 0.0
 	if p.IndexInfo == nil {
-		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, p.accessCols, kv.TiKV, true)
+		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
 	} else {
-		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, p.accessCols, p.IndexInfo.Unique)
+		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
 	}
 	cost += rowSize * sessVars.GetNetworkFactor(p.TblInfo)
 	cost += sessVars.GetSeekFactor(p.TblInfo)
@@ -311,6 +317,8 @@ type BatchPointGetPlan struct {
 	PartTblID int64
 
 	// required by cost model
+	planCostInit bool
+	planCost     float64
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 }
@@ -453,15 +461,19 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 
 // GetCost returns cost of the PointGetPlan.
 func (p *BatchPointGetPlan) GetCost() float64 {
+	cols := p.accessCols
+	if cols == nil {
+		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
+	}
 	sessVars := p.ctx.GetSessionVars()
 	var rowSize, rowCount float64
 	cost := 0.0
 	if p.IndexInfo == nil {
 		rowCount = float64(len(p.Handles))
-		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, p.accessCols, kv.TiKV, true)
+		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
 	} else {
 		rowCount = float64(len(p.IndexValues))
-		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, p.accessCols, p.IndexInfo.Unique)
+		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
 	}
 	cost += rowCount * rowSize * sessVars.GetNetworkFactor(p.TblInfo)
 	cost += rowCount * sessVars.GetSeekFactor(p.TblInfo)
