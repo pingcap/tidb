@@ -296,15 +296,14 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
 	}
-	fieldType := types.FieldType{
-		Charset: mCharset,
-		Collate: mCollation,
-		Tp:      col.tp,
-		Flen:    col.size,
-		Decimal: col.decimal,
-		Flag:    col.flag,
-		Elems:   col.enumElems,
-	}
+	fieldType := types.FieldType{}
+	fieldType.SetType(col.tp)
+	fieldType.SetCharset(mCharset)
+	fieldType.SetCollate(mCollation)
+	fieldType.SetFlen(col.size)
+	fieldType.SetDecimal(col.decimal)
+	fieldType.SetFlag(col.flag)
+	fieldType.SetElems(col.enumElems)
 	return &model.ColumnInfo{
 		Name:         model.NewCIStr(col.name),
 		FieldType:    fieldType,

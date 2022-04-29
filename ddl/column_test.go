@@ -97,14 +97,15 @@ func testDropColumnInternal(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Co
 	return id
 }
 
-func testDropTable(tk *testkit.TestKit, t *testing.T, tblName string, dom *domain.Domain) int64 {
+func testDropTable(tk *testkit.TestKit, t *testing.T, dbName, tblName string, dom *domain.Domain) int64 {
 	sql := fmt.Sprintf("drop table %s ", tblName)
+	tk.MustExec("use " + dbName)
 	tk.MustExec(sql)
 
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
 	require.NoError(t, dom.Reload())
-	_, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tblName))
+	_, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
 	require.Error(t, err)
 	return id
 }
@@ -304,7 +305,7 @@ func TestColumnBasic(t *testing.T) {
 	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c6", true, dom)
 	testCheckJobDone(t, store, jobID, false)
 
-	testDropTable(tk, t, "t1", dom)
+	testDropTable(tk, t, "test", "t1", dom)
 }
 
 func checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle, col *table.Column, columnValue interface{}, isExist bool) error {
@@ -694,7 +695,7 @@ func TestAddColumn(t *testing.T) {
 
 	require.True(t, checkOK)
 
-	jobID = testDropTable(tk, t, "t1", dom)
+	jobID = testDropTable(tk, t, "test", "t1", dom)
 	testCheckJobDone(t, store, jobID, false)
 }
 
@@ -770,7 +771,7 @@ func TestAddColumns(t *testing.T) {
 	require.NoError(t, hErr)
 	require.True(t, ok)
 
-	jobID = testDropTable(tk, t, "t1", dom)
+	jobID = testDropTable(tk, t, "test", "t1", dom)
 	testCheckJobDone(t, store, jobID, false)
 }
 
@@ -832,7 +833,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 	require.NoError(t, hErr)
 	require.True(t, ok)
 
-	jobID = testDropTable(tk, t, "t1", dom)
+	jobID = testDropTable(tk, t, "test", "t1", dom)
 	testCheckJobDone(t, store, jobID, false)
 }
 
@@ -897,7 +898,7 @@ func TestDropColumns(t *testing.T) {
 	require.NoError(t, hErr)
 	require.True(t, ok)
 
-	jobID = testDropTable(tk, t, "t1", dom)
+	jobID = testDropTable(tk, t, "test", "t1", dom)
 	testCheckJobDone(t, store, jobID, false)
 }
 
