@@ -353,7 +353,7 @@ func TestAnalyzeFastSample(t *testing.T) {
 	var colsInfo []*model.ColumnInfo // nolint: prealloc
 	var indicesInfo []*model.IndexInfo
 	for _, col := range tblInfo.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
+		if mysql.HasPriKeyFlag(col.GetFlag()) {
 			continue
 		}
 		colsInfo = append(colsInfo, col)

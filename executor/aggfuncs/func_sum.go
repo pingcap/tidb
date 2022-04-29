@@ -174,7 +174,7 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 	if e.retTp == nil {
 		return errors.New("e.retTp of sum should not be nil")
 	}
-	frac := e.retTp.Decimal
+	frac := e.retTp.GetDecimal()
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}

@@ -785,8 +785,8 @@ func TestChangingTableCharset(t *testing.T) {
 		require.Equal(t, chs, tbl.Meta().Charset)
 		require.Equal(t, coll, tbl.Meta().Collate)
 		for _, col := range tbl.Meta().Columns {
-			require.Equal(t, chs, col.Charset)
-			require.Equal(t, coll, col.Collate)
+			require.Equal(t, chs, col.GetCharset())
+			require.Equal(t, coll, col.GetCollate())
 		}
 	}
 	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
@@ -843,15 +843,15 @@ func TestChangingTableCharset(t *testing.T) {
 	// Test when column charset is "".
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	tblInfo = tbl.Meta().Clone()
-	tblInfo.Columns[0].Charset = ""
-	tblInfo.Columns[0].Collate = ""
+	tblInfo.Columns[0].SetCharset("")
+	tblInfo.Columns[0].SetCollate("")
 	updateTableInfo(tblInfo)
 	// check table charset is ""
 	tk.MustExec("alter table t drop column b;") //  load latest schema.
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
-	require.Equal(t, "", tbl.Meta().Columns[0].Charset)
-	require.Equal(t, "", tbl.Meta().Columns[0].Collate)
+	require.Equal(t, "", tbl.Meta().Columns[0].GetCharset())
+	require.Equal(t, "", tbl.Meta().Columns[0].GetCollate())
 	tk.MustExec("alter table t convert to charset utf8mb4;")
 	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
@@ -873,8 +873,8 @@ func TestChangingTableCharset(t *testing.T) {
 	require.Equal(t, "utf8mb4_bin", tbl.Meta().Collate)
 	for _, col := range tbl.Meta().Columns {
 		// Column charset and collate should remain unchanged.
-		require.Equal(t, "utf8", col.Charset)
-		require.Equal(t, "utf8_bin", col.Collate)
+		require.Equal(t, "utf8", col.GetCharset())
+		require.Equal(t, "utf8_bin", col.GetCollate())
 	}
 
 	tk.MustExec("drop table t")
@@ -885,9 +885,9 @@ func TestChangingTableCharset(t *testing.T) {
 	require.Equal(t, "utf8", tbl.Meta().Charset)
 	require.Equal(t, "utf8_general_ci", tbl.Meta().Collate)
 	for _, col := range tbl.Meta().Columns {
-		require.Equal(t, "utf8", col.Charset)
+		require.Equal(t, "utf8", col.GetCharset())
 		// Column collate should remain unchanged.
-		require.Equal(t, "utf8_unicode_ci", col.Collate)
+		require.Equal(t, "utf8_unicode_ci", col.GetCollate())
 	}
 }
 
@@ -1057,7 +1057,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test_charset_collate", "t5")
 	tblInfo := tbl.Meta().Clone()
 	require.Equal(t, "utf8mb4", tblInfo.Charset)
-	require.Equal(t, "utf8mb4", tblInfo.Columns[0].Charset)
+	require.Equal(t, "utf8mb4", tblInfo.Columns[0].GetCharset())
 
 	tblInfo.Version = model.TableInfoVersion2
 	tblInfo.Charset = "UTF8MB4"
@@ -1081,7 +1081,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 
 	tblInfo = external.GetTableByName(t, tk, "test_charset_collate", "t5").Meta()
 	require.Equal(t, "utf8mb4", tblInfo.Charset)
-	require.Equal(t, "utf8mb4", tblInfo.Columns[0].Charset)
+	require.Equal(t, "utf8mb4", tblInfo.Columns[0].GetCharset())
 
 	// For model.TableInfoVersion3, it is believed that all charsets / collations are lower-cased, do not do case-convert
 	tblInfo = tblInfo.Clone()
@@ -1092,7 +1092,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 
 	tblInfo = external.GetTableByName(t, tk, "test_charset_collate", "t5").Meta()
 	require.Equal(t, "UTF8MB4", tblInfo.Charset)
-	require.Equal(t, "utf8mb4", tblInfo.Columns[0].Charset)
+	require.Equal(t, "utf8mb4", tblInfo.Columns[0].GetCharset())
 }
 
 func TestZeroFillCreateTable(t *testing.T) {
@@ -1115,11 +1115,11 @@ func TestZeroFillCreateTable(t *testing.T) {
 		}
 	}
 	require.NotNil(t, yearCol)
-	require.Equal(t, mysql.TypeYear, yearCol.Tp)
-	require.True(t, mysql.HasUnsignedFlag(yearCol.Flag))
+	require.Equal(t, mysql.TypeYear, yearCol.GetType())
+	require.True(t, mysql.HasUnsignedFlag(yearCol.GetFlag()))
 
 	require.NotNil(t, zCol)
-	require.True(t, mysql.HasUnsignedFlag(zCol.Flag))
+	require.True(t, mysql.HasUnsignedFlag(zCol.GetFlag()))
 }
 
 func TestBitDefaultValue(t *testing.T) {
@@ -1348,7 +1348,7 @@ func TestResolveCharset(t *testing.T) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("resolve_charset"))
 	require.NoError(t, err)
-	require.Equal(t, "latin1", tbl.Cols()[0].Charset)
+	require.Equal(t, "latin1", tbl.Cols()[0].GetCharset())
 	tk.MustExec("INSERT INTO resolve_charset VALUES('鰈')")
 
 	tk.MustExec("create database resolve_charset charset binary")
@@ -1358,14 +1358,14 @@ func TestResolveCharset(t *testing.T) {
 	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset"))
 	require.NoError(t, err)
-	require.Equal(t, "latin1", tbl.Cols()[0].Charset)
+	require.Equal(t, "latin1", tbl.Cols()[0].GetCharset())
 	require.Equal(t, "latin1", tbl.Meta().Charset)
 
 	tk.MustExec(`CREATE TABLE resolve_charset1 (a varchar(255) DEFAULT NULL)`)
 	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset1"))
 	require.NoError(t, err)
-	require.Equal(t, "binary", tbl.Cols()[0].Charset)
+	require.Equal(t, "binary", tbl.Cols()[0].GetCharset())
 	require.Equal(t, "binary", tbl.Meta().Charset)
 }
 
@@ -1581,7 +1581,7 @@ func TestAlterColumn(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colA := tblInfo.Columns[0]
-	hasNoDefault := mysql.HasNoDefaultValueFlag(colA.Flag)
+	hasNoDefault := mysql.HasNoDefaultValueFlag(colA.GetFlag())
 	require.False(t, hasNoDefault)
 	tk.MustExec("alter table test_alter_column alter column a set default 222")
 	tk.MustExec("insert into test_alter_column set b = 'b', c = 'bb'")
@@ -1591,7 +1591,7 @@ func TestAlterColumn(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colA = tblInfo.Columns[0]
-	hasNoDefault = mysql.HasNoDefaultValueFlag(colA.Flag)
+	hasNoDefault = mysql.HasNoDefaultValueFlag(colA.GetFlag())
 	require.False(t, hasNoDefault)
 	tk.MustExec("alter table test_alter_column alter column b set default null")
 	tk.MustExec("insert into test_alter_column set c = 'cc'")
@@ -1601,7 +1601,7 @@ func TestAlterColumn(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[2]
-	hasNoDefault = mysql.HasNoDefaultValueFlag(colC.Flag)
+	hasNoDefault = mysql.HasNoDefaultValueFlag(colC.GetFlag())
 	require.True(t, hasNoDefault)
 	tk.MustExec("alter table test_alter_column alter column c set default 'xx'")
 	tk.MustExec("insert into test_alter_column set a = 123")
@@ -1611,7 +1611,7 @@ func TestAlterColumn(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC = tblInfo.Columns[2]
-	hasNoDefault = mysql.HasNoDefaultValueFlag(colC.Flag)
+	hasNoDefault = mysql.HasNoDefaultValueFlag(colC.GetFlag())
 	require.False(t, hasNoDefault)
 	// TODO: After fix issue 2606.
 	// tk.MustExec( "alter table test_alter_column alter column d set default null")
@@ -1925,8 +1925,8 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	})
 	tk.MustExec("alter table t modify column a varchar(10) character set utf8mb4") //  change column charset.
 	tbl = external.GetTableByName(t, tk, "test", "t")
-	require.Equal(t, charset.CharsetUTF8MB4, tbl.Meta().Columns[0].Charset)
-	require.Equal(t, charset.CollationUTF8MB4, tbl.Meta().Columns[0].Collate)
+	require.Equal(t, charset.CharsetUTF8MB4, tbl.Meta().Columns[0].GetCharset())
+	require.Equal(t, charset.CollationUTF8MB4, tbl.Meta().Columns[0].GetCollate())
 	require.Equal(t, model.ColumnInfoVersion0, tbl.Meta().Columns[0].Version)
 	tk.MustExec("insert into t set a= x'f09f8c80'")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1936,8 +1936,8 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	// Test for change column should not modify the column version.
 	tk.MustExec("alter table t change column a a varchar(20)") //  change column.
 	tbl = external.GetTableByName(t, tk, "test", "t")
-	require.Equal(t, charset.CharsetUTF8MB4, tbl.Meta().Columns[0].Charset)
-	require.Equal(t, charset.CollationUTF8MB4, tbl.Meta().Columns[0].Collate)
+	require.Equal(t, charset.CharsetUTF8MB4, tbl.Meta().Columns[0].GetCharset())
+	require.Equal(t, charset.CollationUTF8MB4, tbl.Meta().Columns[0].GetCollate())
 	require.Equal(t, model.ColumnInfoVersion0, tbl.Meta().Columns[0].Version)
 
 	// Test for v2.1.5 and v2.1.6 that table version is 1 but column version is 0.
@@ -1947,8 +1947,8 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	tblInfo.Collate = charset.CollationUTF8
 	tblInfo.Version = model.TableInfoVersion1
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
-	tblInfo.Columns[0].Charset = charset.CharsetUTF8
-	tblInfo.Columns[0].Collate = charset.CollationUTF8
+	tblInfo.Columns[0].SetCharset(charset.CharsetUTF8)
+	tblInfo.Columns[0].SetCollate(charset.CollationUTF8)
 	updateTableInfo(tblInfo)
 	require.True(t, config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4)
 	tk.MustExec("alter table t change column b b varchar(20) character set ascii") // reload schema.
