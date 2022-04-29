@@ -65,8 +65,8 @@ func mockTableAppendIndex(t *statistics.Table) {
 
 func TestLRUPutGetDel(t *testing.T) {
 	capacity := int64(100)
-	lru := newInternalLRUCache(capacity)
-	require.Equal(t, capacity, lru.capacity)
+	lru := newStatsLruCache(capacity)
+	require.Equal(t, capacity, lru.capacity())
 	mockTable := newMockStatisticsTable(1, 1)
 	mockTableID := int64(1)
 	lru.Put(mockTableID, mockTable)
@@ -91,44 +91,46 @@ func TestLRUPutGetDel(t *testing.T) {
 
 func TestLRUEvict(t *testing.T) {
 	capacity := int64(12)
-	lru := newInternalLRUCache(capacity)
-	t1 := newMockStatisticsTable(2, 1)
-	require.Equal(t, t1.MemoryUsage().TotalMemUsage, 2*columnMemoryUsage+1*indexMemoryUsage)
-	require.Equal(t, t1.MemoryUsage().TotalColTrackingMemUsage(), 2*columnMemoryUsage)
+	lru := newStatsLruCache(capacity)
+	t1 := newMockStatisticsTable(1, 2)
+	require.Equal(t, t1.MemoryUsage().TotalMemUsage, 1*columnMemoryUsage+2*indexMemoryUsage)
+	require.Equal(t, t1.MemoryUsage().TotalIdxTrackingMemUsage(), 2*indexMemoryUsage)
+
 	// Put t1, assert TotalMemUsage and TotalColTrackingMemUsage
 	lru.Put(int64(1), t1)
-	require.Equal(t, lru.totalCost, t1.MemoryUsage().TotalMemUsage)
-	require.Equal(t, lru.trackingCost, t1.MemoryUsage().TotalColTrackingMemUsage())
-	// Put t2, assert TotalMemUsage and TotalColTrackingMemUsage
-	t2 := newMockStatisticsTable(1, 2)
-	lru.Put(int64(2), t2)
-	require.Equal(t, lru.totalCost, t1.MemoryUsage().TotalMemUsage+t2.MemoryUsage().TotalMemUsage)
-	require.Equal(t, lru.trackingCost, t1.MemoryUsage().TotalColTrackingMemUsage()+t2.MemoryUsage().TotalColTrackingMemUsage())
+	require.Equal(t, lru.totalCost(), t1.MemoryUsage().TotalMemUsage)
+	require.Equal(t, lru.Cost(), t1.MemoryUsage().TotalIdxTrackingMemUsage())
 
-	// Put t3, a column CMSketch of t1 should be evicted
-	t3 := newMockStatisticsTable(1, 3)
+	// Put t2, assert TotalMemUsage and TotalColTrackingMemUsage
+	t2 := newMockStatisticsTable(2, 1)
+	lru.Put(int64(2), t2)
+	require.Equal(t, lru.totalCost(), t1.MemoryUsage().TotalMemUsage+t2.MemoryUsage().TotalMemUsage)
+	require.Equal(t, lru.Cost(), t1.MemoryUsage().TotalIdxTrackingMemUsage()+t2.MemoryUsage().TotalIdxTrackingMemUsage())
+
+	// Put t3, an index CMSketch of t1 should be evicted
+	t3 := newMockStatisticsTable(3, 1)
 	lru.Put(int64(3), t3)
 	require.Equal(t, lru.Len(), 3)
-	require.Equal(t, t1.MemoryUsage().TotalColTrackingMemUsage(), columnMemoryUsage)
-	require.Equal(t, lru.totalCost, 3*columnMemoryUsage+6*indexMemoryUsage)
-	require.Equal(t, lru.trackingCost, 3*columnMemoryUsage)
-	require.Equal(t, lru.totalCost, t1.MemoryUsage().TotalMemUsage+t2.MemoryUsage().TotalMemUsage+t3.MemoryUsage().TotalMemUsage)
-	require.Equal(t, lru.trackingCost, t1.MemoryUsage().TotalColTrackingMemUsage()+
-		t2.MemoryUsage().TotalColTrackingMemUsage()+t3.MemoryUsage().TotalColTrackingMemUsage())
+	require.Equal(t, t1.MemoryUsage().TotalIdxTrackingMemUsage(), indexMemoryUsage)
+	require.Equal(t, lru.totalCost(), 6*columnMemoryUsage+3*indexMemoryUsage)
+	require.Equal(t, lru.Cost(), 3*indexMemoryUsage)
+	require.Equal(t, lru.totalCost(), t1.MemoryUsage().TotalMemUsage+t2.MemoryUsage().TotalMemUsage+t3.MemoryUsage().TotalMemUsage)
+	require.Equal(t, lru.Cost(), t1.MemoryUsage().TotalIdxTrackingMemUsage()+
+		t2.MemoryUsage().TotalIdxTrackingMemUsage()+t3.MemoryUsage().TotalIdxTrackingMemUsage())
 
-	// Put t4, all columns cmsketch of other tables should be evicted
-	t4 := newMockStatisticsTable(3, 4)
+	// Put t4, all indices' cmsketch of other tables should be evicted
+	t4 := newMockStatisticsTable(4, 3)
 	lru.Put(int64(4), t4)
 	require.Equal(t, lru.Len(), 4)
-	require.Equal(t, t1.MemoryUsage().TotalColTrackingMemUsage(), int64(0))
-	require.Equal(t, t2.MemoryUsage().TotalColTrackingMemUsage(), int64(0))
-	require.Equal(t, t3.MemoryUsage().TotalColTrackingMemUsage(), int64(0))
-	require.Equal(t, lru.totalCost, 3*columnMemoryUsage+10*indexMemoryUsage)
-	require.Equal(t, lru.trackingCost, 3*columnMemoryUsage)
+	require.Equal(t, t1.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
+	require.Equal(t, t2.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
+	require.Equal(t, t3.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
+	require.Equal(t, lru.totalCost(), 3*indexMemoryUsage+10*columnMemoryUsage)
+	require.Equal(t, lru.Cost(), 3*indexMemoryUsage)
 }
 
 func TestLRUCopy(t *testing.T) {
-	lru := newInternalLRUCache(1000)
+	lru := newStatsLruCache(1000)
 	tables := make([]*statistics.Table, 0)
 	for i := 0; i < 5; i++ {
 		tables = append(tables, newMockStatisticsTable(1, 1))
@@ -166,73 +168,73 @@ func TestLRUCopy(t *testing.T) {
 }
 
 func TestLRUFreshMemUsage(t *testing.T) {
-	lru := newInternalLRUCache(1000)
+	lru := newStatsLruCache(1000)
 	t1 := newMockStatisticsTable(1, 1)
 	t2 := newMockStatisticsTable(2, 2)
 	t3 := newMockStatisticsTable(3, 3)
 	lru.Put(int64(1), t1)
 	lru.Put(int64(2), t2)
 	lru.Put(int64(3), t3)
-	require.Equal(t, lru.totalCost, 6*columnMemoryUsage+6*indexMemoryUsage)
-	require.Equal(t, lru.trackingCost, 6*columnMemoryUsage)
+	require.Equal(t, lru.totalCost(), 6*columnMemoryUsage+6*indexMemoryUsage)
+	require.Equal(t, lru.Cost(), 6*indexMemoryUsage)
 	mockTableAppendColumn(t1)
 	lru.FreshMemUsage()
-	require.Equal(t, lru.totalCost, 7*columnMemoryUsage+6*indexMemoryUsage)
-	require.Equal(t, lru.trackingCost, 7*columnMemoryUsage)
+	require.Equal(t, lru.totalCost(), 7*columnMemoryUsage+6*indexMemoryUsage)
+	require.Equal(t, lru.Cost(), 6*indexMemoryUsage)
 	mockTableAppendIndex(t1)
 	lru.FreshMemUsage()
-	require.Equal(t, lru.totalCost, 7*columnMemoryUsage+7*indexMemoryUsage)
-	require.Equal(t, lru.trackingCost, 7*columnMemoryUsage)
+	require.Equal(t, lru.totalCost(), 7*columnMemoryUsage+7*indexMemoryUsage)
+	require.Equal(t, lru.Cost(), 7*indexMemoryUsage)
 }
 
 func TestLRUFreshTableMemUsage(t *testing.T) {
-	lru := newInternalLRUCache(1000)
+	lru := newStatsLruCache(1000)
 	t1 := newMockStatisticsTable(1, 1)
 	t2 := newMockStatisticsTable(2, 2)
 	t3 := newMockStatisticsTable(3, 3)
 	lru.Put(int64(1), t1)
 	lru.Put(int64(2), t2)
 	lru.Put(int64(3), t3)
-	require.Equal(t, lru.totalCost, 6*columnMemoryUsage+6*indexMemoryUsage)
-	require.Equal(t, lru.trackingCost, 6*columnMemoryUsage)
+	require.Equal(t, lru.totalCost(), 6*columnMemoryUsage+6*indexMemoryUsage)
+	require.Equal(t, lru.Cost(), 6*columnMemoryUsage)
 	mockTableAppendColumn(t1)
 	lru.FreshTableCost(int64(1))
-	require.Equal(t, lru.totalCost, 7*columnMemoryUsage+6*indexMemoryUsage)
-	require.Equal(t, lru.trackingCost, 7*columnMemoryUsage)
+	require.Equal(t, lru.totalCost(), 7*columnMemoryUsage+6*indexMemoryUsage)
+	require.Equal(t, lru.Cost(), 6*indexMemoryUsage)
 	mockTableAppendIndex(t1)
 	lru.FreshTableCost(int64(1))
-	require.Equal(t, lru.totalCost, 7*columnMemoryUsage+7*indexMemoryUsage)
-	require.Equal(t, lru.trackingCost, 7*columnMemoryUsage)
+	require.Equal(t, lru.totalCost(), 7*columnMemoryUsage+7*indexMemoryUsage)
+	require.Equal(t, lru.Cost(), 7*indexMemoryUsage)
 }
 
 func TestLRUPutTooBig(t *testing.T) {
-	lru := newInternalLRUCache(1)
+	lru := newStatsLruCache(1)
 	mockTable := newMockStatisticsTable(1, 1)
-	// put mockTable, the column should be evicted
+	// put mockTable, the index should be evicted
 	lru.Put(int64(1), mockTable)
 	_, ok := lru.Get(int64(1))
 	require.True(t, ok)
-	require.Equal(t, lru.totalCost, indexMemoryUsage)
-	require.Equal(t, lru.trackingCost, int64(0))
-	require.Equal(t, mockTable.MemoryUsage().TotalColTrackingMemUsage(), int64(0))
+	require.Equal(t, lru.totalCost(), indexMemoryUsage)
+	require.Equal(t, lru.Cost(), int64(0))
+	require.Equal(t, mockTable.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
 }
 
 func TestCacheLen(t *testing.T) {
 	capacity := int64(8)
-	lru := newInternalLRUCache(capacity)
-	t1 := newMockStatisticsTable(2, 1)
-	lru.Put(int64(1), t1)
+	stats := newStatsLruCache(capacity)
+	t1 := newMockStatisticsTable(1, 2)
+	stats.Put(int64(1), t1)
 	t2 := newMockStatisticsTable(1, 1)
-	// put t2, t1 should be evicted 1 column and still exists in the list
-	lru.Put(int64(2), t2)
-	require.Equal(t, lru.cache.Len(), 2)
-	require.Equal(t, t1.MemoryUsage().TotalColTrackingMemUsage(), columnMemoryUsage)
-	require.Equal(t, lru.Len(), 2)
+	// put t2, t1 should be evicted 1 index and still exists in the list
+	stats.Put(int64(2), t2)
+	require.Equal(t, stats.lru.cache.Len(), 2)
+	require.Equal(t, t1.MemoryUsage().TotalIdxTrackingMemUsage(), indexMemoryUsage)
+	require.Equal(t, stats.Len(), 2)
 
-	// put t3, t1 should be evicted 2 columns at all and disappeared from the list
+	// put t3, t1 should be evicted 2 index at all and disappeared from the list
 	t3 := newMockStatisticsTable(1, 1)
-	lru.Put(int64(3), t3)
-	require.Equal(t, lru.cache.Len(), 2)
-	require.Equal(t, t1.MemoryUsage().TotalColTrackingMemUsage(), int64(0))
-	require.Equal(t, lru.Len(), 3)
+	stats.Put(int64(3), t3)
+	require.Equal(t, stats.lru.cache.Len(), 2)
+	require.Equal(t, t1.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
+	require.Equal(t, stats.Len(), 3)
 }

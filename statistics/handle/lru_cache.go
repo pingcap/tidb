@@ -21,342 +21,350 @@ import (
 	"github.com/pingcap/tidb/statistics"
 )
 
+type statsInnerCache struct {
+	sync.RWMutex
+	elements map[int64]*lruMapElement
+	// lru maintains index lru cache
+	lru *innerIndexLruCache
+}
+
+func newStatsLruCache(c int64) *statsInnerCache {
+	s := &statsInnerCache{
+		elements: make(map[int64]*lruMapElement),
+		lru:      newInnerIndexLruCache(c),
+	}
+	s.lru.onEvict = s.onEvict
+	return s
+}
+
+type innerIndexLruCache struct {
+	capacity     int64
+	trackingCost int64
+	elements     map[int64]map[int64]*list.Element
+	cache        *list.List
+	onEvict      func(tblID int64)
+}
+
+func newInnerIndexLruCache(c int64) *innerIndexLruCache {
+	return &innerIndexLruCache{
+		capacity: c,
+		cache:    list.New(),
+		elements: make(map[int64]map[int64]*list.Element, 0),
+	}
+}
+
 type lruCacheItem struct {
 	tblID       int64
-	column      *statistics.Column
-	colMemUsage *statistics.ColumnMemUsage
+	idxID       int64
+	index       *statistics.Index
+	idxMemUsage *statistics.IndexMemUsage
 }
 
 type lruMapElement struct {
 	tbl         *statistics.Table
 	tblMemUsage *statistics.TableMemoryUsage
-	// colElements records the columns which stored in the lru cache
-	colElements map[int64]*list.Element
 }
 
-// internalLRUCache is a simple least recently used cache
-type internalLRUCache struct {
-	sync.RWMutex
-	capacity int64
-	// trackingCost records the tracking memory usage of the elements stored in the internalLRUCache
-	// trackingCost should be kept under capacity by evict policy
-	trackingCost int64
-	// totalCost records the total memory usage of the elements stored in the internalLRUCache
-	totalCost int64
-	elements  map[int64]*lruMapElement
-	// cache maintains elements in list.
-	// Note that if the element's trackingMemUsage is 0, it will be removed from cache in order to keep cache not too long
-	cache *list.List
-}
-
-// newInternalLRUCache returns internalLRUCache
-func newInternalLRUCache(capacity int64) *internalLRUCache {
-	if capacity < 1 {
-		panic("capacity of LRU Cache should be at least 1.")
-	}
-	return &internalLRUCache{
-		capacity: capacity,
-		elements: make(map[int64]*lruMapElement),
-		cache:    list.New(),
-	}
-}
-
-// GetByQuery implements the statsCacheInner
-func (l *internalLRUCache) GetByQuery(key int64) (*statistics.Table, bool) {
-	l.Lock()
-	defer l.Unlock()
-	return l.get(key, true)
-}
-
-// Get implements the statsCacheInner
-func (l *internalLRUCache) Get(key int64) (*statistics.Table, bool) {
-	l.Lock()
-	defer l.Unlock()
-	return l.get(key, false)
-}
-
-func (l *internalLRUCache) get(key int64, move bool) (*statistics.Table, bool) {
-	element, exists := l.elements[key]
-	if !exists {
+// GetByQuery implements statsCacheInner
+func (s *statsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
+	s.Lock()
+	defer s.Unlock()
+	element, ok := s.elements[tblID]
+	if !ok {
 		return nil, false
 	}
-	if move {
-		for _, col := range element.colElements {
-			l.cache.MoveToFront(col)
-		}
+	// move element
+	for idxID := range element.tblMemUsage.IndicesMemUsage {
+		s.lru.get(tblID, idxID)
 	}
 	return element.tbl, true
 }
 
-// PutByQuery implements the statsCacheInner
-func (l *internalLRUCache) PutByQuery(key int64, value *statistics.Table) {
-	l.Lock()
-	defer l.Unlock()
-	l.put(key, value, value.MemoryUsage(), true, true)
+// Get implements statsCacheInner
+func (s *statsInnerCache) Get(tblID int64) (*statistics.Table, bool) {
+	s.Lock()
+	defer s.Unlock()
+	element, ok := s.elements[tblID]
+	if !ok {
+		return nil, false
+	}
+	return element.tbl, true
 }
 
-// Put implements the statsCacheInner
-func (l *internalLRUCache) Put(key int64, value *statistics.Table) {
-	l.Lock()
-	defer l.Unlock()
-	l.put(key, value, value.MemoryUsage(), true, false)
+// PutByQuery implements statsCacheInner
+func (s *statsInnerCache) PutByQuery(tblID int64, tbl *statistics.Table) {
+	s.Lock()
+	defer s.Unlock()
+	s.put(tblID, tbl, true)
 }
 
-func (l *internalLRUCache) put(tblID int64, tbl *statistics.Table, tblMemUsage *statistics.TableMemoryUsage,
-	tryEvict, move bool) {
-	// If the item TotalColTrackingMemUsage is larger than capacity, we will drop some structures in order to put it in cache
-	for l.capacity < tblMemUsage.TotalColTrackingMemUsage() {
-		for _, col := range tbl.Columns {
-			col.DropEvicted()
-			tblMemUsage = tbl.MemoryUsage()
-			if l.capacity >= tblMemUsage.TotalColTrackingMemUsage() {
-				break
+// Put implements statsCacheInner
+func (s *statsInnerCache) Put(tblID int64, tbl *statistics.Table) {
+	s.Lock()
+	defer s.Unlock()
+	s.put(tblID, tbl, false)
+}
+
+func (s *statsInnerCache) put(tblID int64, tbl *statistics.Table, needMove bool) {
+	element, exist := s.elements[tblID]
+	if exist {
+		oldtbl := element.tbl
+		newTblMem := tbl.MemoryUsage()
+		deletedIdx := make([]int64, 0)
+		for oldIdxID := range oldtbl.Indices {
+			_, exist := tbl.Indices[oldIdxID]
+			if !exist {
+				deletedIdx = append(deletedIdx, oldIdxID)
 			}
 		}
-	}
-
-	element, exists := l.elements[tblID]
-	if exists {
-		oldMemUsage := element.tblMemUsage
+		for idxID, index := range tbl.Indices {
+			idxMem := newTblMem.IndicesMemUsage[idxID]
+			if idxMem.TrackingMemUsage() < 1 {
+				deletedIdx = append(deletedIdx, idxID)
+				continue
+			}
+			s.lru.put(tblID, idxID, index, idxMem, true, needMove)
+		}
+		for _, idxID := range deletedIdx {
+			s.lru.del(tblID, idxID)
+		}
+		// idx mem usage might be changed before, thus we recalculate the tblMem usage
 		element.tbl = tbl
-		element.tblMemUsage = tblMemUsage
-		l.updateColElements(element, tblID, tbl, tblMemUsage, move)
-		l.calculateCost(tblMemUsage, oldMemUsage)
+		element.tblMemUsage = tbl.MemoryUsage()
 		return
 	}
-	element = &lruMapElement{
+	tblMem := tbl.MemoryUsage()
+	for idxID, idx := range tbl.Indices {
+		idxMem := tblMem.IndicesMemUsage[idxID]
+		s.lru.put(tblID, idxID, idx, idxMem, true, needMove)
+	}
+	// index mem usage might be changed due to evict, thus we recalculate the tblMem usage
+	s.elements[tblID] = &lruMapElement{
 		tbl:         tbl,
-		tblMemUsage: tblMemUsage,
-		colElements: make(map[int64]*list.Element, 0),
-	}
-	insertCols := make([]*lruCacheItem, 0)
-	for colID, col := range tbl.Columns {
-		// Here indicates only the column which trackingMemUsage is larger than 0 can be push into list.
-		if tblMemUsage.ColumnsMemUsage[colID].TrackingMemUsage() > 0 {
-			insertCols = append(insertCols, &lruCacheItem{
-				tblID:       tblID,
-				column:      col,
-				colMemUsage: tblMemUsage.ColumnsMemUsage[colID],
-			})
-		}
-	}
-	l.insertElements(insertCols, element)
-	l.elements[tblID] = element
-	l.calculateCost(tblMemUsage, &statistics.TableMemoryUsage{})
-
-	if tryEvict {
-		l.evictIfNeeded()
+		tblMemUsage: tbl.MemoryUsage(),
 	}
 }
 
-// Del implements the statsCacheInner
-func (l *internalLRUCache) Del(key int64) {
-	l.Lock()
-	defer l.Unlock()
-	l.del(key)
-}
-
-func (l *internalLRUCache) del(key int64) bool {
-	element, exists := l.elements[key]
-	if !exists {
-		return false
+// Del implements statsCacheInner
+func (s *statsInnerCache) Del(tblID int64) {
+	s.Lock()
+	defer s.Unlock()
+	element, exist := s.elements[tblID]
+	if !exist {
+		return
 	}
-	for _, col := range element.colElements {
-		l.cache.Remove(col)
+	for idxID := range element.tblMemUsage.IndicesMemUsage {
+		s.lru.del(tblID, idxID)
 	}
-	delete(l.elements, key)
-	l.calculateCost(&statistics.TableMemoryUsage{}, element.tblMemUsage)
-	return true
+	delete(s.elements, tblID)
 }
 
-// Cost returns the current cost
-func (l *internalLRUCache) Cost() int64 {
-	l.RLock()
-	defer l.RUnlock()
-	return l.totalCost
+// Cost implements statsCacheInner
+func (s *statsInnerCache) Cost() int64 {
+	s.RLock()
+	defer s.RUnlock()
+	return s.lru.trackingCost
 }
 
-// Keys returns the current Keys
-func (l *internalLRUCache) Keys() []int64 {
-	l.RLock()
-	defer l.RUnlock()
-	r := make([]int64, 0, len(l.elements))
-	for tblID := range l.elements {
+func (s *statsInnerCache) totalCost() int64 {
+	s.RLock()
+	defer s.RUnlock()
+	totalCost := int64(0)
+	for tblID, ele := range s.elements {
+		s.freshTableCost(tblID, ele)
+		totalCost += ele.tblMemUsage.TotalMemUsage
+	}
+	return totalCost
+}
+
+// Keys implements statsCacheInner
+func (s *statsInnerCache) Keys() []int64 {
+	s.RLock()
+	defer s.RUnlock()
+	r := make([]int64, 0, len(s.elements))
+	for tblID := range s.elements {
 		r = append(r, tblID)
 	}
 	return r
 }
 
-// Values returns the current Values
-func (l *internalLRUCache) Values() []*statistics.Table {
-	l.RLock()
-	defer l.RUnlock()
-	r := make([]*statistics.Table, 0, len(l.elements))
-	for _, v := range l.elements {
+// Values implements statsCacheInner
+func (s *statsInnerCache) Values() []*statistics.Table {
+	s.RLock()
+	defer s.RUnlock()
+	r := make([]*statistics.Table, 0, len(s.elements))
+	for _, v := range s.elements {
 		r = append(r, v.tbl)
 	}
 	return r
 }
 
-// Map returns the map of table statistics
-func (l *internalLRUCache) Map() map[int64]*statistics.Table {
-	l.RLock()
-	defer l.RUnlock()
-	r := make(map[int64]*statistics.Table, len(l.elements))
-	for k, v := range l.elements {
+// Map implements statsCacheInner
+func (s *statsInnerCache) Map() map[int64]*statistics.Table {
+	s.RLock()
+	defer s.RUnlock()
+	r := make(map[int64]*statistics.Table, len(s.elements))
+	for k, v := range s.elements {
 		r[k] = v.tbl
 	}
 	return r
 }
 
-// Len returns the current length
-func (l *internalLRUCache) Len() int {
-	l.RLock()
-	defer l.RUnlock()
-	return len(l.elements)
+// Len implements statsCacheInner
+func (s *statsInnerCache) Len() int {
+	s.RLock()
+	defer s.RUnlock()
+	return len(s.elements)
 }
 
-// FreshMemUsage re-calculate the memory message
-func (l *internalLRUCache) FreshMemUsage() {
-	l.Lock()
-	defer l.Unlock()
-	for tblID, element := range l.elements {
-		l.freshTableCost(tblID, element, false)
+// FreshMemUsage implements statsCacheInner
+func (s *statsInnerCache) FreshMemUsage() {
+	s.Lock()
+	defer s.Unlock()
+	for tblID, element := range s.elements {
+		s.freshTableCost(tblID, element)
 	}
-	l.evictIfNeeded()
 }
 
-// FreshTableCost re-calculate the memory message for the certain key
-func (l *internalLRUCache) FreshTableCost(tblID int64) {
-	l.Lock()
-	defer l.Unlock()
-	element, ok := l.elements[tblID]
-	if !ok {
+// FreshTableCost implements statsCacheInner
+func (s *statsInnerCache) FreshTableCost(tblID int64) {
+	s.Lock()
+	defer s.Unlock()
+	element, exist := s.elements[tblID]
+	if !exist {
 		return
 	}
-	l.freshTableCost(tblID, element, true)
+	s.freshTableCost(tblID, element)
 }
 
-func (l *internalLRUCache) freshTableCost(tblID int64, element *lruMapElement, evict bool) {
-	oldMemUsage := element.tblMemUsage
-	newMemUsage := element.tbl.MemoryUsage()
-	element.tblMemUsage = newMemUsage
-	l.calculateCost(newMemUsage, oldMemUsage)
-	l.updateColElements(element, tblID, element.tbl, newMemUsage, false)
-	if evict {
-		l.evictIfNeeded()
-	}
-}
-
-// Copy returns a replication of LRU
-// Note that Copy will also maintain the lru order in new lru cache
-func (l *internalLRUCache) Copy() statsCacheInner {
-	l.RLock()
-	defer l.RUnlock()
-	newCache := newInternalLRUCache(l.capacity)
-	node := l.cache.Back()
-	for node != nil {
-		tblID := node.Value.(*lruCacheItem).tblID
-		tblElement := l.elements[tblID]
-		newCache.put(tblID, tblElement.tbl, tblElement.tblMemUsage, false, false)
-		node = node.Prev()
+// Copy implements statsCacheInner
+func (s *statsInnerCache) Copy() statsCacheInner {
+	s.RLock()
+	defer s.RUnlock()
+	newCache := newStatsLruCache(s.lru.capacity)
+	newCache.lru = s.lru.copy()
+	for tblID, element := range s.elements {
+		newCache.elements[tblID] = element
 	}
 	return newCache
 }
 
-// updateTable will updates element cost and columns Elements
-func (l *internalLRUCache) updateColElements(element *lruMapElement, tblID int64, tbl *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, move bool) {
-	// deletedColElements indicates the elements needs to be removed from the list
-	deletedColElements := make(map[int64]*list.Element, 0)
-	// updatedCols indicates the elements needs to be moved in the list
-	updatedCols := make([]*list.Element, 0)
-	// insertCols indicates the elements needs to be inserted into the list
-	insertCols := make([]*lruCacheItem, 0)
+func (s *statsInnerCache) onEvict(tblID int64) {
+	element, exist := s.elements[tblID]
+	if !exist {
+		return
+	}
+	element.tblMemUsage = element.tbl.MemoryUsage()
+}
 
-	// Here indicates some columns needs to be removed after updated comparing old table and new table
-	oldColElements := element.colElements
-	for colID, oldColElement := range oldColElements {
-		_, exists := tbl.Columns[colID]
-		if !exists {
-			deletedColElements[colID] = oldColElement
+func (s *statsInnerCache) freshTableCost(tblID int64, element *lruMapElement) {
+	newTblMem := element.tbl.MemoryUsage()
+	for idxID, idx := range element.tbl.Indices {
+		s.lru.put(tblID, idxID, idx, newTblMem.IndicesMemUsage[idxID], true, false)
+	}
+	// tbl mem usage might be changed due to evict
+	element.tblMemUsage = element.tbl.MemoryUsage()
+}
+
+func (s *statsInnerCache) capacity() int64 {
+	return s.lru.capacity
+}
+
+func (c *innerIndexLruCache) get(tblID, idxID int64) (*lruCacheItem, bool) {
+	v, ok := c.elements[tblID]
+	if !ok {
+		return nil, false
+	}
+	ele, ok := v[idxID]
+	if !ok {
+		return nil, false
+	}
+	return ele.Value.(*lruCacheItem), true
+}
+
+func (c *innerIndexLruCache) del(tblID, idxID int64) {
+	v, ok := c.elements[tblID]
+	if !ok {
+		return
+	}
+	ele, ok := v[idxID]
+	if !ok {
+		return
+	}
+	delete(c.elements[tblID], idxID)
+	c.cache.Remove(ele)
+}
+
+func (c *innerIndexLruCache) put(tblID, idxID int64, newIdx *statistics.Index, newIdxMem *statistics.IndexMemUsage,
+	needEvict, needMove bool) {
+	defer func() {
+		if needEvict {
+			c.evictIfNeeded()
 		}
+	}()
+	if c.capacity < newIdxMem.TrackingMemUsage() {
+		newIdx.DropEvicted()
+		newIdxMem = newIdx.MemoryUsage()
 	}
-
-	for colID, col := range tbl.Columns {
-		newColMemUsage := tblMemUsage.ColumnsMemUsage[colID]
-		colElement, ok := element.colElements[colID]
-		if ok {
-			item := colElement.Value.(*lruCacheItem)
-			item.column = col
-			item.colMemUsage = newColMemUsage
-			if newColMemUsage.TrackingMemUsage() > 0 {
-				updatedCols = append(updatedCols, colElement)
-			} else {
-				// Here indicates the updated column element's TrackingMemUsage becomes 0,
-				// thus we need to remove it from list
-				deletedColElements[colID] = colElement
-			}
-		} else {
-			if newColMemUsage.TrackingMemUsage() > 0 {
-				insertCols = append(insertCols, &lruCacheItem{
-					tblID:       tblID,
-					column:      col,
-					colMemUsage: newColMemUsage,
-				})
-			}
+	v, ok := c.elements[tblID]
+	if !ok {
+		c.elements[tblID] = make(map[int64]*list.Element)
+		v = c.elements[tblID]
+	}
+	element, exist := v[idxID]
+	if exist {
+		oldItem := element.Value.(*lruCacheItem)
+		oldIdxMemUsage := oldItem.idxMemUsage
+		oldItem.index = newIdx
+		oldItem.idxMemUsage = newIdxMem
+		c.calculateCost(newIdxMem, oldIdxMemUsage)
+		if needMove {
+			c.cache.MoveToFront(element)
 		}
+		return
 	}
-	l.removeElements(deletedColElements, element)
-	l.updateElements(updatedCols, move)
-	l.insertElements(insertCols, element)
+	newItem := &lruCacheItem{
+		tblID:       tblID,
+		idxID:       idxID,
+		index:       newIdx,
+		idxMemUsage: newIdxMem,
+	}
+	newElement := c.cache.PushFront(newItem)
+	v[idxID] = newElement
+	c.calculateCost(newIdxMem, &statistics.IndexMemUsage{})
 }
 
-func (l *internalLRUCache) removeElements(delElements map[int64]*list.Element, m *lruMapElement) {
-	for colID, del := range delElements {
-		l.cache.Remove(del)
-		delete(m.colElements, colID)
-	}
-}
-
-func (l *internalLRUCache) updateElements(updates []*list.Element, move bool) {
-	if move {
-		for _, update := range updates {
-			l.cache.MoveToFront(update)
-		}
-	}
-}
-
-func (l *internalLRUCache) insertElements(inserts []*lruCacheItem, m *lruMapElement) {
-	for _, insert := range inserts {
-		newElement := l.cache.PushFront(insert)
-		m.colElements[insert.column.Info.ID] = newElement
-	}
-}
-
-func (l *internalLRUCache) evictIfNeeded() {
-	curr := l.cache.Back()
-	for !l.underCapacity() {
+func (c *innerIndexLruCache) evictIfNeeded() {
+	curr := c.cache.Back()
+	for c.trackingCost > c.capacity {
 		prev := curr.Prev()
 		item := curr.Value.(*lruCacheItem)
-		col := item.column
-		col.DropEvicted()
-		l.cache.Remove(curr)
-		delete(l.elements[item.tblID].colElements, col.Info.ID)
-		l.calculateColCost(col.MemoryUsage(), item.colMemUsage)
+		oldIdxMem := item.idxMemUsage
+		// evict cmSketches
+		item.index.DropEvicted()
+		newIdxMem := item.index.MemoryUsage()
+		c.calculateCost(newIdxMem, oldIdxMem)
+		// remove from lru
+		c.cache.Remove(curr)
+		delete(c.elements[item.tblID], item.idxID)
+		if c.onEvict != nil {
+			c.onEvict(item.tblID)
+		}
 		curr = prev
 	}
 }
 
-func (l *internalLRUCache) underCapacity() bool {
-	return l.trackingCost <= l.capacity
+func (c *innerIndexLruCache) calculateCost(newUsage, oldUsage *statistics.IndexMemUsage) {
+	c.trackingCost += newUsage.TrackingMemUsage() - oldUsage.TrackingMemUsage()
 }
 
-func (l *internalLRUCache) calculateCost(newUsage, oldUsage *statistics.TableMemoryUsage) {
-	l.totalCost += newUsage.TotalMemUsage - oldUsage.TotalMemUsage
-	l.trackingCost += newUsage.TotalColTrackingMemUsage() - oldUsage.TotalColTrackingMemUsage()
-}
-
-func (l *internalLRUCache) calculateColCost(newUsage, oldUsage *statistics.ColumnMemUsage) {
-	l.totalCost += newUsage.TotalMemUsage - oldUsage.TotalMemUsage
-	l.trackingCost += newUsage.TrackingMemUsage() - oldUsage.TrackingMemUsage()
+func (c *innerIndexLruCache) copy() *innerIndexLruCache {
+	newLRU := newInnerIndexLruCache(c.capacity)
+	curr := c.cache.Back()
+	for curr != nil {
+		item := curr.Value.(*lruCacheItem)
+		newLRU.put(item.tblID, item.idxID, item.index, item.idxMemUsage, false, false)
+		curr = curr.Prev()
+	}
+	return newLRU
 }

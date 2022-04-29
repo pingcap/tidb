@@ -1115,16 +1115,6 @@ func (c *Column) MemoryUsage() *ColumnMemUsage {
 	return columnMemUsage
 }
 
-// DropEvicted drops evicted structures
-func (c *Column) DropEvicted() {
-	c.CMSketch = nil
-}
-
-// IsEvicted returns whether column data structures evicted
-func (c *Column) IsEvicted() bool {
-	return c.CMSketch == nil
-}
-
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
@@ -1329,6 +1319,11 @@ type Index struct {
 	LastAnalyzePos types.Datum
 }
 
+// DropEvicted drops evicted structures
+func (idx *Index) DropEvicted() {
+	idx.CMSketch = nil
+}
+
 func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
@@ -1351,7 +1346,7 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 func (idx *Index) MemoryUsage() *IndexMemUsage {
 	var sum int64
 	indexMemUsage := &IndexMemUsage{
-		IndexID: idx.ID,
+		IndexID: idx.Info.ID,
 	}
 	histMemUsage := idx.Histogram.MemoryUsage()
 	indexMemUsage.HistogramMemUsage = histMemUsage

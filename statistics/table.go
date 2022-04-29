@@ -120,10 +120,10 @@ type TableMemoryUsage struct {
 	IndicesMemUsage map[int64]*IndexMemUsage
 }
 
-// TotalColTrackingMemUsage returns total columns' CMSketch memory usage
-func (t *TableMemoryUsage) TotalColTrackingMemUsage() (sum int64) {
-	for _, col := range t.ColumnsMemUsage {
-		sum += col.CMSketchMemUsage
+// TotalIdxTrackingMemUsage returns total indices' tracking memory usage
+func (t *TableMemoryUsage) TotalIdxTrackingMemUsage() (sum int64) {
+	for _, idx := range t.IndicesMemUsage {
+		sum += idx.TrackingMemUsage()
 	}
 	return sum
 }
@@ -137,17 +137,17 @@ type ColumnMemUsage struct {
 	TotalMemUsage     int64
 }
 
-// TrackingMemUsage records tracking mem usage
-func (c *ColumnMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage
-}
-
 // IndexMemUsage records index memory usage
 type IndexMemUsage struct {
 	IndexID           int64
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
 	TotalMemUsage     int64
+}
+
+// TrackingMemUsage records tracking mem usage
+func (c *IndexMemUsage) TrackingMemUsage() int64 {
+	return c.CMSketchMemUsage
 }
 
 // MemoryUsage returns the total memory usage of this Table.
