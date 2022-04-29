@@ -53,11 +53,11 @@ type Column struct {
 
 // String implements fmt.Stringer interface.
 func (c *Column) String() string {
-	ans := []string{c.Name.O, types.TypeToStr(c.Tp, c.Charset)}
-	if mysql.HasAutoIncrementFlag(c.Flag) {
+	ans := []string{c.Name.O, types.TypeToStr(c.GetType(), c.GetCharset())}
+	if mysql.HasAutoIncrementFlag(c.GetFlag()) {
 		ans = append(ans, "AUTO_INCREMENT")
 	}
-	if mysql.HasNotNullFlag(c.Flag) {
+	if mysql.HasNotNullFlag(c.GetFlag()) {
 		ans = append(ans, "NOT NULL")
 	}
 	return strings.Join(ans, " ")
@@ -145,7 +145,7 @@ func FindColumns(cols []*Column, names []string, pkIsHandle bool) (foundCols []*
 func FindOnUpdateCols(cols []*Column) []*Column {
 	var rcols []*Column
 	for _, col := range cols {
-		if mysql.HasOnUpdateNowFlag(col.Flag) {
+		if mysql.HasOnUpdateNowFlag(col.GetFlag()) {
 			rcols = append(rcols, col)
 		}
 	}
@@ -209,7 +209,7 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		zeroV types.Time
 		zeroT string
 	)
-	switch col.Tp {
+	switch col.GetType() {
 	case mysql.TypeDate:
 		zeroV, zeroT = types.ZeroDate, types.DateStr
 	case mysql.TypeDatetime:
@@ -240,7 +240,7 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 	// * **NZD**: NO_ZERO_DATE_MODE
 	// * **ST**: STRICT_TRANS_TABLES
 	// * **ELSE**: empty or NO_ZERO_IN_DATE_MODE
-	if tm.IsZero() && col.Tp == mysql.TypeTimestamp {
+	if tm.IsZero() && col.GetType() == mysql.TypeTimestamp {
 		innerErr := types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
 		if mode.HasStrictMode() && !ignoreErr && (tmIsInvalid || mode.HasNoZeroDateMode()) {
 			return types.NewDatum(zeroV), true, innerErr
@@ -250,7 +250,7 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 			sc.AppendWarning(innerErr)
 		}
 		return types.NewDatum(zeroV), true, nil
-	} else if tmIsInvalid && col.Tp == mysql.TypeTimestamp {
+	} else if tmIsInvalid && col.GetType() == mysql.TypeTimestamp {
 		// Prevent from being stored! Invalid timestamp!
 		if mode.HasStrictMode() {
 			return types.NewDatum(zeroV), true, types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
@@ -299,15 +299,14 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	if returnErr && err != nil {
 		return casted, err
 	}
-	if err != nil && types.ErrTruncated.Equal(err) && col.Tp != mysql.TypeSet && col.Tp != mysql.TypeEnum {
+	if err != nil && types.ErrTruncated.Equal(err) && col.GetType() != mysql.TypeSet && col.GetType() != mysql.TypeEnum {
 		str, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 		}
 		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str)
 	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
-		(val.Kind() != types.KindMysqlTime || !val.GetMysqlTime().IsZero()) &&
-		(col.Tp == mysql.TypeDate || col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp) {
+		(col.GetType() == mysql.TypeDate || col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp) {
 		str, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
@@ -330,7 +329,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		return casted, err
 	}
 
-	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
+	if col.GetType() == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
 		truncateTrailingSpaces(&casted)
 	}
 	return casted, err
@@ -362,33 +361,33 @@ func NewColDesc(col *Column) *ColDesc {
 	// create table
 	name := col.Name
 	nullFlag := "YES"
-	if mysql.HasNotNullFlag(col.Flag) {
+	if mysql.HasNotNullFlag(col.GetFlag()) {
 		nullFlag = "NO"
 	}
 	keyFlag := ""
-	if mysql.HasPriKeyFlag(col.Flag) {
+	if mysql.HasPriKeyFlag(col.GetFlag()) {
 		keyFlag = "PRI"
-	} else if mysql.HasUniKeyFlag(col.Flag) {
+	} else if mysql.HasUniKeyFlag(col.GetFlag()) {
 		keyFlag = "UNI"
-	} else if mysql.HasMultipleKeyFlag(col.Flag) {
+	} else if mysql.HasMultipleKeyFlag(col.GetFlag()) {
 		keyFlag = "MUL"
 	}
 	var defaultValue interface{}
-	if !mysql.HasNoDefaultValueFlag(col.Flag) {
+	if !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
 		defaultValue = col.GetDefaultValue()
 		if defaultValStr, ok := defaultValue.(string); ok {
-			if (col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) &&
+			if (col.GetType() == mysql.TypeTimestamp || col.GetType() == mysql.TypeDatetime) &&
 				strings.EqualFold(defaultValStr, ast.CurrentTimestamp) &&
-				col.Decimal > 0 {
-				defaultValue = fmt.Sprintf("%s(%d)", defaultValStr, col.Decimal)
+				col.GetDecimal() > 0 {
+				defaultValue = fmt.Sprintf("%s(%d)", defaultValStr, col.GetDecimal())
 			}
 		}
 	}
 
 	extra := ""
-	if mysql.HasAutoIncrementFlag(col.Flag) {
+	if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 		extra = "auto_increment"
-	} else if mysql.HasOnUpdateNowFlag(col.Flag) {
+	} else if mysql.HasOnUpdateNowFlag(col.GetFlag()) {
 		// in order to match the rules of mysql 8.0.16 version
 		// see https://github.com/pingcap/tidb/issues/10337
 		extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP" + OptionalFsp(&col.FieldType)
@@ -403,8 +402,8 @@ func NewColDesc(col *Column) *ColDesc {
 	desc := &ColDesc{
 		Field:        name.O,
 		Type:         col.GetTypeDesc(),
-		Charset:      col.Charset,
-		Collation:    col.Collate,
+		Charset:      col.GetCharset(),
+		Collation:    col.GetCollate(),
 		Null:         nullFlag,
 		Key:          keyFlag,
 		DefaultValue: defaultValue,
@@ -445,7 +444,7 @@ func CheckOnce(cols []*Column) error {
 
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
 func (c *Column) CheckNotNull(data *types.Datum) error {
-	if (mysql.HasNotNullFlag(c.Flag) || mysql.HasPreventNullInsertFlag(c.Flag)) && data.IsNull() {
+	if (mysql.HasNotNullFlag(c.GetFlag()) || mysql.HasPreventNullInsertFlag(c.GetFlag())) && data.IsNull() {
 		return ErrColumnCantNull.GenWithStackByArgs(c.Name)
 	}
 	return nil
@@ -467,12 +466,12 @@ func (c *Column) HandleBadNull(d *types.Datum, sc *stmtctx.StatementContext) err
 
 // IsPKHandleColumn checks if the column is primary key handle column.
 func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
-	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.PKIsHandle
+	return mysql.HasPriKeyFlag(c.GetFlag()) && tbInfo.PKIsHandle
 }
 
 // IsCommonHandleColumn checks if the column is common handle column.
 func (c *Column) IsCommonHandleColumn(tbInfo *model.TableInfo) bool {
-	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.IsCommonHandle
+	return mysql.HasPriKeyFlag(c.GetFlag()) && tbInfo.IsCommonHandle
 }
 
 // CheckNotNull checks if row has nil value set to a column with NotNull flag set.
@@ -537,7 +536,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 		return getColDefaultValueFromNil(ctx, col)
 	}
 
-	if col.Tp != mysql.TypeTimestamp && col.Tp != mysql.TypeDatetime {
+	if col.GetType() != mysql.TypeTimestamp && col.GetType() != mysql.TypeDatetime {
 		value, err := CastValue(ctx, types.NewDatum(defaultVal), col, false, false)
 		if err != nil {
 			return types.Datum{}, err
@@ -549,7 +548,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	sc := ctx.GetSessionVars().StmtCtx
 	var needChangeTimeZone bool
 	// If the column's default value is not ZeroDatetimeStr nor CurrentTimestamp, should use the time zone of the default value itself.
-	if col.Tp == mysql.TypeTimestamp {
+	if col.GetType() == mysql.TypeTimestamp {
 		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
 			needChangeTimeZone = true
 			originalTZ := sc.TimeZone
@@ -561,7 +560,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 			defer func() { sc.TimeZone = originalTZ }()
 		}
 	}
-	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
+	value, err := expression.GetTimeValue(ctx, defaultVal, col.GetType(), col.GetDecimal())
 	if err != nil {
 		return types.Datum{}, errGetDefaultFailed.GenWithStackByArgs(col.Name)
 	}
@@ -578,19 +577,19 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 }
 
 func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	if !mysql.HasNotNullFlag(col.Flag) {
+	if !mysql.HasNotNullFlag(col.GetFlag()) {
 		return types.Datum{}, nil
 	}
-	if col.Tp == mysql.TypeEnum {
+	if col.GetType() == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
-		defEnum, err := types.ParseEnumValue(col.FieldType.Elems, 1)
+		defEnum, err := types.ParseEnumValue(col.FieldType.GetElems(), 1)
 		if err != nil {
 			return types.Datum{}, err
 		}
-		return types.NewCollateMysqlEnumDatum(defEnum, col.Collate), nil
+		return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
 	}
-	if mysql.HasAutoIncrementFlag(col.Flag) {
+	if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 		// Auto increment column doesn't has default value and we should not return error.
 		return GetZeroValue(col), nil
 	}
@@ -610,9 +609,9 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 // GetZeroValue gets zero value for given column type.
 func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	var d types.Datum
-	switch col.Tp {
+	switch col.GetType() {
 	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong:
-		if mysql.HasUnsignedFlag(col.Flag) {
+		if mysql.HasUnsignedFlag(col.GetFlag()) {
 			d.SetUint64(0)
 		} else {
 			d.SetInt64(0)
@@ -624,17 +623,17 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeDouble:
 		d.SetFloat64(0)
 	case mysql.TypeNewDecimal:
-		d.SetLength(col.Flen)
-		d.SetFrac(col.Decimal)
+		d.SetLength(col.GetFlen())
+		d.SetFrac(col.GetDecimal())
 		d.SetMysqlDecimal(new(types.MyDecimal))
 	case mysql.TypeString:
-		if col.Flen > 0 && col.Charset == charset.CharsetBin {
-			d.SetBytes(make([]byte, col.Flen))
+		if col.GetFlen() > 0 && col.GetCharset() == charset.CharsetBin {
+			d.SetBytes(make([]byte, col.GetFlen()))
 		} else {
-			d.SetString("", col.Collate)
+			d.SetString("", col.GetCollate())
 		}
 	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		d.SetString("", col.Collate)
+		d.SetString("", col.GetCollate())
 	case mysql.TypeDuration:
 		d.SetMysqlDuration(types.ZeroDuration)
 	case mysql.TypeDate:
@@ -646,18 +645,18 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeBit:
 		d.SetMysqlBit(types.ZeroBinaryLiteral)
 	case mysql.TypeSet:
-		d.SetMysqlSet(types.Set{}, col.Collate)
+		d.SetMysqlSet(types.Set{}, col.GetCollate())
 	case mysql.TypeEnum:
-		d.SetMysqlEnum(types.Enum{}, col.Collate)
+		d.SetMysqlEnum(types.Enum{}, col.GetCollate())
 	case mysql.TypeJSON:
 		d.SetMysqlJSON(json.CreateBinary(nil))
 	}
 	return d
 }
 
-// OptionalFsp convert a FieldType.Decimal to string.
+// OptionalFsp convert a FieldType.GetDecimal() to string.
 func OptionalFsp(fieldType *types.FieldType) string {
-	fsp := fieldType.Decimal
+	fsp := fieldType.GetDecimal()
 	if fsp == 0 {
 		return ""
 	}

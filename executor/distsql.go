@@ -1063,9 +1063,9 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			// collation to `binary`.
 			rtp := e.handleCols[i].RetType
 			if collate.NewCollationEnabled() && e.table.Meta().CommonHandleVersion == 0 && rtp.EvalType() == types.ETString &&
-				!mysql.HasBinaryFlag(rtp.Flag) && tp == getHandleFromIndex {
+				!mysql.HasBinaryFlag(rtp.GetFlag()) && tp == getHandleFromIndex {
 				rtp = rtp.Clone()
-				rtp.Collate = charset.CollationBin
+				rtp.SetCollate(charset.CollationBin)
 				datums = append(datums, row.GetDatum(idx, rtp))
 				continue
 			}
@@ -1164,7 +1164,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 	// Prepare collator for compare.
 	collators := make([]collate.Collator, 0, len(w.idxColTps))
 	for _, tp := range w.idxColTps {
-		collators = append(collators, collate.GetCollator(tp.Collate))
+		collators = append(collators, collate.GetCollator(tp.GetCollate()))
 	}
 
 	ir := func() *consistency.Reporter {

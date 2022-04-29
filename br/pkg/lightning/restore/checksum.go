@@ -310,7 +310,7 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 			zap.Int("concurrency", distSQLScanConcurrency), zap.Int("retry", i))
 
 		// do not retry context.Canceled error
-		if !utils.IsRetryableError(err) {
+		if !common.IsRetryableError(err) {
 			break
 		}
 		if distSQLScanConcurrency > minDistSQLScanConcurrency {
