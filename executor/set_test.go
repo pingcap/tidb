@@ -136,8 +136,8 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
 
-	tk.MustExec("set @@session.ddl_slow_threshold=12345")
-	tk.MustQuery("select @@session.ddl_slow_threshold").Check(testkit.Rows("12345"))
+	tk.MustExec("set @@global.ddl_slow_threshold=12345")
+	tk.MustQuery("select @@global.ddl_slow_threshold").Check(testkit.Rows("12345"))
 	require.Equal(t, uint32(12345), variable.DDLSlowOprThreshold)
 	tk.MustExec("set session ddl_slow_threshold=\"54321\"")
 	tk.MustQuery("show variables like 'ddl_slow_threshold'").Check(testkit.Rows("ddl_slow_threshold 54321"))
@@ -221,17 +221,16 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set @@tidb_pprof_sql_cpu = 1")
 	tk.MustExec("set @@tidb_pprof_sql_cpu = 0")
 
-	tk.MustExec(`set tidb_force_priority = "no_priority"`)
-	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
-	tk.MustExec(`set tidb_force_priority = "low_priority"`)
-	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("LOW_PRIORITY"))
-	tk.MustExec(`set tidb_force_priority = "high_priority"`)
-	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("HIGH_PRIORITY"))
-	tk.MustExec(`set tidb_force_priority = "delayed"`)
-	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
-	tk.MustExec(`set tidb_force_priority = "abc"`)
-	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
-	require.Error(t, tk.ExecToErr(`set global tidb_force_priority = ""`))
+	tk.MustExec(`set @@global.tidb_force_priority = "no_priority"`)
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
+	tk.MustExec(`set @@global.tidb_force_priority = "low_priority"`)
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("LOW_PRIORITY"))
+	tk.MustExec(`set @@global.tidb_force_priority = "high_priority"`)
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("HIGH_PRIORITY"))
+	tk.MustExec(`set @@global.tidb_force_priority = "delayed"`)
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
+	tk.MustExec(`set @@global.tidb_force_priority = "abc"`)
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
 
 	tk.MustExec("set tidb_constraint_check_in_place = 1")
 	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
@@ -623,6 +622,10 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '0'"))
 	result = tk.MustQuery("select @@global.max_allowed_packet;")
 	result.Check(testkit.Rows("1024"))
+
+	// for read-only instance scoped system variables.
+	tk.MustGetErrCode("set @@global.plugin_load = ''", errno.ErrIncorrectGlobalLocalVar)
+	tk.MustGetErrCode("set @@global.plugin_dir = ''", errno.ErrIncorrectGlobalLocalVar)
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
@@ -1446,6 +1449,30 @@ func TestDefaultBehavior(t *testing.T) {
 	err := tk.ExecToErr("SET GLOBAL sql_mode = 'DEFAULT'") // illegal now
 	require.EqualError(t, err, `ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'DEFAULT'`)
 	tk.MustExec("SET GLOBAL sql_mode = DEFAULT")
+}
+
+func TestTiDBReadOnly(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	// turn on tidb_restricted_read_only should turn on tidb_super_read_only
+	tk.MustExec("SET GLOBAL tidb_restricted_read_only = ON")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("1"))
+
+	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
+	err := tk.ExecToErr("SET GLOBAL tidb_super_read_only = OFF")
+	require.Error(t, err)
+	require.Equal(t, "can't turn off tidb_super_read_only when tidb_restricted_read_only is on", err.Error())
+
+	// turn off tidb_restricted_read_only won't affect tidb_super_read_only
+	tk.MustExec("SET GLOBAL tidb_restricted_read_only = OFF")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_restricted_read_only").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("1"))
+
+	// it is ok to turn off tidb_super_read_only now
+	tk.MustExec("SET GLOBAL tidb_super_read_only = OFF")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("0"))
 }
 
 func TestRemovedSysVars(t *testing.T) {

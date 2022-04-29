@@ -327,7 +327,7 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 		opt.SkipFDRule331 = true
 	}
 
-	opt.OnlyInnerFilter = len(eqCondSlice) == 0 && len(outerCondition) == 0
+	opt.OnlyInnerFilter = len(eqCondSlice) == 0 && len(outerCondition) == 0 && len(p.OtherConditions) == 0
 	if opt.OnlyInnerFilter {
 		// if one of the inner condition is constant false, the inner side are all null, left make constant all of that.
 		for _, one := range innerCondition {

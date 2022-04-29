@@ -514,7 +514,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 		startTs:                    startTs,
 		vars:                       vars,
 		needTriggerFallback:        needTriggerFallback,
-		enableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
+		enableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo,
 	}
 	go iter.run(ctxChild)
 	return iter

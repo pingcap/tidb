@@ -17,6 +17,7 @@ package restore
 import (
 	"context"
 	"database/sql"
+	"math"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -405,9 +406,15 @@ func TestAlterAutoInc(t *testing.T) {
 		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_INCREMENT=12345\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
+		ExpectExec("\\QALTER TABLE `db`.`table` FORCE AUTO_INCREMENT=9223372036854775807\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
 		ExpectClose()
 
 	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
+	require.NoError(t, err)
+
+	err = AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1)
 	require.NoError(t, err)
 }
 
@@ -420,9 +427,19 @@ func TestAlterAutoRandom(t *testing.T) {
 		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_RANDOM_BASE=12345\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
+		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_RANDOM_BASE=288230376151711743\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
+	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345, 288230376151711743)
+	require.NoError(t, err)
+
+	// insert 288230376151711743 and try rebase to 288230376151711744
+	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 288230376151711744, 288230376151711743)
+	require.NoError(t, err)
+
+	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1, 288230376151711743)
 	require.NoError(t, err)
 }
 
