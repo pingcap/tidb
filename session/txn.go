@@ -488,6 +488,7 @@ type txnFuture struct {
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
+	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
 		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {
