@@ -881,6 +881,8 @@ var (
 )
 
 var (
+	// SetMemQuotaAnalyze is the func registered by global/subglobal tracker to set memory quota.
 	SetMemQuotaAnalyze func(quota int64) = nil
-	GetMemQuotaAnalyze func() int64      = nil
+	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
+	GetMemQuotaAnalyze func() int64 = nil
 )
