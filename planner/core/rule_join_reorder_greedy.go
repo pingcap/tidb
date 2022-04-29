@@ -40,30 +40,24 @@ type joinReorderGreedySolver struct {
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
-	for _, node := range joinNodePlans {
-		_, err := node.recursiveDeriveStats(nil)
+	var err error
+	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans, tracer)
+	if err != nil {
+		return nil, err
+	}
+	var leadingJoinNodes []*jrNode
+	if s.leadingJoinGroup != nil {
+		leadingJoinNodes, err = s.generateJoinOrderNode([]LogicalPlan{s.leadingJoinGroup}, tracer)
 		if err != nil {
 			return nil, err
 		}
-		cost := s.baseNodeCumCost(node)
-		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			p:       node,
-			cumCost: cost,
-		})
-		tracer.appendLogicalJoinCost(node, cost)
-	}
-	var leadingNode *jrNode
-	if s.leading {
-		joinGroupLen := len(s.curJoinGroup)
-		leadingNode = s.curJoinGroup[joinGroupLen-1]
-		s.curJoinGroup = s.curJoinGroup[joinGroupLen-1 : joinGroupLen]
 	}
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
-	if leadingNode != nil {
-		curJoinGroup := append([]*jrNode{leadingNode}, s.curJoinGroup...)
-		s.curJoinGroup = curJoinGroup
+	if leadingJoinNodes != nil {
+		leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)
+		s.curJoinGroup = leadingJoinNodes
 	}
 
 	var cartesianGroup []LogicalPlan

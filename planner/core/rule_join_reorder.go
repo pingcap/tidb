@@ -87,7 +87,6 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			ctx:        ctx,
 			otherConds: otherConds,
 			eqEdges:    eqEdges,
-			leading:    leadingNum > 0,
 		}
 		p = curJoinGroup[0]
 		curJoinGroup = curJoinGroup[1:]
@@ -97,7 +96,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			curJoinGroup = curJoinGroup[1:]
 			leadingNum--
 		}
-		curJoinGroup = append(curJoinGroup, p)
+		if leadingNum == 1 {
+			baseGroupSolver.leadingJoinGroup = p
+		}
 		originalSchema := p.Schema()
 		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
 			groupSolver := &joinReorderGreedySolver{
@@ -149,11 +150,11 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 
 // nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
-	ctx          sessionctx.Context
-	curJoinGroup []*jrNode
-	otherConds   []expression.Expression
-	eqEdges      []*expression.ScalarFunction
-	leading      bool
+	ctx              sessionctx.Context
+	curJoinGroup     []*jrNode
+	otherConds       []expression.Expression
+	eqEdges          []*expression.ScalarFunction
+	leadingJoinGroup LogicalPlan
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
@@ -163,6 +164,23 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) 
 		cost += s.baseNodeCumCost(child)
 	}
 	return cost
+}
+
+func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) ([]*jrNode, error) {
+	joinGroup := make([]*jrNode, 0, len(joinNodePlans))
+	for _, node := range joinNodePlans {
+		_, err := node.recursiveDeriveStats(nil)
+		if err != nil {
+			return nil, err
+		}
+		cost := s.baseNodeCumCost(node)
+		joinGroup = append(joinGroup, &jrNode{
+			p:       node,
+			cumCost: cost,
+		})
+		tracer.appendLogicalJoinCost(node, cost)
+	}
+	return joinGroup, nil
 }
 
 // makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
