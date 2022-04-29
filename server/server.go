@@ -838,6 +838,14 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	return tsList
 }
 
+// InternalSessionExists is used for test
+func (s *Server) InternalSessionExists(se interface{}) bool {
+	s.sessionMapMutex.Lock()
+	_, ok := s.internalSessions[se]
+	s.sessionMapMutex.Unlock()
+	return ok
+}
+
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,
 // only the first will actually do setSystemTimeZoneVariable, thus we can avoid data race.
 var setSysTimeZoneOnce = &sync.Once{}

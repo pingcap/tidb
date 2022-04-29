@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"go.uber.org/zap"
@@ -451,7 +451,7 @@ func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize int64) e
 	for i := 0; i < importMaxRetryTimes; i++ {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize)
-		if !utils.IsRetryableError(err) {
+		if !common.IsRetryableError(err) {
 			task.End(zap.ErrorLevel, err)
 			return err
 		}
