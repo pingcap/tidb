@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/pingcap/tidb/errno"
@@ -113,17 +114,17 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 	}
 	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	result.ReserveString(n)
-	var encodedBuf []byte
+	encodedBuf := &bytes.Buffer{}
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		encodedBuf, err = enc.Transform(encodedBuf, buf.GetBytes(i), charset.OpEncode)
+		val, err := enc.Transform(encodedBuf, buf.GetBytes(i), charset.OpEncode)
 		if err != nil {
 			return err
 		}
-		result.AppendBytes(encodedBuf)
+		result.AppendBytes(val)
 	}
 	return nil
 }
@@ -194,7 +195,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 		return err
 	}
 	enc := charset.FindEncoding(b.tp.Charset)
-	var encBuf []byte
+	encodedBuf := &bytes.Buffer{}
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
@@ -202,12 +203,12 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 			continue
 		}
 		str := buf.GetBytes(i)
-		encBuf, err = enc.Transform(encBuf, str, charset.OpDecode)
+		val, err := enc.Transform(encodedBuf, str, charset.OpDecode)
 		if err != nil {
 			strHex := fmt.Sprintf("%X", str)
 			return errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.Charset)
 		}
-		result.AppendBytes(encBuf)
+		result.AppendBytes(val)
 	}
 	return nil
 }
@@ -266,8 +267,6 @@ var convertActionMap = map[funcProp][]string{
 		ast.CharLength, ast.CharacterLength, ast.FromBase64, ast.Lcase, ast.Left, ast.LoadFile,
 		ast.Lower, ast.LTrim, ast.Mid, ast.Ord, ast.Quote, ast.Repeat, ast.Reverse, ast.Right,
 		ast.RTrim, ast.Soundex, ast.Substr, ast.Substring, ast.Ucase, ast.Unhex, ast.Upper, ast.WeightString,
-		/* args are independent, no implicit conversion */
-		ast.Elt,
 	},
 	funcPropBinAware: {
 		/* result is binary-aware */
@@ -279,7 +278,7 @@ var convertActionMap = map[funcProp][]string{
 	funcPropAuto: {
 		/* string functions */ ast.Concat, ast.ConcatWS, ast.ExportSet, ast.Field, ast.FindInSet,
 		ast.InsertFunc, ast.Instr, ast.Lpad, ast.Locate, ast.Lpad, ast.MakeSet, ast.Position,
-		ast.Replace, ast.Rpad, ast.SubstringIndex, ast.Trim,
+		ast.Replace, ast.Rpad, ast.SubstringIndex, ast.Trim, ast.Elt,
 		/* operators */
 		ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.If, ast.Ifnull, ast.In,
 		ast.Case, ast.Cast,

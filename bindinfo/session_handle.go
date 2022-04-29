@@ -68,7 +68,8 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 // DropBindRecord drops a BindRecord in the cache.
 func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding) error {
 	db = strings.ToLower(db)
-	oldRecord := h.GetBindRecord(originalSQL, db)
+	hash := parser.DigestNormalized(originalSQL).String()
+	oldRecord := h.GetBindRecord(hash, originalSQL, db)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
 	if binding != nil {
@@ -79,14 +80,13 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	} else {
 		newRecord = record
 	}
-	h.ch.setBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), newRecord)
+	h.ch.setBindRecord(hash, newRecord)
 	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
 	return nil
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
-func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindRecord {
-	hash := parser.DigestNormalized(normdOrigSQL).String()
+func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	bindRecords := h.ch[hash]
 	for _, bindRecord := range bindRecords {
 		if bindRecord.OriginalSQL == normdOrigSQL {

@@ -13,6 +13,8 @@
 
 package charset
 
+import "bytes"
+
 // Make sure all of them implement Encoding interface.
 var (
 	_ Encoding = &encodingUTF8{}
@@ -75,7 +77,9 @@ type Encoding interface {
 	// Foreach iterates the characters in in current encoding.
 	Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool)
 	// Transform map the bytes in src to dest according to Op.
-	Transform(dest, src []byte, op Op) ([]byte, error)
+	// **the caller should initialize the dest if it wants to avoid memory alloc every time, or else it will always make a new one**
+	// **the returned array may be the alias of `src`, edit the returned array on your own risk**
+	Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error)
 	// ToUpper change a string to uppercase.
 	ToUpper(src string) string
 	// ToLower change a string to lowercase.
@@ -114,6 +118,7 @@ const (
 	OpEncodeNoErr   = OpEncode | opSkipError
 	OpEncodeReplace = opFromUTF8 | opTruncateReplace | opCollectTo
 	OpDecode        = opToUTF8 | opTruncateTrim | opCollectTo
+	OpDecodeNoErr   = OpDecode | opSkipError
 	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo
 )
 

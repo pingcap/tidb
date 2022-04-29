@@ -33,6 +33,7 @@ func Test_tsItem_toProto(t *testing.T) {
 		stmtStats: stmtstats.StatementStatsItem{
 			ExecCount:     3,
 			SumDurationNs: 50000,
+			DurationCount: 2,
 			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 4}},
 		},
 	}
@@ -41,6 +42,7 @@ func Test_tsItem_toProto(t *testing.T) {
 	assert.Equal(t, uint32(2), pb.CpuTimeMs)
 	assert.Equal(t, uint64(3), pb.StmtExecCount)
 	assert.Equal(t, uint64(50000), pb.StmtDurationSumNs)
+	assert.Equal(t, uint64(2), pb.StmtDurationCount)
 	assert.Equal(t, uint64(4), pb.StmtKvExecCount[""])
 }
 

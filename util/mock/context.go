@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -340,6 +341,11 @@ func (c *Context) HasLockedTables() bool {
 
 // PrepareTSFuture implements the sessionctx.Context interface.
 func (c *Context) PrepareTSFuture(ctx context.Context) {
+}
+
+// GetStmtStats implements the sessionctx.Context interface.
+func (c *Context) GetStmtStats() *stmtstats.StatementStats {
+	return nil
 }
 
 // Close implements the sessionctx.Context interface.

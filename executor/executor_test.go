@@ -330,6 +330,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 	tk.MustQuery("show charset").Check(testkit.Rows(
 		"ascii US ASCII ascii_bin 1",
 		"binary binary binary 1",
+		"gbk Chinese Internal Code Specification gbk_bin 2",
 		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
@@ -3440,16 +3441,6 @@ type testSuiteWithCliBaseCharset struct {
 	testSuiteWithCliBase
 }
 
-func (s *testSuiteWithCliBaseCharset) SetUpSuite(c *C) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	s.testSuiteWithCliBase.SetUpSuite(c)
-}
-
-func (s *testSuiteWithCliBaseCharset) TearDownSuite(c *C) {
-	s.testSuiteWithCliBase.TearDownSuite(c)
-	collate.SetCharsetFeatEnabledForTest(false)
-}
-
 type testSuiteWithCliBase struct {
 	store kv.Storage
 	dom   *domain.Domain
@@ -5736,7 +5727,31 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "keep order:false")
 }
 
+func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureWithoutNewCollation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("show charset").Check(testkit.Rows(
+		"ascii US ASCII ascii_bin 1",
+		"binary binary binary 1",
+		"gbk Chinese Internal Code Specification gbk_bin 2",
+		"latin1 Latin1 latin1_bin 1",
+		"utf8 UTF-8 Unicode utf8_bin 3",
+		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
+	))
+	tk.MustQuery("show collation").Check(testkit.Rows(
+		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
+		"latin1_bin latin1 47 Yes Yes 1",
+		"binary binary 63 Yes Yes 1",
+		"ascii_bin ascii 65 Yes Yes 1",
+		"utf8_bin utf8 83 Yes Yes 1",
+		"gbk_bin gbk 87 Yes Yes 1",
+	))
+	tk.MustExec("create table t5(a char(20), b char(20) charset utf8, c binary) charset gbk collate gbk_bin;")
+}
+
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
@@ -5790,6 +5805,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 		"  `b` char(10) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+	tk.MustExec("create table t5(a char(20), b char(20) charset utf8, c binary) charset gbk collate gbk_bin;")
 
 	tk.MustExec("create database test_gbk charset gbk;")
 	tk.MustExec("use test_gbk")
@@ -5798,26 +5814,11 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 		"  `a` char(10) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci",
 	))
-
-	collate.SetNewCollationEnabledForTest(false)
-	tk.MustQuery("show charset").Check(testkit.Rows(
-		"ascii US ASCII ascii_bin 1",
-		"binary binary binary 1",
-		"gbk Chinese Internal Code Specification gbk_chinese_ci 2",
-		"latin1 Latin1 latin1_bin 1",
-		"utf8 UTF-8 Unicode utf8_bin 3",
-		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
-	))
-	tk.MustQuery("show collation").Check(testkit.Rows(
-		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
-		"latin1_bin latin1 47 Yes Yes 1",
-		"binary binary 63 Yes Yes 1",
-		"ascii_bin ascii 65 Yes Yes 1",
-		"utf8_bin utf8 83 Yes Yes 1",
-	))
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -5843,6 +5844,8 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetWithPrefixIndex(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -8077,12 +8080,12 @@ func (s *testSuite) TestIssue13953(c *C) {
 }
 
 func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
 	SQLs := []string{
 		`select YEAR(0000-00-00), YEAR("0000-00-00")`,
 		`select MONTH(0000-00-00), MONTH("0000-00-00")`,
-		`select DAYOFWEEK(0000-00-00), DAYOFWEEK("0000-00-00")`,
 		`select DAYOFMONTH(0000-00-00), DAYOFMONTH("0000-00-00")`,
-		`select DAYOFYEAR(0000-00-00), DAYOFYEAR("0000-00-00")`,
 		`select QUARTER(0000-00-00), QUARTER("0000-00-00")`,
 		`select EXTRACT(DAY FROM 0000-00-00), EXTRACT(DAY FROM "0000-00-00")`,
 		`select EXTRACT(MONTH FROM 0000-00-00), EXTRACT(MONTH FROM "0000-00-00")`,
@@ -8090,12 +8093,48 @@ func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
 		`select EXTRACT(WEEK FROM 0000-00-00), EXTRACT(WEEK FROM "0000-00-00")`,
 		`select EXTRACT(QUARTER FROM 0000-00-00), EXTRACT(QUARTER FROM "0000-00-00")`,
 	}
-	tk := testkit.NewTestKit(c, s.store)
-
 	for _, t := range SQLs {
-		fmt.Println(t)
 		tk.MustQuery(t).Check(testkit.Rows("0 <nil>"))
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	}
+
+	SQLs = []string{
+		`select DAYOFWEEK(0000-00-00), DAYOFWEEK("0000-00-00")`,
+		`select DAYOFYEAR(0000-00-00), DAYOFYEAR("0000-00-00")`,
+	}
+	for _, t := range SQLs {
+		tk.MustQuery(t).Check(testkit.Rows("<nil> <nil>"))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(v1 datetime, v2 datetime(3))")
+	tk.MustExec("insert ignore into t values(0,0)")
+
+	SQLs = []string{
+		`select YEAR(v1), YEAR(v2) from t`,
+		`select MONTH(v1), MONTH(v2) from t`,
+		`select DAYOFMONTH(v1), DAYOFMONTH(v2) from t`,
+		`select QUARTER(v1), QUARTER(v2) from t`,
+		`select EXTRACT(DAY FROM v1), EXTRACT(DAY FROM v2) from t`,
+		`select EXTRACT(MONTH FROM v1), EXTRACT(MONTH FROM v2) from t`,
+		`select EXTRACT(YEAR FROM v1), EXTRACT(YEAR FROM v2) from t`,
+		`select EXTRACT(WEEK FROM v1), EXTRACT(WEEK FROM v2) from t`,
+		`select EXTRACT(QUARTER FROM v1), EXTRACT(QUARTER FROM v2) from t`,
+	}
+	for _, t := range SQLs {
+		tk.MustQuery(t).Check(testkit.Rows("0 0"))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	}
+
+	SQLs = []string{
+		`select DAYOFWEEK(v1), DAYOFWEEK(v2) from t`,
+		`select DAYOFYEAR(v1), DAYOFYEAR(v2) from t`,
+	}
+	for _, t := range SQLs {
+		tk.MustQuery(t).Check(testkit.Rows("<nil> <nil>"))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
 	}
 }
 
@@ -8167,16 +8206,8 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	tk.MustExec("create table t4(a int)")
 	tk.MustExec("insert into t4 values(1)")
 	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
-	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
-	// check the first 5 actions is rate limit.
-	for i := 0; i < 5; i++ {
-		c.Assert(action.GetPriority(), Equals, int64(memory.DefRateLimitPriority))
-		action = action.GetFallback()
-	}
-	for action.GetFallback() != nil {
-		c.Assert(action.GetPriority(), Equals, int64(memory.DefSpillPriority))
-		action = action.GetFallback()
-	}
+	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(true)
+	// All actions are finished and removed.
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
 }
 
@@ -9490,6 +9521,7 @@ func (s *testSuiteP1) TestIssue29412(c *C) {
 }
 
 func (s *testSerialSuite) TestIssue28650(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -9726,6 +9758,45 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 	c.Assert(opsAlreadyCoveredMask, Equals, opsNeedsCoveredMask, Commentf("these operators are not covered %s", commentBuf.String()))
 }
 
+func (s *testSerialSuite) TestIndexJoin31494(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int(11) default null, b int(11) default null, key(b));")
+	insertStr := "insert into t1 values(1, 1)"
+	for i := 1; i < 32768; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("create table t2(a int(11) default null, b int(11) default null, c int(11) default null)")
+	insertStr = "insert into t2 values(1, 1, 1)"
+	for i := 1; i < 32768; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("set @@tidb_mem_quota_query=2097152;")
+	// This bug will be reproduced in 10 times.
+	for i := 0; i < 10; i++ {
+		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	}
+}
+
 func (s *testSerialSuite) TestIssue30971(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9750,4 +9821,48 @@ func (s *testSerialSuite) TestIssue30971(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(fields, HasLen, test.fields)
 	}
+}
+
+func (s *testSerialSuite) TestEncodingSet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `enum-set` (`set` SET(" +
+		"'x00','x01','x02','x03','x04','x05','x06','x07','x08','x09','x10','x11','x12','x13','x14','x15'," +
+		"'x16','x17','x18','x19','x20','x21','x22','x23','x24','x25','x26','x27','x28','x29','x30','x31'," +
+		"'x32','x33','x34','x35','x36','x37','x38','x39','x40','x41','x42','x43','x44','x45','x46','x47'," +
+		"'x48','x49','x50','x51','x52','x53','x54','x55','x56','x57','x58','x59','x60','x61','x62','x63'" +
+		")NOT NULL PRIMARY KEY)")
+	tk.MustExec("INSERT INTO `enum-set` VALUES\n(\"x00,x59\");")
+	tk.MustQuery("select `set` from `enum-set` use index(PRIMARY)").Check(testkit.Rows("x00,x59"))
+	tk.MustExec("admin check table `enum-set`")
+}
+
+func (s *testSuite) TestDeleteWithMulTbl(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// Delete multiple tables from left joined table.
+	// The result of left join is (3, null, null).
+	// Because rows in t2 are not matched, so no row will be deleted in t2.
+	// But row in t1 is matched, so it should be deleted.
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c1 int);")
+	tk.MustExec("create table t2 (c1 int primary key, c2 int);")
+	tk.MustExec("insert into t1 values(3);")
+	tk.MustExec("insert into t2 values(2, 2);")
+	tk.MustExec("insert into t2 values(0, 0);")
+	tk.MustExec("delete from t1, t2 using t1 left join t2 on t1.c1 = t2.c2;")
+	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 order by c1;").Check(testkit.Rows("0 0", "2 2"))
+
+	// Rows in both t1 and t2 are matched, so will be deleted even if it's null.
+	// NOTE: The null values are not generated by join.
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c1 int);")
+	tk.MustExec("create table t2 (c2 int);")
+	tk.MustExec("insert into t1 values(null);")
+	tk.MustExec("insert into t2 values(null);")
+	tk.MustExec("delete from t1, t2 using t1 join t2 where t1.c1 is null;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t2;").Check(testkit.Rows())
 }

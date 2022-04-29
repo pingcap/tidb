@@ -92,6 +92,8 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 	accessPath := []*util.AccessPath{
 		{IsIntHandlePath: true},
 		{Index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
+		genTiFlashPath(tblInfo, false),
+		genTiFlashPath(tblInfo, true),
 	}
 
 	path := getPathByIndexName(accessPath, model.NewCIStr("idx"), tblInfo)
@@ -284,6 +286,11 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 	c.Assert(checkPhysicalPlanClone(sel), IsNil)
+
+	// maxOneRow
+	maxOneRow := &PhysicalMaxOneRow{}
+	maxOneRow = maxOneRow.Init(ctx, stats, 0)
+	c.Assert(checkPhysicalPlanClone(maxOneRow), IsNil)
 
 	// projection
 	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}

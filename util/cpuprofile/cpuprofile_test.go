@@ -212,12 +212,12 @@ func TestProfileHTTPHandler(t *testing.T) {
 	router.HandleFunc("/debug/pprof/profile", ProfileHTTPHandler)
 	httpServer := &http.Server{Handler: router, WriteTimeout: time.Second * 60}
 	go func() {
-		if err = httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			require.NoError(t, err)
 		}
 	}()
 	defer func() {
-		err = httpServer.Close()
+		err := httpServer.Close()
 		require.NoError(t, err)
 	}()
 

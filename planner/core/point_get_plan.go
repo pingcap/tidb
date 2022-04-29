@@ -1215,12 +1215,9 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		}
 		// The converted result must be same as original datum.
 		cmp, err := dVal.Compare(stmtCtx, &d, collate.GetCollator(col.Collate))
-		if err != nil {
+		if err != nil || cmp != 0 {
 			return nil, false
-		} else if cmp != 0 {
-			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), true
 		}
-
 		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
 	}
 	return nil, false

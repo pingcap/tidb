@@ -185,12 +185,12 @@ type builder struct {
 	sc  *stmtctx.StatementContext
 }
 
-func (r *builder) build(expr expression.Expression) []*point {
+func (r *builder) build(expr expression.Expression, collator collate.Collator) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
 		return r.buildFromColumn(x)
 	case *expression.ScalarFunction:
-		return r.buildFromScalarFunc(x)
+		return r.buildFromScalarFunc(x, collator)
 	case *expression.Constant:
 		return r.buildFromConstant(x)
 	}
@@ -595,6 +595,9 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 				continue
 			}
 		}
+		if expr.GetArgs()[0].GetType().EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
+			dt.SetString(dt.GetString(), expr.GetArgs()[0].GetType().Collate) // refine the string like what we did in builder.buildFromBinOp
+		}
 		var startValue, endValue types.Datum
 		dt.Copy(&startValue)
 		dt.Copy(&endValue)
@@ -762,16 +765,14 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 	return getFullRange()
 }
 
-func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []*point {
-	_, coll := expr.CharsetAndCollation()
-	collator := collate.GetCollator(coll)
+func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator collate.Collator) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
 		return r.buildFromBinOp(expr)
 	case ast.LogicAnd:
-		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]), collator)
+		return r.intersection(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
 	case ast.LogicOr:
-		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]), collator)
+		return r.union(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 0, false)
 	case ast.IsTruthWithNull:

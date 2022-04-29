@@ -198,14 +198,14 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() (err error) {
-	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
-		return nil
-	}
-
 	if e.result != nil {
 		err = e.result.Close()
 	}
 	e.result = nil
+	e.kvRanges = e.kvRanges[:0]
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
@@ -289,9 +289,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
-	if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-		builder.SetIsolationLevel(kv.RC)
-	}
 	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
@@ -559,9 +556,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			PushedLimit:     e.PushedLimit,
 		}
 		var builder distsql.RequestBuilder
-		if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-			builder.SetIsolationLevel(kv.RC)
-		}
 		builder.SetDAGRequest(e.dagPB).
 			SetStartTS(e.startTS).
 			SetDesc(e.desc).
@@ -683,6 +677,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
+	e.kvRanges = e.kvRanges[:0]
 	if e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}

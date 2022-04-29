@@ -535,3 +535,14 @@ select crc32(a), crc32(b), crc32(c) from t;
 crc32(a)	crc32(b)	crc32(c)
 1785250883	3461331449	4092198678
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a enum('a一','b二','c三','d四') default 'c三', b binary(10)) charset=gbk;
+insert into t values (1, 0x1234);
+set @@tidb_enable_vectorized_expression = true;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+hex(elt(1, a, b))	hex(elt(1, a, 0x12))
+61D2BB	61D2BB
+set @@tidb_enable_vectorized_expression = false;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+hex(elt(1, a, b))	hex(elt(1, a, 0x12))
+61D2BB	61D2BB

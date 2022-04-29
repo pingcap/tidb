@@ -10865,7 +10865,7 @@
           "bars": false,
           "dashLength": 10,
           "dashes": false,
-          "datasource": "tidb-cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "",
           "fieldConfig": {
             "defaults": {},
@@ -10877,7 +10877,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 33
+            "y": 170
           },
           "hiddenSeries": false,
           "id": 229,
@@ -10898,7 +10898,6 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -10975,7 +10974,7 @@
           "bars": false,
           "dashLength": 10,
           "dashes": false,
-          "datasource": "tidb-cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "",
           "fieldConfig": {
             "defaults": {},
@@ -10987,7 +10986,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 33
+            "y": 170
           },
           "hiddenSeries": false,
           "id": 230,
@@ -11008,7 +11007,6 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",

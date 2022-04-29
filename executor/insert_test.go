@@ -209,6 +209,36 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
 	tk.MustQuery("select * from a").Check(testkit.Rows("2"))
 
+	// Test issue 28078.
+	// Use different types of columns so that there's likely to be error if the types mismatches.
+	tk.MustExec("drop table if exists a, b")
+	tk.MustExec("create table a(id int, a1 timestamp, a2 varchar(10), a3 float, unique(id))")
+	tk.MustExec("create table b(id int, b1 time, b2 varchar(10), b3 int)")
+	tk.MustExec("insert into a values (1, '2022-01-04 07:02:04', 'a', 1.1), (2, '2022-01-04 07:02:05', 'b', 2.2)")
+	tk.MustExec("insert into b values (2, '12:34:56', 'c', 10), (3, '01:23:45', 'd', 20)")
+	tk.MustExec("insert into a (id) select id from b on duplicate key update a.a2 = b.b2, a.a3 = 3.3")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(3))
+	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+		"1/2022-01-04 07:02:04/a/1.1",
+		"2/2022-01-04 07:02:05/c/3.3",
+		"3/<nil>/<nil>/<nil>"))
+	tk.MustExec("insert into a (id) select 4 from b where b3 = 20 on duplicate key update a.a3 = b.b3")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+		"1/2022-01-04 07:02:04/a/1.1",
+		"2/2022-01-04 07:02:05/c/3.3",
+		"3/<nil>/<nil>/<nil>",
+		"4/<nil>/<nil>/<nil>"))
+	tk.MustExec("insert into a (a2, a3) select 'x', 1.2 from b on duplicate key update a.a2 = b.b3")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+		"1/2022-01-04 07:02:04/a/1.1",
+		"2/2022-01-04 07:02:05/c/3.3",
+		"3/<nil>/<nil>/<nil>",
+		"4/<nil>/<nil>/<nil>",
+		"<nil>/<nil>/x/1.2",
+		"<nil>/<nil>/x/1.2"))
+
 	// reproduce insert on duplicate key update bug under new row format.
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)

@@ -4356,8 +4356,6 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &TiFlashSystemTableExtractor{}
 		case infoschema.TableStatementsSummary, infoschema.TableStatementsSummaryHistory:
 			p.Extractor = &StatementsSummaryExtractor{}
-		case infoschema.TableTiKVRegionPeers:
-			p.Extractor = &TikvRegionPeersExtractor{}
 		}
 	}
 	return p, nil
@@ -4485,6 +4483,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
+	setIsInApplyForCTE(innerPlan)
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.names = make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len())
@@ -4510,10 +4509,29 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 		return nil, err
 	}
 
+	setIsInApplyForCTE(innerPlan)
 	ap := &LogicalApply{LogicalJoin: *join}
 	ap.tp = plancodec.TypeApply
 	ap.self = ap
 	return ap, nil
+}
+
+// setIsInApplyForCTE indicates CTE is the in inner side of Apply,
+// the storage of cte needs to be reset for each outer row.
+// It's better to handle this in CTEExec.Close(), but cte storage is closed when SQL is finished.
+func setIsInApplyForCTE(p LogicalPlan) {
+	switch x := p.(type) {
+	case *LogicalCTE:
+		x.cte.IsInApply = true
+		setIsInApplyForCTE(x.cte.seedPartLogicalPlan)
+		if x.cte.recursivePartLogicalPlan != nil {
+			setIsInApplyForCTE(x.cte.recursivePartLogicalPlan)
+		}
+	default:
+		for _, child := range p.Children() {
+			setIsInApplyForCTE(child)
+		}
+	}
 }
 
 func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {

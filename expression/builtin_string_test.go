@@ -1403,8 +1403,6 @@ func TestBitLength(t *testing.T) {
 }
 
 func TestChar(t *testing.T) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
 	ctx := createContext(t)
 	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	tbl := []struct {
@@ -2190,9 +2188,6 @@ func TestInsert(t *testing.T) {
 }
 
 func TestOrd(t *testing.T) {
-	// TODO: Remove this and enable test parallel after new charset enabled
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}

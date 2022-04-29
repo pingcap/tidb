@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -140,6 +141,8 @@ type Context interface {
 	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
 	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
 	GetBuiltinFunctionUsage() map[string]uint32
+	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
+	GetStmtStats() *stmtstats.StatementStats
 }
 
 type basicCtxType int
