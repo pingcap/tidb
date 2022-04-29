@@ -1,10 +1,5 @@
+server TestTopSQLCPUProfile
 ddl TestModifyColumnTypeWhenInterception
-executor TestPBMemoryLeak
-executor TestIndexJoin31494
-server TestGetSchemaStorage
 executor TestIn
-ddl TestModifyColumn
 executor TestDefaultValForAnalyze
-session testPessimisticSuite.TestDeadlock
-ddl TestCreateTable
-executor TestFlushPrivileges
+
