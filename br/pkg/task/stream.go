@@ -909,7 +909,7 @@ func RunStreamRestore(
 		}
 		if cfg.StartTS < logStartTS {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
-				"it has gap bewteen full backup ts:%d(%s) and log backup ts:%d(%s)"+
+				"it has gap between full backup ts:%d(%s) and log backup ts:%d(%s)"+
 					"you can \"restore full\" and \"restore point\" separately",
 				cfg.StartTS, oracle.GetTimeFromTS(cfg.StartTS),
 				logStartTS, oracle.GetTimeFromTS(logStartTS))
@@ -1171,6 +1171,7 @@ func getFullBakcupTS(
 	return backupmeta.GetEndVersion(), nil
 }
 
+// nolint: unused, deadcode
 func getGlobalCheckpointTS(ms []*backuppb.Metadata) uint64 {
 	storeMap := make(map[int64]uint64)
 	for _, m := range ms {

@@ -127,12 +127,12 @@ type Client struct {
 	supportPolicy bool
 
 	// startTS and restoreTs are used for kv file restore.
-	// TiKV will filter the key space that don't belong to [startTs, restoreTs].
+	// TiKV will filter the key space that don't belong to [startTS, restoreTS].
 	startTS   uint64
-	restoreTs uint64
-	// currentTs is used for rewrite meta kv when restore stream.
+	restoreTS uint64
+	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
-	currentTs uint64
+	currentTS uint64
 
 	storage storage.ExternalStorage
 }
@@ -277,11 +277,11 @@ func (rc *Client) Close() {
 
 func (rc *Client) SetRestoreRangeTS(startTs, restoreTS uint64) {
 	rc.startTS = startTs
-	rc.restoreTs = restoreTS
+	rc.restoreTS = restoreTS
 }
 
 func (rc *Client) SetCurrentTS(ts uint64) {
-	rc.currentTs = ts
+	rc.currentTS = ts
 }
 
 func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
@@ -1657,7 +1657,7 @@ func (rc *Client) RestoreKVFiles(
 					summary.CollectInt("File", 1)
 					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
 				}()
-				return rc.fileImporter.ImportKVFiles(ectx, file, rule, rc.restoreTs)
+				return rc.fileImporter.ImportKVFiles(ectx, file, rule, rc.restoreTS)
 			})
 		}
 	}
@@ -1758,7 +1758,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		}()...)
 	}
 
-	return stream.NewSchemasReplace(dbMap, rc.currentTs, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs), nil
+	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs), nil
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
@@ -1818,7 +1818,7 @@ func (rc *Client) RestoreMetaKVFile(
 
 		// The commitTs in write CF need be limited on [startTs, restoreTs].
 		// We can restore more key-value in default CF.
-		if ts > rc.restoreTs {
+		if ts > rc.restoreTS {
 			continue
 		} else if file.Cf == "write" && ts < rc.startTS {
 			continue
