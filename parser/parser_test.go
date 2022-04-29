@@ -4223,7 +4223,7 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints[2].Tables, 3)
 	require.Equal(t, "t4", hints[2].Tables[0].TableName.L)
 	require.Equal(t, "t5", hints[2].Tables[1].TableName.L)
-	require.Equal(t, "t6", hints[2].Tables[1].TableName.L)
+	require.Equal(t, "t6", hints[2].Tables[2].TableName.L)
 }
 
 func TestType(t *testing.T) {
