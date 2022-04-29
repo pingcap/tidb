@@ -27,20 +27,23 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 )
 
-// extractJoinGroup extracts all the join nodes connected with continuous
+// extractJoinGroupAndJoinOrderHint extracts all the join nodes connected with continuous
 // InnerJoins to construct a join group. This join group is further used to
 // construct a new join order based on a reorder algorithm.
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, LeftJoin(c, d)}.
-func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) {
+func extractJoinGroupAndJoinOrderHint(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression, hintInfo *tableHintInfo) {
 	join, isJoin := p.(*LogicalJoin)
 	if !isJoin || join.preferJoinType > uint(0) || join.JoinType != InnerJoin || join.StraightJoin {
-		return []LogicalPlan{p}, nil, nil
+		return []LogicalPlan{p}, nil, nil, nil
 	}
 
-	lhsGroup, lhsEqualConds, lhsOtherConds := extractJoinGroup(join.children[0])
-	rhsGroup, rhsEqualConds, rhsOtherConds := extractJoinGroup(join.children[1])
+	if join.preferJoinOrder {
+		hintInfo = join.hintInfo
+	}
+	lhsGroup, lhsEqualConds, lhsOtherConds, lhsHint := extractJoinGroupAndJoinOrderHint(join.children[0])
+	rhsGroup, rhsEqualConds, rhsOtherConds, rhsHint := extractJoinGroupAndJoinOrderHint(join.children[1])
 
 	group = append(group, lhsGroup...)
 	group = append(group, rhsGroup...)
@@ -50,7 +53,14 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	otherConds = append(otherConds, join.OtherConditions...)
 	otherConds = append(otherConds, lhsOtherConds...)
 	otherConds = append(otherConds, rhsOtherConds...)
-	return group, eqEdges, otherConds
+	if hintInfo == nil {
+		if lhsHint != nil {
+			hintInfo = lhsHint
+		} else if rhsHint != nil {
+			hintInfo = rhsHint
+		}
+	}
+	return group, eqEdges, otherConds, hintInfo
 }
 
 type joinReOrderSolver struct {
@@ -73,9 +83,7 @@ func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	var err error
-	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
-	// TODO: determine the leading number
-	leadingNum := int64(0)
+	curJoinGroup, eqEdges, otherConds, hintInfo := extractJoinGroupAndJoinOrderHint(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
@@ -88,19 +96,51 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			otherConds: otherConds,
 			eqEdges:    eqEdges,
 		}
-		p = curJoinGroup[0]
-		curJoinGroup = curJoinGroup[1:]
-		for leadingNum > 1 {
-			usedEdges := baseGroupSolver.checkConnection(p, curJoinGroup[0])
-			p, baseGroupSolver.otherConds = baseGroupSolver.makeJoin(p, curJoinGroup[0], usedEdges)
-			curJoinGroup = curJoinGroup[1:]
-			leadingNum--
+		joinGroupNum := len(curJoinGroup)
+		var leadingJoinGroup []LogicalPlan
+		for _, hintTbl := range hintInfo.leadingJoinOrder {
+			for i, joinGroup := range curJoinGroup {
+				hintMatched := false
+				for _, child := range joinGroup.Children() {
+					tableAlias := extractTableAlias(child, joinGroup.SelectBlockOffset())
+					if tableAlias == nil {
+						continue
+					}
+					if hintTbl.dbName.L == tableAlias.dbName.L && hintTbl.tblName.L == tableAlias.tblName.L && hintTbl.selectOffset == tableAlias.selectOffset {
+						hintMatched = true
+						break
+					}
+				}
+				if hintMatched {
+					leadingJoinGroup = append(leadingJoinGroup, joinGroup)
+					curJoinGroup = append(curJoinGroup[:i], curJoinGroup[i+1:]...)
+					break
+				}
+			}
 		}
-		if leadingNum == 1 {
+		var errMsg string
+		if len(leadingJoinGroup) != len(hintInfo.leadingJoinOrder) {
+			errMsg = fmt.Sprint("leading hint is inapplicable, check if the leading hint table is valid")
+		} else if joinGroupNum <= ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
+			errMsg = fmt.Sprint("leading hint is inapplicable for the DP join reorder algorithm")
+		}
+		if len(errMsg) > 0 {
+			curJoinGroup = append(curJoinGroup, leadingJoinGroup...)
+			leadingJoinGroup = nil
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+		}
+		if leadingJoinGroup != nil {
+			p = leadingJoinGroup[0]
+			leadingJoinGroup = leadingJoinGroup[1:]
+			for len(leadingJoinGroup) > 0 {
+				usedEdges := baseGroupSolver.checkConnection(p, leadingJoinGroup[0])
+				p, baseGroupSolver.otherConds = baseGroupSolver.makeJoin(p, leadingJoinGroup[0], usedEdges)
+				curJoinGroup = leadingJoinGroup[1:]
+			}
 			baseGroupSolver.leadingJoinGroup = p
 		}
 		originalSchema := p.Schema()
-		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
+		if joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
