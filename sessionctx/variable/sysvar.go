@@ -283,31 +283,6 @@ var defaultSysVars = []*SysVar{
 		s.MetricSchemaRangeDuration = TidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBSlowLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowThreshold), skipInit: true, Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(TidbOptInt64(val, logutil.DefaultSlowThreshold)))
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), nil
-	}},
-	{Scope: ScopeSession, Name: TiDBRecordPlanInSlowLog, Value: int32ToBoolStr(logutil.DefaultRecordPlanInSlowLog), skipInit: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(TidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		enabled := atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog) == 1
-		return BoolToOnOff(enabled), nil
-	}},
-	{Scope: ScopeSession, Name: TiDBEnableSlowLog, Value: BoolToOnOff(logutil.DefaultTiDBEnableSlowLog), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
-		config.GetGlobalConfig().Log.EnableSlowLog.Store(TiDBOptOn(val))
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog.Load()), nil
-	}},
-	{Scope: ScopeSession, Name: TiDBCheckMb4ValueInUTF8, Value: BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load()), skipInit: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		config.GetGlobalConfig().CheckMb4ValueInUTF8.Store(TiDBOptOn(val))
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load()), nil
-	}},
 	{Scope: ScopeSession, Name: TiDBFoundInPlanCache, Value: BoolToOnOff(DefTiDBFoundInPlanCache), Type: TypeBool, ReadOnly: true, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		s.FoundInPlanCache = TiDBOptOn(val)
 		return nil
