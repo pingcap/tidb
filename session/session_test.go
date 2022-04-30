@@ -16,6 +16,7 @@ package session_test
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"sync"
 	"testing"
@@ -29,6 +30,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
+
+func skipIfPessimisticTxn(t *testing.T) {
+	if *withTiKV && flag.Lookup("check.exclude").Value.String() == "testPessimisticSuite" {
+		t.Skip("skip optimistic transaction dependent tests")
+	}
+}
 
 func TestErrorRollback(t *testing.T) {
 	store, clean := createStorage(t)
@@ -205,6 +212,8 @@ func TestLastMessage(t *testing.T) {
 
 // TestRowLock . See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
 func TestRowLock(t *testing.T) {
+	skipIfPessimisticTxn(t)
+
 	store, clean := createStorage(t)
 	defer clean()
 
