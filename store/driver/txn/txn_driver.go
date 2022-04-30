@@ -284,6 +284,6 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 type TiDBKVFilter struct{}
 
 // IsUnnecessaryKeyValue defines which kinds of KV pairs from TiDB needn't be committed.
-func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
-	return tablecodec.IsUntouchedIndexKValue(key, value)
+func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
+	return tablecodec.IsUntouchedIndexKValue(key, value), nil
 }
