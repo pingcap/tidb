@@ -32,5 +32,4 @@ jobs:
         run: |
           export log_level=error
           make failpoint-enable
-          cd pessimistictest
-          go test -v -with-real-tikv -timeout 20m
+          go test ./tests/pessimistictest -v -with-real-tikv -timeout 20m
