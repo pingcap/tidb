@@ -16,13 +16,11 @@ package owner_test
 
 import (
 	"context"
-	goctx "context"
 	"fmt"
 	"runtime"
 	"testing"
 	"time"
 
-	goctx "context"
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"

@@ -15,7 +15,7 @@
 package ddltest
 
 import (
-	goctx "context"
+	"context"
 	"fmt"
 	"math"
 	"sync"
@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	goctx "context"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/table"
 	"github.com/stretchr/testify/require"
@@ -42,7 +41,7 @@ func getIndex(t table.Table, name string) table.Index {
 func (s *ddlSuite) checkDropIndex(t *testing.T, tableName string) {
 	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	require.NoError(t, err)
-	err = gcWorker.DeleteRanges(goctx.Background(), uint64(math.MaxInt32))
+	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt32))
 	require.NoError(t, err)
 	s.mustExec(fmt.Sprintf("admin check table %s", tableName))
 }
