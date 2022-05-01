@@ -940,7 +940,7 @@ func doSendBackup(
 				logutil.CL(ctx).Debug("failpoint reset-retryable-error unavailable injected.")
 				err = status.Error(codes.Unavailable, "Unavailable error")
 			}
-		case "Internal" :
+		case "Internal":
 			{
 				logutil.CL(ctx).Debug("failpoint reset-retryable-error internal injected.")
 				err = status.Error(codes.Internal, "Internal error")
@@ -1041,10 +1041,8 @@ func isRetryableError(err error) bool {
 	// some errors can be retried
 	// https://github.com/pingcap/tidb/issues/34350
 	switch status.Code(err) {
-	case codes.Unavailable: return true
-	case codes.DeadlineExceeded : return true
-	case codes.ResourceExhausted: return true
-	case codes.Aborted: return true
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted:
+		return true
 	case codes.Internal:
 		{
 			log.Warn("backup met s3 internal error, this error can be retry 5 times")
