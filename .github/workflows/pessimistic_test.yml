@@ -19,7 +19,7 @@ jobs:
           # Disable pipelined pessimistic lock temporarily until tikv#11649 is resolved
           echo -e "[pessimistic-txn]\npipelined = false" > tikv.toml
           curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
-          tiup playground nightly --mode tikv-slim --kv 3 --pd 1 --without-monitor --kv.config tikv.toml
+          $HOME/.tiup/bin/tiup playground nightly --mode tikv-slim --kv 3 --pd 1 --without-monitor --kv.config tikv.toml
       - name: Run Tests
         run: |
           export log_level=error
