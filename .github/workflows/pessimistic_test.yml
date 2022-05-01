@@ -15,7 +15,19 @@ jobs:
         with:
           go-version: 1.18
       - name: Setup TiKV cluster
-        run: TAG=nightly docker-compose -f pessimistictest/docker/cluster.yml up --remove-orphans -d
+        run: |
+          # Disable pipelined pessimistic lock temporarily until tikv#11649 is resolved
+          echo -e "[pessimistic-txn]\npipelined = false" > tikv.toml
+          
+          curl https://tiup-mirrors.pingcap.com/pd-nightly-linux-amd64.tar.gz | tar xz
+          curl https://tiup-mirrors.pingcap.com/tikv-nightly-linux-amd64.tar.gz | tar xz
+          ./pd-server -name=pd1 --data-dir=pd1 --client-urls=http://127.0.0.1:2379 --peer-urls=http://127.0.0.1:2378 -force-new-cluster &> pd1.log &
+          ./tikv-server --pd=127.0.0.1:2379 -s tikv1 --addr=0.0.0.0:20160 --advertise-addr=127.0.0.1:20160 --advertise-status-addr=127.0.0.1:20165 -C tikv.toml -f  tikv1.log &
+          ./pd-server -name=pd2 --data-dir=pd2 --client-urls=http://127.0.0.1:2389 --peer-urls=http://127.0.0.1:2388 -force-new-cluster &>  pd2.log &
+          ./tikv-server --pd=127.0.0.1:2389 -s tikv2 --addr=0.0.0.0:20170 --advertise-addr=127.0.0.1:20170 --advertise-status-addr=127.0.0.1:20175 -C tikv.toml -f  tikv2.log &
+          ./pd-server -name=pd3 --data-dir=pd3 --client-urls=http://127.0.0.1:2399 --peer-urls=http://127.0.0.1:2398 -force-new-cluster &> pd3.log &
+          ./tikv-server --pd=127.0.0.1:2399 -s tikv3 --addr=0.0.0.0:20190 --advertise-addr=127.0.0.1:20190 --advertise-status-addr=127.0.0.1:20185 -C tikv.toml -f  tikv3.log &
+
       - name: Run Tests
         run: |
           export log_level=error
