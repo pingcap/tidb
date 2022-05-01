@@ -1,4 +1,4 @@
-name: Pessimistic Tests
+name: Real TiKV Tests
 
 on:
   push:
