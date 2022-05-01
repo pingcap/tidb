@@ -1041,11 +1041,10 @@ func isRetryableError(err error) bool {
 	// some errors can be retried
 	// https://github.com/pingcap/tidb/issues/34350
 	switch status.Code(err) {
-	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted:
-		return true
-	case codes.Internal:
+	case codes.Unavailable, codes.DeadlineExceeded,
+		codes.ResourceExhausted, codes.Aborted, codes.Internal:
 		{
-			log.Warn("backup met s3 internal error, this error can be retry 5 times")
+			log.Warn("backup met some errors, these errors can be retry 5 times", zap.Error(err))
 			return true
 		}
 	}
@@ -1055,6 +1054,7 @@ func isRetryableError(err error) bool {
 	if status.Code(err) == codes.Canceled {
 		if s, ok := status.FromError(err); ok {
 			if strings.Contains(s.Message(), gRPC_Cancel) {
+				log.Warn("backup met grpc cancel error, this errors can be retry 5 times", zap.Error(err))
 				return true
 			}
 		}
