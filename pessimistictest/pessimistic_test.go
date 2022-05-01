@@ -1998,12 +1998,10 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 varchar(10))")
 	tk.MustExec("insert t1 values (1, 77, 'a'), (2, 88, 'b')")
@@ -2087,10 +2085,7 @@ func TestInsertDupKeyAfterLock(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+
 	tk2.MustExec("drop table if exists t1")
 	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
 	tk2.MustExec("insert into t1 values(1, 2, 3);")
@@ -2183,10 +2178,7 @@ func TestInsertDupKeyAfterLockBatchPointGet(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+
 	tk2.MustExec("drop table if exists t1")
 	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
 	tk2.MustExec("insert into t1 values(1, 2, 3);")
@@ -2282,15 +2274,10 @@ func TestAmendTxnVariable(t *testing.T) {
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use test")
 
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
 	tk2.MustExec("drop table if exists t1")
 	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
 	tk2.MustExec("insert into t1 values(1, 1, 1);")
 	tk2.MustExec("insert into t1 values(2, 2, 2);")
-	tk3.MustExec("use test_db")
 
 	// Set off the session variable.
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
@@ -2300,8 +2287,7 @@ func TestAmendTxnVariable(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values(4, 4, 4)")
 	tk2.MustExec("alter table t1 add column new_col int")
-	err := tk3.ExecToErr("commit")
-	require.Error(t, err)
+	require.Error(t, tk3.ExecToErr("commit"))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>"))
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
@@ -2313,12 +2299,10 @@ func TestAmendTxnVariable(t *testing.T) {
 	tk4.MustExec("use test")
 
 	tk4.MustQuery(`show variables like "tidb_enable_amend_pessimistic_txn"`).Check(testkit.Rows("tidb_enable_amend_pessimistic_txn OFF"))
-	tk4.MustExec("use test_db")
 	tk4.MustExec("begin pessimistic")
 	tk4.MustExec("insert into t1 values(5, 5, 5, 5)")
 	tk2.MustExec("alter table t1 drop column new_col")
-	err = tk4.ExecToErr("commit")
-	require.Error(t, err)
+	require.Error(t, tk4.ExecToErr("commit"))
 	tk4.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk4.MustExec("begin pessimistic")
 	tk4.MustExec("insert into t1 values(5, 5, 5)")
@@ -2573,10 +2557,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+
 	tk2.MustExec("drop table if exists t1")
 	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
 	tk2.MustExec("insert into t1 values(1, 1, 1);")
@@ -2587,8 +2568,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into t1 values(3, 3, 3)")
 	tk.MustExec("insert into t1 values(4, 4, 3)")
 	tk2.MustExec("alter table t1 add unique index uk1(c3)")
-	err := tk.ExecToErr("commit")
-	require.Error(t, err)
+	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustExec("alter table t1 drop index uk1")
 	tk2.MustExec("admin check table t1")
 
@@ -2597,8 +2577,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into t1 values(3, 3, 3)")
 	tk.MustExec("insert into t1 values(4, 4, 1)")
 	tk2.MustExec("alter table t1 add unique index uk1(c3)")
-	err = tk.ExecToErr("commit")
-	require.Error(t, err)
+	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustExec("admin check table t1")
 
 	// Put new values.
@@ -2617,8 +2596,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("alter table t add unique index uk(c);")
 	tk.MustExec("update t set c = 2 where id = 3;")
-	err = tk.ExecToErr("commit")
-	require.Error(t, err)
+	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustExec("admin check table t")
 
 	// Update the old value with same unique key, but the row key has changed.
@@ -2634,7 +2612,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 	}()
 	time.Sleep(300 * time.Millisecond)
 	tk.MustExec("commit")
-	err = <-finishCh
+	err := <-finishCh
 	require.NoError(t, err)
 	tk2.MustExec("admin check table t")
 
@@ -2699,10 +2677,7 @@ func TestAmendWithColumnTypeChange(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	tk2.MustExec("drop table if exists t")
@@ -3067,10 +3042,7 @@ func TestAmendForIndexChange(t *testing.T) {
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
 	tk.Session().GetSessionVars().EnableAsyncCommit = false
 	tk.Session().GetSessionVars().Enable1PC = false
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+
 	tk2.MustExec("drop table if exists t1")
 
 	// Add some different column types.
@@ -3131,8 +3103,6 @@ func TestAmendForIndexChange(t *testing.T) {
 			tk2.MustQuery("select count(*) from t_part").Check(testkit.Rows("2"))
 		}
 	}
-
-	tk2.MustExec("drop database test_db")
 }
 
 func TestAmendForColumnChange(t *testing.T) {
@@ -3145,10 +3115,6 @@ func TestAmendForColumnChange(t *testing.T) {
 	tk2.MustExec("use test")
 
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
 	tk2.MustExec("drop table if exists t1")
 
 	// Add some different column types.
@@ -3220,8 +3186,6 @@ func TestAmendForColumnChange(t *testing.T) {
 		tk2.MustExec("admin check table t_part")
 		tk2.MustQuery("select count(*) from t_part").Check(testkit.Rows("2"))
 	}
-
-	tk2.MustExec("drop database test_db")
 }
 
 func TestPessimisticAutoCommitTxn(t *testing.T) {
@@ -3232,9 +3196,6 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (i int)")
 	tk.MustExec("insert into t values (1)")
