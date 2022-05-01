@@ -45,6 +45,7 @@ import (
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	utilMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -2383,5 +2384,5 @@ func (s *SessionVars) IsRcCheckTsRetryable(err error) bool {
 		return false
 	}
 	// The `RCCheckTS` flag of `stmtCtx` is set.
-	return s.RcReadCheckTS && s.StmtCtx.RCCheckTS && errors.ErrorEqual(err, kv.ErrWriteConflict)
+	return s.RcReadCheckTS && s.StmtCtx.RCCheckTS && errors.ErrorEqual(err, dbterror.ErrWriteConflict)
 }

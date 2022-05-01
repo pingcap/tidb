@@ -1102,7 +1102,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 					continue
 				}
-			} else if !kv.IsErrNotFound(err) {
+			} else if !dbterror.IsErrNotFound(err) {
 				return err
 			}
 		}
@@ -1114,7 +1114,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				skip = true
 				break
 			}
-			if !kv.IsErrNotFound(err) {
+			if !dbterror.IsErrNotFound(err) {
 				return err
 			}
 		}
@@ -1148,7 +1148,7 @@ func (e *InsertValues) removeRow(ctx context.Context, txn kv.Transaction, r toBe
 		logutil.BgLogger().Error("get old row failed when replace",
 			zap.String("handle", handle.String()),
 			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
-		if kv.IsErrNotFound(err) {
+		if dbterror.IsErrNotFound(err) {
 			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
 		}
 		return err

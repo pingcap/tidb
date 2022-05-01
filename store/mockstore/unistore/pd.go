@@ -20,7 +20,6 @@ import (
 	"math"
 	"sync"
 
-	"context"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	pd "github.com/tikv/pd/client"

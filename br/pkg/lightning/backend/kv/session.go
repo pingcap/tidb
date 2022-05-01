@@ -197,7 +197,7 @@ func (t *transaction) Reset() {}
 
 // Get implements the kv.Retriever interface
 func (t *transaction) Get(ctx context.Context, key kv.Key) ([]byte, error) {
-	return nil, kv.ErrNotExist
+	return nil, dbterror.ErrNotExist
 }
 
 // Iter implements the kv.Retriever interface

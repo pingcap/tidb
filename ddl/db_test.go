@@ -936,7 +936,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, historyJob)
 	require.Equal(t, int64(1), historyJob.ErrorCount)
-	require.True(t, kv.ErrEntryTooLarge.Equal(historyJob.Error))
+	require.True(t, dbterror.ErrEntryTooLarge.Equal(historyJob.Error))
 }
 
 func TestCommitTxnWithIndexChange(t *testing.T) {

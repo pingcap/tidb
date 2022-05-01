@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -70,7 +71,7 @@ func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle 
 		logutil.BgLogger().Error("get old row failed when replace",
 			zap.String("handle", handle.String()),
 			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
-		if kv.IsErrNotFound(err) {
+		if dbterror.IsErrNotFound(err) {
 			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
 		}
 		return false, err
@@ -132,7 +133,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 				return nil
 			}
 		} else {
-			if !kv.IsErrNotFound(err) {
+			if !dbterror.IsErrNotFound(err) {
 				return err
 			}
 		}
@@ -171,7 +172,7 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 	for _, uk := range r.uniqueKeys {
 		val, err := txn.Get(ctx, uk.newKey)
 		if err != nil {
-			if kv.IsErrNotFound(err) {
+			if dbterror.IsErrNotFound(err) {
 				continue
 			}
 			return false, false, err

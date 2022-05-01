@@ -382,7 +382,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 			}
 		}
 		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
-		if kv.ErrKeyExists.Equal(err) {
+		if dbterror.ErrKeyExists.Equal(err) {
 			record1 := &consistency.RecordData{Handle: h1, Values: vals1}
 			record2 := &consistency.RecordData{Handle: h2, Values: vals1}
 			return false, ir().ReportAdminCheckInconsistent(ctx, h1, record2, record1)

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -200,7 +201,7 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 	}
 
 	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, e.OnDuplicate)
-	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
+	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && dbterror.ErrKeyExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
 	}
@@ -248,7 +249,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			if err == nil {
 				continue
 			}
-			if !kv.IsErrNotFound(err) {
+			if !dbterror.IsErrNotFound(err) {
 				return err
 			}
 		}
@@ -256,7 +257,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		for _, uk := range r.uniqueKeys {
 			val, err := txn.Get(ctx, uk.newKey)
 			if err != nil {
-				if kv.IsErrNotFound(err) {
+				if dbterror.IsErrNotFound(err) {
 					continue
 				}
 				return err
@@ -268,7 +269,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 
 			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
 			if err != nil {
-				if kv.IsErrNotFound(err) {
+				if dbterror.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
 					// handle points to nothing.
 					logutil.BgLogger().Error("get old row failed when insert on dup",

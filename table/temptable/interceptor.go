@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 var (
@@ -71,12 +72,12 @@ func getSessionKey(ctx context.Context, tblInfo *model.TableInfo, sessionData kv
 	}
 
 	if sessionData == nil || tblInfo.TempTableType == model.TempTableGlobal {
-		return nil, kv.ErrNotExist
+		return nil, dbterror.ErrNotExist
 	}
 
 	val, err := sessionData.Get(ctx, k)
 	if err == nil && len(val) == 0 {
-		return nil, kv.ErrNotExist
+		return nil, dbterror.ErrNotExist
 	}
 	return val, err
 }
@@ -123,7 +124,7 @@ func (i *TemporaryTableSnapshotInterceptor) batchGetTemporaryTableKeys(ctx conte
 		}
 
 		val, err := getSessionKey(ctx, tblInfo, i.sessionData, k)
-		if kv.ErrNotExist.Equal(err) {
+		if dbterror.ErrNotExist.Equal(err) {
 			continue
 		}
 

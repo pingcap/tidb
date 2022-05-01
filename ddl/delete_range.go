@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -207,7 +208,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 
 			for _, key := range dr.keys {
 				err := txn.Delete(key)
-				if err != nil && !kv.ErrNotExist.Equal(err) {
+				if err != nil && !dbterror.ErrNotExist.Equal(err) {
 					return errors.Trace(err)
 				}
 			}

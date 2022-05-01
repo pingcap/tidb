@@ -83,24 +83,24 @@ func TestTxnGet(t *testing.T) {
 	err = txn.Delete(kv.Key("k1"))
 	require.NoError(t, err)
 
-	// should return kv.ErrNotExist if deleted
+	// should return dbterror.ErrNotExist if deleted
 	v, err = txn.Get(context.Background(), kv.Key("k1"))
 	require.Nil(t, v)
-	require.True(t, kv.ErrNotExist.Equal(err))
+	require.True(t, dbterror.ErrNotExist.Equal(err))
 
-	// should return kv.ErrNotExist if not exist
+	// should return dbterror.ErrNotExist if not exist
 	v, err = txn.Get(context.Background(), kv.Key("kn"))
 	require.Nil(t, v)
-	require.True(t, kv.ErrNotExist.Equal(err))
+	require.True(t, dbterror.ErrNotExist.Equal(err))
 
 	// make snapshot returns error
 	errInterceptor := &mockErrInterceptor{err: errors.New("error")}
 	txn.SetOption(kv.SnapInterceptor, errInterceptor)
 
-	// should return kv.ErrNotExist because k1 is deleted in memBuff
+	// should return dbterror.ErrNotExist because k1 is deleted in memBuff
 	v, err = txn.Get(context.Background(), kv.Key("k1"))
 	require.Nil(t, v)
-	require.True(t, kv.ErrNotExist.Equal(err))
+	require.True(t, dbterror.ErrNotExist.Equal(err))
 
 	// should return dirty data because k2 is in memBuff
 	v, err = txn.Get(context.Background(), kv.Key("k2"))

@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -732,7 +733,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 		return err
 	}
 	if !txn.Valid() {
-		return errors.Trace(kv.ErrInvalidTxn)
+		return errors.Trace(dbterror.ErrInvalidTxn)
 	}
 
 	// The Oracle serializable isolation is actually SI in pessimistic mode.
@@ -775,7 +776,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 			zap.Uint64("lockTS", deadlock.LockTs),
 			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
-	} else if terror.ErrorEqual(kv.ErrWriteConflict, err) {
+	} else if terror.ErrorEqual(dbterror.ErrWriteConflict, err) {
 		errStr := err.Error()
 		forUpdateTS := txnCtx.GetForUpdateTS()
 		logutil.Logger(ctx).Debug("pessimistic write conflict, retry statement",

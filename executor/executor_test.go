@@ -3878,7 +3878,7 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	// try to update in session 1
 	tk1.MustExec("update t set c = c + 10 where c = 1")
 	err = tk1.ExecToErr("commit")
-	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
+	require.True(t, dbterror.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
 
 	// verify
 	rs, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(1)})
@@ -4055,7 +4055,7 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 	// try to update in session 1
 	tk1.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 6"))
 	err = tk1.ExecToErr("commit")
-	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
+	require.True(t, dbterror.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
 
 	// verify
 	tk2.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1 1"))

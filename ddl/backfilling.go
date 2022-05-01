@@ -756,7 +756,7 @@ func iterateSnapshotRows(ctx *JobContext, store kv.Storage, priority int, t tabl
 
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key()))
 		if err != nil {
-			if kv.ErrNotExist.Equal(err) {
+			if dbterror.ErrNotExist.Equal(err) {
 				break
 			}
 			return errors.Trace(err)

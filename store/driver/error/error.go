@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/dbterror"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -70,30 +69,30 @@ func ToTiDBErr(err error) error {
 		return nil
 	}
 	if tikverr.IsErrNotFound(err) {
-		return kv.ErrNotExist
+		return dbterror.ErrNotExist
 	}
 
 	var writeConflictInLatch *tikverr.ErrWriteConflictInLatch
 	if stderrs.As(err, &writeConflictInLatch) {
-		return kv.ErrWriteConflictInTiDB.FastGenByArgs(writeConflictInLatch.StartTS)
+		return dbterror.ErrWriteConflictInTiDB.FastGenByArgs(writeConflictInLatch.StartTS)
 	}
 
 	var txnTooLarge *tikverr.ErrTxnTooLarge
 	if stderrs.As(err, &txnTooLarge) {
-		return kv.ErrTxnTooLarge.GenWithStackByArgs(txnTooLarge.Size)
+		return dbterror.ErrTxnTooLarge.GenWithStackByArgs(txnTooLarge.Size)
 	}
 
 	if stderrs.Is(err, tikverr.ErrCannotSetNilValue) {
-		return kv.ErrCannotSetNilValue
+		return dbterror.ErrCannotSetNilValue
 	}
 
 	var entryTooLarge *tikverr.ErrEntryTooLarge
 	if stderrs.As(err, &entryTooLarge) {
-		return kv.ErrEntryTooLarge.GenWithStackByArgs(entryTooLarge.Limit, entryTooLarge.Size)
+		return dbterror.ErrEntryTooLarge.GenWithStackByArgs(entryTooLarge.Limit, entryTooLarge.Size)
 	}
 
 	if stderrs.Is(err, tikverr.ErrInvalidTxn) {
-		return kv.ErrInvalidTxn
+		return dbterror.ErrInvalidTxn
 	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVServerTimeout) {

@@ -24,7 +24,6 @@ import (
 	"time"
 	"unsafe"
 
-	"context"
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/errors"

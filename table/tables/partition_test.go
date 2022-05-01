@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	mysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
@@ -97,7 +96,7 @@ PARTITION BY RANGE ( id ) (
 	require.NoError(t, err)
 	require.Greater(t, len(val), 0)
 	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
-	require.True(t, kv.ErrNotExist.Equal(err))
+	require.True(t, dbterror.ErrNotExist.Equal(err))
 
 	// Cover more code.
 	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(7))
@@ -191,7 +190,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, len(val), 0)
 	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
-	require.True(t, kv.ErrNotExist.Equal(err))
+	require.True(t, dbterror.ErrNotExist.Equal(err))
 
 	// Cover more code.
 	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(-1))
@@ -226,7 +225,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 		require.NoError(t, err)
 		require.Greater(t, len(val), 0)
 		_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
-		require.True(t, kv.ErrNotExist.Equal(err))
+		require.True(t, dbterror.ErrNotExist.Equal(err))
 	}
 	_, err = tk.Session().Execute(context.Background(), "drop table if exists t1, t2;")
 	require.NoError(t, err)

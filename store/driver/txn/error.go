@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
@@ -41,7 +42,7 @@ func genKeyExistsError(name string, value string, err error) error {
 	if err != nil {
 		logutil.BgLogger().Info("extractKeyExistsErr meets error", zap.Error(err))
 	}
-	return kv.ErrKeyExists.FastGenByArgs(value, name)
+	return dbterror.ErrKeyExists.FastGenByArgs(value, name)
 }
 
 func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.TableInfo) error {
@@ -149,20 +150,20 @@ func extractKeyErr(err error) error {
 	}
 	if e, ok := errors.Cause(err).(*tikverr.ErrRetryable); ok {
 		notFoundDetail := prettyLockNotFoundKey(e.Retryable)
-		return kv.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
+		return dbterror.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
 	}
 	return derr.ToTiDBErr(err)
 }
 
 func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
 	if conflict == nil {
-		return kv.ErrWriteConflict
+		return dbterror.ErrWriteConflict
 	}
 	var buf bytes.Buffer
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
+	return dbterror.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {

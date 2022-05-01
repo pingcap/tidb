@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
@@ -318,7 +319,7 @@ func decreaseMockAutoRandIDRetryCount() {
 }
 
 // ResetMockAutoRandIDRetryCount set the number of occurrences of
-// `kv.ErrTxnRetryable` when calling TxnState.Commit().
+// `dbterror.ErrTxnRetryable` when calling TxnState.Commit().
 func ResetMockAutoRandIDRetryCount(failTimes int64) {
 	atomic.StoreInt64(&mockAutoRandIDRetryCount, failTimes)
 }
@@ -331,7 +332,7 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 			zap.String("TxnState", txn.GoString()),
 			zap.Int("staging handler", int(txn.stagingHandle)),
 			zap.Stack("something must be wrong"))
-		return errors.Trace(kv.ErrInvalidTxn)
+		return errors.Trace(dbterror.ErrInvalidTxn)
 	}
 
 	txn.mu.Lock()
@@ -343,7 +344,7 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 	// mockCommitError8942 is used for PR #8942.
 	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(kv.ErrTxnRetryable)
+			failpoint.Return(dbterror.ErrTxnRetryable)
 		}
 	})
 
@@ -351,14 +352,14 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 	failpoint.Inject("mockCommitRetryForAutoIncID", func(val failpoint.Value) {
 		if val.(bool) && !mockAutoIncIDRetry() {
 			enableMockAutoIncIDRetry()
-			failpoint.Return(kv.ErrTxnRetryable)
+			failpoint.Return(dbterror.ErrTxnRetryable)
 		}
 	})
 
 	failpoint.Inject("mockCommitRetryForAutoRandID", func(val failpoint.Value) {
 		if val.(bool) && needMockAutoRandIDRetry() {
 			decreaseMockAutoRandIDRetryCount()
-			failpoint.Return(kv.ErrTxnRetryable)
+			failpoint.Return(dbterror.ErrTxnRetryable)
 		}
 	})
 

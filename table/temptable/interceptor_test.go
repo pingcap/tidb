@@ -287,7 +287,7 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 	for i, c := range cases {
 		val, err := getSessionKey(ctx, localTb.Meta(), retriever, c.Key)
 		if len(c.Value) == 0 || string(c.Value) == "non-exist-key" {
-			require.True(t, kv.ErrNotExist.Equal(err), i)
+			require.True(t, dbterror.ErrNotExist.Equal(err), i)
 			require.Nil(t, val, i)
 		} else {
 			require.NoError(t, err, i)
@@ -301,14 +301,14 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 
 		// test for nil session
 		val, err = getSessionKey(ctx, localTb.Meta(), nil, c.Key)
-		require.True(t, kv.ErrNotExist.Equal(err), i)
+		require.True(t, dbterror.ErrNotExist.Equal(err), i)
 		require.Nil(t, val, i)
 		require.Equal(t, 0, len(retriever.GetInvokes()), i)
 	}
 
 	// test global temporary table should return empty data directly
 	val, err := getSessionKey(ctx, globalTb.Meta(), retriever, encodeTableKey(3))
-	require.True(t, kv.ErrNotExist.Equal(err))
+	require.True(t, dbterror.ErrNotExist.Equal(err))
 	require.Nil(t, val)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 
@@ -431,7 +431,7 @@ func TestInterceptorOnGet(t *testing.T) {
 			}
 			val, err := inter.OnGet(ctx, snap, c.Key)
 			if string(c.Value) == "non-exist-key" {
-				require.True(t, kv.ErrNotExist.Equal(err), i)
+				require.True(t, dbterror.ErrNotExist.Equal(err), i)
 				require.Nil(t, val, i)
 			} else {
 				require.NoError(t, err, i)
@@ -446,21 +446,21 @@ func TestInterceptorOnGet(t *testing.T) {
 		}
 	}
 
-	// test global temporary table should return kv.ErrNotExist
+	// test global temporary table should return dbterror.ErrNotExist
 	val, err := interceptor.OnGet(ctx, snap, encodeTableKey(3))
-	require.True(t, kv.ErrNotExist.Equal(err))
+	require.True(t, dbterror.ErrNotExist.Equal(err))
 	require.Nil(t, val)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 	require.Equal(t, 0, len(snap.GetInvokes()))
 
 	val, err = interceptor.OnGet(ctx, snap, encodeTableKey(3, 1))
-	require.True(t, kv.ErrNotExist.Equal(err))
+	require.True(t, dbterror.ErrNotExist.Equal(err))
 	require.Nil(t, val)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 	require.Equal(t, 0, len(snap.GetInvokes()))
 
 	val, err = emptyRetrieverInterceptor.OnGet(ctx, snap, encodeTableKey(3, 1))
-	require.True(t, kv.ErrNotExist.Equal(err))
+	require.True(t, dbterror.ErrNotExist.Equal(err))
 	require.Nil(t, val)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
 	require.Equal(t, 0, len(snap.GetInvokes()))
@@ -473,7 +473,7 @@ func TestInterceptorOnGet(t *testing.T) {
 	for i, c := range cases {
 		val, err = interceptor.OnGet(ctx, snap, c.Key)
 		if len(c.Value) == 0 || string(c.Value) == "non-exist-key" {
-			require.True(t, kv.ErrNotExist.Equal(err), i)
+			require.True(t, dbterror.ErrNotExist.Equal(err), i)
 			require.Nil(t, val, i)
 		} else {
 			require.NoError(t, err, i)
@@ -487,7 +487,7 @@ func TestInterceptorOnGet(t *testing.T) {
 		retriever.ResetInvokes()
 
 		val, err = emptyRetrieverInterceptor.OnGet(ctx, snap, c.Key)
-		require.True(t, kv.ErrNotExist.Equal(err))
+		require.True(t, dbterror.ErrNotExist.Equal(err))
 		require.Nil(t, val)
 		require.Equal(t, 0, len(snap.GetInvokes()), i)
 		require.Equal(t, 0, len(retriever.GetInvokes()), i)

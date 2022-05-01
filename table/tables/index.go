@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -183,7 +184,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	} else {
 		value, err = txn.Get(ctx, key)
 	}
-	if err != nil && !kv.IsErrNotFound(err) {
+	if err != nil && !dbterror.IsErrNotFound(err) {
 		return nil, err
 	}
 	if err != nil || len(value) == 0 {
@@ -211,7 +212,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	if err != nil {
 		return nil, err
 	}
-	return handle, kv.ErrKeyExists
+	return handle, dbterror.ErrKeyExists
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
@@ -242,7 +243,7 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 	}
 
 	value, err := txn.Get(context.TODO(), key)
-	if kv.IsErrNotFound(err) {
+	if dbterror.IsErrNotFound(err) {
 		return false, nil, nil
 	}
 	if err != nil {
@@ -257,7 +258,7 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 			return false, nil, err
 		}
 		if !handle.Equal(h) {
-			return true, handle, kv.ErrKeyExists
+			return true, handle, dbterror.ErrKeyExists
 		}
 		return true, handle, nil
 	}

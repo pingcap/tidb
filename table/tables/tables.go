@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -829,15 +830,15 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 				setPresume = true
 			}
 			if err == nil && len(v) == 0 {
-				err = kv.ErrNotExist
+				err = dbterror.ErrNotExist
 			}
 		} else {
 			_, err = txn.Get(ctx, key)
 		}
 		if err == nil {
 			handleStr := getDuplicateErrorHandleString(t, recordID, r)
-			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
-		} else if !kv.ErrNotExist.Equal(err) {
+			return recordID, dbterror.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
+		} else if !dbterror.ErrNotExist.Equal(err) {
 			return recordID, err
 		}
 	}
@@ -959,11 +960,11 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 				return nil, err
 			}
 			idxMeta := v.Meta()
-			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
+			dupErr = dbterror.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
 		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
-			if kv.ErrKeyExists.Equal(err) {
+			if dbterror.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
 			}
 			return nil, err
@@ -1301,7 +1302,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 			return err
 		}
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
-			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
+			if v.Meta().State != model.StatePublic && dbterror.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
 				logutil.BgLogger().Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()))
@@ -1327,7 +1328,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	}
 	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil, idx.Meta())
 	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
-		if kv.ErrKeyExists.Equal(err) {
+		if dbterror.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := genIndexKeyStr(vals)
 			if err1 != nil {
@@ -1335,7 +1336,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 				return err
 			}
 
-			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name)
+			return dbterror.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name)
 		}
 		return err
 	}

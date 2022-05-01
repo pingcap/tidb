@@ -947,7 +947,7 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 	tk.MustExec("insert into t values (22, 'gold witch'), (24, 'gray singer'), (21, 'silver sight');")
 	tk.MustExec("begin;")
 	err := tk.ExecToErr("insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);")
-	require.True(t, kv.ErrKeyExists.Equal(err))
+	require.True(t, dbterror.ErrKeyExists.Equal(err))
 	tk.MustExec("commit;")
 	tk.MustQuery("select * from t order by c_int;").Check(testkit.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
 	tk.MustExec("drop table t;")
@@ -2401,7 +2401,7 @@ func TestLatch(t *testing.T) {
 	tk1.MustExec("update t set id = id + 1")
 	tk2.MustExec("update t set id = id + 1")
 	_, err = tk1.Exec("commit")
-	require.True(t, kv.ErrWriteConflictInTiDB.Equal(err))
+	require.True(t, dbterror.ErrWriteConflictInTiDB.Equal(err))
 
 	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk1.MustExec("update t set id = id + 1")

@@ -67,7 +67,7 @@ func TestPrefix(t *testing.T) {
 	err = util.DelKeyWithPrefix(txn, []byte("key"))
 	require.NoError(t, err)
 	_, err = txn.Get(context.TODO(), k)
-	assert.True(t, terror.ErrorEqual(kv.ErrNotExist, err))
+	assert.True(t, terror.ErrorEqual(dbterror.ErrNotExist, err))
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)

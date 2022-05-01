@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/dbterror"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
@@ -48,8 +49,8 @@ type tikvBatchBufferGetter struct {
 func (b tikvBatchBufferGetter) Get(k []byte) ([]byte, error) {
 	// Get from buffer
 	val, err := b.tidbBuffer.Get(context.TODO(), k)
-	if err == nil || !kv.IsErrNotFound(err) || b.tidbMiddleCache == nil {
-		if kv.IsErrNotFound(err) {
+	if err == nil || !dbterror.IsErrNotFound(err) || b.tidbMiddleCache == nil {
+		if dbterror.IsErrNotFound(err) {
 			err = tikverr.ErrNotExist
 		}
 		return val, err

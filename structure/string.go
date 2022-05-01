@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // Set sets the string value of the key.
@@ -35,7 +36,7 @@ func (t *TxStructure) Set(key []byte, value []byte) error {
 func (t *TxStructure) Get(key []byte) ([]byte, error) {
 	ek := t.encodeStringDataKey(key)
 	value, err := t.reader.Get(context.TODO(), ek)
-	if kv.ErrNotExist.Equal(err) {
+	if dbterror.ErrNotExist.Equal(err) {
 		err = nil
 	}
 	return value, errors.Trace(err)
@@ -61,7 +62,7 @@ func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 	ek := t.encodeStringDataKey(key)
 	// txn Inc will lock this key, so we don't lock it here.
 	n, err := kv.IncInt64(t.readWriter, ek, step)
-	if kv.ErrNotExist.Equal(err) {
+	if dbterror.ErrNotExist.Equal(err) {
 		err = nil
 	}
 	return n, errors.Trace(err)
@@ -74,7 +75,7 @@ func (t *TxStructure) Clear(key []byte) error {
 	}
 	ek := t.encodeStringDataKey(key)
 	err := t.readWriter.Delete(ek)
-	if kv.ErrNotExist.Equal(err) {
+	if dbterror.ErrNotExist.Equal(err) {
 		err = nil
 	}
 	return errors.Trace(err)

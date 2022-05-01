@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -562,8 +563,8 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 
 	_, err = tk1.Session().Execute(context.Background(), "commit")
 	require.Error(t, err)
-	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("err %v", err))
-	require.Contains(t, err.Error(), kv.TxnRetryableMark)
+	require.True(t, dbterror.ErrWriteConflict.Equal(err), fmt.Sprintf("err %v", err))
+	require.Contains(t, err.Error(), dbterror.TxnRetryableMark)
 	tk1.MustExec("rollback")
 
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -583,7 +584,7 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	tk1.MustExec("update no_retry set id = 12")
 	_, err = tk1.Session().Execute(context.Background(), "set autocommit = 1")
 	require.Error(t, err)
-	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("err %v", err))
+	require.True(t, dbterror.ErrWriteConflict.Equal(err), fmt.Sprintf("err %v", err))
 	require.Contains(t, err.Error(), kv.TxnRetryableMark)
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("11"))
@@ -594,7 +595,7 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	tk1.MustExec("update no_retry set id = 14")
 	_, err = tk1.Session().Execute(context.Background(), "commit")
 	require.Error(t, err)
-	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("err %v", err))
+	require.True(t, dbterror.ErrWriteConflict.Equal(err), fmt.Sprintf("err %v", err))
 	require.Contains(t, err.Error(), kv.TxnRetryableMark)
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("13"))

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -141,7 +142,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 		handleKey = &keyValueWithDupInfo{
 			newKey: tablecodec.EncodeRecordKey(t.RecordPrefix(), handle),
-			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
+			dupErr: dbterror.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
 		}
 	}
 
@@ -185,7 +186,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 		uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
 			newKey:       key,
-			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
+			dupErr:       dbterror.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
 			commonHandle: t.Meta().IsCommonHandle,
 		})
 	}

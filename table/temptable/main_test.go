@@ -168,7 +168,7 @@ func (r *mockedRetriever) Get(ctx context.Context, k kv.Key) (val []byte, err er
 		var ok bool
 		val, ok = r.dataMap[string(k)]
 		if !ok {
-			err = kv.ErrNotExist
+			err = dbterror.ErrNotExist
 		}
 	}
 	r.appendInvoke("Get", []interface{}{ctx, k}, []interface{}{val, err})
