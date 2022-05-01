@@ -23,7 +23,7 @@ var retryableServerError = []string{
 	"body write aborted",
 	"error during dispatch",
 	"put object timeout",
-	"InternalError",
+	"internalerror",
 }
 
 // RetryableFunc presents a retryable operation.
