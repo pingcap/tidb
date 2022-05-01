@@ -2434,6 +2434,8 @@ func TestSelectForUpdateConflictRetry(t *testing.T) {
 func TestAsyncCommitWithSchemaChange(t *testing.T) {
 	if !*withRealTiKV {
 		t.Skip("TODO: implement commit_ts calculation in unistore")
+	} else {
+		t.Skip("This test is unstable as depending on time.Sleep")
 	}
 
 	defer config.RestoreFunc()()
