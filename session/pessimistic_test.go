@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 
@@ -1503,14 +1504,14 @@ func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
 	tk.MustQuery("select * from t1 where c1 in(1, 5) for update").Check(testkit.Rows("1 1 1", "5 5 5"))
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 1)
 	err := tk.ExecToErr("select * from t1 where c1 in(1, 5)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrLockExpire), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrLockExpire), IsTrue)
 	tk.MustExec("commit")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 where c1 in(1, 5) for update").Check(testkit.Rows("1 1 1", "5 5 5"))
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 1)
 	err = tk.ExecToErr("update t1 set c2 = c2 + 1")
-	c.Assert(terror.ErrorEqual(err, kv.ErrLockExpire), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrLockExpire), IsTrue)
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 0)
 	tk.MustExec("update t1 set c2 = c2 + 1")
 	tk.MustExec("rollback")

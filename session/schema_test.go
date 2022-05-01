@@ -585,7 +585,7 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	_, err = tk1.Session().Execute(context.Background(), "set autocommit = 1")
 	require.Error(t, err)
 	require.True(t, dbterror.ErrWriteConflict.Equal(err), fmt.Sprintf("err %v", err))
-	require.Contains(t, err.Error(), kv.TxnRetryableMark)
+	require.Contains(t, err.Error(), dbterror.TxnRetryableMark)
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("11"))
 
@@ -596,7 +596,7 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	_, err = tk1.Session().Execute(context.Background(), "commit")
 	require.Error(t, err)
 	require.True(t, dbterror.ErrWriteConflict.Equal(err), fmt.Sprintf("err %v", err))
-	require.Contains(t, err.Error(), kv.TxnRetryableMark)
+	require.Contains(t, err.Error(), dbterror.TxnRetryableMark)
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("13"))
 }

@@ -19,20 +19,21 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
-		ErrNotExist,
-		ErrTxnRetryable,
-		ErrCannotSetNilValue,
-		ErrInvalidTxn,
-		ErrTxnTooLarge,
-		ErrEntryTooLarge,
-		ErrNotImplemented,
-		ErrWriteConflict,
-		ErrWriteConflictInTiDB,
+		dbterror.ErrNotExist,
+		dbterror.ErrTxnRetryable,
+		dbterror.ErrCannotSetNilValue,
+		dbterror.ErrInvalidTxn,
+		dbterror.ErrTxnTooLarge,
+		dbterror.ErrEntryTooLarge,
+		dbterror.ErrNotImplemented,
+		dbterror.ErrWriteConflict,
+		dbterror.ErrWriteConflictInTiDB,
 	}
 
 	for _, err := range kvErrs {
