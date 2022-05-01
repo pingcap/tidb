@@ -2508,6 +2508,8 @@ func TestAsyncCommitWithSchemaChange(t *testing.T) {
 func Test1PCWithSchemaChange(t *testing.T) {
 	if !*withRealTiKV {
 		t.Skip("TODO: implement commit_ts calculation in unistore")
+	} else {
+		t.Skip("This test is unstable as depending on time.Sleep")
 	}
 
 	defer config.RestoreFunc()()
