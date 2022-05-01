@@ -15,12 +15,7 @@ jobs:
         with:
           go-version: 1.18
       - name: Setup TiKV cluster
-        run: |
-          # Disable pipelined pessimistic lock temporarily until tikv#11649 is resolved
-          echo -e "[pessimistic-txn]\npipelined = false" > tikv.toml
-          curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
-          $HOME/.tiup/bin/tiup playground nightly --mode tikv-slim --kv 3 --pd 1 --without-monitor --kv.config tikv.toml &
-          curl --retry-connrefused --retry 5 --retry-delay 5 http://127.0.0.1:2379
+        run: TAG=nightly docker-compose -f pessimistictest/docker/cluster.yml up --remove-orphans -d
       - name: Run Tests
         run: |
           export log_level=error

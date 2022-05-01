@@ -1,0 +1,2 @@
+[pessimistic-txn]
+pipelined = false
