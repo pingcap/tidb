@@ -934,9 +934,17 @@ func doSendBackup(
 	})
 	bCli, err := client.Backup(ctx, &req)
 	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
-			err = status.Error(codes.Unavailable, "Unavailable error")
+		switch val.(string) {
+		case "Unavaiable":
+			{
+				logutil.CL(ctx).Debug("failpoint reset-retryable-error unavailable injected.")
+				err = status.Error(codes.Unavailable, "Unavailable error")
+			}
+		case "Internal" :
+			{
+				logutil.CL(ctx).Debug("failpoint reset-retryable-error internal injected.")
+				err = status.Error(codes.Internal, "Internal error")
+			}
 		}
 	})
 	failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
@@ -1030,9 +1038,18 @@ const (
 
 // isRetryableError represents whether we should retry reset grpc connection.
 func isRetryableError(err error) bool {
-
-	if status.Code(err) == codes.Unavailable {
-		return true
+	// some errors can be retried
+	// https://github.com/pingcap/tidb/issues/34350
+	switch status.Code(err) {
+	case codes.Unavailable: return true
+	case codes.DeadlineExceeded : return true
+	case codes.ResourceExhausted: return true
+	case codes.Aborted: return true
+	case codes.Internal:
+		{
+			log.Warn("backup met s3 internal error, this error can be retry 5 times")
+			return true
+		}
 	}
 
 	// At least, there are two possible cancel() call,
