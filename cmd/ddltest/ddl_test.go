@@ -106,7 +106,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	require.NoError(t, err)
 
 	s.ctx = s.s.(sessionctx.Context)
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	_, err = s.s.Execute(goCtx, "create database if not exists test_ddl")
 	require.NoError(t, err)
 
@@ -478,7 +478,7 @@ func (s *ddlSuite) getServer() *server {
 func (s *ddlSuite) runDDL(sql string) chan error {
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.s.Execute(goctx.Background(), sql)
+		_, err := s.s.Execute(context.Background(), sql)
 		// We must wait 2 * lease time to guarantee all servers update the schema.
 		if err == nil {
 			time.Sleep(time.Duration(*lease) * time.Second * 2)
@@ -656,7 +656,7 @@ func TestSimple(t *testing.T) {
 				fmt.Printf("[TestSimpleMixed][Mixed][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := ctx.NewTxn(context.Background())
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -734,7 +734,7 @@ func TestSimple(t *testing.T) {
 				fmt.Printf("[TestSimpleInc][Update][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := ctx.NewTxn(context.Background())
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, "test_inc")
@@ -796,7 +796,7 @@ func TestSimpleInsert(t *testing.T) {
 				fmt.Printf("[TestSimpleInsert][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := ctx.NewTxn(context.Background())
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, "test_insert")
@@ -852,7 +852,7 @@ func TestSimpleInsert(t *testing.T) {
 				fmt.Printf("[TestSimpleConflictInsert][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := ctx.NewTxn(context.Background())
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -917,7 +917,7 @@ func TestSimpleUpdate(t *testing.T) {
 				fmt.Printf("[TestSimpleUpdate][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := ctx.NewTxn(context.Background())
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -996,7 +996,7 @@ func TestSimpleUpdate(t *testing.T) {
 				fmt.Printf("[TestSimpleConflictUpdate][Update][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := ctx.NewTxn(context.Background())
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -1059,7 +1059,7 @@ func TestSimpleDelete(t *testing.T) {
 				fmt.Printf("[TestSimpleDelete][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := ctx.NewTxn(context.Background())
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -1136,7 +1136,7 @@ func TestSimpleDelete(t *testing.T) {
 				fmt.Printf("[TestSimpleConflictDelete][Delete][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := ctx.NewTxn(context.Background())
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
