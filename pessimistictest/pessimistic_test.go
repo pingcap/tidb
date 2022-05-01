@@ -45,6 +45,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/goleak"
@@ -62,7 +63,17 @@ var withRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with re
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	flag.Parse()
-	goleak.VerifyTestMain(m)
+	session.SetSchemaLease(20 * time.Millisecond)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+	tikv.EnableFailpoints()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }
 
 func clearTiKVStorage(t *testing.T, store kv.Storage) {
@@ -613,8 +624,7 @@ func TestOptimisticConflicts(t *testing.T) {
 	tk.MustExec("update conflict set c = 4 where id = 1")
 	tk2.MustExec("begin optimistic")
 	tk2.MustExec("update conflict set c = 5 where id = 1")
-	_, err := tk2.Exec("commit")
-	require.Error(t, err)
+	require.Error(t, tk2.ExecToErr("commit"))
 	tk.MustExec("rollback")
 
 	// Update snapshotTS after a conflict, invalidate snapshot cache.
@@ -1989,8 +1999,7 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk2.MustExec("use test")
+
 	tk.MustExec("drop database if exists test_db")
 	tk.MustExec("create database test_db")
 	tk.MustExec("use test_db")
@@ -2016,8 +2025,7 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1(c1) values(100)")
 	tk2.MustExec("alter table t1 change column c2 cc2 bigint not null")
-	err := tk.ExecToErr("commit")
-	require.Error(t, err)
+	require.Error(t, tk.ExecToErr("commit"))
 
 	// Change default value is rejected.
 	tk2.MustExec("create table ta(a bigint primary key auto_random(3), b varchar(255) default 'old');")
@@ -2025,8 +2033,7 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into ta values()")
 	tk2.MustExec("alter table ta modify column b varchar(300) default 'new';")
-	err = tk.ExecToErr("commit")
-	require.Error(t, err)
+	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustQuery("select b from ta").Check(testkit.Rows("a"))
 
 	// Change default value with add index. There is a new MultipleKeyFlag flag on the index key, and the column is changed,
@@ -2053,8 +2060,6 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 	tk2.MustExec("insert into tbl_time(c1) values(4)")
 	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustQuery("select count(1) from tbl_time where c_time is not null").Check(testkit.Rows("2"))
-
-	tk2.MustExec("drop database if exists test_db")
 }
 
 func TestPessimisticUnionForUpdate(t *testing.T) {

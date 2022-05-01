@@ -20,4 +20,4 @@ jobs:
       - name: Run Tests
         run: |
           make failpoint-enable
-          go test -with-real-tikv -timeout 20m ./pessimistictest
+          go test -with-real-tikv -timeout 20m -v ./pessimistictest
