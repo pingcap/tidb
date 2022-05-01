@@ -71,7 +71,16 @@ func TestMain(m *testing.M) {
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransport"),
+		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
+		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
+		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }

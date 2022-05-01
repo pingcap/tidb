@@ -11,13 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: 1.18
       - name: Setup TiKV cluster
         run: |
           # Disable pipelined pessimistic lock temporarily until tikv#11649 is resolved
           echo -e "[pessimistic-txn]\npipelined = false" > tikv.toml
           curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | cat
-          tiup playground nightly --mode tikv-slim --kv 3 --pd 1 --kv.config tikv.toml
+          tiup playground nightly --mode tikv-slim --kv 3 --pd 1 --without-monitor --kv.config tikv.toml
       - name: Run Tests
         run: |
+          export log_level=error
           make failpoint-enable
-          go test -with-real-tikv -timeout 20m -v ./pessimistictest
+          cd pessimistictest
+          go test -v -with-real-tikv -timeout 20m
