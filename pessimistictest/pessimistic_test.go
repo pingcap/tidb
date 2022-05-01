@@ -124,32 +124,42 @@ func clearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
 }
 
 func createMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
+	// set it to 5 seconds for testing lock resolve.
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
+	transaction.PrewriteMaxBackoff = 500
+
+	var store kv.Storage
+	var dom *domain.Domain
+	var err error
+
 	if *withRealTiKV {
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 		})
-		store, err := d.Open("tikv://127.0.0.1:2379?disableGC=true")
+		store, err = d.Open("tikv://127.0.0.1:2379?disableGC=true")
 		require.NoError(t, err)
 
 		clearTiKVStorage(t, store)
 		clearEtcdStorage(t, store.(kv.EtcdBackend))
 
 		session.ResetStoreForWithTiKVTest(store)
-		dom, err := session.BootstrapSession(store)
+		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
 
-		// set it to 5 seconds for testing lock resolve.
-		atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
-		transaction.PrewriteMaxBackoff = 500
-
-		return store, func() {
-			transaction.PrewriteMaxBackoff = 20000
-			dom.Close()
-			require.NoError(t, store.Close())
-		}
+	} else {
+		store, err = mockstore.NewMockStore(opts...)
+		require.NoError(t, err)
+		session.DisableStats4Test()
+		dom, err = session.BootstrapSession(store)
+		require.NoError(t, err)
 	}
-	return testkit.CreateMockStore(t, opts...)
+
+	return store, func() {
+		transaction.PrewriteMaxBackoff = 20000
+		dom.Close()
+		require.NoError(t, store.Close())
+	}
 }
 
 func createAsyncCommitTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
