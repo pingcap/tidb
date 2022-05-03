@@ -606,10 +606,6 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableSlowLog.Load()), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBQueryLogMaxLen)
-	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), val)
-
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), val)
@@ -945,4 +941,30 @@ func TestTiDBMemQuotaQuery(t *testing.T) {
 		require.Equal(t, val, fmt.Sprintf("%d", expected))
 		require.NoError(t, err)
 	}
+}
+
+func TestTiDBQueryLogMaxLen(t *testing.T) {
+	sv := GetSysVar(TiDBQueryLogMaxLen)
+	vars := NewSessionVars()
+
+	newVal := 32 * 1024 * 1024
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, val, "33554432")
+	require.NoError(t, err)
+
+	// out of range
+	newVal = 1073741825
+	expected := 1073741824
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = -2
+	expected = 0
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
 }
