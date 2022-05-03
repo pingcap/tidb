@@ -1086,7 +1086,7 @@ func (h *logHook) checkLogCount(t *testing.T, expected int) {
 	require.Len(t, logsStr, expected)
 }
 
-func withLogHook(t *testing.T, ctx context.Context, msgFilter string) (newCtx context.Context, hook *logHook) {
+func withLogHook(ctx context.Context, t *testing.T, msgFilter string) (newCtx context.Context, hook *logHook) {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	enc, err := log.NewTextEncoder(&config.GetGlobalConfig().Log.ToLogConfig().Config)
@@ -1112,7 +1112,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, tk.uniqueIndex.Delete(tk.sctx, txn, types.MakeDatums(1), kv.IntHandle(1)))
 		require.NoError(t, txn.Commit(tk.ctx))
 
-		ctx, hook := withLogHook(t, tk.ctx, "inconsistency")
+		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindInt64 1]\"", err.Error())
@@ -1136,7 +1136,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, tk.plainIndex.Delete(tk.sctx, txn, []types.Datum{types.NewStringDatum("10")}, kv.IntHandle(1)))
 		require.NoError(t, txn.Commit(tk.ctx))
 
-		ctx, hook := withLogHook(t, tk.ctx, "inconsistency")
+		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindString 10]\"", err.Error())
@@ -1160,7 +1160,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
 
-		ctx, hook := withLogHook(t, tk.ctx, "inconsistency")
+		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"handle: 1, values: [KindString 100 KindInt64 1]\" != record-values:\"\"", err.Error())
@@ -1176,7 +1176,7 @@ func TestCheckFailReport(t *testing.T) {
 		logEntry.checkFieldNotEmpty(t, "index_mvcc")
 
 		// test inconsistency check in index lookup
-		ctx, hook = withLogHook(t, tk.ctx, "")
+		ctx, hook = withLogHook(tk.ctx, t, "")
 		rs, err := tk.Exec(ctx, "select * from admin_test use index(k2) where c3 = '100'")
 		require.NoError(t, err)
 		_, err = session.GetRows4Test(ctx, testkit.TryRetrieveSession(ctx), rs)
@@ -1205,7 +1205,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
 
-		ctx, hook := withLogHook(t, tk.ctx, "inconsistency")
+		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"handle: 1, values: [KindInt64 10 KindInt64 1]\" != record-values:\"\"", err.Error())
@@ -1221,7 +1221,7 @@ func TestCheckFailReport(t *testing.T) {
 		logEntry.checkFieldNotEmpty(t, "index_mvcc")
 
 		// test inconsistency check in point-get
-		ctx, hook = withLogHook(t, tk.ctx, "")
+		ctx, hook = withLogHook(tk.ctx, t, "")
 		rs, err := tk.Exec(ctx, "select * from admin_test use index(uk1) where c2 = 10")
 		require.NoError(t, err)
 		_, err = session.GetRows4Test(ctx, testkit.TryRetrieveSession(ctx), rs)
@@ -1250,7 +1250,7 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.uniqueIndex.Create(mock.NewContext(), txn, []types.Datum{types.NewIntDatum(20)}, kv.IntHandle(1), nil)
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
-		ctx, hook := withLogHook(t, tk.ctx, "inconsistency")
+		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[executor:8134]data inconsistency in table: admin_test, index: uk1, col: c2, handle: \"1\", index-values:\"KindInt64 20\" != record-values:\"KindInt64 10\", compare err:<nil>", err.Error())
@@ -1278,7 +1278,7 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.plainIndex.Create(mock.NewContext(), txn, []types.Datum{types.NewStringDatum("200")}, kv.IntHandle(1), nil)
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
-		ctx, hook := withLogHook(t, tk.ctx, "inconsistency")
+		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[executor:8134]data inconsistency in table: admin_test, index: k2, col: c3, handle: \"1\", index-values:\"KindString 200\" != record-values:\"KindString 100\", compare err:<nil>", err.Error())
@@ -1315,7 +1315,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
 
-		ctx, hook := withLogHook(t, tk.ctx, "inconsistency")
+		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, `[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 282574488403969, index-values:"handle: 282574488403969, values: [KindInt64 282578800083201 KindInt64 282574488403969]" != record-values:""`, err.Error())
