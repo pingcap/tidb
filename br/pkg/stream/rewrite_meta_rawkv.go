@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -36,34 +36,32 @@ type OldID = int64
 type NewID = int64
 
 type TableReplace struct {
-	TableID      NewID
-	OldName      string
+	OldTableInfo *model.TableInfo
+	NewTableID   NewID
 	NewName      string
 	PartitionMap map[OldID]NewID
 	IndexMap     map[OldID]NewID
 }
 
 type DBReplace struct {
-	DBID     NewID
-	OldName  string
-	NewName  string
-	TableMap map[OldID]*TableReplace
+	OldDBInfo *model.DBInfo
+	NewDBID   NewID
+	TableMap  map[OldID]*TableReplace
 }
 
 type SchemasReplace struct {
 	DbMap           map[OldID]*DBReplace
 	RewriteTS       uint64
 	TableFilter     filter.Filter
-	info            infoschema.InfoSchema
 	genGenGlobalID  func(ctx context.Context) (int64, error)
 	genGenGlobalIDs func(ctx context.Context, n int) ([]int64, error)
 }
 
 // NewTableReplace creates a TableReplace struct.
-func NewTableReplace(tableID NewID, oldTableName, newTableName string) *TableReplace {
+func NewTableReplace(tableInfo *model.TableInfo, newID NewID, newTableName string) *TableReplace {
 	return &TableReplace{
-		TableID:      tableID,
-		OldName:      oldTableName,
+		OldTableInfo: tableInfo,
+		NewTableID:   newID,
 		NewName:      newTableName,
 		PartitionMap: make(map[OldID]NewID),
 		IndexMap:     make(map[OldID]NewID),
@@ -71,12 +69,11 @@ func NewTableReplace(tableID NewID, oldTableName, newTableName string) *TableRep
 }
 
 // NewDBReplace creates a DBReplace struct.
-func NewDBReplace(dbID NewID, oldDBName, newDBName string) *DBReplace {
+func NewDBReplace(dbInfo *model.DBInfo, newID NewID) *DBReplace {
 	return &DBReplace{
-		DBID:     dbID,
-		OldName:  oldDBName,
-		NewName:  newDBName,
-		TableMap: make(map[OldID]*TableReplace),
+		OldDBInfo: dbInfo,
+		NewDBID:   newID,
+		TableMap:  make(map[OldID]*TableReplace),
 	}
 }
 
@@ -97,6 +94,25 @@ func NewSchemasReplace(
 	}
 }
 
+func (sr *SchemasReplace) TranslateToSchema() *backup.Schemas {
+	schemas := backup.NewBackupSchemas()
+
+	for _, dr := range sr.DbMap {
+		if dr.OldDBInfo == nil {
+			continue
+		}
+
+		for _, tr := range dr.TableMap {
+			if tr.OldTableInfo == nil {
+				continue
+			}
+
+			schemas.AddSchema(dr.OldDBInfo, tr.OldTableInfo)
+		}
+	}
+	return schemas
+}
+
 func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, bool, int64, error) {
 	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
 	if err != nil {
@@ -108,9 +124,17 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, bool, 
 		return nil, false, 0, errors.Trace(err)
 	}
 
-	//The dbID has existed in dbReplace, because we do rewriteDBInfo() first,
-	dbReplace := sr.DbMap[dbID]
-	rawMetaKey.UpdateField(meta.DBkey(dbReplace.DBID))
+	dbReplace, exist := sr.DbMap[dbID]
+	if !exist {
+		newID, err := sr.genGenGlobalID(context.Background())
+		if err != nil {
+			return nil, false, dbID, errors.Trace(err)
+		}
+		dbReplace = NewDBReplace(nil, newID)
+		sr.DbMap[dbID] = dbReplace
+	}
+
+	rawMetaKey.UpdateField(meta.DBkey(dbReplace.NewDBID))
 	if cf == "write" {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
@@ -118,39 +142,32 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, bool, 
 }
 
 func (sr *SchemasReplace) rewriteDBInfo(value []byte, _ int64) ([]byte, bool, error) {
-	var (
-		dbInfo model.DBInfo
-		err    error
-	)
-
-	if err = json.Unmarshal(value, &dbInfo); err != nil {
+	oldDBInfo := new(model.DBInfo)
+	if err := json.Unmarshal(value, oldDBInfo); err != nil {
 		return nil, false, errors.Trace(err)
 	}
 
-	dbReplace, exist := sr.DbMap[dbInfo.ID]
+	dbReplace, exist := sr.DbMap[oldDBInfo.ID]
 	if !exist {
 		// If the schema has existed, don't need generate a new ID.
 		// Or we need a new ID to rewrite the dbID in kv entry.
-		var newID int64
-		newDBInfo, exist := sr.info.SchemaByName(dbInfo.Name)
-		if exist {
-			newID = newDBInfo.ID
-		} else {
-			newID, err = sr.genGenGlobalID(context.Background())
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
+		newID, err := sr.genGenGlobalID(context.Background())
+		if err != nil {
+			return nil, false, errors.Trace(err)
 		}
 
-		dbReplace = NewDBReplace(newID, dbInfo.Name.O, dbInfo.Name.O)
-		sr.DbMap[dbInfo.ID] = dbReplace
+		dbReplace = NewDBReplace(oldDBInfo, newID)
+		sr.DbMap[oldDBInfo.ID] = dbReplace
+	} else {
+		dbReplace.OldDBInfo = oldDBInfo
 	}
 
-	log.Debug("rewrite dbinfo", zap.String("dbName", dbReplace.OldName),
-		zap.Int64("old ID", dbInfo.ID), zap.Int64("new ID", dbReplace.DBID))
+	log.Debug("rewrite dbinfo", zap.String("dbName", dbReplace.OldDBInfo.Name.O),
+		zap.Int64("old ID", oldDBInfo.ID), zap.Int64("new ID", dbReplace.NewDBID))
 
-	dbInfo.ID = dbReplace.DBID
-	newValue, err := json.Marshal(&dbInfo)
+	newDBInfo := oldDBInfo.Clone()
+	newDBInfo.ID = dbReplace.NewDBID
+	newValue, err := json.Marshal(newDBInfo)
 	if err != nil {
 		return nil, false, err
 	}
@@ -185,6 +202,8 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	parseField func([]byte) (tableID int64, err error),
 	encodeField func(tableID int64) []byte,
 ) ([]byte, bool, int64, error) {
+	var newID int64
+
 	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
@@ -200,11 +219,26 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 		return nil, false, 0, errors.Trace(err)
 	}
 
-	dbReplace := sr.DbMap[dbID]
-	tableReplace := dbReplace.TableMap[tableID]
+	dbReplace, exist := sr.DbMap[dbID]
+	if !exist {
+		if newID, err = sr.genGenGlobalID(context.Background()); err != nil {
+			return nil, false, dbID, errors.Trace(err)
+		}
+		dbReplace = NewDBReplace(nil, newID)
+		sr.DbMap[dbID] = dbReplace
+	}
 
-	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.DBID))
-	rawMetaKey.UpdateField(encodeField(tableReplace.TableID))
+	tableReplace, exist := dbReplace.TableMap[tableID]
+	if !exist {
+		if newID, err = sr.genGenGlobalID(context.Background()); err != nil {
+			return nil, false, dbID, errors.Trace(err)
+		}
+		tableReplace = NewTableReplace(nil, newID, "")
+		dbReplace.TableMap[tableID] = tableReplace
+	}
+
+	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.NewDBID))
+	rawMetaKey.UpdateField(encodeField(tableReplace.NewTableID))
 	if cf == "write" {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
@@ -212,48 +246,51 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 }
 
 func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bool, error) {
-	var (
-		tableInfo model.TableInfo
-		newID     int64
-		err       error
-	)
-	if err = json.Unmarshal(value, &tableInfo); err != nil {
+	var tableInfo model.TableInfo
+	if err := json.Unmarshal(value, &tableInfo); err != nil {
 		return nil, false, errors.Trace(err)
 	}
 
 	// update table ID
-	dbReplace := sr.DbMap[dbID]
+	dbReplace, exist := sr.DbMap[dbID]
+	if !exist {
+		newID, err := sr.genGenGlobalID(context.Background())
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		dbReplace = NewDBReplace(nil, newID)
+		sr.DbMap[dbID] = dbReplace
+	}
+
 	tableReplace, exist := dbReplace.TableMap[tableInfo.ID]
 	if !exist {
-		var newTableID int64
-		if sr.info.TableExists(model.NewCIStr(dbReplace.NewName), tableInfo.Name) {
-			newTableInfo, err := sr.info.TableByName(model.NewCIStr(dbReplace.NewName), tableInfo.Name)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-			newTableID = newTableInfo.Meta().ID
-		} else {
-			newTableID, err = sr.genGenGlobalID(context.Background())
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
+		newID, err := sr.genGenGlobalID(context.Background())
+		if err != nil {
+			return nil, false, errors.Trace(err)
 		}
-
-		tableReplace = NewTableReplace(newTableID, tableInfo.Name.O, tableInfo.Name.O)
+		tableReplace = NewTableReplace(&tableInfo, newID, tableInfo.Name.O)
 		dbReplace.TableMap[tableInfo.ID] = tableReplace
+	} else {
+		tableReplace.OldTableInfo = &tableInfo
 	}
 
 	log.Debug("rewrite tableInfo", zap.String("table-name", tableInfo.Name.String()),
-		zap.Int64("old ID", tableInfo.ID), zap.Int64("new ID", tableReplace.TableID))
-	tableInfo.ID = tableReplace.TableID
+		zap.Int64("old ID", tableInfo.ID), zap.Int64("new ID", tableReplace.NewTableID))
+
+	newTableInfo := tableInfo.Clone()
+	if newTableInfo.Partition != nil {
+		newTableInfo.Partition = tableInfo.Partition.Clone()
+	}
+	newTableInfo.ID = tableReplace.NewTableID
 
 	// update partition table ID
-	partitions := tableInfo.GetPartitionInfo()
+	partitions := newTableInfo.GetPartitionInfo()
 	if partitions != nil {
 		for i, tbl := range partitions.Definitions {
-			newID, exist = tableReplace.PartitionMap[tbl.ID]
+			newID, exist := tableReplace.PartitionMap[tbl.ID]
 			if !exist {
-				if newID, err = sr.genGenGlobalID(context.Background()); err != nil {
+				newID, err := sr.genGenGlobalID(context.Background())
+				if err != nil {
 					return nil, false, errors.Trace(err)
 				}
 				tableReplace.PartitionMap[tbl.ID] = newID
@@ -267,7 +304,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 	}
 
 	// marshal to json
-	newValue, err := json.Marshal(&tableInfo)
+	newValue, err := json.Marshal(&newTableInfo)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}

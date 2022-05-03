@@ -515,14 +515,9 @@ func (rc *Client) CreatePolicies(ctx context.Context, policyMap *sync.Map) error
 }
 
 // GetDBSchema gets the schema of a db from TiDB cluster
-func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DBInfo, error) {
+func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DBInfo, bool) {
 	info := dom.InfoSchema()
-	dbInfo, exist := info.SchemaByName(dbName)
-	if !exist {
-		log.Warn("schema not exist", zap.String("dbName", dbName.String()))
-		return nil, errors.Annotatef(berrors.ErrRestoreSchemaNotExists, "%v not exist", dbName.String())
-	}
-	return dbInfo, nil
+	return info.SchemaByName(dbName)
 }
 
 // CreateDatabase creates a database.
@@ -1721,29 +1716,27 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	for _, t := range *tables {
 		name, _ := utils.GetSysDBName(t.DB.Name)
 		dbName := model.NewCIStr(name)
-		newDBInfo, err := rc.GetDBSchema(rc.GetDomain(), dbName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
-		if err != nil {
-			return nil, errors.Trace(err)
+		newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
+		if !exist {
+			log.Info("db not existed", zap.String("dbname", dbName.String()))
+			continue
 		}
 
 		dbReplace, exist := dbMap[t.DB.ID]
 		if !exist {
-			dbReplace = &stream.DBReplace{
-				DBID:     newDBInfo.ID,
-				OldName:  name,
-				NewName:  newDBInfo.Name.String(),
-				TableMap: make(map[stream.OldID]*stream.TableReplace),
-			}
+			dbReplace = stream.NewDBReplace(t.DB, newDBInfo.ID)
 			dbMap[t.DB.ID] = dbReplace
 		}
 
+		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
+		if err != nil {
+			log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
+			continue
+		}
+
 		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
-			TableID:      newTableInfo.ID,
-			OldName:      t.Info.Name.String(),
+			OldTableInfo: t.Info,
+			NewTableID:   newTableInfo.ID,
 			NewName:      newTableInfo.Name.String(),
 			PartitionMap: getTableIDMap(newTableInfo, t.Info),
 			IndexMap:     getIndexIDMap(newTableInfo, t.Info),
@@ -1754,14 +1747,14 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		log.Info("replace info", func() []zapcore.Field {
 			fields := make([]zapcore.Field, 0, (len(dbReplace.TableMap)+1)*3)
 			fields = append(fields,
-				zap.String("dbName", dbReplace.OldName),
+				zap.String("dbName", dbReplace.OldDBInfo.Name.O),
 				zap.Int64("oldID", oldDBID),
-				zap.Int64("newID", dbReplace.DBID))
+				zap.Int64("newID", dbReplace.NewDBID))
 			for oldTableID, tableReplace := range dbReplace.TableMap {
 				fields = append(fields,
-					zap.String("table", tableReplace.OldName),
+					zap.String("table", tableReplace.NewName),
 					zap.Int64("oldID", oldTableID),
-					zap.Int64("newID", tableReplace.TableID))
+					zap.Int64("newID", tableReplace.NewTableID))
 			}
 			return fields
 		}()...)
@@ -1935,5 +1928,29 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		return errors.Annotatef(err, "failed to put global schema verson %v to etcd", ver)
 	}
 
+	return nil
+}
+
+func (rc *Client) SaveSchemas(
+	ctx context.Context,
+	sr *stream.SchemasReplace,
+	logStartTs uint64,
+) error {
+	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, nil)
+	metaWriter.Update(func(m *backuppb.BackupMeta) {
+		// save log startTS to backupmeta file
+		m.StartVersion = logStartTs
+	})
+
+	schemas := sr.TranslateToSchema()
+	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
+	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }

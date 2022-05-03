@@ -46,13 +46,13 @@ type Schemas struct {
 	schemas map[string]*schemaInfo
 }
 
-func newBackupSchemas() *Schemas {
+func NewBackupSchemas() *Schemas {
 	return &Schemas{
 		schemas: make(map[string]*schemaInfo),
 	}
 }
 
-func (ss *Schemas) addSchema(
+func (ss *Schemas) AddSchema(
 	dbInfo *model.DBInfo, tableInfo *model.TableInfo,
 ) {
 	name := fmt.Sprintf("%s.%s",

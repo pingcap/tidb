@@ -939,7 +939,7 @@ func RunStreamRestore(
 		cfg.Config.Storage = logStorage
 	}
 	// restore log.
-	if err := restoreStream(ctx, g, cfg); err != nil {
+	if err := restoreStream(ctx, g, cfg, logStartTS); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -950,6 +950,7 @@ func restoreStream(
 	c context.Context,
 	g glue.Glue,
 	cfg *RestoreConfig,
+	logStartTS uint64,
 ) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
@@ -1034,9 +1035,12 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
-	err = client.CleanUpKVFiles(ctx)
-	if err != nil {
+	if err = client.CleanUpKVFiles(ctx); err != nil {
 		return errors.Annotate(err, "failed to clean up")
+	}
+
+	if err = client.SaveSchemas(ctx, schemasReplace, logStartTS); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -1254,7 +1258,8 @@ func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) 
 		}
 		newTableInfo, err := client.GetTableSchema(client.GetDomain(), t.DB.Name, t.Info.Name)
 		if err != nil {
-			return nil, errors.Trace(err)
+			// If table not existed, skip it directly.
+			continue
 		}
 		// we don't handle index rule in pitr. since we only support pitr on non-exists table.
 		tableRules := restore.GetRewriteRulesMap(newTableInfo, t.Info, 0, false)
@@ -1284,29 +1289,28 @@ func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *s
 	filter := schemasReplace.TableFilter
 
 	for _, dbReplace := range schemasReplace.DbMap {
-		if utils.IsSysDB(dbReplace.OldName) || utils.IsSysDB(dbReplace.NewName) {
-			continue
-		}
-		if !filter.MatchSchema(dbReplace.NewName) && !filter.MatchSchema(dbReplace.OldName) {
+		if dbReplace.OldDBInfo == nil ||
+			utils.IsSysDB(dbReplace.OldDBInfo.Name.O) ||
+			!filter.MatchSchema(dbReplace.OldDBInfo.Name.O) {
 			continue
 		}
 
 		for oldTableID, tableReplace := range dbReplace.TableMap {
-			if !filter.MatchTable(dbReplace.OldName, tableReplace.OldName) &&
-				!filter.MatchTable(dbReplace.NewName, tableReplace.NewName) {
+			if tableReplace.OldTableInfo == nil ||
+				!filter.MatchTable(dbReplace.OldDBInfo.Name.O, tableReplace.OldTableInfo.Name.O) {
 				continue
 			}
 
 			if _, exist := rules[oldTableID]; !exist {
-				log.Info("add rewrite rule", zap.String("tableName", dbReplace.NewName+"."+tableReplace.NewName),
-					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.TableID))
+				log.Info("add rewrite rule", zap.String("tableName", dbReplace.OldDBInfo.Name.O+"."+tableReplace.NewName),
+					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.NewTableID))
 				rules[oldTableID] = restore.GetRewriteRuleOfTable(
-					oldTableID, tableReplace.TableID, 0, tableReplace.IndexMap, false)
+					oldTableID, tableReplace.NewTableID, 0, tableReplace.IndexMap, false)
 			}
 
 			for oldID, newID := range tableReplace.PartitionMap {
 				if _, exist := rules[oldID]; !exist {
-					log.Info("add rewrite rule", zap.String("tableName", dbReplace.NewName+"."+tableReplace.NewName),
+					log.Info("add rewrite rule", zap.String("tableName", dbReplace.OldDBInfo.Name.O+"."+tableReplace.NewName),
 						zap.Int64("oldID", oldID), zap.Int64("newID", newID))
 					rules[oldID] = restore.GetRewriteRuleOfTable(oldID, newID, 0, tableReplace.IndexMap, false)
 				}
