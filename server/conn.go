@@ -1309,12 +1309,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			ctx, task = trace.NewTask(ctx, sqlType)
 			defer task.End()
 
-			var err error
 			trace.Log(ctx, "sql", lc.String())
-			ctx, err = logutil.WithTraceLogger(ctx, cc.connectionID)
-			if err != nil {
-				return err
-			}
+			ctx = logutil.WithTraceLogger(ctx, cc.connectionID)
 
 			taskID := *(*uint64)(unsafe.Pointer(task))
 			ctx = pprof.WithLabels(ctx, pprof.Labels("trace", strconv.FormatUint(taskID, 10)))
