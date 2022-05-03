@@ -1243,7 +1243,7 @@ func TestCreateTableTooLarge(t *testing.T) {
 	originLimit := config.GetGlobalConfig().TableColumnCountLimit
 	atomic.StoreUint32(&config.GetGlobalConfig().TableColumnCountLimit, uint32(cnt*4))
 	_, err := tk.Exec(sql)
-	require.Truef(t, kv.ErrEntryTooLarge.Equal(err), "err:%v", err)
+	require.Truef(t, dbterror.ErrEntryTooLarge.Equal(err), "err:%v", err)
 	atomic.StoreUint32(&config.GetGlobalConfig().TableColumnCountLimit, originLimit)
 }
 

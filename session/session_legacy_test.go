@@ -1336,7 +1336,7 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	tk.MustExec("insert into autoid values(5000)")
 	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
 	_, err = tk.Exec("update autoid set auto_inc_id = 8000")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1", "5000"))
 	tk.MustExec("update autoid set auto_inc_id = 9000 where auto_inc_id=1")
 	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("9000", "5000"))
@@ -1363,7 +1363,7 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	tk.MustExec("insert into autoid values(5000)")
 	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1", "5000"))
 	_, err = tk.Exec("update autoid set auto_inc_id = 8000")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("1", "5000"))
 	tk.MustExec("update autoid set auto_inc_id = 9000 where auto_inc_id=1")
 	tk.MustQuery("select * from autoid use index()").Check(testkit.Rows("9000", "5000"))
@@ -1999,12 +1999,12 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 	_, err := tk.Exec("commit")
 	c.Assert(err, NotNil)
 	// Check error type and error message
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue, Commentf("err %v", err))
 	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue, Commentf("err %v", err))
 	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'val'")
 
 	// Test for https://github.com/pingcap/tidb/issues/463
@@ -3951,31 +3951,31 @@ func (s *testSessionSuite) TestLocalTemporaryTableInsert(c *C) {
 
 	// insert dup records out txn must be error
 	_, err := tk.Exec("insert into tmp1 values(1, 999, 9999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	c.Assert(dbterror.ErrKeyExists.Equal(err), IsTrue)
 	checkRecordOneTwoThreeAndNonExist()
 
 	_, err = tk.Exec("insert into tmp1 values(99, 11, 999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	c.Assert(dbterror.ErrKeyExists.Equal(err), IsTrue)
 	checkRecordOneTwoThreeAndNonExist()
 
 	// insert dup records in txn must be error
 	tk.MustExec("begin")
 	_, err = tk.Exec("insert into tmp1 values(1, 999, 9999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	c.Assert(dbterror.ErrKeyExists.Equal(err), IsTrue)
 	checkRecordOneTwoThreeAndNonExist()
 
 	_, err = tk.Exec("insert into tmp1 values(99, 11, 9999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	c.Assert(dbterror.ErrKeyExists.Equal(err), IsTrue)
 	checkRecordOneTwoThreeAndNonExist()
 
 	tk.MustExec("insert into tmp1 values(4, 14, 104)")
 	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows("4 14 104"))
 
 	_, err = tk.Exec("insert into tmp1 values(4, 999, 9999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	c.Assert(dbterror.ErrKeyExists.Equal(err), IsTrue)
 
 	_, err = tk.Exec("insert into tmp1 values(99, 14, 9999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	c.Assert(dbterror.ErrKeyExists.Equal(err), IsTrue)
 
 	checkRecordOneTwoThreeAndNonExist()
 	tk.MustExec("commit")
@@ -4456,14 +4456,14 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 			tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u=101").Check(testkit.Rows())
 			tk.MustQuery("show warnings").Check(testkit.Rows())
 		}},
-		{"update tmp1 set id=2 where id=1", checkError{kv.ErrKeyExists}, nil},
-		{"update tmp1 set u=102 where id=1", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set id=2 where id=1", checkError{dbterror.ErrKeyExists}, nil},
+		{"update tmp1 set u=102 where id=1", checkError{dbterror.ErrKeyExists}, nil},
 		// update with batch point get for primary key
 		{"update tmp1 set v=v+1000 where id in (1, 3, 5)", checkSuccess{[]string{"1 101 2001", "3 103 2003", "5 105 2005"}, nil}, nil},
 		{"update tmp1 set u=u+1 where id in (9, 100)", checkSuccess{[]string{"9 110 1009"}, nil}, nil},
 		{"update tmp1 set u=101 where id in (100, 101)", checkSuccess{nil, nil}, nil},
-		{"update tmp1 set id=id+1 where id in (8, 9)", checkError{kv.ErrKeyExists}, nil},
-		{"update tmp1 set u=u+1 where id in (8, 9)", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set id=id+1 where id in (8, 9)", checkError{dbterror.ErrKeyExists}, nil},
+		{"update tmp1 set u=u+1 where id in (8, 9)", checkError{dbterror.ErrKeyExists}, nil},
 		{"update tmp1 set id=id+20 where id in (1, 3, 5)", checkSuccess{[]string{"21 101 1001", "23 103 1003", "25 105 1005"}, []int{1, 3, 5}}, nil},
 		{"update tmp1 set u=u+100 where id in (1, 3, 5)", checkSuccess{[]string{"1 201 1001", "3 203 1003", "5 205 1005"}, nil}, func(_ error) {
 			// check index deleted
@@ -4475,21 +4475,21 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		{"update tmp1 set id=21 where u=101", checkSuccess{[]string{"21 101 1001"}, []int{1}}, nil},
 		{"update tmp1 set v=888 where u=201", checkSuccess{nil, nil}, nil},
 		{"update tmp1 set u=201 where u=101", checkSuccess{[]string{"1 201 1001"}, nil}, nil},
-		{"update tmp1 set id=2 where u=101", checkError{kv.ErrKeyExists}, nil},
-		{"update tmp1 set u=102 where u=101", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set id=2 where u=101", checkError{dbterror.ErrKeyExists}, nil},
+		{"update tmp1 set u=102 where u=101", checkError{dbterror.ErrKeyExists}, nil},
 		// update with batch point get for unique key
 		{"update tmp1 set v=v+1000 where u in (101, 103)", checkSuccess{[]string{"1 101 2001", "3 103 2003"}, nil}, nil},
 		{"update tmp1 set v=v+1000 where u in (201, 203)", checkSuccess{nil, nil}, nil},
 		{"update tmp1 set v=v+1000 where u in (101, 110)", checkSuccess{[]string{"1 101 2001"}, nil}, nil},
-		{"update tmp1 set id=id+1 where u in (108, 109)", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set id=id+1 where u in (108, 109)", checkError{dbterror.ErrKeyExists}, nil},
 		// update with table scan and index scan
 		{"update tmp1 set v=v+1000 where id<3", checkSuccess{[]string{"1 101 2001", "2 102 2002"}, nil}, nil},
 		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>107", checkSuccess{[]string{"8 108 2008", "9 109 2009"}, nil}, nil},
 		{"update tmp1 set v=v+1000 where v>=1007 or v<=1002", checkSuccess{[]string{"1 101 2001", "2 102 2002", "7 107 2007", "8 108 2008", "9 109 2009"}, nil}, nil},
 		{"update tmp1 set v=v+1000 where id>=10", checkSuccess{nil, nil}, nil},
-		{"update tmp1 set id=id+1 where id>7", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set id=id+1 where id>7", checkError{dbterror.ErrKeyExists}, nil},
 		{"update tmp1 set id=id+1 where id>8", checkSuccess{[]string{"10 109 1009"}, []int{9}}, nil},
-		{"update tmp1 set u=u+1 where u>107", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set u=u+1 where u>107", checkError{dbterror.ErrKeyExists}, nil},
 		{"update tmp1 set u=u+1 where u>108", checkSuccess{[]string{"9 110 1009"}, nil}, nil},
 		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>108 or u<102", checkSuccess{[]string{"1 101 2001", "9 109 2009"}, nil}, nil},
 	}

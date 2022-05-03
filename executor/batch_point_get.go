@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/math"
@@ -185,7 +186,7 @@ func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[st
 
 	for _, key := range keys {
 		val, err := s.memBuffer.Get(ctx, key)
-		if kv.ErrNotExist.Equal(err) {
+		if dbterror.ErrNotExist.Equal(err) {
 			continue
 		}
 
@@ -288,7 +289,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				continue
 			}
 			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
-			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
+			if err1 != nil && !dbterror.ErrNotExist.Equal(err1) {
 				return err1
 			}
 			if idxKey == nil {
@@ -448,7 +449,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		// Change the unique index LOCK into PUT record.
 		if len(indexKeys) > 0 {
 			if !e.txn.Valid() {
-				return kv.ErrInvalidTxn
+				return dbterror.ErrInvalidTxn
 			}
 			membuf := e.txn.GetMemBuffer()
 			for _, idxKey := range indexKeys {
@@ -520,13 +521,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 		if len(changeLockToPutIdxKeys) > 0 {
 			if !e.txn.Valid() {
-				return kv.ErrInvalidTxn
+				return dbterror.ErrInvalidTxn
 			}
 			for _, idxKey := range changeLockToPutIdxKeys {
 				membuf := e.txn.GetMemBuffer()
 				handleVal := handleVals[string(idxKey)]
 				if len(handleVal) == 0 {
-					return kv.ErrNotExist
+					return dbterror.ErrNotExist
 				}
 				err = membuf.Set(idxKey, handleVal)
 				if err != nil {
@@ -574,7 +575,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	if ok {
 		return val, nil
 	}
-	return nil, kv.ErrNotExist
+	return nil, dbterror.ErrNotExist
 }
 
 func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, intVal int64) (int64, error) {
@@ -629,7 +630,7 @@ func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[str
 	for _, key := range keys {
 		val, err := cacheDB.UnionGet(ctx, b.tid, b.snapshot, key)
 		if err != nil {
-			if !kv.ErrNotExist.Equal(err) {
+			if !dbterror.ErrNotExist.Equal(err) {
 				return nil, err
 			}
 			continue

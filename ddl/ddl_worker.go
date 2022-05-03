@@ -378,7 +378,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 	if err == nil {
 		return nil
 	}
-	if kv.ErrEntryTooLarge.Equal(err) {
+	if dbterror.ErrEntryTooLarge.Equal(err) {
 		logutil.Logger(w.logCtx).Warn("[ddl] update DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
@@ -396,7 +396,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(kv.ErrEntryTooLarge)
+			failpoint.Return(dbterror.ErrEntryTooLarge)
 		}
 	})
 	updateRawArgs := true

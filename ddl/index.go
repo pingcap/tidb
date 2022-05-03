@@ -606,7 +606,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
 		}
-		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
+		if dbterror.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
 			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 			if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
@@ -1225,7 +1225,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 	for i, val := range values[:idxColLen] {
 		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
 		if err != nil {
-			return kv.ErrKeyExists.FastGenByArgs(key.String(), indexName)
+			return dbterror.ErrKeyExists.FastGenByArgs(key.String(), indexName)
 		}
 		str, err := d.ToString()
 		if err != nil {
@@ -1233,7 +1233,7 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 		}
 		valueStr = append(valueStr, str)
 	}
-	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
+	return dbterror.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
 }
 
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
@@ -1339,7 +1339,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			// Create the index.
 			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion)
 			if err != nil {
-				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
+				if dbterror.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.
 					continue
 				}

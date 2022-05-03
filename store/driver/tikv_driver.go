@@ -32,6 +32,7 @@ import (
 	derr "github.com/pingcap/tidb/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
@@ -320,7 +321,7 @@ func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 
 // ShowStatus returns the specified status of the storage
 func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
-	return nil, kv.ErrNotImplemented
+	return nil, dbterror.ErrNotImplemented
 }
 
 // GetLockWaits get return lock waits info

@@ -18,10 +18,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -434,7 +434,7 @@ func testUpdatePKLazyCheck(t *testing.T, tk *testkit.TestKit, clusteredIndex var
 	tk.MustExec("update upk set b = b + 1 where a between 1 and 2")
 	require.Equal(t, 2, getPresumeExistsCount(t, tk.Session()))
 	_, err := tk.Exec("update upk set a = 3, b = 3 where a between 1 and 2")
-	require.True(t, kv.ErrKeyExists.Equal(err))
+	require.True(t, dbterror.ErrKeyExists.Equal(err))
 	tk.MustExec("commit")
 }
 

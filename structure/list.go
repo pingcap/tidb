@@ -19,7 +19,7 @@ import (
 	"encoding/binary"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 type listMeta struct {
@@ -216,7 +216,7 @@ func (t *TxStructure) LClear(key []byte) error {
 
 func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
 	v, err := t.reader.Get(context.TODO(), metaKey)
-	if kv.ErrNotExist.Equal(err) {
+	if dbterror.ErrNotExist.Equal(err) {
 		err = nil
 	}
 	if err != nil {

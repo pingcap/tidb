@@ -541,7 +541,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
 		if val.(bool) {
 			if _, err := failpoint.Eval("tikvclient/mockCommitErrorOpt"); err == nil {
-				failpoint.Return(kv.ErrTxnRetryable)
+				failpoint.Return(dbterror.ErrTxnRetryable)
 			}
 		}
 	})
@@ -675,7 +675,7 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 		return err
 	}
 	key := assertionFailure.Key
-	newErr := kv.ErrAssertionFailed.GenWithStackByArgs(
+	newErr := dbterror.ErrAssertionFailed.GenWithStackByArgs(
 		hex.EncodeToString(key), assertionFailure.Assertion.String(), assertionFailure.StartTs,
 		assertionFailure.ExistingStartTs, assertionFailure.ExistingCommitTs,
 	)
@@ -830,7 +830,7 @@ func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags t
 // of the errors defined in kv/error.go, these look to be clearly related to a client-inflicted issue,
 // and the server is only responsible for handling the error correctly. It does not need to log.
 func errIsNoisy(err error) bool {
-	if kv.ErrKeyExists.Equal(err) {
+	if dbterror.ErrKeyExists.Equal(err) {
 		return true
 	}
 	if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
@@ -1010,15 +1010,15 @@ func (s *session) isInternal() bool {
 
 func (s *session) isTxnRetryableError(err error) bool {
 	if atomic.LoadUint32(&SchemaChangedWithoutRetry) == 1 {
-		return kv.IsTxnRetryableError(err)
+		return dbterror.IsTxnRetryableError(err)
 	}
-	return kv.IsTxnRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
+	return dbterror.IsTxnRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	var err error
 	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
-		err = kv.ErrLockExpire
+		err = dbterror.ErrLockExpire
 	} else {
 		return nil
 	}
@@ -2417,7 +2417,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		return &s.txn, nil
 	}
 	if !s.txn.validOrPending() {
-		return &s.txn, errors.AddStack(kv.ErrInvalidTxn)
+		return &s.txn, errors.AddStack(dbterror.ErrInvalidTxn)
 	}
 	if s.txn.pending() {
 		defer func(begin time.Time) {

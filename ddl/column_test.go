@@ -328,7 +328,7 @@ func checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle,
 	}
 	data, err := txn.Get(context.TODO(), key)
 	if !isExist {
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
+		if terror.ErrorEqual(err, dbterror.ErrNotExist) {
 			return nil
 		}
 	}

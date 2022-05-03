@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 
@@ -351,9 +352,9 @@ func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		_, err1 := tk2.Exec("insert point values (1, 1, 1)")
-		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		c.Check(dbterror.ErrKeyExists.Equal(err1), IsTrue)
 		_, err1 = tk2.Exec("insert point values (2, 2, 2)")
-		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		c.Check(dbterror.ErrKeyExists.Equal(err1), IsTrue)
 		tk2.MustExec("rollback")
 		<-syncCh
 	}()
@@ -369,9 +370,9 @@ func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		_, err1 := tk2.Exec("insert point values (3, 3, 3)")
-		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		c.Check(dbterror.ErrKeyExists.Equal(err1), IsTrue)
 		_, err1 = tk2.Exec("insert point values (4, 4, 4)")
-		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		c.Check(dbterror.ErrKeyExists.Equal(err1), IsTrue)
 		tk2.MustExec("rollback")
 		<-syncCh
 	}()
@@ -1503,14 +1504,14 @@ func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
 	tk.MustQuery("select * from t1 where c1 in(1, 5) for update").Check(testkit.Rows("1 1 1", "5 5 5"))
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 1)
 	err := tk.ExecToErr("select * from t1 where c1 in(1, 5)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrLockExpire), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrLockExpire), IsTrue)
 	tk.MustExec("commit")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 where c1 in(1, 5) for update").Check(testkit.Rows("1 1 1", "5 5 5"))
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 1)
 	err = tk.ExecToErr("update t1 set c2 = c2 + 1")
-	c.Assert(terror.ErrorEqual(err, kv.ErrLockExpire), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrLockExpire), IsTrue)
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 0)
 	tk.MustExec("update t1 set c2 = c2 + 1")
 	tk.MustExec("rollback")
@@ -1782,33 +1783,33 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLock(c *C) {
 	// Test insert after lock.
 	tk.MustExec("begin pessimistic")
 	err := tk.ExecToErr("update t1 set c2 = 20 where c1 = 1;")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from t1 for update")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from t1 where c2 = 2 for update")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	// Test insert after insert.
 	tk.MustExec("begin pessimistic")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("insert into t1 values(5, 6, 7)")
 	err = tk.ExecToErr("insert into t1 values(6, 6, 7);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "5 6 7", "10 20 30"))
 
@@ -1817,20 +1818,20 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLock(c *C) {
 	tk.MustExec("delete from t1 where c2 > 2")
 	tk.MustExec("insert into t1 values(10, 20, 500);")
 	err = tk.ExecToErr("insert into t1 values(20, 20, 30);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	err = tk.ExecToErr("insert into t1 values(1, 20, 30);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 500"))
 
 	// Test range.
 	tk.MustExec("begin pessimistic")
 	err = tk.ExecToErr("update t1 set c2 = 20 where c1 >= 1 and c1 < 5;")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	err = tk.ExecToErr("update t1 set c2 = 20 where c1 >= 1 and c1 < 50;")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 500"))
 
@@ -1841,9 +1842,9 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLock(c *C) {
 	tk.MustExec("select * from t1 where c1 = 6 for update")
 	tk.MustExec("select * from t1 for update")
 	err = tk.ExecToErr("insert into t1 values(7, 6, 7)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	err = tk.ExecToErr("insert into t1 values(5, 8, 6)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("select * from t1 where c1 = 5 for update")
 	tk.MustExec("select * from t1 where c2 = 8 for update")
 	tk.MustExec("select * from t1 for update")
@@ -1855,7 +1856,7 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLock(c *C) {
 	tk.MustQuery("select * from t1 where c1 = 1 for update").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("insert into t1 values(10, 10, 10)")
 	err = tk.ExecToErr("commit")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 }
 
 func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
@@ -1873,33 +1874,33 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
 	// Test insert after lock.
 	tk.MustExec("begin pessimistic")
 	err := tk.ExecToErr("update t1 set c2 = 20 where c1 in (1);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from t1 for update")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from t1 where c2 in (2) for update")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	// Test insert after insert.
 	tk.MustExec("begin pessimistic")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("insert into t1 values(5, 6, 7)")
 	err = tk.ExecToErr("insert into t1 values(6, 6, 7);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "5 6 7", "10 20 30"))
 
@@ -1908,20 +1909,20 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
 	tk.MustExec("delete from t1 where c2 > 2")
 	tk.MustExec("insert into t1 values(10, 20, 500);")
 	err = tk.ExecToErr("insert into t1 values(20, 20, 30);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	err = tk.ExecToErr("insert into t1 values(1, 20, 30);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 500"))
 
 	// Test range.
 	tk.MustExec("begin pessimistic")
 	err = tk.ExecToErr("update t1 set c2 = 20 where c1 >= 1 and c1 < 5;")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	err = tk.ExecToErr("update t1 set c2 = 20 where c1 >= 1 and c1 < 50;")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 500"))
 
@@ -1932,9 +1933,9 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
 	tk.MustExec("select * from t1 where c1 = 6 for update")
 	tk.MustExec("select * from t1 for update")
 	err = tk.ExecToErr("insert into t1 values(7, 6, 7)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	err = tk.ExecToErr("insert into t1 values(5, 8, 6)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 	tk.MustExec("select * from t1 where c2 = 8 for update")
 	tk.MustExec("select * from t1 where c1 in (5, 8) for update")
 	tk.MustExec("select * from t1 for update")
@@ -1946,7 +1947,7 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
 	tk.MustQuery("select * from t1 where c1 in (1) for update").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("insert into t1 values(10, 10, 10)")
 	err = tk.ExecToErr("commit")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, dbterror.ErrKeyExists), IsTrue)
 }
 
 func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {

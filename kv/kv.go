@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -97,7 +98,7 @@ type EmptyRetriever struct{}
 
 // Get gets the value for key k from kv store. Always return nil for this retriever
 func (r *EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
-	return nil, ErrNotExist
+	return nil, dbterror.ErrNotExist
 }
 
 // Iter creates an Iterator. Always return EmptyIterator for this retriever

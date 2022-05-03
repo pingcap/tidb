@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // HashPair is the pair for (field, value) in a hash.
@@ -43,7 +44,7 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
 	value, err := t.reader.Get(context.TODO(), dataKey)
-	if kv.ErrNotExist.Equal(err) {
+	if dbterror.ErrNotExist.Equal(err) {
 		err = nil
 	}
 	return value, errors.Trace(err)
@@ -334,7 +335,7 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 
 func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
 	v, err := t.reader.Get(context.TODO(), dataKey)
-	if kv.ErrNotExist.Equal(err) {
+	if dbterror.ErrNotExist.Equal(err) {
 		err = nil
 		v = nil
 	}

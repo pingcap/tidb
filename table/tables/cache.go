@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -289,7 +290,7 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts, leaseDuration)
 	newLease, err := handle.RenewReadLease(context.Background(), tid, data.Lease, lease)
-	if err != nil && !kv.IsTxnRetryableError(err) {
+	if err != nil && !dbterror.IsTxnRetryableError(err) {
 		log.Warn("Renew read lease error", zap.Error(err))
 	}
 	if newLease > 0 {

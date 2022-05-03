@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -195,7 +196,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		}
 
 		sc := e.ctx.GetSessionVars().StmtCtx
-		if kv.ErrKeyExists.Equal(err1) && sc.DupKeyAsWarning {
+		if dbterror.ErrKeyExists.Equal(err1) && sc.DupKeyAsWarning {
 			sc.AppendWarning(err1)
 			continue
 		}

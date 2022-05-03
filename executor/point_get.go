@@ -236,7 +236,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
 			if err != nil {
-				if kv.ErrNotExist.Equal(err) {
+				if dbterror.ErrNotExist.Equal(err) {
 					return nil
 				}
 				return err
@@ -247,13 +247,13 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		} else {
 			e.idxKey, err = EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals, tblID)
-			if err != nil && !kv.ErrNotExist.Equal(err) {
+			if err != nil && !dbterror.ErrNotExist.Equal(err) {
 				return err
 			}
 
 			e.handleVal, err = e.get(ctx, e.idxKey)
 			if err != nil {
-				if !kv.ErrNotExist.Equal(err) {
+				if !dbterror.ErrNotExist.Equal(err) {
 					return err
 				}
 			}
@@ -268,7 +268,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				// Change the unique index LOCK into PUT record.
 				if e.lock && len(e.handleVal) > 0 {
 					if !e.txn.Valid() {
-						return kv.ErrInvalidTxn
+						return dbterror.ErrInvalidTxn
 					}
 					memBuffer := e.txn.GetMemBuffer()
 					err = memBuffer.Set(e.idxKey, e.handleVal)
@@ -349,7 +349,7 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 		// Only Lock the exist keys in RC isolation.
 		val, err = e.get(ctx, key)
 		if err != nil {
-			if !kv.ErrNotExist.Equal(err) {
+			if !dbterror.ErrNotExist.Equal(err) {
 				return nil, err
 			}
 			return nil, nil
@@ -367,7 +367,7 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 	}
 	val, err = e.get(ctx, key)
 	if err != nil {
-		if !kv.ErrNotExist.Equal(err) {
+		if !dbterror.ErrNotExist.Equal(err) {
 			return nil, err
 		}
 		return nil, nil
@@ -398,10 +398,10 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 }
 
 // get will first try to get from txn buffer, then check the pessimistic lock cache,
-// then the store. Kv.ErrNotExist will be returned if key is not found
+// then the store. dbterror.ErrNotExist will be returned if key is not found
 func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
 	if len(key) == 0 {
-		return nil, kv.ErrNotExist
+		return nil, dbterror.ErrNotExist
 	}
 
 	var (
@@ -416,7 +416,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		if err == nil {
 			return val, err
 		}
-		if !kv.IsErrNotFound(err) {
+		if !dbterror.IsErrNotFound(err) {
 			return nil, err
 		}
 		// key does not exist in mem buffer, check the lock cache
@@ -507,11 +507,11 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 			var e types.Enum
 			str, err = idxVals[i].ToString()
 			if err != nil {
-				return nil, kv.ErrNotExist
+				return nil, dbterror.ErrNotExist
 			}
 			e, err = types.ParseEnumName(colInfo.FieldType.GetElems(), str, colInfo.FieldType.GetCollate())
 			if err != nil {
-				return nil, kv.ErrNotExist
+				return nil, dbterror.ErrNotExist
 			}
 			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.GetCollate())
 		} else {
@@ -520,7 +520,7 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 			idxVals[i], err = table.CastValue(ctx, idxVals[i], colInfo, true, false)
 			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) ||
 				types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
-				return nil, kv.ErrNotExist
+				return nil, dbterror.ErrNotExist
 			}
 		}
 		if err != nil {

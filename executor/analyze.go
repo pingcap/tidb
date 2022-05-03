@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1763,7 +1764,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
-		if kv.ErrInvalidTxn.Equal(err) {
+		if dbterror.ErrInvalidTxn.Equal(err) {
 			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")
 			if err != nil {
 				return nil, errors.Trace(err)

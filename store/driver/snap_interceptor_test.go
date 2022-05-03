@@ -50,7 +50,7 @@ func TestSnapshotWithoutInterceptor(t *testing.T) {
 	require.Equal(t, []byte("v2"), val)
 
 	val, err = snap.Get(ctx, kv.Key("kn"))
-	require.True(t, kv.ErrNotExist.Equal(err))
+	require.True(t, dbterror.ErrNotExist.Equal(err))
 	require.Nil(t, val)
 
 	// Test for BatchGet

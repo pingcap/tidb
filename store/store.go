@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -73,7 +74,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		logutil.BgLogger().Info("new store", zap.String("path", path))
 		s, err = d.Open(path)
-		return kv.IsTxnRetryableError(err), err
+		return dbterror.IsTxnRetryableError(err), err
 	})
 
 	if err == nil {

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"context"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"

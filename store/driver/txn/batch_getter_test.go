@@ -71,7 +71,7 @@ func (s *mockBatchGetterStore) Get(_ context.Context, k kv.Key) ([]byte, error) 
 			return s.value[i], nil
 		}
 	}
-	return nil, kv.ErrNotExist
+	return nil, dbterror.ErrNotExist
 }
 
 func (s *mockBatchGetterStore) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
@@ -82,7 +82,7 @@ func (s *mockBatchGetterStore) BatchGet(ctx context.Context, keys []kv.Key) (map
 			m[string(k)] = v
 			continue
 		}
-		if kv.IsErrNotFound(err) {
+		if dbterror.IsErrNotFound(err) {
 			continue
 		}
 		return m, err

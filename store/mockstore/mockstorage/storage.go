@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	driver "github.com/pingcap/tidb/store/driver/txn"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -81,7 +82,7 @@ func (s *mockStorage) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) {
 
 // ShowStatus returns the specified status of the storage
 func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
-	return nil, kv.ErrNotImplemented
+	return nil, dbterror.ErrNotImplemented
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.

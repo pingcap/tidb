@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -128,7 +129,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 		if err != nil {
 			err1 := txn.Rollback()
 			terror.Log(err1)
-			if retryable && IsTxnRetryableError(err) {
+			if retryable && dbterror.IsTxnRetryableError(err) {
 				logutil.BgLogger().Warn("RunInNewTxn",
 					zap.Uint64("retry txn", txn.StartTS()),
 					zap.Uint64("original txn", originalTxnTS),
@@ -143,7 +144,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 				switch v {
 				case "retry_once":
 					if i == 0 {
-						err = ErrTxnRetryable
+						err = dbterror.ErrTxnRetryable
 					}
 				case "no_retry":
 					failpoint.Return(errors.New("mock commit error"))
@@ -157,7 +158,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 				break
 			}
 		}
-		if retryable && IsTxnRetryableError(err) {
+		if retryable && dbterror.IsTxnRetryableError(err) {
 			logutil.BgLogger().Warn("RunInNewTxn",
 				zap.Uint64("retry txn", txn.StartTS()),
 				zap.Uint64("original txn", originalTxnTS),

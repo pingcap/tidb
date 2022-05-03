@@ -28,6 +28,7 @@ import (
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -152,12 +153,12 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 
 func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	val, err := txn.GetMemBuffer().Get(ctx, k)
-	if kv.ErrNotExist.Equal(err) {
+	if dbterror.ErrNotExist.Equal(err) {
 		val, err = txn.GetSnapshot().Get(ctx, k)
 	}
 
 	if err == nil && len(val) == 0 {
-		return nil, kv.ErrNotExist
+		return nil, dbterror.ErrNotExist
 	}
 
 	return val, err

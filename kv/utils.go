@@ -17,14 +17,16 @@ package kv
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // IncInt64 increases the value for key k in kv store by step.
 func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
 	val, err := rm.Get(context.TODO(), k)
-	if IsErrNotFound(err) {
+	if dbterror.IsErrNotFound(err) {
 		err = rm.Set(k, []byte(strconv.FormatInt(step, 10)))
 		if err != nil {
 			return 0, err
@@ -51,7 +53,7 @@ func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
 // GetInt64 get int64 value which created by IncInt64 method.
 func GetInt64(ctx context.Context, r Retriever, k Key) (int64, error) {
 	val, err := r.Get(ctx, k)
-	if IsErrNotFound(err) {
+	if dbterror.IsErrNotFound(err) {
 		return 0, nil
 	}
 	if err != nil {
@@ -83,4 +85,25 @@ func WalkMemBuffer(memBuf Retriever, f func(k Key, v []byte) error) error {
 	}
 
 	return nil
+}
+
+// GetDuplicateErrorHandleString is used to concat the handle columns data with '-'.
+// This is consistent with MySQL.
+func GetDuplicateErrorHandleString(handle Handle) string {
+	dt, err := handle.Data()
+	if err != nil {
+		return err.Error()
+	}
+	var sb strings.Builder
+	for i, d := range dt {
+		if i != 0 {
+			sb.WriteString("-")
+		}
+		s, err := d.ToString()
+		if err != nil {
+			return err.Error()
+		}
+		sb.WriteString(s)
+	}
+	return sb.String()
 }
