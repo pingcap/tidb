@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,15 +71,6 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 	return errors.Trace(err)
 }
 
-// GetStack gets the stacktrace.
-func GetStack() []byte {
-	const size = 4096
-	buf := make([]byte, size)
-	stackSize := runtime.Stack(buf, false)
-	buf = buf[:stackSize]
-	return buf
-}
-
 // WithRecovery wraps goroutine startup call with force recovery.
 // it will dump current goroutine stack into log if catch any recover result.
 //   exec:      execute logic function.
@@ -119,7 +109,7 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
 		zap.Reflect("r", r),
-		zap.String("stack", string(GetStack())))
+		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
 	if quit {
 		// Wait for metrics to be pushed.
