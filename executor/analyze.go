@@ -382,10 +382,10 @@ func isAnalyzeWorkerPanic(err error) bool {
 func getAnalyzeWorkerPanicErr(r interface{}) error {
 	if msg, ok := r.(string); ok && msg == globalPanicAnalyzeMemoryExceed {
 		return errAnalyzeWorkerOOM
-	} else {
-		return errAnalyzeWorkerPanic
 	}
+	return errAnalyzeWorkerPanic
 }
+
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	defer func() {
