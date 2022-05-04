@@ -98,7 +98,8 @@ func tryGC(memTracker *memory.Tracker, force bool) {
 	if inGC.CAS(false, true) {
 		defer inGC.Store(false)
 		toGC := memToGC.Load()
-		if force || toGC > variable.AnalyzeGCTrigger.Load() {
+		gcTrigger := variable.AnalyzeGCTrigger.Load()
+		if force || (gcTrigger > 0 && toGC > gcTrigger) {
 			runtime.GC()
 			memTracker.Consume(-toGC)
 			memToGC.Add(-toGC)
@@ -179,7 +180,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		if results.Err != nil {
 			err = results.Err
-			if err == errAnalyzeWorkerPanic {
+			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
 			} else {
 				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
@@ -231,8 +232,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 	})
 	if err != nil {
-		if err.Error() == globalPanicAnalyzeMemoryExceed {
-			return errors.New(globalPanicAnalyzeMemoryExceed + " Please try with smaller samplerate(refer to 110000/count) or sample number.")
+		if err == errAnalyzeWorkerOOM {
+			return errors.Errorf(err.Error()+", please try with smaller samplerate(refer to %d/count) or sample number.", config.DefRowsForSampleRate)
 		}
 		return err
 	}
@@ -372,7 +373,19 @@ type analyzeTask struct {
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
+var errAnalyzeWorkerOOM = errors.New("analyze worker panic due to memory quota exceeds")
 
+func isAnalyzeWorkerPanic(err error) bool {
+	return err == errAnalyzeWorkerPanic || err == errAnalyzeWorkerOOM
+}
+
+func getAnalyzeWorkerPanicErr(r interface{}) error {
+	if msg, ok := r.(string); ok && msg == globalPanicAnalyzeMemoryExceed {
+		return errAnalyzeWorkerOOM
+	} else {
+		return errAnalyzeWorkerPanic
+	}
+}
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	defer func() {
@@ -383,7 +396,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultsCh <- &statistics.AnalyzeResults{
-				Err: errAnalyzeWorkerPanic,
+				Err: getAnalyzeWorkerPanicErr(r),
 				Job: task.job,
 			}
 		}
@@ -996,8 +1009,11 @@ func (e *AnalyzeColumnsExec) buildSamplingStatsWithRetry(
 	}
 	for i := retries; i > 0; i-- {
 		count, hists, topns, fmSketches, extStats, err = e.buildSamplingStats(ranges, needExtStats, indexesWithVirtualColOffsets, idxNDVPushDownCh)
+		if err != nil {
+			memToGC.Add(e.memTracker.BytesConsumed())
+		}
 		tryGC(e.memTracker, true)
-		if err.Error() != globalPanicAnalyzeMemoryExceed || i <= 1 || e.analyzePB.ColReq == nil {
+		if err == nil || err != errAnalyzeWorkerOOM || i <= 1 || e.analyzePB.ColReq == nil {
 			return
 		}
 		oldSampleRate := *e.analyzePB.ColReq.SampleRate
@@ -1096,7 +1112,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 		if mergeResult.err != nil {
 			err = mergeResult.err
-			if mergeResult.err == errAnalyzeWorkerPanic {
+			if isAnalyzeWorkerPanic(mergeResult.err) {
 				mergeWorkerPanicCnt++
 			}
 			continue
@@ -1211,7 +1227,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 		if err1 != nil {
 			err = err1
-			if err1 == errAnalyzeWorkerPanic {
+			if isAnalyzeWorkerPanic(err1) {
 				panicCnt++
 			}
 			continue
@@ -1247,7 +1263,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 			logutil.BgLogger().Error("analyze ndv for special index panicked", zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			totalResultCh <- analyzeIndexNDVTotalResult{
-				err: errAnalyzeWorkerPanic,
+				err: getAnalyzeWorkerPanicErr(r),
 			}
 		}
 	}()
@@ -1282,7 +1298,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		if results.Err != nil {
 			err = results.Err
 			FinishAnalyzeJob(e.ctx, results.Job, err)
-			if err == errAnalyzeWorkerPanic {
+			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
 			}
 			continue
@@ -1307,7 +1323,7 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resu
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultsCh <- &statistics.AnalyzeResults{
-				Err: errAnalyzeWorkerPanic,
+				Err: getAnalyzeWorkerPanicErr(r),
 				Job: task.job,
 			}
 		}
@@ -1413,7 +1429,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			buf = buf[:stackSize]
 			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
-			resultCh <- &samplingMergeResult{err: errAnalyzeWorkerPanic}
+			resultCh <- &samplingMergeResult{err: getAnalyzeWorkerPanicErr(r)}
 		}
 		// Consume the remaining things.
 		for {
@@ -1485,7 +1501,7 @@ func (e *AnalyzeColumnsExec) subBuildWorker(
 			buf = buf[:stackSize]
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
-			resultCh <- errAnalyzeWorkerPanic
+			resultCh <- getAnalyzeWorkerPanicErr(r)
 		}
 	}()
 	failpoint.Inject("mockAnalyzeSamplingBuildWorkerPanic", func() {
