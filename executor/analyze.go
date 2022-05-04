@@ -32,6 +32,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -97,7 +98,7 @@ func tryGC(memTracker *memory.Tracker, force bool) {
 	if inGC.CAS(false, true) {
 		defer inGC.Store(false)
 		toGC := memToGC.Load()
-		if force || toGC > 524288000 { // GC when exceeds 500MB
+		if force || toGC > variable.AnalyzeGCTrigger.Load() {
 			runtime.GC()
 			memTracker.Consume(-toGC)
 			memToGC.Add(-toGC)
@@ -745,8 +746,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 			colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
 		})
 		defer wg.Wait()
-		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
-		tryGC(colExec.memTracker, true)
+		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStatsWithRetry(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
@@ -975,6 +975,72 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 		mergeTaskCh <- data
 	}
 	return nil
+}
+
+func (e *AnalyzeColumnsExec) buildSamplingStatsWithRetry(
+	ranges []*ranger.Range,
+	needExtStats bool,
+	indexesWithVirtualColOffsets []int,
+	idxNDVPushDownCh chan analyzeIndexNDVTotalResult,
+) (
+	count int64,
+	hists []*statistics.Histogram,
+	topns []*statistics.TopN,
+	fmSketches []*statistics.FMSketch,
+	extStats *statistics.ExtendedStatsColl,
+	err error,
+) {
+	retries := 1
+	if e.ctx.GetSessionVars().InRestrictedSQL {
+		retries = 2
+	}
+	for i := retries; i > 0; i-- {
+		count, hists, topns, fmSketches, extStats, err = e.buildSamplingStats(ranges, needExtStats, indexesWithVirtualColOffsets, idxNDVPushDownCh)
+		tryGC(e.memTracker, true)
+		if err.Error() != globalPanicAnalyzeMemoryExceed || i <= 1 || e.analyzePB.ColReq == nil {
+			return
+		}
+		oldSampleRate := *e.analyzePB.ColReq.SampleRate
+		if oldSampleRate <= 0 || oldSampleRate > 1 {
+			return
+		}
+		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+		if statsHandle == nil {
+			return
+		}
+		var statsTbl *statistics.Table
+		tid := e.tableID.GetStatisticsID()
+		if tid == e.tableInfo.ID {
+			statsTbl = statsHandle.GetTableStats(e.tableInfo)
+		} else {
+			statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
+		}
+		if statsTbl == nil || statsTbl.Count <= 0 {
+			return
+		}
+		newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.Count))
+		if newSampleRate >= oldSampleRate {
+			return
+		}
+		*e.analyzePB.ColReq.SampleRate = newSampleRate
+		if e.PartitionName != "" {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(
+				"Analyze retry with adjusted sample rate %f for table %s.%s's partition %s",
+				newSampleRate,
+				e.DBName,
+				e.TableName,
+				e.PartitionName,
+			))
+		} else {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(
+				"Analyze retry with adjusted sample rate %f for table %s.%s",
+				newSampleRate,
+				e.DBName,
+				e.TableName,
+			))
+		}
+	}
+	return
 }
 
 func (e *AnalyzeColumnsExec) buildSamplingStats(
@@ -1463,7 +1529,7 @@ workLoop:
 					if collator != nil {
 						val.SetBytes(collator.Key(val.GetString()))
 						bufferedMemInc += int64(cap(val.GetBytes()))
-						if bufferedMemInc > int64(104857600) { // track when exceeds 100 MB
+						if bufferedMemInc > int64(config.TrackMemWhenExceeds) {
 							e.memTracker.Consume(bufferedMemInc)
 							totalMemInc += bufferedMemInc
 							bufferedMemInc = int64(0)

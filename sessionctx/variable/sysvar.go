@@ -683,6 +683,24 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBMemQuotaAnalyze, Value: strconv.Itoa(DefTiDBMemQuotaAnalyze), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt32,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatInt(GetMemQuotaAnalyze(), 10), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			SetMemQuotaAnalyze(TidbOptInt64(val, DefTiDBMemQuotaAnalyze))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBAnalyzeGCTrigger, Value: strconv.Itoa(DefTiDBAnalyzeGCTrigger), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatInt(AnalyzeGCTrigger.Load(), 10), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			AnalyzeGCTrigger.Store(TidbOptInt64(val, DefTiDBAnalyzeGCTrigger))
+			return nil
+		},
+	},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
@@ -1438,15 +1456,6 @@ var defaultSysVars = []*SysVar{
 		s.MemQuotaQuery = TidbOptInt64(val, DefTiDBMemQuotaQuery)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBMemQuotaAnalyze, Value: strconv.Itoa(DefTiDBMemQuotaAnalyze), skipInit: true, Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
-		GetGlobal: func(s *SessionVars) (string, error) {
-			return strconv.FormatInt(GetMemQuotaAnalyze(), 10), nil
-		},
-		SetGlobal: func(s *SessionVars, val string) error {
-			SetMemQuotaAnalyze(TidbOptInt64(val, DefTiDBMemQuotaAnalyze))
-			return nil
-		},
-	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
