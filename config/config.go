@@ -32,6 +32,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -260,9 +261,9 @@ func (c *Config) UpdateTempStoragePath() {
 	}
 }
 
-func (c *Config) getTiKVConfig() *tikvcfg.Config {
+func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
-		CommitterConcurrency:  c.Performance.CommitterConcurrency,
+		CommitterConcurrency:  int(tikvutil.CommitterConcurrency.Load()),
 		MaxTxnTTL:             c.Performance.MaxTxnTTL,
 		TiKVClient:            c.TiKVClient,
 		Security:              c.Security.ClusterSecurity(),
@@ -595,9 +596,8 @@ type Performance struct {
 	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
-	ProjectionPushDown   bool   `toml:"projection-push-down" json:"projection-push-down"`
-	CommitterConcurrency int    `toml:"committer-concurrency" json:"committer-concurrency"`
-	MaxTxnTTL            uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
+	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
 	MemProfileInterval   string `toml:"-" json:"-"`
 	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
@@ -819,7 +819,6 @@ var defaultConf = Config{
 		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
 		ProjectionPushDown:    false,
-		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease:  "0s",
@@ -900,7 +899,7 @@ func GetGlobalConfig() *Config {
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
 	globalConf.Store(config)
-	cfg := *config.getTiKVConfig()
+	cfg := *config.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
 }
 
@@ -930,6 +929,7 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.history-size":          {},
 	"mem-quota-query":                    {},
 	"query-log-max-len":                  {},
+	"committer-concurrency":              {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

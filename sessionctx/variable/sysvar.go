@@ -35,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/tikvutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/versioninfo"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	atomic2 "go.uber.org/atomic"
 )
@@ -682,6 +684,14 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return fmt.Sprint(QueryLogMaxLen.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBCommitterConcurrency, Value: strconv.Itoa(DefTiDBCommitterConcurrency), Type: TypeInt, MinValue: 1, MaxValue: 10000, SetGlobal: func(s *SessionVars, val string) error {
+		//CommitterConcurrency.Store(int32(TidbOptInt64(val, DefTiDBCommitterConcurrency)))
+		cfg := config.GetGlobalConfig().GetTiKVConfig()
+		tikvcfg.StoreGlobalConfig(cfg)
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return fmt.Sprint(tikvutil.CommitterConcurrency.Load()), nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */

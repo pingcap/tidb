@@ -668,6 +668,8 @@ const (
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
+	// TiDBCommitterConcurrency controls the number of running concurrent requests in the commit phase.
+	TiDBCommitterConcurrency = "tidb_committer_concurrency"
 )
 
 // TiDB intentional limits
@@ -841,6 +843,7 @@ const (
 	DefMaxAllowedPacket                   uint64 = 67108864
 	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
 	DefTiDBQueryLogMaxLen                        = 4096
+	DefTiDBCommitterConcurrency                  = 128
 )
 
 // Process global variables.
