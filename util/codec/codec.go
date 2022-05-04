@@ -886,18 +886,16 @@ func DecodeAsDateTime(b []byte, tp byte, loc *time.Location) (remain []byte, d t
 	}
 	t := types.NewTime(types.ZeroCoreTime, tp, 0)
 	err = t.FromPackedUint(v)
-	if err == nil {
-		if tp == mysql.TypeTimestamp && !t.IsZero() && loc != nil {
-			err = t.ConvertTimeZone(time.UTC, loc)
-			if err != nil {
-				return b, d, err
-			}
-		}
-		d.SetMysqlTime(t)
-	}
 	if err != nil {
 		return b, d, errors.Trace(err)
 	}
+	if tp == mysql.TypeTimestamp && !t.IsZero() && loc != nil {
+		err = t.ConvertTimeZone(time.UTC, loc)
+		if err != nil {
+			return b, d, err
+		}
+	}
+	d.SetMysqlTime(t)
 	return b, d, nil
 }
 
