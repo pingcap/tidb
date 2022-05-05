@@ -19,6 +19,11 @@ var retryableServerError = []string{
 	"connection closed before message completed",
 	"body write aborted",
 	"error during dispatch",
+<<<<<<< HEAD
+=======
+	"put object timeout",
+	"internalerror",
+>>>>>>> 167d4ebc6... backup: retry on internal error and make more errors can be retried (#34352)
 }
 
 // RetryableFunc presents a retryable operation.
