@@ -257,7 +257,7 @@ func (s *GlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful bool)
 			}
 			log.Info(fmt.Sprintf("service \"%s\" stopped gracefully", name))
 			return nil
-		case <-time.After(10 * time.Second):
+		case <-time.After(60 * time.Second):
 			err = fmt.Errorf("service \"%s\" can't gracefully stop in time", name)
 			log.Info(err.Error())
 			return err
@@ -530,7 +530,6 @@ func TestMultipleTiDB(t *testing.T) {
 }
 
 func TestLostConnection(t *testing.T) {
-	t.Skip("unstable, skip race test")
 	s, clean := createGloabalKillSuite(t)
 	defer clean()
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
@@ -585,15 +584,15 @@ func TestLostConnection(t *testing.T) {
 	// [Test Scenario 4] Existing connections are killed after PD lost connection for long time.
 	r := <-ch
 	log.Info("sleepRoutine err", zap.Error(r.err))
-	require.NoError(t, err)
+	require.NotNil(t, r.err)
 	require.Equal(t, r.err.Error(), "invalid connection")
 
 	// check new connection.
 	// [Test Scenario 5] New connections are not accepted after PD lost connection for long time.
 	log.Info("check connection after lost connection to PD.")
 	_, err = s.connectTiDB(port1)
-	log.Info("connectTiDB err", zap.Error(r.err))
-	require.NoError(t, err)
+	log.Info("connectTiDB err", zap.Error(err))
+	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "driver: bad connection")
 
 	err = s.stopTiKV()

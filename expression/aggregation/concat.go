@@ -114,7 +114,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 // GetResult implements Aggregation interface.
 func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 	if evalCtx.Buffer != nil {
-		d.SetString(evalCtx.Buffer.String(), cf.RetTp.Collate)
+		d.SetString(evalCtx.Buffer.String(), cf.RetTp.GetCollate())
 	} else {
 		d.SetNull()
 	}

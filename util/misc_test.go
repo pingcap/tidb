@@ -91,11 +91,6 @@ func TestX509NameParseMatch(t *testing.T) {
 	assert.Equal(t, result, X509NameOnline(check))
 }
 
-func TestBasicFuncGetStack(t *testing.T) {
-	b := GetStack()
-	assert.Less(t, len(b), 4096)
-}
-
 func TestBasicFuncWithRecovery(t *testing.T) {
 	var recovery interface{}
 	WithRecovery(func() {
@@ -166,7 +161,7 @@ func TestToPB(t *testing.T) {
 		FieldType:    *types.NewFieldType(0),
 		Hidden:       true,
 	}
-	column.Collate = "utf8mb4_general_ci"
+	column.SetCollate("utf8mb4_general_ci")
 
 	column2 := &model.ColumnInfo{
 		ID:           1,
@@ -176,7 +171,7 @@ func TestToPB(t *testing.T) {
 		FieldType:    *types.NewFieldType(0),
 		Hidden:       true,
 	}
-	column2.Collate = "utf8mb4_bin"
+	column2.SetCollate("utf8mb4_bin")
 
 	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column).String())
 	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false)[0].String())
