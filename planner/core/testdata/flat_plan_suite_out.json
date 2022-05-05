@@ -6,7 +6,6 @@
         "SQL": "select * from t",
         "Main": [
           {
-            "ExplainID": "TableReader_5",
             "TextTreeExplainID": "TableReader_5",
             "Depth": 0,
             "DriverSide": 0,
@@ -15,12 +14,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 10000,
-            "ExplainInfo": "data:TableFullScan_4",
             "IsPhysicalPlan": true,
             "EstCost": 184001.33333333334
           },
           {
-            "ExplainID": "TableFullScan_4",
             "TextTreeExplainID": "└─TableFullScan_4",
             "Depth": 1,
             "DriverSide": 0,
@@ -29,7 +26,6 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 10000,
-            "ExplainInfo": "table:t, keep order:false, stats:pseudo",
             "IsPhysicalPlan": true,
             "EstCost": 1785000
           }
@@ -40,7 +36,6 @@
         "SQL": "select sum(t.a) from t join t2",
         "Main": [
           {
-            "ExplainID": "HashAgg_8",
             "TextTreeExplainID": "HashAgg_8",
             "Depth": 0,
             "DriverSide": 0,
@@ -49,12 +44,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 1,
-            "ExplainInfo": "funcs:sum(Column#33)->Column#16",
             "IsPhysicalPlan": true,
             "EstCost": 120121313.66766667
           },
           {
-            "ExplainID": "Projection_34",
             "TextTreeExplainID": "└─Projection_34",
             "Depth": 1,
             "DriverSide": 0,
@@ -63,12 +56,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 100000000,
-            "ExplainInfo": "cast(test.t.a, decimal(10,0) BINARY)->Column#33",
             "IsPhysicalPlan": true,
             "EstCost": 0
           },
           {
-            "ExplainID": "HashJoin_10",
             "TextTreeExplainID": "  └─HashJoin_10",
             "Depth": 2,
             "DriverSide": 0,
@@ -77,12 +68,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 100000000,
-            "ExplainInfo": "CARTESIAN inner join",
             "IsPhysicalPlan": true,
             "EstCost": 60121280.666666664
           },
           {
-            "ExplainID": "IndexReader_17",
             "TextTreeExplainID": "    ├─IndexReader_17(Build)",
             "Depth": 3,
             "DriverSide": 1,
@@ -91,12 +80,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 10000,
-            "ExplainInfo": "index:IndexFullScan_16",
             "IsPhysicalPlan": true,
             "EstCost": 47834.666666666664
           },
           {
-            "ExplainID": "IndexFullScan_16",
             "TextTreeExplainID": "    │ └─IndexFullScan_16",
             "Depth": 4,
             "DriverSide": 0,
@@ -105,12 +92,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 10000,
-            "ExplainInfo": "table:t, index:f(f), keep order:false, stats:pseudo",
             "IsPhysicalPlan": true,
             "EstCost": 555000
           },
           {
-            "ExplainID": "TableReader_27",
             "TextTreeExplainID": "    └─TableReader_27(Probe)",
             "Depth": 3,
             "DriverSide": 2,
@@ -119,12 +104,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 10000,
-            "ExplainInfo": "data:TableFullScan_26",
             "IsPhysicalPlan": true,
             "EstCost": 43418
           },
           {
-            "ExplainID": "TableFullScan_26",
             "TextTreeExplainID": "      └─TableFullScan_26",
             "Depth": 4,
             "DriverSide": 0,
@@ -133,7 +116,6 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 10000,
-            "ExplainInfo": "table:t2, keep order:false, stats:pseudo",
             "IsPhysicalPlan": true,
             "EstCost": 570000
           }
@@ -144,7 +126,6 @@
         "SQL": "select a from t use index (f) where f > 100",
         "Main": [
           {
-            "ExplainID": "Projection_4",
             "TextTreeExplainID": "Projection_4",
             "Depth": 0,
             "DriverSide": 0,
@@ -153,12 +134,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 3333.3333333333335,
-            "ExplainInfo": "test.t.a",
             "IsPhysicalPlan": true,
             "EstCost": 17963.77777777778
           },
           {
-            "ExplainID": "IndexReader_6",
             "TextTreeExplainID": "└─IndexReader_6",
             "Depth": 1,
             "DriverSide": 0,
@@ -167,12 +146,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 3333.3333333333335,
-            "ExplainInfo": "index:IndexRangeScan_5",
             "IsPhysicalPlan": true,
             "EstCost": 15945.77777777778
           },
           {
-            "ExplainID": "IndexRangeScan_5",
             "TextTreeExplainID": "  └─IndexRangeScan_5",
             "Depth": 2,
             "DriverSide": 0,
@@ -181,7 +158,6 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 3333.3333333333335,
-            "ExplainInfo": "table:t, index:f(f), range:(100,+inf], keep order:false, stats:pseudo",
             "IsPhysicalPlan": true,
             "EstCost": 185000
           }
@@ -192,7 +168,6 @@
         "SQL": "select a from t use index () where f > 100",
         "Main": [
           {
-            "ExplainID": "Projection_4",
             "TextTreeExplainID": "Projection_4",
             "Depth": 0,
             "DriverSide": 0,
@@ -201,12 +176,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 3333.3333333333335,
-            "ExplainInfo": "test.t.a",
             "IsPhysicalPlan": true,
             "EstCost": 126630.44444444445
           },
           {
-            "ExplainID": "TableReader_7",
             "TextTreeExplainID": "└─TableReader_7",
             "Depth": 1,
             "DriverSide": 0,
@@ -215,12 +188,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 3333.3333333333335,
-            "ExplainInfo": "data:Selection_6",
             "IsPhysicalPlan": true,
             "EstCost": 124612.44444444445
           },
           {
-            "ExplainID": "Selection_6",
             "TextTreeExplainID": "  └─Selection_6",
             "Depth": 2,
             "DriverSide": 0,
@@ -229,12 +200,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 3333.3333333333335,
-            "ExplainInfo": "gt(test.t.f, 100)",
             "IsPhysicalPlan": true,
             "EstCost": 1815000
           },
           {
-            "ExplainID": "TableFullScan_5",
             "TextTreeExplainID": "    └─TableFullScan_5",
             "Depth": 3,
             "DriverSide": 0,
@@ -243,7 +212,6 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 10000,
-            "ExplainInfo": "table:t, keep order:false, stats:pseudo",
             "IsPhysicalPlan": true,
             "EstCost": 1785000
           }
@@ -254,7 +222,6 @@
         "SQL": "with cte1 as (select a, b from t), cte2 as (select a, b from t2) select * from cte1 join cte2 on cte1.a = cte2.a",
         "Main": [
           {
-            "ExplainID": "HashJoin_28",
             "TextTreeExplainID": "HashJoin_28",
             "Depth": 0,
             "DriverSide": 0,
@@ -263,12 +230,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 8000,
-            "ExplainInfo": "inner join, equal:[eq(test.t.a, test.t2.a)]",
             "IsPhysicalPlan": true,
             "EstCost": 321729.7333333334
           },
           {
-            "ExplainID": "Selection_30",
             "TextTreeExplainID": "├─Selection_30(Build)",
             "Depth": 1,
             "DriverSide": 1,
@@ -277,12 +242,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 6400,
-            "ExplainInfo": "not(isnull(test.t.a))",
             "IsPhysicalPlan": true,
             "EstCost": 189852.6666666667
           },
           {
-            "ExplainID": "CTEFullScan_31",
             "TextTreeExplainID": "│ └─CTEFullScan_31",
             "Depth": 2,
             "DriverSide": 0,
@@ -291,12 +254,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 8000,
-            "ExplainInfo": "CTE:cte1, data:CTE_0",
             "IsPhysicalPlan": true,
             "EstCost": 0
           },
           {
-            "ExplainID": "Selection_32",
             "TextTreeExplainID": "└─Selection_32(Probe)",
             "Depth": 1,
             "DriverSide": 2,
@@ -305,12 +266,10 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 6400,
-            "ExplainInfo": "not(isnull(test.t2.a))",
             "IsPhysicalPlan": true,
             "EstCost": 107852.66666666666
           },
           {
-            "ExplainID": "CTEFullScan_33",
             "TextTreeExplainID": "  └─CTEFullScan_33",
             "Depth": 2,
             "DriverSide": 0,
@@ -319,7 +278,6 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 8000,
-            "ExplainInfo": "CTE:cte2, data:CTE_1",
             "IsPhysicalPlan": true,
             "EstCost": 0
           }
@@ -327,7 +285,6 @@
         "CTEs": [
           [
             {
-              "ExplainID": "CTE_0",
               "TextTreeExplainID": "CTE_0",
               "Depth": 0,
               "DriverSide": 0,
@@ -336,12 +293,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 8000,
-              "ExplainInfo": "Non-Recursive CTE",
               "IsPhysicalPlan": true,
               "EstCost": 0
             },
             {
-              "ExplainID": "Selection_13",
               "TextTreeExplainID": "└─Selection_13(Seed Part)",
               "Depth": 1,
               "DriverSide": 3,
@@ -350,12 +305,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 8000,
-              "ExplainInfo": "not(isnull(test.t.a))",
               "IsPhysicalPlan": true,
               "EstCost": 165852.6666666667
             },
             {
-              "ExplainID": "TableReader_16",
               "TextTreeExplainID": "  └─TableReader_16",
               "Depth": 2,
               "DriverSide": 0,
@@ -364,12 +317,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 10000,
-              "ExplainInfo": "data:TableFullScan_15",
               "IsPhysicalPlan": true,
               "EstCost": 129834.66666666667
             },
             {
-              "ExplainID": "TableFullScan_15",
               "TextTreeExplainID": "    └─TableFullScan_15",
               "Depth": 3,
               "DriverSide": 0,
@@ -378,14 +329,12 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 10000,
-              "ExplainInfo": "table:t, keep order:false, stats:pseudo",
               "IsPhysicalPlan": true,
               "EstCost": 1785000
             }
           ],
           [
             {
-              "ExplainID": "CTE_1",
               "TextTreeExplainID": "CTE_1",
               "Depth": 0,
               "DriverSide": 0,
@@ -394,12 +343,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 8000,
-              "ExplainInfo": "Non-Recursive CTE",
               "IsPhysicalPlan": true,
               "EstCost": 0
             },
             {
-              "ExplainID": "Selection_18",
               "TextTreeExplainID": "└─Selection_18(Seed Part)",
               "Depth": 1,
               "DriverSide": 3,
@@ -408,12 +355,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 8000,
-              "ExplainInfo": "not(isnull(test.t2.a))",
               "IsPhysicalPlan": true,
               "EstCost": 83852.66666666666
             },
             {
-              "ExplainID": "IndexReader_23",
               "TextTreeExplainID": "  └─IndexReader_23",
               "Depth": 2,
               "DriverSide": 0,
@@ -422,12 +367,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 10000,
-              "ExplainInfo": "index:IndexFullScan_22",
               "IsPhysicalPlan": true,
               "EstCost": 47834.666666666664
             },
             {
-              "ExplainID": "IndexFullScan_22",
               "TextTreeExplainID": "    └─IndexFullScan_22",
               "Depth": 3,
               "DriverSide": 0,
@@ -436,7 +379,6 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 10000,
-              "ExplainInfo": "table:t2, index:b(b), keep order:false, stats:pseudo",
               "IsPhysicalPlan": true,
               "EstCost": 555000
             }
@@ -447,7 +389,6 @@
         "SQL": "WITH RECURSIVE cte (n) AS(  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte;",
         "Main": [
           {
-            "ExplainID": "CTEFullScan_17",
             "TextTreeExplainID": "CTEFullScan_17",
             "Depth": 0,
             "DriverSide": 0,
@@ -456,7 +397,6 @@
             "ReqType": 0,
             "StatsInfoAvailable": true,
             "EstRows": 1.8,
-            "ExplainInfo": "CTE:cte, data:CTE_0",
             "IsPhysicalPlan": true,
             "EstCost": 0
           }
@@ -464,7 +404,6 @@
         "CTEs": [
           [
             {
-              "ExplainID": "CTE_0",
               "TextTreeExplainID": "CTE_0",
               "Depth": 0,
               "DriverSide": 0,
@@ -473,12 +412,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 1.8,
-              "ExplainInfo": "Recursive CTE",
               "IsPhysicalPlan": true,
               "EstCost": 0
             },
             {
-              "ExplainID": "Projection_11",
               "TextTreeExplainID": "├─Projection_11(Seed Part)",
               "Depth": 1,
               "DriverSide": 3,
@@ -487,12 +424,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 1,
-              "ExplainInfo": "1->Column#2",
               "IsPhysicalPlan": true,
               "EstCost": 18.6
             },
             {
-              "ExplainID": "TableDual_12",
               "TextTreeExplainID": "│ └─TableDual_12",
               "Depth": 2,
               "DriverSide": 0,
@@ -501,12 +436,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 1,
-              "ExplainInfo": "rows:1",
               "IsPhysicalPlan": true,
               "EstCost": 0
             },
             {
-              "ExplainID": "Projection_13",
               "TextTreeExplainID": "└─Projection_13(Recursive Part)",
               "Depth": 1,
               "DriverSide": 4,
@@ -515,12 +448,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 0.8,
-              "ExplainInfo": "cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
               "IsPhysicalPlan": true,
               "EstCost": 21.48
             },
             {
-              "ExplainID": "Selection_14",
               "TextTreeExplainID": "  └─Selection_14",
               "Depth": 2,
               "DriverSide": 0,
@@ -529,12 +460,10 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 0.8,
-              "ExplainInfo": "lt(Column#3, 5)",
               "IsPhysicalPlan": true,
               "EstCost": 3
             },
             {
-              "ExplainID": "CTETable_15",
               "TextTreeExplainID": "    └─CTETable_15",
               "Depth": 3,
               "DriverSide": 0,
@@ -543,7 +472,6 @@
               "ReqType": 0,
               "StatsInfoAvailable": true,
               "EstRows": 1,
-              "ExplainInfo": "Scan on CTE_0",
               "IsPhysicalPlan": true,
               "EstCost": 0
             }

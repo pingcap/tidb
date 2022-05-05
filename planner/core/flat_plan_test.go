@@ -31,7 +31,6 @@ import (
 
 // FlatPhysicalOperatorForTest contains fields of FlatOperator that is needed for tests.
 type FlatPhysicalOperatorForTest struct {
-	ExplainID          string
 	TextTreeExplainID  string
 	Depth              uint64
 	DriverSide         core.DriverSide
@@ -40,7 +39,6 @@ type FlatPhysicalOperatorForTest struct {
 	ReqType            core.ReadReqType
 	StatsInfoAvailable bool
 	EstRows            float64
-	ExplainInfo        string
 	IsPhysicalPlan     bool
 	EstCost            float64
 }
@@ -80,7 +78,7 @@ func TestFlatPhysicalPlan(t *testing.T) {
 		Main []*FlatPhysicalOperatorForTest
 		CTEs [][]*FlatPhysicalOperatorForTest
 	}
-	planSuiteData := core.GetExplainedSuiteData()
+	planSuiteData := core.GetFlatPlanSuiteData()
 	planSuiteData.GetTestCases(t, &input, &output)
 	p := parser.New()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
