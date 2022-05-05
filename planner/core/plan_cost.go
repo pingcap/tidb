@@ -95,7 +95,8 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType) (flo
 		p.planCost += childCost
 	}
 
-	// calculate table-side scan cost, we cannot know its stats until we finish index plan.
+	// to keep compatible with the previous cost implementation, re-calculate table-scan cost by using index stats-count again (see copTask.finishIndexPlan).
+	// TODO: amend table-side cost here later
 	var tmp PhysicalPlan
 	for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
 	}
