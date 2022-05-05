@@ -28,7 +28,8 @@ import (
 	"github.com/tikv/client-go/v2/metrics"
 )
 
-var Usage = ClusterIndexUsage{}
+// emptyClusterIndexUsage is empty ClusterIndexUsage, deprecated.
+var emptyClusterIndexUsage = ClusterIndexUsage{}
 
 type featureUsage struct {
 	// transaction usage information
