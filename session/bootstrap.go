@@ -416,6 +416,10 @@ const (
 		PRIMARY KEY (id),
 		KEY (update_time)
 	);`
+	// CreateAdvisoryLocks stores the advisory locks (get_lock, release_lock).
+	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
+		lock_name VARCHAR(64) NOT NULL PRIMARY KEY
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -609,11 +613,13 @@ const (
 	version87 = 87
 	// version88 fixes the issue https://github.com/pingcap/tidb/issues/33650.
 	version88 = 88
+	// version89 adds the tables mysql.advisory_locks
+	version89 = 89
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version88
+var currentBootstrapVersion int64 = version89
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -705,6 +711,7 @@ var (
 		upgradeToVer86,
 		upgradeToVer87,
 		upgradeToVer88,
+		upgradeToVer89,
 	}
 )
 
@@ -1808,6 +1815,13 @@ func upgradeToVer88(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_client_priv` `Repl_client_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`")
 }
 
+func upgradeToVer89(s Session, ver int64) {
+	if ver >= version89 {
+		return
+	}
+	doReentrantDDL(s, CreateAdvisoryLocks)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1900,6 +1914,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsMetaHistory)
 	// Create analyze_jobs table.
 	mustExecute(s, CreateAnalyzeJobs)
+	// Create advisory_locks table.
+	mustExecute(s, CreateAdvisoryLocks)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
