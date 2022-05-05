@@ -193,6 +193,18 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t use index(cd) where c < 200 order by c limit 10",
 		"select * from t use index(cd) where c = 200 order by c limit 10",
 		"select * from t use index(cd) where c = 200 and d < 200 order by c, d limit 10",
+		// join
+		"select /*+ hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a<t2.a+2 and t1.b>1000",
+		"select /*+ merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a<t2.a+2 and t1.b>1000",
+		"select /*+ inl_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b>1000",
+		"select /*+ inl_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
+		"select /*+ inl_hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ inl_hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
+		"select /*+ inl_merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ inl_merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
+		"select * from t t1 where t1.b in (select sum(t2.b) from t t2 where t1.a < t2.a)", // apply
 		// point get
 		"select * from t where a = 1", // generated in fast plan optimization
 		"select * from t where a in (1, 2, 3, 4, 5)",
