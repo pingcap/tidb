@@ -176,7 +176,7 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (ncu *NewClusterIndexUsage
 		}
 	}
 	newUsage.NumTotalTables = uint64(len(rows))
-	return &newUsage, &Usage, nil
+	return &newUsage, &emptyClusterIndexUsage, nil
 }
 
 // TxnUsage records the usage info of transaction related features, including
