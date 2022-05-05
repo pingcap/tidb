@@ -231,7 +231,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 				rowID:   76,
 			},
 		}
-		kvsCh <- []deliveredKVs{}
+		kvsCh <- []deliveredKVs{{offset: 37}}
 		close(kvsCh)
 	}()
 
@@ -268,7 +268,9 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 	require.Equal(s.T(), []string(nil), kvs[0].columns)
 
 	kvs = <-kvsCh
-	require.Equal(s.T(), 0, len(kvs))
+	require.Equal(s.T(), 1, len(kvs))
+	require.Nil(s.T(), kvs[0].kvs)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
 }
 
 func (s *chunkRestoreSuite) TestEncodeLoopCanceled() {
@@ -358,7 +360,9 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 		if count == 4 {
 			// we will send empty kvs before encodeLoop exists
 			// so, we can receive 4 batch and 1 is empty
-			require.Len(s.T(), kvs, 0)
+			require.Len(s.T(), kvs, 1)
+			require.Nil(s.T(), kvs[0].kvs)
+			require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
 			break
 		}
 	}
@@ -527,7 +531,9 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	require.Equal(s.T(), deliverKV.columns, kvs[0].columns)
 
 	kvs = <-kvsCh
-	require.Equal(s.T(), 0, len(kvs))
+	require.Equal(s.T(), 1, len(kvs))
+	require.Nil(s.T(), kvs[0].kvs)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
 }
 
 type mockEncoder struct{}

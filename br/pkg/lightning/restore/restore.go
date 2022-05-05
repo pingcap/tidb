@@ -2147,8 +2147,6 @@ func (cr *chunkRestore) deliverLoop(
 	dataEngine, indexEngine *backend.LocalEngineWriter,
 	rc *Controller,
 ) (deliverTotalDur time.Duration, err error) {
-	var channelClosed bool
-
 	deliverLogger := t.logger.With(
 		zap.Int32("engineNumber", engineID),
 		zap.Int("fileIndex", cr.index),
@@ -2160,7 +2158,8 @@ func (cr *chunkRestore) deliverLoop(
 	indexKVs := rc.backend.MakeEmptyRows()
 
 	dataSynced := true
-	for !channelClosed {
+	hasMoreKVs := true
+	for hasMoreKVs {
 		var dataChecksum, indexChecksum verify.KVChecksum
 		var columns []string
 		var kvPacket []deliveredKVs
@@ -2175,12 +2174,14 @@ func (cr *chunkRestore) deliverLoop(
 			select {
 			case kvPacket = <-kvsCh:
 				if len(kvPacket) == 0 {
-					channelClosed = true
+					hasMoreKVs = false
 					break populate
 				}
 				for _, p := range kvPacket {
 					if p.kvs == nil {
+						// This is the last message.
 						currOffset = p.offset
+						hasMoreKVs = false
 						break populate
 					}
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
@@ -2477,8 +2478,7 @@ func (cr *chunkRestore) encodeLoop(
 		}
 	}
 
-	endOffset, _ := cr.parser.Pos()
-	err = send([]deliveredKVs{{offset: endOffset}})
+	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset}})
 	return
 }
 
