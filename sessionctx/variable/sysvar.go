@@ -688,7 +688,6 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatInt(GetMemQuotaAnalyze(), 10), nil
 		},
 		SetGlobal: func(s *SessionVars, val string) error {
-			println(val)
 			SetMemQuotaAnalyze(TidbOptInt64(val, DefTiDBMemQuotaAnalyze))
 			return nil
 		},
