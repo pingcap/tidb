@@ -48,7 +48,6 @@ var (
 		"OOMAction":                       {},
 		"TiKVClient.StoreLimit":           {},
 		"Log.Level":                       {},
-		"Log.QueryLogMaxLen":              {},
 		"Log.ExpensiveThreshold":          {},
 		"Instance.SlowThreshold":          {},
 		"Instance.CheckMb4ValueInUTF8":    {},
