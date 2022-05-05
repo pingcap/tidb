@@ -110,7 +110,7 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 // while avoiding circle dependency with domain package.
 var GetDomainInfoSchema func(sessionctx.Context) infoschema.InfoSchema
 
-// ClusterIndexUsage records the usage info of all the tables, no more than 10k tables, Deprecated
+// ClusterIndexUsage records the usage info of all the tables, no more than 10k tables, deprecated.
 type ClusterIndexUsage map[string]TableClusteredInfo
 
 // TableClusteredInfo records the usage info of clusterindex of each table
@@ -122,7 +122,7 @@ type TableClusteredInfo struct {
 	// NA means this field is no meaningful information
 }
 
-// NewClusterIndexUsage records the cluster index usage info of all the tables
+// NewClusterIndexUsage records the clustered index usage info of all the tables.
 type NewClusterIndexUsage struct {
 	// The number of user's tables with clustered index enabled.
 	NumClusteredTables uint64 `json:"numClusteredTables"`
