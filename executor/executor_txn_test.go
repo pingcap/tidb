@@ -269,6 +269,9 @@ func TestTxnSavepoint0(t *testing.T) {
 		sps []string
 		err string
 	}{
+		{"set autocommit=1", nil, ""},
+		{"delete from t", nil, ""},
+
 		{"savepoint s1", nil, ""},
 		{"rollback to s1", nil, "[executor:1305]SAVEPOINT s1 does not exist"},
 		{"begin", nil, ""},
@@ -314,19 +317,23 @@ func TestTxnSavepoint0(t *testing.T) {
 		{"commit", nil, ""},
 	}
 
-	for idx, ca := range cases {
-		comment := fmt.Sprintf("idx: %v, %#v", idx, ca)
-		_, err := tk.Exec(ca.sql)
-		if ca.err == "" {
-			require.NoError(t, err, comment)
-		} else {
-			require.Error(t, err, comment)
-			require.Equal(t, ca.err, err.Error(), comment)
-		}
-		txnCtx := tk.Session().GetSessionVars().TxnCtx
-		require.Equal(t, len(ca.sps), len(txnCtx.Savepoints), comment)
-		for i, sp := range ca.sps {
-			require.Equal(t, sp, txnCtx.Savepoints[i].Name, comment)
+	txnModes := []string{"optimistic", "pessimistic", ""}
+	for _, txnMode := range txnModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
+		for idx, ca := range cases {
+			comment := fmt.Sprintf("txn_mode: %v,idx: %v, %#v", txnMode, idx, ca)
+			_, err := tk.Exec(ca.sql)
+			if ca.err == "" {
+				require.NoError(t, err, comment)
+			} else {
+				require.Error(t, err, comment)
+				require.Equal(t, ca.err, err.Error(), comment)
+			}
+			txnCtx := tk.Session().GetSessionVars().TxnCtx
+			require.Equal(t, len(ca.sps), len(txnCtx.Savepoints), comment)
+			for i, sp := range ca.sps {
+				require.Equal(t, sp, txnCtx.Savepoints[i].Name, comment)
+			}
 		}
 	}
 }
@@ -428,12 +435,9 @@ func TestTxnSavepoint1(t *testing.T) {
 		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
 		{sql: "delete from t"},
 	}
-	for i := 0; i < 2; i++ {
-		if i == 0 {
-			tk.MustExec("set session tidb_txn_mode='optimistic';")
-		} else {
-			tk.MustExec("set session tidb_txn_mode='pessimistic';")
-		}
+	txnModes := []string{"optimistic", "pessimistic", ""}
+	for _, txnMode := range txnModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
 		for idx, ca := range cases {
 			comment := fmt.Sprintf("idx: %v, %#v", idx, ca)
 			if ca.result == nil {
@@ -451,7 +455,7 @@ func TestTxnSavepoint1(t *testing.T) {
 	}
 }
 
-func TestRollbackToSavepoint0(t *testing.T) {
+func TestRollbackToSavepoint(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
