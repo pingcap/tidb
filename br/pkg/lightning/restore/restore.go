@@ -2178,6 +2178,10 @@ func (cr *chunkRestore) deliverLoop(
 					break populate
 				}
 				for _, p := range kvPacket {
+					if p.kvs == nil {
+						currOffset = p.offset
+						break populate
+					}
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 					columns = p.columns
 					currOffset = p.offset
@@ -2241,20 +2245,15 @@ func (cr *chunkRestore) deliverLoop(
 		// (the write to the importer is effective immediately, thus update these here)
 		// No need to apply a lock since this is the only thread updating `cr.chunk.**`.
 		// In local mode, we should write these checkpoints after engine flushed.
+		lastOffset := cr.chunk.Chunk.Offset
 		cr.chunk.Checksum.Add(&dataChecksum)
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = currOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
-		// currOffset may be less than endOffset even if we have read all rows of this chunk.
-		// Update chunk offset to endOffset, so that we don't need to restore this chunk
-		// when recovering from checkpoint.
-		if channelClosed {
-			cr.chunk.Chunk.Offset = cr.chunk.Chunk.EndOffset
-		}
 
 		metric.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
 
-		if channelClosed || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
+		if currOffset > lastOffset || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
 			// No need to save checkpoint if nothing was delivered.
 			dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataEngine, indexEngine)
 		}
@@ -2332,6 +2331,8 @@ func (cr *chunkRestore) encodeLoop(
 	deliverCompleteCh <-chan deliverResult,
 	rc *Controller,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
+	defer close(kvsCh)
+
 	send := func(kvs []deliveredKVs) error {
 		select {
 		case kvsCh <- kvs:
@@ -2475,7 +2476,8 @@ func (cr *chunkRestore) encodeLoop(
 		}
 	}
 
-	err = send([]deliveredKVs{})
+	endOffset, _ := cr.parser.Pos()
+	err = send([]deliveredKVs{{offset: endOffset}})
 	return
 }
 
@@ -2497,15 +2499,10 @@ func (cr *chunkRestore) restore(
 	if err != nil {
 		return err
 	}
+	defer kvEncoder.Close()
 
 	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
-
-	defer func() {
-		kvEncoder.Close()
-		kvEncoder = nil
-		close(kvsCh)
-	}()
 
 	go func() {
 		defer close(deliverCompleteCh)
@@ -2522,11 +2519,8 @@ func (cr *chunkRestore) restore(
 		zap.Stringer("path", &cr.chunk.Key),
 	).Begin(zap.InfoLevel, "restore file")
 
-	readTotalDur, encodeTotalDur, err := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc)
-	if err != nil {
-		return err
-	}
-
+	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc)
+	var deliverErr error
 	select {
 	case deliverResult, ok := <-deliverCompleteCh:
 		if ok {
@@ -2536,11 +2530,13 @@ func (cr *chunkRestore) restore(
 				zap.Duration("deliverDur", deliverResult.totalDur),
 				zap.Object("checksum", &cr.chunk.Checksum),
 			)
-			return errors.Trace(deliverResult.err)
+			deliverErr = deliverResult.err
+		} else {
+			// else, this must cause by ctx cancel
+			deliverErr = ctx.Err()
 		}
-		// else, this must cause by ctx cancel
-		return ctx.Err()
 	case <-ctx.Done():
-		return ctx.Err()
+		deliverErr = ctx.Err()
 	}
+	return errors.Trace(firstErr(encodeErr, deliverErr))
 }
