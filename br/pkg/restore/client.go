@@ -1490,13 +1490,17 @@ func (rc *Client) PreCheckTableClusterIndex(
 }
 
 const (
-	streamBackupMetaPrefix = "v1_backupmeta"
+	streamBackupMetaPrefix = "v1/backupmeta"
 )
+
+func GetStreamBackupMetaPrefix() string {
+	return streamBackupMetaPrefix
+}
 
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
 func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
 	streamBackupMetaFiles := make([]*backuppb.Metadata, 0)
-	opt := &storage.WalkOption{ObjPrefix: streamBackupMetaPrefix}
+	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	err := rc.storage.WalkDir(ctx, opt, func(path string, size int64) error {
 		if strings.Contains(path, streamBackupMetaPrefix) {
 			m := &backuppb.Metadata{}
