@@ -908,12 +908,24 @@ func (p *sessionPool) Get() (resource pools.Resource, err error) {
 	default:
 		resource, err = p.factory()
 	}
+
+	// Put the internal session to the map of SessionManager
+	failpoint.Inject("mockSessionPoolReturnError", func() {
+		err = errors.New("mockSessionPoolReturnError")
+	})
+
+	if nil == err {
+		infosync.StoreInternalSession(resource)
+	}
+
 	return
 }
 
 func (p *sessionPool) Put(resource pools.Resource) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	// Delete the internal session to the map of SessionManager
+	infosync.DeleteInternalSession(resource)
 	if p.mu.closed {
 		resource.Close()
 		return
