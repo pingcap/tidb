@@ -19,7 +19,7 @@ ALTER TABLE t ADD COLUMN b INT AUTO_INCREMENT PRIMARY KEY,
  AUTO_INCREMENT = 1000;
 ```
 
-Currently, TiDB only supports one schema change per SQL statement and multi-schema changes in rare cases.
+Currently, TiDB only supports one schema change per SQL statement and limited multi-schema changes for some rare cases.
 
 When users try to migrate data from MySQL-like databases, they have to spend extra effort to rewrite a multi-schema change DDL to several single-schema change DDLs. For the users who rely on ORM frameworks like flyway to construct SQLs automatically, rewriting SQL is not even possible.
 
