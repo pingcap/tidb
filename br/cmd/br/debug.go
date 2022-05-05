@@ -216,6 +216,10 @@ func newBackupMetaValidateCommand() *cobra.Command {
 			tableIDMap := make(map[int64]int64)
 			// Simulate to create table
 			for _, table := range tables {
+				if table.Info == nil {
+					// empty database.
+					continue
+				}
 				indexIDAllocator := mockid.NewIDAllocator()
 				newTable := new(model.TableInfo)
 				tableID, _ := tableIDAllocator.Alloc()

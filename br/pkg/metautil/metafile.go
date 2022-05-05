@@ -332,8 +332,11 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 						}
 					}
 				}
+				tableMap[tableInfo.ID] = table
+			} else {
+				// empty database
+				tableMap[0] = table
 			}
-			tableMap[tableInfo.ID] = table
 			return nil
 		})
 		if err != nil {
