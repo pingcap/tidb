@@ -326,8 +326,7 @@ const (
 	// TiFlashMaxThreads TiflashMaxThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
 	// Default value is -1, means it will not be pushed down to tiflash.
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
-	TiFlashMaxThreads = "max_threads"
-
+	TiFlashMaxThreads = "tidb_max_tiflash_threads"
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
