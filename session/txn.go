@@ -376,9 +376,9 @@ func (txn *LazyTxn) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
-func (txn *LazyTxn) RollbackToCheckpoint(cp *kv.MemCheckpoint) {
+func (txn *LazyTxn) RollbackToSavepoint(cp *kv.MemCheckpoint) {
 	txn.flushStmtBuf()
-	txn.Transaction.RollbackToCheckpoint(cp)
+	txn.Transaction.RollbackToSavepoint(cp)
 	txn.cleanup()
 }
 

@@ -78,7 +78,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	return txn.extractKeyErr(err)
 }
 
-func (txn *tikvTxn) RollbackToCheckpoint(cp *kv.MemCheckpoint) {
+func (txn *tikvTxn) RollbackToSavepoint(cp *kv.MemCheckpoint) {
 	buf := txn.KVTxn.GetMemBuffer()
 	buf.RevertToCheckpoint(cp)
 }
