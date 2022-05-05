@@ -463,6 +463,18 @@ func TestRollbackToSavepoint0(t *testing.T) {
 	tk.MustExec("rollback to s1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("delete from t where id = 1")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert into t values (1,2)")
+	tk.MustExec("rollback to s1")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
 func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {
@@ -470,7 +482,7 @@ func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {
 	defer clean()
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	tk1.MustExec("create table t(id int, a int, unique index idx(id))")
+	tk1.MustExec("create table t(id int key, a int)")
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
@@ -481,6 +493,33 @@ func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {
 	tk1.MustExec("insert into t values (2,2)")
 	tk1.MustExec("rollback to s1")
 
-	//tk2.MustExec("begin pessimistic")
-	//tk2.MustExec("insert into t values (2,2)")
+	tk2.MustExec("begin pessimistic")
+	start := time.Now()
+	// test for release lock after rollback to savepoint then commit.
+	tk1.MustExec("commit")
+	tk2.MustExec("insert into t values (2,2)")
+	require.Less(t, time.Since(start).Seconds(), float64(2))
+
+	tk2.MustExec("commit")
+	tk1.MustExec("delete from t")
+	tk1.MustExec("insert into t values (1, 1)")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t where a= 1 for update")
+	tk1.MustExec("savepoint s1")
+	tk1.MustExec("delete from t where a = 1")
+	// After rollback to s1, should not release lock in the row which a = 1
+	tk1.MustExec("rollback to s1")
+
+	tk2.MustExec("begin pessimistic")
+	start = time.Now()
+	var wait time.Duration
+	go func() {
+		time.Sleep(time.Millisecond * 100)
+		wait = time.Since(start)
+		tk1.MustExec("rollback")
+	}()
+	// should wait until tk1 rollback and release the lock.
+	tk2.MustExec("select * from t where a= 1 for update")
+	require.Less(t, wait.Seconds(), time.Since(start).Seconds())
 }

@@ -79,7 +79,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 }
 
 func (txn *tikvTxn) RollbackToCheckpoint(cp *kv.MemCheckpoint) {
-	txn.GetMemBuffer().RevertToCheckpoint(cp)
+	buf := txn.KVTxn.GetMemBuffer()
+	buf.RevertToCheckpoint(cp)
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.

@@ -74,10 +74,6 @@ func (m *memBuffer) Checkpoint() *tikv.MemCheckpoint {
 	return m.MemDB.Checkpoint()
 }
 
-func (m *memBuffer) RevertToCheckpoint(cp *tikv.MemCheckpoint) {
-	m.MemDB.RevertToCheckpoint(cp)
-}
-
 func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, kv.KeyFlags, []byte)) {
 	tf := func(key []byte, flag tikvstore.KeyFlags, value []byte) {
 		f(kv.Key(key), getTiDBKeyFlags(flag), value)

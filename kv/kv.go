@@ -176,8 +176,6 @@ type MemBuffer interface {
 	Size() int
 
 	Checkpoint() *MemCheckpoint
-
-	RevertToCheckpoint(cp *MemCheckpoint)
 }
 
 type MemCheckpoint = tikv.MemCheckpoint
