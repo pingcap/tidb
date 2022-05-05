@@ -18,4 +18,5 @@ import (
 	"go.uber.org/atomic"
 )
 
+// CommitterConcurrency stores the current value of the sysvar tidb_committer_concurrency
 var CommitterConcurrency = atomic.NewInt32(128)

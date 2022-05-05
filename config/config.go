@@ -261,6 +261,7 @@ func (c *Config) UpdateTempStoragePath() {
 	}
 }
 
+// GetTiKVConfig returns configuration options from tikvcfg
 func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
 		CommitterConcurrency:  int(tikvutil.CommitterConcurrency.Load()),
