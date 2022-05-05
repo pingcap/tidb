@@ -1,6 +1,6 @@
 [
   {
-    "name": "TestExplainedPhysicalPlan",
+    "name": "TestFlatPhysicalPlan",
     "cases": [
       "select * from t",
       "select sum(t.a) from t join t2",

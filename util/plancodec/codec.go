@@ -409,7 +409,7 @@ func decodeTaskType(str string) (string, error) {
 	return "cop[" + ((kv.StoreType)(storeType)).Name() + "]", nil
 }
 
-// Compress is used to compress the input with zlib.
+// Compress compresses the input with snappy then encodes it with base64.
 func Compress(input []byte) string {
 	compressBytes := snappy.Encode(nil, input)
 	return base64.StdEncoding.EncodeToString(compressBytes)

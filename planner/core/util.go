@@ -256,6 +256,25 @@ func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 	return newSchema
 }
 
+func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
+	res := make(map[string]uint64)
+	for _, op := range flat.Main {
+		switch p := op.Origin.(type) {
+		case *PhysicalIndexScan:
+			if op.StatsInfoAvailable {
+				res[p.Table.Name.O] = p.stats.StatsVersion
+			}
+		case *PhysicalTableScan:
+			// Ignore PhysicalTableScan of IndexLookUp because they use the same stats with the index side,
+			// and we do not set the statsInfo for the table side.
+			if op.StatsInfoAvailable && op.DriverSide == Empty {
+				res[p.Table.Name.O] = p.stats.StatsVersion
+			}
+		}
+	}
+	return res
+}
+
 // GetStatsInfo gets the statistics info from a physical plan tree.
 func GetStatsInfo(i interface{}) map[string]uint64 {
 	if i == nil {

@@ -164,12 +164,23 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
-	// planNormalized use for cache the normalized plan, avoid duplicate builds.
-	planNormalized        string
-	planDigest            *parser.Digest
-	encodedPlan           string
-	planHint              string
-	planHintSet           bool
+
+	// The several fields below are mainly for some statistics features, like stmt summary and slow query.
+	// We cache the values here to avoid calculating them multiple times.
+	// Note:
+	//   Avoid accessing these fields directly, use their Setter/Getter methods instead.
+	//   Other fields should be the zero value or be consistent with the plan field.
+	planNormalized string
+	planDigest     *parser.Digest
+	encodedPlan    string
+	planHint       string
+	planHintSet    bool
+	// To avoid cycle import, we use interface{} for the following two fields.
+	// flatPlan should be a *plannercore.FlatPhysicalPlan if it's not nil
+	flatPlan interface{}
+	// plan should be a plannercore.Plan if it's not nil
+	plan interface{}
+
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
@@ -327,6 +338,24 @@ func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Dige
 // GetPlanDigest gets the normalized plan and plan digest.
 func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *parser.Digest) {
 	return sc.planNormalized, sc.planDigest
+}
+
+func (sc *StatementContext) GetPlan() interface{} {
+	return sc.plan
+}
+
+func (sc *StatementContext) SetPlan(plan interface{}) {
+	sc.plan = plan
+	return
+}
+
+func (sc *StatementContext) GetFlatPlan() interface{} {
+	return sc.flatPlan
+}
+
+func (sc *StatementContext) SetFlatPlan(flat interface{}) {
+	sc.flatPlan = flat
+	return
 }
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.

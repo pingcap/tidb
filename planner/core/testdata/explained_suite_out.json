@@ -1,6 +1,6 @@
 [
   {
-    "Name": "TestExplainedPhysicalPlan",
+    "Name": "TestFlatPhysicalPlan",
     "Cases": [
       {
         "SQL": "select * from t",

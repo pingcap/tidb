@@ -2188,6 +2188,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 
 	stmt.Text = prepared.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.SetPlan(execPlan)
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
 	logGeneralQuery(stmt, s, false)

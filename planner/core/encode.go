@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"hash"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/failpoint"
@@ -25,6 +26,60 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/plancodec"
 )
+
+func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
+	var buf bytes.Buffer
+	if len(flat.Main) == 0 {
+		return ""
+	}
+	for _, op := range flat.Main {
+		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
+		analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoFromExplainedOp(op)
+		plancodec.EncodePlanNode(
+			int(op.Depth),
+			op.Origin.ID(),
+			op.Origin.TP(),
+			op.EstRows,
+			taskTypeInfo,
+			op.Origin.ExplainInfo(),
+			strconv.FormatInt(op.ActRows, 10),
+			analyzeInfo,
+			memoryInfo,
+			diskInfo,
+			&buf,
+		)
+	}
+	for _, cte := range flat.CTEs {
+		for i, op := range cte {
+			id := 0
+			tp := ""
+			if i == 0 {
+				cteDef := cte[0].Origin.(*CTEDefinition)
+				id = cteDef.CTE.IDForStorage
+				tp = plancodec.TypeCTEDefinition
+			} else {
+				id = op.Origin.ID()
+				tp = op.Origin.TP()
+			}
+			taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
+			analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoFromExplainedOp(op)
+			plancodec.EncodePlanNode(
+				int(op.Depth),
+				id,
+				tp,
+				op.EstRows,
+				taskTypeInfo,
+				op.Origin.ExplainInfo(),
+				strconv.FormatInt(op.ActRows, 10),
+				analyzeInfo,
+				memoryInfo,
+				diskInfo,
+				&buf,
+			)
+		}
+	}
+	return plancodec.Compress(buf.Bytes())
+}
 
 var encoderPool = sync.Pool{
 	New: func() interface{} {
@@ -150,6 +205,33 @@ type planDigester struct {
 	buf          bytes.Buffer
 	encodedPlans map[int]bool
 	hasher       hash.Hash
+}
+
+func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parser.Digest) {
+	hasher := sha256.New()
+	var buf bytes.Buffer
+	selectPlan := flat.Main.GetSelectPlan()
+	if len(selectPlan) == 0 {
+		return "", parser.NewDigest(nil)
+	}
+	for _, op := range selectPlan {
+		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
+		p := op.Origin.(PhysicalPlan)
+		plancodec.NormalizePlanNode(
+			int(op.Depth),
+			op.Origin.TP(),
+			taskTypeInfo,
+			p.ExplainNormalizedInfo(),
+			&buf,
+		)
+	}
+
+	_, err := hasher.Write(buf.Bytes())
+	if err != nil {
+		panic(err)
+	}
+	digest = parser.NewDigest(hasher.Sum(nil))
+	return
 }
 
 // NormalizePlan is used to normalize the plan and generate plan digest.

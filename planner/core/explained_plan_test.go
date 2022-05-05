@@ -29,8 +29,8 @@ import (
 	"testing"
 )
 
-// ExplainedPhysicalOperatorForTest contains fields of ExplainedOperator that is needed for tests.
-type ExplainedPhysicalOperatorForTest struct {
+// FlatPhysicalOperatorForTest contains fields of FlatOperator that is needed for tests.
+type FlatPhysicalOperatorForTest struct {
 	ExplainID          string
 	TextTreeExplainID  string
 	Depth              uint64
@@ -45,9 +45,8 @@ type ExplainedPhysicalOperatorForTest struct {
 	EstCost            float64
 }
 
-func simplifyExplainedPhysicalOperator(e *core.ExplainedOperator) *ExplainedPhysicalOperatorForTest {
-	return &ExplainedPhysicalOperatorForTest{
-		ExplainID:          e.ExplainID,
+func simplifyFlatPhysicalOperator(e *core.FlatOperator) *FlatPhysicalOperatorForTest {
+	return &FlatPhysicalOperatorForTest{
 		TextTreeExplainID:  e.TextTreeExplainID,
 		Depth:              e.Depth,
 		DriverSide:         e.DriverSide,
@@ -56,21 +55,20 @@ func simplifyExplainedPhysicalOperator(e *core.ExplainedOperator) *ExplainedPhys
 		ReqType:            e.ReqType,
 		StatsInfoAvailable: e.StatsInfoAvailable,
 		EstRows:            e.EstRows,
-		ExplainInfo:        e.ExplainInfo,
 		IsPhysicalPlan:     e.IsPhysicalPlan,
 		EstCost:            e.EstCost,
 	}
 }
 
-func simplifyExplainedPlan(p []*core.ExplainedOperator) []*ExplainedPhysicalOperatorForTest {
-	var res []*ExplainedPhysicalOperatorForTest
+func simplifyFlatPlan(p []*core.FlatOperator) []*FlatPhysicalOperatorForTest {
+	var res []*FlatPhysicalOperatorForTest
 	for _, op := range p {
-		res = append(res, simplifyExplainedPhysicalOperator(op))
+		res = append(res, simplifyFlatPhysicalOperator(op))
 	}
 	return res
 }
 
-func TestExplainedPhysicalPlan(t *testing.T) {
+func TestFlatPhysicalPlan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -79,8 +77,8 @@ func TestExplainedPhysicalPlan(t *testing.T) {
 	var input []string
 	var output []struct {
 		SQL  string
-		Main []*ExplainedPhysicalOperatorForTest
-		CTEs [][]*ExplainedPhysicalOperatorForTest
+		Main []*FlatPhysicalOperatorForTest
+		CTEs [][]*FlatPhysicalOperatorForTest
 	}
 	planSuiteData := core.GetExplainedSuiteData()
 	planSuiteData.GetTestCases(t, &input, &output)
@@ -94,11 +92,11 @@ func TestExplainedPhysicalPlan(t *testing.T) {
 		p, _, err := planner.Optimize(context.Background(), tk.Session(), stmt, is)
 		require.NoError(t, err, comment)
 
-		explained := core.ExplainPhysicalPlan(p, tk.Session())
-		main := simplifyExplainedPlan(explained.Main)
-		var ctes [][]*ExplainedPhysicalOperatorForTest
+		explained := core.FlattenPhysicalPlan(p, tk.Session().GetSessionVars().StmtCtx)
+		main := simplifyFlatPlan(explained.Main)
+		var ctes [][]*FlatPhysicalOperatorForTest
 		for _, cte := range explained.CTEs {
-			ctes = append(ctes, simplifyExplainedPlan(cte))
+			ctes = append(ctes, simplifyFlatPlan(cte))
 		}
 
 		testdata.OnRecord(func() {
