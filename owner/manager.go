@@ -157,9 +157,13 @@ func (m *ownerManager) RequireOwner(ctx context.Context) error {
 			time.Sleep(1 * time.Second)
 		}
 		url := fmt.Sprintf("http://%s:%d/ddl/owner/resign", owner.IP, owner.StatusPort)
-		_, err = http.Post(url, "text/plain", nil) // #nosec
+		rs, err := http.Post(url, "text/plain", nil) // #nosec
 		if err != nil {
 			logutil.BgLogger().Warn("resign owner meet error", zap.Error(err))
+		} else {
+			if err := rs.Body.Close(); err != nil {
+				logutil.BgLogger().Warn("close response body meet error", zap.Error(err))
+			}
 		}
 		// wait for new election.
 		time.Sleep(500 * time.Millisecond)
