@@ -5451,12 +5451,11 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#4)->Column#18",
-          "      └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#15, 0), 1, Column#15), decimal(20,0) BINARY))->Column#4",
-          "        └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:sum(Column#16)->Column#15, funcs:sum(Column#17)->Column#4",
-          "          └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "            └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "              └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#16, funcs:sum(test.t.value)->Column#17",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#14, 0), 1, Column#14), decimal(20,0) BINARY))->Column#4",
+          "        └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#14, funcs:sum(test.t.value)->Column#4",
+          "          └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5529,11 +5528,10 @@
           "  └─HashJoin 7992.00 mpp[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
           "    ├─Projection(Build) 7992.00 mpp[tiflash]  test.t.id",
           "    │ └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
-          "    │   └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
-          "    │     └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "    │       └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, ",
-          "    │         └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │           └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    │   └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
+          "    │     └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "    │       └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "    │         └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Projection(Probe) 7992.00 mpp[tiflash]  Column#11, test.t.id",
           "      └─HashAgg 7992.00 mpp[tiflash]  group by:Column#39, funcs:sum(Column#37)->Column#11, funcs:firstrow(Column#38)->test.t.id",
           "        └─Projection 9990.00 mpp[tiflash]  cast(test.t.id, decimal(10,0) BINARY)->Column#37, test.t.id, test.t.id",
