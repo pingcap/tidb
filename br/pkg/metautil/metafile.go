@@ -292,8 +292,10 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 		err := receiveBatch(ctx, errCh, ch, MaxBatchSize, func(item interface{}) error {
 			s := item.(*backuppb.Schema)
 			tableInfo := &model.TableInfo{}
-			if err := json.Unmarshal(s.Table, tableInfo); err != nil {
-				return errors.Trace(err)
+			if s.Table != nil {
+				if err := json.Unmarshal(s.Table, tableInfo); err != nil {
+					return errors.Trace(err)
+				}
 			}
 			dbInfo := &model.DBInfo{}
 			if err := json.Unmarshal(s.Db, dbInfo); err != nil {
