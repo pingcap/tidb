@@ -225,3 +225,20 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		checkCost(t, tk, q, "")
 	}
 }
+
+func TestNewCostInterfaceRandGenCases(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key, b int, c int, d int, k int, key b(b), key cd(c, d), unique key(k))`)
+
+	queries := []string{
+		`SELECT k, sum(b), sum(d) FROM t WHERE b in (51268, 70191, 42012) GROUP BY k`,
+	}
+
+	for _, q := range queries {
+		checkCost(t, tk, q, "")
+	}
+}
