@@ -249,6 +249,136 @@ func TestBuiltinFuncJsonPretty(t *testing.T) {
 	require.Equal(t, errors.ErrCode(mysql.ErrInvalidJSONText), terr.Code())
 }
 
+func TestGetLock(t *testing.T) {
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	// No timeout specified
+	err := tk.ExecToErr("SELECT get_lock('testlock')")
+	require.Error(t, err)
+	terr := errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(mysql.ErrWrongParamcountToNativeFct), terr.Code())
+
+	// 0 timeout = immediate
+	// Negative timeout = convert to max value
+	tk.MustQuery("SELECT get_lock('testlock1', 0)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock('testlock2', -10)").Check(testkit.Rows("1"))
+	// show warnings:
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect get_lock value: '-10'"))
+	tk.MustQuery("SELECT release_lock('testlock1'), release_lock('testlock2')").Check(testkit.Rows("1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+
+	// GetLock/ReleaseLock with NULL name or '' name
+	rs, _ := tk.Exec("SELECT get_lock('', 10)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT get_lock(NULL, 10)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT release_lock('')")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT release_lock(NULL)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	// NULL timeout is fine (= unlimited)
+	tk.MustQuery("SELECT get_lock('aaa', NULL)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('aaa')").Check(testkit.Rows("1"))
+
+	// GetLock in CAPS, release lock in different case.
+	tk.MustQuery("SELECT get_lock('aBC', -10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('AbC')").Check(testkit.Rows("1"))
+
+	// Release unacquired LOCK and previously released lock
+	tk.MustQuery("SELECT release_lock('randombytes')").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT release_lock('abc')").Check(testkit.Rows("0"))
+
+	// GetLock with integer name, 64, character name.
+	tk.MustQuery("SELECT get_lock(1234, 10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock(REPEAT('a', 64), 10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock(1234), release_lock(REPEAT('aa', 32))").Check(testkit.Rows("1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+
+	// 65 character name
+	rs, _ = tk.Exec("SELECT get_lock(REPEAT('a', 65), 10)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT release_lock(REPEAT('a', 65))")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	// Floating point timeout.
+	tk.MustQuery("SELECT get_lock('nnn', 1.2)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('nnn')").Check(testkit.Rows("1"))
+
+	// Multiple locks acquired in one statement.
+	// Release all locks and one not held lock
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("SELECT release_lock('a1'),release_lock('a2'),release_lock('a3'), release_lock('random'), release_lock('a4')").Check(testkit.Rows("1 1 1 0 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+
+	// Multiple locks acquired, released all at once.
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("4"))
+	tk.MustQuery("SELECT release_lock('a1')").Check(testkit.Rows("0")) // lock is free
+
+	// Multiple locks acquired, reference count increased, released all at once.
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a5', 1.2)").Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("7")) // 7 not 5, because the it includes ref count
+	tk.MustQuery("SELECT release_lock('a1')").Check(testkit.Rows("0"))  // lock is free
+	tk.MustQuery("SELECT release_lock('a5')").Check(testkit.Rows("0"))  // lock is free
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+
+	// Test common cases:
+	// Get a lock, release it immediately.
+	// Try to release it again (its released)
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0"))
+
+	// Get a lock, acquire it again, release it twice.
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0"))
+
+	// Test someone else has the lock with short timeout.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("0"))  // someone else has the lock
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
+	// try again
+	tk.MustQuery("SELECT get_lock('mygloballock', 0)").Check(testkit.Rows("0"))  // someone else has the lock
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
+	// release it
+	tk2.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1")) // works
+
+	// Confirm all locks are released
+	tk2.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+}
+
 func TestMiscellaneousBuiltin(t *testing.T) {
 	ctx := context.Background()
 	store, clean := testkit.CreateMockStore(t)
@@ -320,7 +450,6 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a order by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
 
 	// for locks
-	tk.MustExec(`set tidb_enable_noop_functions=1;`)
 	result := tk.MustQuery(`SELECT GET_LOCK('test_lock1', 10);`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT GET_LOCK('test_lock2', 10);`)
@@ -330,6 +459,10 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock1');`)
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock3');`) // not acquired
+	result.Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT RELEASE_ALL_LOCKS()`).Check(testkit.Rows("0")) // none acquired
+
 }
 
 func TestConvertToBit(t *testing.T) {
@@ -753,7 +886,7 @@ func TestStringBuiltin(t *testing.T) {
 	// for convert
 	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
 	result.Check(testkit.Rows("123 中文 中文 中文 中文"))
-	// Charset 866 does not have a default collation configured currently, so this will return error.
+	// charset 866 does not have a default collation configured currently, so this will return error.
 	err = tk.ExecToErr(`select convert("123" using "866");`)
 	require.Error(t, err, "[parser:1115]Unknown character set: '866'")
 	// Test case in issue #4436.
@@ -2580,7 +2713,7 @@ func TestColumnInfoModified(t *testing.T) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
-	require.Equal(t, mysql.TypeLong, col.Tp)
+	require.Equal(t, mysql.TypeLong, col.GetType())
 }
 
 func TestIssues(t *testing.T) {
@@ -3709,7 +3842,7 @@ func TestDatetimeMicrosecond(t *testing.T) {
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 DAY_MICROSECOND);`).Check(
 		testkit.Rows("2007-03-28 22:08:27.800000"))
 
-	// For Decimal
+	// For decimal
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE);`).Check(
 		testkit.Rows("2007-03-29 00:10:28"))
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE_SECOND);`).Check(
@@ -5404,6 +5537,16 @@ func TestIssue19892(t *testing.T) {
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2000-01-00 00:00:00'"))
 		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 	}
+	tk.MustExec("drop table if exists table_20220419;")
+	tk.MustExec(`CREATE TABLE table_20220419 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  lastLoginDate datetime NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec("set sql_mode='';")
+	tk.MustExec("insert into table_20220419 values(1,'0000-00-00 00:00:00');")
+	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';")
+	tk.MustGetErrMsg("insert into table_20220419(lastLoginDate) select lastLoginDate from table_20220419;", "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00'")
 }
 
 // The actual results do not agree with the test results, It should be modified after the test suite is updated

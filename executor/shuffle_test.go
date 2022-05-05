@@ -29,7 +29,7 @@ func TestPartitionRangeSplitter(t *testing.T) {
 	ctx := mock.NewContext()
 	concurrency := 2
 
-	tp := &types.FieldType{Tp: mysql.TypeVarchar}
+	tp := types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).BuildP()
 	col0 := &expression.Column{
 		RetType: tp,
 		Index:   0,

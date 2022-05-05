@@ -796,11 +796,11 @@ func TestTime(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Time, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 		tp := f.GetType()
-		require.Equal(t, mysql.TypeDuration, tp.Tp)
-		require.Equal(t, charset.CharsetBin, tp.Charset)
-		require.Equal(t, charset.CollationBin, tp.Collate)
-		require.Equal(t, mysql.BinaryFlag, tp.Flag&mysql.BinaryFlag)
-		require.Equal(t, c.flen, tp.Flen)
+		require.Equal(t, mysql.TypeDuration, tp.GetType())
+		require.Equal(t, charset.CharsetBin, tp.GetCharset())
+		require.Equal(t, charset.CollationBin, tp.GetCollate())
+		require.Equal(t, mysql.BinaryFlag, tp.GetFlag()&mysql.BinaryFlag)
+		require.Equal(t, c.flen, tp.GetFlen())
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
@@ -1188,7 +1188,7 @@ func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte
 	}
 
 	f := types.NewFieldType(tp)
-	f.Decimal = fsp
+	f.SetDecimal(fsp)
 
 	d, err = arg.ConvertTo(sc, f)
 	if err != nil {
@@ -1266,7 +1266,7 @@ func TestFromUnixTime(t *testing.T) {
 		if len(c.format) == 0 {
 			constants := datumsToConstants([]types.Datum{timestamp})
 			if !c.isDecimal {
-				constants[0].GetType().Decimal = 0
+				constants[0].GetType().SetDecimal(0)
 			}
 
 			f, err := fc.getFunction(ctx, constants)
@@ -1280,7 +1280,7 @@ func TestFromUnixTime(t *testing.T) {
 			format := types.NewStringDatum(c.format)
 			constants := datumsToConstants([]types.Datum{timestamp, format})
 			if !c.isDecimal {
-				constants[0].GetType().Decimal = 0
+				constants[0].GetType().SetDecimal(0)
 			}
 			f, err := fc.getFunction(ctx, constants)
 			require.NoError(t, err)
@@ -1624,11 +1624,11 @@ func TestTimeDiff(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.TimeDiff, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
 		tp := f.GetType()
-		require.Equal(t, mysql.TypeDuration, tp.Tp)
-		require.Equal(t, charset.CharsetBin, tp.Charset)
-		require.Equal(t, charset.CollationBin, tp.Collate)
-		require.Equal(t, mysql.BinaryFlag, tp.Flag)
-		require.Equal(t, c.flen, tp.Flen)
+		require.Equal(t, mysql.TypeDuration, tp.GetType())
+		require.Equal(t, charset.CharsetBin, tp.GetCharset())
+		require.Equal(t, charset.CollationBin, tp.GetCollate())
+		require.Equal(t, mysql.BinaryFlag, tp.GetFlag())
+		require.Equal(t, c.flen, tp.GetFlen())
 		d, err := f.Eval(chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
@@ -1857,7 +1857,7 @@ func TestUnixTimestamp(t *testing.T) {
 
 	for _, test := range tests {
 		expr := datumsToConstants([]types.Datum{test.input})
-		expr[0].GetType().Decimal = test.inputDecimal
+		expr[0].GetType().SetDecimal(test.inputDecimal)
 		resetStmtContext(ctx)
 		f, err := fc.getFunction(ctx, expr)
 		require.NoErrorf(t, err, "%+v", test)
@@ -2190,11 +2190,11 @@ func TestMakeDate(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.MakeDate, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
 		tp := f.GetType()
-		require.Equal(t, mysql.TypeDate, tp.Tp)
-		require.Equal(t, charset.CharsetBin, tp.Charset)
-		require.Equal(t, charset.CollationBin, tp.Collate)
-		require.Equal(t, mysql.BinaryFlag, tp.Flag)
-		require.Equal(t, mysql.MaxDateWidth, tp.Flen)
+		require.Equal(t, mysql.TypeDate, tp.GetType())
+		require.Equal(t, charset.CharsetBin, tp.GetCharset())
+		require.Equal(t, charset.CollationBin, tp.GetCollate())
+		require.Equal(t, mysql.BinaryFlag, tp.GetFlag())
+		require.Equal(t, mysql.MaxDateWidth, tp.GetFlen())
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
@@ -2286,13 +2286,7 @@ func TestMakeTime(t *testing.T) {
 	}
 
 	// MAKETIME(CAST(-1 AS UNSIGNED),0,0);
-	tp1 := &types.FieldType{
-		Tp:      mysql.TypeLonglong,
-		Flag:    mysql.UnsignedFlag,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-		Flen:    mysql.MaxIntWidth,
-	}
+	tp1 := types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 	f := BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err := f.Eval(chunk.Row{})
 	require.NoError(t, err)
@@ -2668,7 +2662,7 @@ func TestSecToTime(t *testing.T) {
 	for _, test := range tests {
 		comment := fmt.Sprintf("%+v", test)
 		expr := datumsToConstants([]types.Datum{test.input})
-		expr[0].GetType().Decimal = test.inputDecimal
+		expr[0].GetType().SetDecimal(test.inputDecimal)
 		f, err := fc.getFunction(ctx, expr)
 		require.NoError(t, err, comment)
 		d, err := evalBuiltinFunc(f, chunk.Row{})

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -60,27 +59,6 @@ func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 	return tblInfo, nil
 }
 
-// testTableInfoWithPartition creates a test table with num int columns and with no index.
-func testTableInfoWithPartition(t *testing.T, d *ddl, name string, num int) *model.TableInfo {
-	tblInfo, err := testTableInfo(d, name, num)
-	require.NoError(t, err)
-	genIDs, err := d.genGlobalIDs(1)
-	require.NoError(t, err)
-	pid := genIDs[0]
-	tblInfo.Partition = &model.PartitionInfo{
-		Type:   model.PartitionTypeRange,
-		Expr:   tblInfo.Columns[0].Name.L,
-		Enable: true,
-		Definitions: []model.PartitionDefinition{{
-			ID:       pid,
-			Name:     model.NewCIStr("p0"),
-			LessThan: []string{"maxvalue"},
-		}},
-	}
-
-	return tblInfo
-}
-
 func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
@@ -100,21 +78,6 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model
 	return job
 }
 
-func testDropTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropTable,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
-
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
 func testCheckTableState(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
 	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
@@ -130,10 +93,4 @@ func testCheckTableState(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *mo
 		require.Equal(t, info.State, state)
 		return nil
 	}))
-}
-
-func testGetTable(t *testing.T, d *ddl, schemaID int64, tableID int64) table.Table {
-	tbl, err := testGetTableWithError(d, schemaID, tableID)
-	require.NoError(t, err)
-	return tbl
 }
