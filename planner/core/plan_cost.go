@@ -85,15 +85,19 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType) (flo
 	if p.planCostInit {
 		return p.planCost, nil
 	}
-	p.planCost = 0
-	// child's cost
-	for _, child := range []PhysicalPlan{p.indexPlan, p.tablePlan} {
-		childCost, err := child.GetPlanCost(property.CopDoubleReadTaskType)
-		if err != nil {
-			return 0, err
-		}
-		p.planCost += childCost
+	// index's cost
+	idxCost, err := p.indexPlan.GetPlanCost(property.CopDoubleReadTaskType)
+	if err != nil {
+		return 0, err
 	}
+	p.planCost = idxCost
+
+	// table-side scan cost, we cannot know its stats until we finish index plan.
+	var tmp PhysicalPlan
+	for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
+	}
+	ts := tmp.(*PhysicalTableScan)
+	p.planCost += p.indexPlan.StatsCount() * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
 
 	// index-side net I/O cost: rows * row-size * net-factor
 	netFactor := getTableNetFactor(p.tablePlan)
@@ -105,7 +109,7 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType) (flo
 
 	// table-side net I/O cost: rows * row-size * net-factor
 	tblRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-	p.planCost += p.tablePlan.StatsCount() * tblRowSize * netFactor
+	p.planCost += p.indexPlan.StatsCount() * tblRowSize * netFactor
 
 	// table-side seek cost
 	p.planCost += estimateNetSeekCost(p.tablePlan)
