@@ -1178,6 +1178,8 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext) int64 {
 	return rootStats.GetActRows()
 }
 
+// FlattenPhysicalPlanForStmtCtx generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
+// then stores it in stmtCtx.flatPlan.
 func FlattenPhysicalPlanForStmtCtx(stmtCtx *stmtctx.StatementContext) *plannercore.FlatPhysicalPlan {
 	pp := stmtCtx.GetPlan()
 	if pp == nil {

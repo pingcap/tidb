@@ -22,6 +22,7 @@ import (
 	utilhint "github.com/pingcap/tidb/util/hint"
 )
 
+// GenHintsFromFlatPlan generates hints from a FlatPhysicalPlan.
 func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 	if len(flat.Main) == 0 {
 		return nil

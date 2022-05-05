@@ -2040,6 +2040,8 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 )
 
+// GenerateVisualPlan decides whether we should record visual plan in slow log and stmt summary.
+// It's controlled by the global variable `tidb_generate_visual_plan`.
 var GenerateVisualPlan atomic2.Bool
 
 // SlowQueryLogItems is a collection of items that should be included in the

@@ -1337,8 +1337,9 @@ func (e *Explain) RenderResult() error {
 	return nil
 }
 
+// VisualPlanStrFromFlatPlan generates the compressed and encoded visual plan from a FlatPhysicalPlan.
 func VisualPlanStrFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) string {
-	visual := VisualDataFromFlatPlan(explainCtx, flat)
+	visual := visualDataFromFlatPlan(explainCtx, flat)
 	if visual == nil {
 		return ""
 	}
@@ -1350,7 +1351,7 @@ func VisualPlanStrFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysical
 	return str
 }
 
-func VisualDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) *tipb.VisualData {
+func visualDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) *tipb.VisualData {
 	if len(flat.Main) == 0 {
 		return nil
 	}

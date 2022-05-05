@@ -358,17 +358,16 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 		res, ok := getDynamicAccessPartition(sctx, ts.Table, &p.PartitionInfo)
 		if ok {
 			return "partition:" + res
-		} else {
-			return res
 		}
+		return res
 	}
 	if len(p.PartitionInfos) == 1 {
 		res, ok := getDynamicAccessPartition(sctx, p.PartitionInfos[0].tableScan.Table, &p.PartitionInfos[0].partitionInfo)
 		if ok {
 			return "partition:" + res
-		} else {
-			return res
 		}
+		return res
+
 	}
 	containsPartitionTable := false
 	for _, info := range p.PartitionInfos {
@@ -451,9 +450,9 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 	res, ok := getDynamicAccessPartition(sctx, is.Table, &p.PartitionInfo)
 	if ok {
 		return "partition:" + res
-	} else {
-		return res
 	}
+	return res
+
 }
 
 // ExplainInfo implements Plan interface.
@@ -481,9 +480,8 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string
 	res, ok := getDynamicAccessPartition(sctx, ts.Table, &p.PartitionInfo)
 	if ok {
 		return "partition:" + res
-	} else {
-		return res
 	}
+	return res
 }
 
 // ExplainInfo implements Plan interface.
@@ -496,9 +494,8 @@ func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string 
 	res, ok := getDynamicAccessPartition(sctx, ts.Table, &p.PartitionInfo)
 	if ok {
 		return "partition:" + res
-	} else {
-		return res
 	}
+	return res
 }
 
 // ExplainInfo implements Plan interface.

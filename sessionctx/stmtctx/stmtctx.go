@@ -340,19 +340,23 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 	return sc.planNormalized, sc.planDigest
 }
 
+// GetPlan gets the plan field of stmtctx
 func (sc *StatementContext) GetPlan() interface{} {
 	return sc.plan
 }
 
+// SetPlan sets the plan field of stmtctx
 func (sc *StatementContext) SetPlan(plan interface{}) {
 	sc.plan = plan
 	return
 }
 
+// GetFlatPlan gets the flatPlan field of stmtctx
 func (sc *StatementContext) GetFlatPlan() interface{} {
 	return sc.flatPlan
 }
 
+// SetFlatPlan sets the flatPlan field of stmtctx
 func (sc *StatementContext) SetFlatPlan(flat interface{}) {
 	sc.flatPlan = flat
 	return

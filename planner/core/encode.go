@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
+// EncodeFlatPlan encodes a FlatPhysicalPlan with compression.
 func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	var buf bytes.Buffer
 	if len(flat.Main) == 0 {
@@ -207,6 +208,7 @@ type planDigester struct {
 	hasher       hash.Hash
 }
 
+// NormalizeFlatPlan normalizes a FlatPhysicalPlan and generates plan digest.
 func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parser.Digest) {
 	hasher := sha256.New()
 	var buf bytes.Buffer

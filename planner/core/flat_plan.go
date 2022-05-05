@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/util/texttree"
 )
 
+// FlatPhysicalPlan provides an easier structure to traverse a plan and collect needed information.
+// Note: Although it's named FlatPhysicalPlan, there also could be Insert, Delete and Update at the beginning of Main.
 type FlatPhysicalPlan struct {
 	Main FlatPlanTree
 	CTEs []FlatPlanTree
@@ -32,9 +34,13 @@ type FlatPhysicalPlan struct {
 	stmtCtx *stmtctx.StatementContext
 }
 
+// FlatPlanTree is a simplified plan tree.
+// It arranges all operators in the tree as a slice, ordered by the order of traversing the tree, which means a
+// depth-first traversal plus some special rule for some operators. Anyway, it will be the same order you'll see
+// in the result of an EXPLAIN statement.
 type FlatPlanTree []*FlatOperator
 
-// GetSelectPlan skips Insert, Delete and Update in the beginning of the FlatPlanTree.
+// GetSelectPlan skips Insert, Delete and Update at the beginning of the FlatPlanTree.
 // Note: it returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
 func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
 	if len(e) == 0 {
@@ -50,6 +56,8 @@ func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
 	return nil
 }
 
+// FlatOperator is a simplified operator.
+// It contains a reference to the original operator and some usually needed information.
 type FlatOperator struct {
 	// A reference to the original operator. It will be useful when the information below is insufficient.
 	Origin Plan
@@ -79,9 +87,12 @@ type FlatOperator struct {
 	DiskTracker *memory.Tracker
 }
 
+// DriverSide indicates the operator's location from its parent.
+// It's useful for index join, apply, index lookup, cte and so on.
 type DriverSide uint8
 
 const (
+	// Empty means DriverSide is meaningless for this operator.
 	Empty DriverSide = iota
 	BuildSide
 	ProbeSide
@@ -115,6 +126,7 @@ type operatorCtx struct {
 	isLastChild bool
 }
 
+// FlattenPhysicalPlan generates a FlatPhysicalPlan from a PhysicalPlan, Insert, Delete or Update.
 func FlattenPhysicalPlan(p Plan, stmtCtx *stmtctx.StatementContext) *FlatPhysicalPlan {
 	res := &FlatPhysicalPlan{stmtCtx: stmtCtx}
 	initInfo := &operatorCtx{
@@ -141,14 +153,14 @@ func FlattenPhysicalPlan(p Plan, stmtCtx *stmtctx.StatementContext) *FlatPhysica
 }
 
 func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
-	rawId := p.ExplainID().String()
+	explainID := p.ExplainID().String()
 	// Explain operator doesn't have a meaningful explain ID. It's explain ID is "_0", we skip such operator.
-	if rawId == "_0" {
+	if explainID == "_0" {
 		return nil
 	}
 	res := &FlatOperator{
 		Origin:            p,
-		TextTreeExplainID: texttree.PrettyIdentifier(rawId+info.driverSide.String(), info.indent, info.isLastChild),
+		TextTreeExplainID: texttree.PrettyIdentifier(explainID+info.driverSide.String(), info.indent, info.isLastChild),
 		DriverSide:        info.driverSide,
 		IsRoot:            info.isRoot,
 		StoreType:         info.storeType,

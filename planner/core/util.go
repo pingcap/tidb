@@ -256,6 +256,7 @@ func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 	return newSchema
 }
 
+// GetStatsInfoFromFlatPlan gets the statistics info from a FlatPhysicalPlan.
 func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
 	res := make(map[string]uint64)
 	for _, op := range flat.Main {

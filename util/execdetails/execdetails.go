@@ -345,6 +345,7 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 	return totalRows
 }
 
+// MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
 func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, totalTasks, totalLoops, totalThreads int32) {
 	procTimes = make([]time.Duration, 0, 32)
 	for _, instanceStats := range crs.stats {
@@ -494,6 +495,7 @@ func (e *RootRuntimeStats) GetActRows() int64 {
 	return num
 }
 
+// MergeBasicStats merges BasicRuntimeStats in the RootRuntimeStats into single one.
 func (e *RootRuntimeStats) MergeBasicStats() *BasicRuntimeStats {
 	if len(e.basics) == 0 {
 		return nil
