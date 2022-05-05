@@ -28,6 +28,8 @@ import (
 	"github.com/tikv/client-go/v2/metrics"
 )
 
+var Usage = ClusterIndexUsage{}
+
 type featureUsage struct {
 	// transaction usage information
 	Txn *TxnUsage `json:"txn"`
@@ -133,7 +135,6 @@ type NewClusterIndexUsage struct {
 // getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
 func getClusterIndexUsageInfo(ctx sessionctx.Context) (ncu *NewClusterIndexUsage, cu *ClusterIndexUsage, err error) {
 	var newUsage NewClusterIndexUsage
-	usage := make(ClusterIndexUsage)
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
 	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
@@ -174,7 +175,7 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (ncu *NewClusterIndexUsage
 		}
 	}
 	newUsage.NumTotalTables = uint64(len(rows))
-	return &newUsage, &usage, nil
+	return &newUsage, &Usage, nil
 }
 
 // TxnUsage records the usage info of transaction related features, including
