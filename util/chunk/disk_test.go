@@ -143,7 +143,7 @@ type listInDiskWriteDisk struct {
 	ListInDisk
 }
 
-func (l *tempFileWithIOWrapper) flushForTest() (err error) {
+func (l *diskFileReaderWriter) flushForTest() (err error) {
 	err = l.disk.Close()
 	if err != nil {
 		return
