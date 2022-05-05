@@ -1490,7 +1490,7 @@ func (rc *Client) PreCheckTableClusterIndex(
 }
 
 const (
-	streamBackupMetaPrefix = "v1_backupmeta"
+	streamBackupMetaPrefix = "v1/backupmeta"
 )
 
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
