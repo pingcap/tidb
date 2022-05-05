@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+
 	"go.uber.org/zap"
 )
 
@@ -266,10 +267,14 @@ func makeSourceFileRegion(
 	}
 
 	dataFileSize := fi.FileMeta.FileSize
-	divisor := int64(columns)
+	// divisor := int64(columns)
 	isCsvFile := fi.FileMeta.Type == SourceTypeCSV
-	if !isCsvFile {
-		divisor += 2
+	// if !isCsvFile {
+	// 	divisor += 2
+	// }
+	sizePerRow, err := sampleAndGetAvgRowSize(&fi, cfg, ioWorkers, store)
+	if err != nil {
+		return nil, nil, err
 	}
 	// If a csv file is overlarge, we need to split it into multiple regions.
 	// Note: We can only split a csv file whose format is strict.
@@ -277,7 +282,7 @@ func makeSourceFileRegion(
 	// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
 	// avoid split a lot of small chunks.
 	if isCsvFile && cfg.Mydumper.StrictFormat && dataFileSize > int64(cfg.Mydumper.MaxRegionSize+cfg.Mydumper.MaxRegionSize/largeCSVLowerThresholdRation) {
-		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
+		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, sizePerRow, 0, ioWorkers, store)
 		return regions, subFileSizes, err
 	}
 
@@ -289,7 +294,7 @@ func makeSourceFileRegion(
 			Offset:       0,
 			EndOffset:    fi.FileMeta.FileSize,
 			PrevRowIDMax: 0,
-			RowIDMax:     fi.FileMeta.FileSize / divisor,
+			RowIDMax:     fi.FileMeta.FileSize / sizePerRow,
 		},
 	}
 
@@ -300,6 +305,47 @@ func makeSourceFileRegion(
 			zap.Int64("size", dataFileSize))
 	}
 	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.FileSize)}, nil
+}
+
+func sampleAndGetAvgRowSize(
+	fileInfo *FileInfo,
+	cfg *config.Config,
+	ioWorkers *worker.Pool,
+	store storage.ExternalStorage,
+) (int64, error) {
+	reader, err := store.Open(context.Background(), fileInfo.FileMeta.Path)
+	if err != nil {
+		return 0, nil
+	}
+	var parser Parser
+	switch fileInfo.FileMeta.Type {
+	case SourceTypeCSV:
+		hasHeader := cfg.Mydumper.CSV.Header
+		charsetConvertor, err := NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+		if err != nil {
+			return 0, err
+		}
+		parser, err = NewCSVParser(&cfg.Mydumper.CSV, reader, int64(cfg.Mydumper.ReadBlockSize), ioWorkers, hasHeader, charsetConvertor)
+		if err != nil {
+			return 0, err
+		}
+	case SourceTypeSQL:
+		parser = NewChunkParser(cfg.TiDB.SQLMode, reader, int64(cfg.Mydumper.ReadBlockSize), ioWorkers)
+	}
+	totalBytes := 0
+	totalRows := 0
+	defaultSampleRows := 10 // todo: may be configurable
+	for i := 0; i < defaultSampleRows; i++ {
+		err = parser.ReadRow()
+		if err != nil && errors.Cause(err) == io.EOF {
+			break
+		} else if err != nil {
+			return 0, err
+		}
+		totalBytes += parser.LastRow().Length
+		totalRows++
+	}
+	return int64(totalBytes) / int64(totalRows), nil
 }
 
 // because parquet files can't seek efficiently, there is no benefit in split.

@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -44,6 +45,15 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	defaultRowPerFile = 10
+	fileCntThrd       = 10
+	fileByteThrd      = 10 * units.KiB
+	// we are expecting the estimates are closed to the reality,
+	// hence, TableRestore re-allocates 100000 new RowIDs for extreme cases.
+	defaultNewAllocIDCnt = 100000
+)
+
 type TableRestore struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
@@ -55,6 +65,8 @@ type TableRestore struct {
 	logger    log.Logger
 
 	ignoreColumns map[string]struct{}
+
+	curMaxRowID int64
 }
 
 func NewTableRestore(
@@ -97,6 +109,9 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 			timestamp = int64(v.(int))
 		})
 		for _, chunk := range chunks {
+			if chunk.Chunk.RowIDMax > tr.curMaxRowID {
+				tr.curMaxRowID = chunk.Chunk.RowIDMax
+			}
 			engine, found := cp.Engines[chunk.EngineID]
 			if !found {
 				engine = &checkpoints.EngineCheckpoint{
@@ -528,7 +543,7 @@ func (tr *TableRestore) restoreEngine(
 				rc.regionWorkers.Recycle(w)
 			}()
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
-			err := cr.restore(ctx, tr, engineID, dataWriter, indexWriter, rc)
+			err := cr.restore(ctx, tr, engineID, dataWriter, indexWriter, rc, dataEngine, indexEngine, dataWriterCfg)
 			var dataFlushStatus, indexFlushStaus backend.ChunkFlushStatus
 			if err == nil {
 				dataFlushStatus, err = dataWriter.Close(ctx)
@@ -965,6 +980,12 @@ func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) er
 	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger)
 	task.End(zap.ErrorLevel, err)
 	return err
+}
+
+func (tr *TableRestore) allocateRowIDs() (int64, int64) {
+	newBase := tr.curMaxRowID + 1
+	tr.curMaxRowID += defaultNewAllocIDCnt
+	return newBase, tr.curMaxRowID
 }
 
 // estimate SST files compression threshold by total row file size
