@@ -61,7 +61,7 @@ require (
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.4.0
 	github.com/spf13/pflag v1.0.5
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.7.2-0.20220504104629-106ec21d14df
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.1-0.20220406091203-f73ec0e675f4
 	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
@@ -205,6 +205,3 @@ replace github.com/pingcap/tidb/parser => ./parser
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
-
-// fix date race in the testify. it can be remove after merging https://github.com/stretchr/testify/pull/1165
-replace github.com/stretchr/testify => github.com/hawkingrei/testify v1.7.1-0.20220318075534-088488aa27f2
