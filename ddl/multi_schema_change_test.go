@@ -850,6 +850,15 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 	require.Equal(t, rows[0][11], "rollback done")
 	require.Equal(t, rows[1][11], "rollback done")
 	require.Equal(t, rows[2][11], "cancelled")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int);")
+	jobIDExt = wrapJobIDExtCallback(originHook)
+	dom.DDL().SetHook(jobIDExt)
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustGetErrCode("alter table t add index i(a), modify column a int null default 1 after a;", errno.ErrBadField)
+	checkDelRangeCnt(tk, jobIDExt.jobID, 1)
+
 }
 
 func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {

@@ -83,7 +83,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 		// The sub-jobs are normally running.
 		// Run the first executable sub-job.
-		for i, sub := range job.MultiSchemaInfo.SubJobs {
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
 			if !sub.Revertible || isFinished(sub) {
 				// Skip the sub jobs which related schema states
 				// are in the last revertible point.
@@ -93,20 +93,32 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			proxyJob := cloneFromSubJob(job, sub)
 			ver, err = w.runDDLJob(d, t, proxyJob)
 			mergeBackToSubJob(proxyJob, sub)
-			handleRevertibleException(job, sub, i, proxyJob.Error)
+			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
 		}
-		// All the sub-jobs are non-revertible.
-		job.MultiSchemaInfo.Revertible = false
+
+		// Save tblInfo and subJobs for rollback
+		tblInfo, _ := t.GetTable(job.SchemaID, job.TableID)
+		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
 			if isFinished(sub) {
 				continue
 			}
+			subJobs[i] = *sub
 			proxyJob := cloneFromSubJob(job, sub)
 			ver, err = w.runDDLJob(d, t, proxyJob)
 			mergeBackToSubJob(proxyJob, sub)
+			if err != nil {
+				for j := i - 1; j >= 0; j-- {
+					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
+				}
+				handleRevertibleException(job, sub, proxyJob.Error)
+				return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+			}
 		}
+		// All the sub-jobs are non-revertible.
+		job.MultiSchemaInfo.Revertible = false
 		return ver, err
 	}
 	// Run the rest non-revertible sub-jobs one by one.
@@ -170,7 +182,7 @@ func mergeBackToSubJob(job *model.Job, sub *model.SubJob) {
 	sub.RowCount = job.RowCount
 }
 
-func handleRevertibleException(job *model.Job, subJob *model.SubJob, idx int, err *terror.Error) {
+func handleRevertibleException(job *model.Job, subJob *model.SubJob, err *terror.Error) {
 	if !isAbnormal(subJob) {
 		return
 	}
