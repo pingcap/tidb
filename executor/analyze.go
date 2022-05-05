@@ -759,8 +759,9 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 			colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
 		})
 		defer wg.Wait()
-		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStatsWithRetry(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
+		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
+			memToGC.Add(colExec.memTracker.BytesConsumed())
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
@@ -988,75 +989,6 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 		mergeTaskCh <- data
 	}
 	return nil
-}
-
-func (e *AnalyzeColumnsExec) buildSamplingStatsWithRetry(
-	ranges []*ranger.Range,
-	needExtStats bool,
-	indexesWithVirtualColOffsets []int,
-	idxNDVPushDownCh chan analyzeIndexNDVTotalResult,
-) (
-	count int64,
-	hists []*statistics.Histogram,
-	topns []*statistics.TopN,
-	fmSketches []*statistics.FMSketch,
-	extStats *statistics.ExtendedStatsColl,
-	err error,
-) {
-	retries := 1
-	if e.ctx.GetSessionVars().InRestrictedSQL {
-		retries = 2
-	}
-	for i := retries; i > 0; i-- {
-		count, hists, topns, fmSketches, extStats, err = e.buildSamplingStats(ranges, needExtStats, indexesWithVirtualColOffsets, idxNDVPushDownCh)
-		if err != nil {
-			memToGC.Add(e.memTracker.BytesConsumed())
-		}
-		tryGC(e.memTracker, true)
-		if err == nil || err != errAnalyzeWorkerOOM || i <= 1 || e.analyzePB.ColReq == nil {
-			return
-		}
-		oldSampleRate := *e.analyzePB.ColReq.SampleRate
-		if oldSampleRate <= 0 || oldSampleRate > 1 {
-			return
-		}
-		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-		if statsHandle == nil {
-			return
-		}
-		var statsTbl *statistics.Table
-		tid := e.tableID.GetStatisticsID()
-		if tid == e.tableInfo.ID {
-			statsTbl = statsHandle.GetTableStats(e.tableInfo)
-		} else {
-			statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
-		}
-		if statsTbl == nil || statsTbl.Count <= 0 {
-			return
-		}
-		newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.Count))
-		if newSampleRate >= oldSampleRate {
-			return
-		}
-		*e.analyzePB.ColReq.SampleRate = newSampleRate
-		if e.PartitionName != "" {
-			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(
-				"Analyze retry with adjusted sample rate %f for table %s.%s's partition %s",
-				newSampleRate,
-				e.DBName,
-				e.TableName,
-				e.PartitionName,
-			))
-		} else {
-			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(
-				"Analyze retry with adjusted sample rate %f for table %s.%s",
-				newSampleRate,
-				e.DBName,
-				e.TableName,
-			))
-		}
-	}
-	return
 }
 
 func (e *AnalyzeColumnsExec) buildSamplingStats(
