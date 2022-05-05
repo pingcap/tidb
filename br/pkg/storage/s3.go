@@ -5,11 +5,9 @@ package storage
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
 	"io"
-	"io/ioutil"
-	"net/http"
 	"net/url"
 	"path"
 	"regexp"
@@ -17,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client"
@@ -55,6 +54,8 @@ const (
 
 	// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
 	hardcodedS3ChunkSize = 5 * 1024 * 1024
+	// to check the cloud type by endpoint tag.
+	domainAliyun = "aliyuncs.com"
 )
 
 var permissionCheckFn = map[Permission]func(*s3.S3, *backuppb.S3) error{
@@ -244,18 +245,8 @@ func NewS3Storage( // revive:disable-line:flag-parameter
 	})
 }
 
-const (
-	ossRAMMetaUrl = "http://100.100.100.200/latest/meta-data/ram/security-credentials/"
-	ossRAMAK      = "AccessKeyId"
-	ossRAMSK      = "AccessKeySecret"
-	ossRAMToken   = "SecurityToken"
-	//
-	domain_aliyun = "aliyuncs.com"
-)
-
 // auto access without ak / sk.
-
-func autoNewCred(qs *backuppb.S3, opts *ExternalStorageOptions) (cred *credentials.Credentials, err error) {
+func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
 		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, ""), nil
 	}
@@ -265,46 +256,20 @@ func autoNewCred(qs *backuppb.S3, opts *ExternalStorageOptions) (cred *credentia
 		return nil, nil
 	}
 	// if it Contains 'aliyuncs', fetch the sts token.
-	if strings.Contains(endpoint, domain_aliyun) {
-		return createOssRamCred(opts.HTTPClient)
+	if strings.Contains(endpoint, domainAliyun) {
+		return createOssRamCred()
 	}
 	// other case ,return no error and run default(aws) follow.
 	return nil, nil
 }
-func createOssRamCred(cli *http.Client) (*credentials.Credentials, error) {
 
-	if cli == nil {
-		cli = http.DefaultClient
-	}
-	// get role ;
-	resp, err := cli.Get(ossRAMMetaUrl)
+func createOssRamCred() (*credentials.Credentials, error) {
+	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
 	if err != nil {
-		return nil, errors.Annotate(err, "createOssRamCred failed to get role")
+		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
 	}
-	d, err := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return nil, errors.Annotate(err, "createOssRamCred failed to get role data")
-	}
-	resp, err = cli.Get(ossRAMMetaUrl + string(d))
-	if err != nil {
-
-		return nil, errors.Annotatef(err, "createOssRamCred failed get sts by role %s", string(d))
-	}
-	d, err = ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return nil, errors.Annotate(err, "createOssRamCred failed get sts token")
-	}
-	var mp map[string]string
-	err = json.Unmarshal(d, &mp)
-	if err != nil {
-		return nil, errors.Annotate(err, "createOssRamCred failed parse sts token")
-	}
-	ak := mp[ossRAMAK]
-	sk := mp[ossRAMSK]
-	token := mp[ossRAMToken]
-	return credentials.NewStaticCredentials(ak, sk, token), nil
+	ncred := cred.(*alicred.StsTokenCredential)
+	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
 }
 
 func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
@@ -319,7 +284,7 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 	if opts.HTTPClient != nil {
 		awsConfig.WithHTTPClient(opts.HTTPClient)
 	}
-	cred, err := autoNewCred(&qs, opts)
+	cred, err := autoNewCred(&qs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
