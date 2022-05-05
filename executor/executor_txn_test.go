@@ -15,13 +15,18 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 func TestInvalidReadTemporaryTable(t *testing.T) {
@@ -522,4 +527,40 @@ func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {
 	// should wait until tk1 rollback and release the lock.
 	tk2.MustExec("select * from t where a= 1 for update")
 	require.Less(t, wait.Seconds(), time.Since(start).Seconds())
+}
+
+func TestSavepointWithBinlog(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	// mock for binlog enabled.
+	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&mockPumpClient{})
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, a int, unique index idx(id))")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1,1)")
+	err := tk.ExecToErr("savepoint s1")
+	require.Error(t, err)
+	require.Equal(t, executor.ErrSavepointNotSupportedWithBinlog.Error(), err.Error())
+	err = tk.ExecToErr("rollback to s1")
+	require.Error(t, err)
+	require.Equal(t, "[executor:1305]SAVEPOINT s1 does not exist", err.Error())
+	err = tk.ExecToErr("release savepoint s1")
+	require.Error(t, err)
+	require.Equal(t, "[executor:1305]SAVEPOINT s1 does not exist", err.Error())
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+}
+
+type mockPumpClient struct{}
+
+func (m mockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
+	return &binlog.WriteBinlogResp{}, nil
+}
+
+func (m mockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
+	return nil, nil
 }

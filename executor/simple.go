@@ -643,12 +643,18 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	return nil
 }
 
+var ErrSavepointNotSupportedWithBinlog = errors.New("SAVEPOINT is not supported when binlog is enabled")
+
 func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 	if !sessVars.InTxn() && sessVars.IsAutocommit() {
 		return nil
 	}
+	if sessVars.BinlogClient != nil {
+		return ErrSavepointNotSupportedWithBinlog
+	}
+
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
