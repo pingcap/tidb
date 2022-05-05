@@ -17,6 +17,8 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 // FlatPhysicalOperatorForTest contains fields of FlatOperator that is needed for tests.
@@ -59,7 +60,7 @@ func simplifyFlatPhysicalOperator(e *core.FlatOperator) *FlatPhysicalOperatorFor
 }
 
 func simplifyFlatPlan(p []*core.FlatOperator) []*FlatPhysicalOperatorForTest {
-	var res []*FlatPhysicalOperatorForTest
+	res := make([]*FlatPhysicalOperatorForTest, 0, len(p))
 	for _, op := range p {
 		res = append(res, simplifyFlatPhysicalOperator(op))
 	}

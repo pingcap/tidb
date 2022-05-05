@@ -348,7 +348,6 @@ func (sc *StatementContext) GetPlan() interface{} {
 // SetPlan sets the plan field of stmtctx
 func (sc *StatementContext) SetPlan(plan interface{}) {
 	sc.plan = plan
-	return
 }
 
 // GetFlatPlan gets the flatPlan field of stmtctx
@@ -359,7 +358,6 @@ func (sc *StatementContext) GetFlatPlan() interface{} {
 // SetFlatPlan sets the flatPlan field of stmtctx
 func (sc *StatementContext) SetFlatPlan(flat interface{}) {
 	sc.flatPlan = flat
-	return
 }
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.

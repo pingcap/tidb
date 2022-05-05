@@ -19,11 +19,11 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/golang/snappy"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/golang/snappy"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
