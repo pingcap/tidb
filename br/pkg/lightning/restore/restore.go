@@ -1039,6 +1039,7 @@ func (rc *Controller) listenCheckpointUpdates() {
 			}
 		})
 	}
+	// Don't put this statement in defer function at the beginning. failpoint function may call it manually.
 	rc.checkpointsWg.Done()
 }
 
