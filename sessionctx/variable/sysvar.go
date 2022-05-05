@@ -686,6 +686,7 @@ var defaultSysVars = []*SysVar{
 		return fmt.Sprint(QueryLogMaxLen.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBCommitterConcurrency, Value: strconv.Itoa(DefTiDBCommitterConcurrency), Type: TypeInt, MinValue: 1, MaxValue: 10000, SetGlobal: func(s *SessionVars, val string) error {
+		tikvutil.CommitterConcurrency.Store(int32(TidbOptInt64(val, DefTiDBCommitterConcurrency)))
 		cfg := config.GetGlobalConfig().GetTiKVConfig()
 		tikvcfg.StoreGlobalConfig(cfg)
 		return nil
