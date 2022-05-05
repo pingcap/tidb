@@ -94,9 +94,13 @@ type DriverSide uint8
 const (
 	// Empty means DriverSide is meaningless for this operator.
 	Empty DriverSide = iota
+	// BuildSide means this operator is at the build side of its parent
 	BuildSide
+	// ProbeSide means this operator is at the probe side of its parent
 	ProbeSide
+	// SeedPart means this operator is the seed part of its parent (a cte)
 	SeedPart
+	// RecursivePart means this operator is the recursive part of its parent (a cte)
 	RecursivePart
 )
 

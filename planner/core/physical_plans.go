@@ -73,6 +73,7 @@ type tableScanAndPartitionInfo struct {
 	partitionInfo PartitionInfo
 }
 
+// ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
 type ReadReqType uint8
 
 const (
