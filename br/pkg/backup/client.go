@@ -70,8 +70,9 @@ type ProgressUnit string
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
-	backupFineGrainedMaxBackoff = 80000
-	backupRetryTimes            = 5
+	backupFineGrainedMaxBackoff   = 80000
+	backupFindRegionLeaderBackoff = 3000
+	backupRetryTimes              = 5
 	// RangeUnit represents the progress updated counter when a range finished.
 	RangeUnit ProgressUnit = "range"
 	// RegionUnit represents the progress updated counter when a region finished.
@@ -629,25 +630,40 @@ func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool
 	if !isRawKv {
 		key = codec.EncodeBytes([]byte{}, key)
 	}
-	for i := 0; i < 5; i++ {
-		// better backoff.
+
+	bo := tikv.NewBackoffer(ctx, backupFindRegionLeaderBackoff)
+	var err error
+
+	for {
+		// pd retry with Exponential Backoff, BoPDRPC configure = (base = 500, cap=3000, EqualJitter))
+		if err != nil {
+			if errors.Cause(err) == context.Canceled {
+				return nil, errors.Trace(err)
+			}
+
+			err := bo.Backoff(tikv.BoPDRPC(), err)
+			if err != nil {
+				log.Error("can not find leader", logutil.Key("key", key))
+				return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find leader")
+			}
+		}
+
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
-		if err != nil || region == nil {
-			log.Error("find leader failed", zap.Error(err), zap.Reflect("region", region))
-			time.Sleep(time.Millisecond * time.Duration(100*i))
+		failpoint.Inject("get-region-error", func(val failpoint.Value) {
+			if val.(bool) {
+				logutil.CL(ctx).Debug("failpoint get-region-error injected.")
+				err = status.Error(codes.Unavailable, "Unavailable error")
+			}
+		})
+		if err != nil || region == nil || region.Leader == nil {
+			log.Warn("can not find region by key, retry it...", zap.Error(err), zap.Reflect("region", region), logutil.Key("key", key))
 			continue
 		}
-		if region.Leader != nil {
-			log.Info("find leader",
-				zap.Reflect("Leader", region.Leader), logutil.Key("key", key))
-			return region.Leader, nil
-		}
-		log.Warn("no region found", logutil.Key("key", key))
-		time.Sleep(time.Millisecond * time.Duration(100*i))
-		continue
+
+		log.Info("find leader", zap.Reflect("Leader", region.Leader), logutil.Key("key", key))
+		return region.Leader, nil
 	}
-	log.Error("can not find leader", logutil.Key("key", key))
-	return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find leader")
+
 }
 
 func (bc *Client) fineGrainedBackup(

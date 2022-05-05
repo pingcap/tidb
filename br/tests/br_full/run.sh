@@ -18,6 +18,7 @@ set -eu
 DB="$TEST_NAME"
 TABLE="usertable"
 DB_COUNT=3
+BACKUP_LOG="$TEST_DIR/backup_retry.log"
 
 for i in $(seq $DB_COUNT); do
     run_sql "CREATE DATABASE $DB${i};"
@@ -46,6 +47,27 @@ if ps -q $pid ; then
     exit 1
 fi
 
+unset BR_LOG_TO_TERM
+# backup full and let PD returns an error, to test retry.
+echo "backup with retryable error start..."
+rm -f $BACKUP_LOG
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/get-region-error=1*return(true)"
+run_br --pd $PD_ADDR backup full --log-file $BACKUP_LOG -s "local://$TEST_DIR/$DB-retryable"
+
+retry_count=$(grep "retry it..." "${BACKUP_LOG}" | wc -l)
+
+if [ "$retry_count" -eq "0" ];then
+    echo "there is no incomplete range"
+else
+    echo "retry times is ${retry_count}"
+    # at least retry larger than 2 with max sleep time 3000
+    if [ "$retry_count" -le "2" ];then
+        echo "After failed 15 seconds, BR doesn't gracefully shutdown..."
+        exit 1
+    fi
+fi
+
+export GO_FAILPOINTS=""
 
 # backup full
 echo "backup with lz4 start..."
