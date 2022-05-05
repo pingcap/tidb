@@ -1581,7 +1581,7 @@ func tryGetPkHandleCol(tblInfo *model.TableInfo, allColSchema *expression.Schema
 		return nil, nil, false
 	}
 	for i, c := range tblInfo.Columns {
-		if mysql.HasPriKeyFlag(c.Flag) {
+		if mysql.HasPriKeyFlag(c.GetFlag()) {
 			return c, allColSchema.Columns[i], true
 		}
 	}
@@ -1751,7 +1751,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 		if col.IsGenerated() && !col.GeneratedStored {
 			continue
 		}
-		if mysql.HasPriKeyFlag(col.Flag) && tbl.HasClusteredIndex() {
+		if mysql.HasPriKeyFlag(col.GetFlag()) && tbl.HasClusteredIndex() {
 			continue
 		}
 		colsInfo = append(colsInfo, col)
@@ -2562,7 +2562,7 @@ func parseAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uin
 			}
 			optMap[opt.Type] = v
 		case ast.AnalyzeOptSampleRate:
-			// Only Int/Float/Decimal is accepted, so pass nil here is safe.
+			// Only Int/Float/decimal is accepted, so pass nil here is safe.
 			fVal, err := datumValue.ToFloat64(nil)
 			if err != nil {
 				return nil, err
@@ -2624,7 +2624,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 			}
 			optMap[opt.Type] = v
 		case ast.AnalyzeOptSampleRate:
-			// Only Int/Float/Decimal is accepted, so pass nil here is safe.
+			// Only Int/Float/decimal is accepted, so pass nil here is safe.
 			fVal, err := datumValue.ToFloat64(nil)
 			if err != nil {
 				return nil, err
@@ -2832,13 +2832,12 @@ func buildColumnWithName(tableName, name string, tp byte, size int) (*expression
 		flag = 0
 	}
 
-	fieldType := &types.FieldType{
-		Charset: cs,
-		Collate: cl,
-		Tp:      tp,
-		Flen:    size,
-		Flag:    flag,
-	}
+	fieldType := &types.FieldType{}
+	fieldType.SetType(tp)
+	fieldType.SetCharset(cs)
+	fieldType.SetCollate(cl)
+	fieldType.SetFlen(size)
+	fieldType.SetFlag(flag)
 	return &expression.Column{
 		RetType: fieldType,
 	}, &types.FieldName{DBName: util2.InformationSchemaName, TblName: model.NewCIStr(tableName), ColName: model.NewCIStr(name)}
@@ -4754,8 +4753,12 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 			tp = ftypes[i]
 		}
 		fieldType := types.NewFieldType(tp)
-		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
-		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
+		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.SetFlen(flen)
+		fieldType.SetDecimal(decimal)
+		charset, collate := types.DefaultCharsetForType(tp)
+		fieldType.SetCharset(charset)
+		fieldType.SetCollate(collate)
 		col.RetType = fieldType
 		schema.Append(col)
 	}

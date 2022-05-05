@@ -173,7 +173,7 @@ func bytesToI64Slice(b []byte) (i64s []int64) {
 const varElemLen = -1
 
 func getFixedLen(colType *types.FieldType) int {
-	switch colType.Tp {
+	switch colType.GetType() {
 	case mysql.TypeFloat:
 		return 4
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
@@ -206,7 +206,7 @@ func EstimateTypeWidth(colType *types.FieldType) int {
 		return colLen
 	}
 
-	colLen = colType.Flen
+	colLen = colType.GetFlen()
 	if colLen > 0 {
 		if colLen <= 32 {
 			return colLen

@@ -317,8 +317,8 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	col.SetCoercibility(expr.Coercibility())
 	p.schema.Append(col)
 	// reset ParseToJSONFlag in order to keep the flag away from json column
-	if col.GetType().Tp == mysql.TypeJSON {
-		col.GetType().Flag &= ^mysql.ParseToJSONFlag
+	if col.GetType().GetType() == mysql.TypeJSON {
+		col.GetType().DelFlag(mysql.ParseToJSONFlag)
 	}
 	return col
 }
@@ -624,7 +624,7 @@ func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) ex
 	if childCol == nil {
 		childCol = schema.RetrieveColumn(arg1)
 	}
-	if isNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.Flag) {
+	if isNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx, childCol)
 	}
 	return nil
