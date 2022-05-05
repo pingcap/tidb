@@ -21,6 +21,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/tracing"
@@ -80,23 +81,29 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				return nil, err
 			}
 		}
+		originalSchema := p.Schema()
+
 		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
 			ctx:        ctx,
 			otherConds: otherConds,
+			eqEdges:    eqEdges,
 		}
-		originalSchema := p.Schema()
+		err = baseGroupSolver.deriveStatsAndGenerateJRNodeGroup(curJoinGroup, tracer)
+		if err != nil {
+			return nil, err
+		}
+
 		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
-				eqEdges:                        eqEdges,
 			}
-			p, err = groupSolver.solve(curJoinGroup, tracer)
+			p, err = groupSolver.solve(tracer)
 		} else {
 			dpSolver := &joinReorderDPSolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
 			dpSolver.newJoin = dpSolver.newJoinWithEdges
-			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges), tracer)
+			p, err = dpSolver.solve(curJoinGroup, tracer)
 		}
 		if err != nil {
 			return nil, err
@@ -139,6 +146,24 @@ type baseSingleGroupJoinOrderSolver struct {
 	ctx          sessionctx.Context
 	curJoinGroup []*jrNode
 	otherConds   []expression.Expression
+	eqEdges      []*expression.ScalarFunction
+}
+
+func (s *baseSingleGroupJoinOrderSolver) deriveStatsAndGenerateJRNodeGroup(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) error {
+	s.curJoinGroup = make([]*jrNode, 0, len(joinNodePlans))
+	for _, node := range joinNodePlans {
+		_, err := node.recursiveDeriveStats(nil)
+		if err != nil {
+			return err
+		}
+		cost := s.baseNodeCumCost(node)
+		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
+			p:       node,
+			cumCost: cost,
+		})
+		tracer.appendLogicalJoinCost(node, cost)
+	}
+	return nil
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
@@ -148,6 +173,31 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) 
 		cost += s.baseNodeCumCost(child)
 	}
 	return cost
+}
+
+func (s *baseSingleGroupJoinOrderSolver) checkConnection(lChild, rChild LogicalPlan) (usedEdges []*expression.ScalarFunction) {
+	for _, edge := range s.eqEdges {
+		lCol := edge.GetArgs()[0].(*expression.Column)
+		rCol := edge.GetArgs()[1].(*expression.Column)
+		if lChild.Schema().Contains(lCol) && rChild.Schema().Contains(rCol) {
+			usedEdges = append(usedEdges, edge)
+		} else if rChild.Schema().Contains(lCol) && lChild.Schema().Contains(rCol) {
+			newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+			usedEdges = append(usedEdges, newSf)
+		}
+	}
+	return
+}
+
+func (s *baseSingleGroupJoinOrderSolver) makeJoin(lChild, rChild LogicalPlan, eqEdges []*expression.ScalarFunction) (LogicalPlan, []expression.Expression) {
+	remainOtherConds := make([]expression.Expression, len(s.otherConds))
+	copy(remainOtherConds, s.otherConds)
+	var otherConds []expression.Expression
+	mergedSchema := expression.MergeSchema(lChild.Schema(), rChild.Schema())
+	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		return expression.ExprFromSchema(expr, mergedSchema)
+	})
+	return s.newJoinWithEdges(lChild, rChild, eqEdges, otherConds), remainOtherConds
 }
 
 // makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
@@ -160,14 +210,8 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 				resultJoinGroup = append(resultJoinGroup, cartesianJoinGroup[i])
 				break
 			}
-			newJoin := s.newCartesianJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1])
-			for i := len(s.otherConds) - 1; i >= 0; i-- {
-				cols := expression.ExtractColumns(s.otherConds[i])
-				if newJoin.schema.ColumnsIndices(cols) != nil {
-					newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
-					s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
-				}
-			}
+			newJoin, remainOtherConds := s.makeJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil)
+			s.otherConds = remainOtherConds
 			resultJoinGroup = append(resultJoinGroup, newJoin)
 		}
 		cartesianJoinGroup, resultJoinGroup = resultJoinGroup, cartesianJoinGroup

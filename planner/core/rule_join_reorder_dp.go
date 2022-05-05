@@ -37,19 +37,8 @@ type joinGroupNonEqEdge struct {
 	expr       expression.Expression
 }
 
-func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expression.Expression, tracer *joinReorderTrace) (LogicalPlan, error) {
-	for _, node := range joinGroup {
-		_, err := node.recursiveDeriveStats(nil)
-		if err != nil {
-			return nil, err
-		}
-		cost := s.baseNodeCumCost(node)
-		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			p:       node,
-			cumCost: cost,
-		})
-		tracer.appendLogicalJoinCost(node, cost)
-	}
+func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
+	eqConds := expression.ScalarFuncs2Exprs(s.eqEdges)
 	adjacents := make([][]int, len(s.curJoinGroup))
 	totalEqEdges := make([]joinGroupEqEdge, 0, len(eqConds))
 	addEqEdge := func(node1, node2 int, edgeContent *expression.ScalarFunction) {
