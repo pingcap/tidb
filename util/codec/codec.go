@@ -870,30 +870,32 @@ func DecodeAsDateTime(b []byte, tp byte, loc *time.Location) (remain []byte, d t
 	}
 	flag := b[0]
 	b = b[1:]
+	var v uint64
 	switch flag {
 	case uintFlag:
-		var v uint64
 		b, v, err = DecodeUint(b)
-		if err != nil {
-			return b, d, err
-		}
-		t := types.NewTime(types.ZeroCoreTime, tp, 0)
-		err = t.FromPackedUint(v)
-		if err == nil {
-			if tp == mysql.TypeTimestamp && !t.IsZero() && loc != nil {
-				err = t.ConvertTimeZone(time.UTC, loc)
-				if err != nil {
-					return b, d, err
-				}
-			}
-			d.SetMysqlTime(t)
-		}
+	case uvarintFlag:
+		// Datetime can be encoded as Uvarint
+		b, v, err = DecodeUvarint(b)
+
 	default:
 		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
 	}
 	if err != nil {
+		return b, d, err
+	}
+	t := types.NewTime(types.ZeroCoreTime, tp, 0)
+	err = t.FromPackedUint(v)
+	if err != nil {
 		return b, d, errors.Trace(err)
 	}
+	if tp == mysql.TypeTimestamp && !t.IsZero() && loc != nil {
+		err = t.ConvertTimeZone(time.UTC, loc)
+		if err != nil {
+			return b, d, err
+		}
+	}
+	d.SetMysqlTime(t)
 	return b, d, nil
 }
 
