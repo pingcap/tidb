@@ -173,7 +173,6 @@ func TestConfig(t *testing.T) {
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
-	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
@@ -221,8 +220,6 @@ deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
 enable-forwarding = true
-[performance]
-txn-total-size-limit=2000
 tcp-no-delay = false
 [tikv-client]
 commit-timeout="41s"
@@ -268,7 +265,6 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, "hash", conf.Binlog.Strategy)
 
 	// Test that the value will be overwritten by the config file.
-	require.Equal(t, uint64(2000), conf.Performance.TxnTotalSizeLimit)
 	require.True(t, conf.AlterPrimaryKey)
 	require.False(t, conf.Performance.TCPNoDelay)
 
@@ -489,25 +485,6 @@ func TestOOMActionValid(t *testing.T) {
 	for _, tt := range tests {
 		c1.OOMAction = tt.oomAction
 		require.Equal(t, tt.valid, c1.Valid() == nil)
-	}
-}
-
-func TestTxnTotalSizeLimitValid(t *testing.T) {
-	conf := NewConfig()
-	tests := []struct {
-		limit uint64
-		valid bool
-	}{
-		{4 << 10, true},
-		{10 << 30, true},
-		{10<<30 + 1, true},
-		{1 << 40, true},
-		{1<<40 + 1, false},
-	}
-
-	for _, tt := range tests {
-		conf.Performance.TxnTotalSizeLimit = tt.limit
-		require.Equal(t, tt.valid, conf.Valid() == nil)
 	}
 }
 

@@ -936,12 +936,12 @@ func TestBatchInsertDelete(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
-	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	originLimit := kv.TxnTotalSizeLimit.Load()
 	defer func() {
-		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
+		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5500)
+	kv.TxnTotalSizeLimit.Store(5500)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

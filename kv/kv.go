@@ -32,6 +32,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -48,7 +49,9 @@ var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
 	TxnEntrySizeLimit uint64 = config.DefTxnEntrySizeLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
-	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
+	//TxnTotalSizeLimit uint64 =  //DefTiDBTxnTotalSizeLimit
+
+	TxnTotalSizeLimit = atomic.NewUint64(100 * 1024 * 1024)
 )
 
 // Getter is the interface for the Get method.

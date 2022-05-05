@@ -410,6 +410,12 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL scope  */
+	{Scope: ScopeGlobal, Name: TiDBTxnTotalSizeLimit, Value: strconv.FormatInt(DefTiDBTxnTotalSizeLimit, 10), Type: TypeInt, MaxValue: 1099511627776, GetGlobal: func(sv *SessionVars) (string, error) {
+		return strconv.FormatUint(kv.TxnTotalSizeLimit.Load(), 10), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		kv.TxnTotalSizeLimit.Store(uint64(TidbOptInt64(val, DefTiDBTxnTotalSizeLimit)))
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
 	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 	/* TiDB specific variables */
