@@ -31,7 +31,7 @@ type statsInnerCache struct {
 func newStatsLruCache(c int64) *statsInnerCache {
 	s := &statsInnerCache{
 		elements: make(map[int64]*lruMapElement),
-		lru:      newInnerIndexLruCache(c),
+		lru:      newInnerLruCache(c),
 	}
 	s.lru.onEvict = s.onEvict
 	return s
@@ -45,7 +45,7 @@ type innerItemLruCache struct {
 	onEvict      func(tblID int64)
 }
 
-func newInnerIndexLruCache(c int64) *innerItemLruCache {
+func newInnerLruCache(c int64) *innerItemLruCache {
 	return &innerItemLruCache{
 		capacity: c,
 		cache:    list.New(),
@@ -82,8 +82,8 @@ func (s *statsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
 
 // Get implements statsCacheInner
 func (s *statsInnerCache) Get(tblID int64) (*statistics.Table, bool) {
-	s.Lock()
-	defer s.Unlock()
+	s.RLock()
+	defer s.RUnlock()
 	element, ok := s.elements[tblID]
 	if !ok {
 		return nil, false
@@ -135,10 +135,6 @@ func (s *statsInnerCache) updateIndices(tblID int64, tbl *statistics.Table, tblM
 		}
 		for idxID, index := range tbl.Indices {
 			idxMem := tblMemUsage.IndicesMemUsage[idxID]
-			if idxMem.TrackingMemUsage() < 1 {
-				deletedIdx = append(deletedIdx, idxID)
-				continue
-			}
 			s.lru.put(tblID, idxID, index, idxMem, true, needMove)
 		}
 		for _, idxID := range deletedIdx {
@@ -278,28 +274,28 @@ func (s *statsInnerCache) capacity() int64 {
 	return s.lru.capacity
 }
 
-func (c *innerItemLruCache) get(tblID, idxID int64) (*lruCacheItem, bool) {
+func (c *innerItemLruCache) get(tblID, id int64) (*lruCacheItem, bool) {
 	v, ok := c.elements[tblID]
 	if !ok {
 		return nil, false
 	}
-	ele, ok := v[idxID]
+	ele, ok := v[id]
 	if !ok {
 		return nil, false
 	}
 	return ele.Value.(*lruCacheItem), true
 }
 
-func (c *innerItemLruCache) del(tblID, idxID int64) {
+func (c *innerItemLruCache) del(tblID, id int64) {
 	v, ok := c.elements[tblID]
 	if !ok {
 		return
 	}
-	ele, ok := v[idxID]
+	ele, ok := v[id]
 	if !ok {
 		return
 	}
-	delete(c.elements[tblID], idxID)
+	delete(c.elements[tblID], id)
 	c.cache.Remove(ele)
 }
 
@@ -367,7 +363,7 @@ func (c *innerItemLruCache) calculateCost(newUsage, oldUsage statistics.CacheIte
 }
 
 func (c *innerItemLruCache) copy() *innerItemLruCache {
-	newLRU := newInnerIndexLruCache(c.capacity)
+	newLRU := newInnerLruCache(c.capacity)
 	curr := c.cache.Back()
 	for curr != nil {
 		item := curr.Value.(*lruCacheItem)
