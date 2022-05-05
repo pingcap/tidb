@@ -3905,11 +3905,10 @@
           "TableReader 2.00 root  data:ExchangeSender",
           "└─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 2.00 mpp[tiflash]  Column#4, test.table_1.value",
-          "    └─HashAgg 2.00 mpp[tiflash]  group by:test.table_1.value, funcs:sum(Column#7)->Column#4, funcs:firstrow(test.table_1.value)->test.table_1.value",
+          "    └─HashAgg 2.00 mpp[tiflash]  group by:test.table_1.value, funcs:count(1)->Column#4, funcs:firstrow(test.table_1.value)->test.table_1.value",
           "      └─ExchangeReceiver 2.00 mpp[tiflash]  ",
           "        └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_general_ci]",
-          "          └─HashAgg 2.00 mpp[tiflash]  group by:test.table_1.value, funcs:count(1)->Column#7",
-          "            └─TableFullScan 2.00 mpp[tiflash] table:table_1 keep order:false"
+          "          └─TableFullScan 2.00 mpp[tiflash] table:table_1 keep order:false"
         ]
       },
       {
@@ -3918,11 +3917,10 @@
           "TableReader 2.00 root  data:ExchangeSender",
           "└─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 2.00 mpp[tiflash]  Column#4, test.table_2.value",
-          "    └─HashAgg 2.00 mpp[tiflash]  group by:test.table_2.value, funcs:sum(Column#7)->Column#4, funcs:firstrow(test.table_2.value)->test.table_2.value",
+          "    └─HashAgg 2.00 mpp[tiflash]  group by:test.table_2.value, funcs:count(1)->Column#4, funcs:firstrow(test.table_2.value)->test.table_2.value",
           "      └─ExchangeReceiver 2.00 mpp[tiflash]  ",
           "        └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_2.value, collate: utf8mb4_bin]",
-          "          └─HashAgg 2.00 mpp[tiflash]  group by:test.table_2.value, funcs:count(1)->Column#7",
-          "            └─TableFullScan 2.00 mpp[tiflash] table:table_2 keep order:false"
+          "          └─TableFullScan 2.00 mpp[tiflash] table:table_2 keep order:false"
         ]
       }
     ]
