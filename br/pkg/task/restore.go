@@ -593,7 +593,7 @@ func filterRestoreFiles(
 				dbs = append(dbs, db)
 				createdDatabase = true
 			}
-			if table == nil {
+			if table.Info == nil {
 				// we may back up empty database.
 				continue
 			}
