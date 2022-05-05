@@ -762,8 +762,10 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
 			memToGC.Add(colExec.memTracker.BytesConsumed())
+			tryGC(colExec.memTracker, true)
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
+		tryGC(colExec.memTracker, true)
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
 		colGroupResult := &statistics.AnalyzeResult{
 			Hist:    hists[cLen:],
