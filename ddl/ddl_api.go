@@ -527,10 +527,11 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
 	job := &model.Job{
-		SchemaID:   old.ID,
-		SchemaName: old.Name.L,
-		Type:       model.ActionDropSchema,
-		BinlogInfo: &model.HistoryInfo{},
+		SchemaID:    old.ID,
+		SchemaName:  old.Name.L,
+		SchemaState: old.State,
+		Type:        model.ActionDropSchema,
+		BinlogInfo:  &model.HistoryInfo{},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -1838,7 +1839,7 @@ func buildTableInfo(
 		}
 		// set index type.
 		if constr.Option != nil {
-			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), constr.Option)
+			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), &constr.Option.Comment, dbterror.ErrTooLongIndexComment)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -2131,6 +2132,10 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	}
 
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if _, err = validateCommentLength(ctx.GetSessionVars(), tbInfo.Name.L, &tbInfo.Comment, dbterror.ErrTooLongTableComment); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -3784,13 +3789,14 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  meta.Name.L,
-		Type:       model.ActionDropTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partNames},
+		SchemaID:    schema.ID,
+		TableID:     meta.ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: model.StatePublic,
+		TableName:   meta.Name.L,
+		Type:        model.ActionDropTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{partNames},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -4029,6 +4035,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
 		MultiSchemaInfo: multiSchemaInfo,
+		SchemaState:     model.StatePublic,
 		Args:            []interface{}{colName},
 	}
 
@@ -4263,7 +4270,10 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	if err != nil {
 		return errors.Trace(err)
 	}
-	col.Comment, err = value.ToString()
+	if col.Comment, err = value.ToString(); err != nil {
+		return errors.Trace(err)
+	}
+	col.Comment, err = validateCommentLength(ctx.GetSessionVars(), col.Name.L, &col.Comment, dbterror.ErrTooLongFieldComment)
 	return errors.Trace(err)
 }
 
@@ -4884,6 +4894,9 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
+	if _, err = validateCommentLength(ctx.GetSessionVars(), ident.Name.L, &spec.Comment, dbterror.ErrTooLongTableComment); err != nil {
+		return errors.Trace(err)
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -5267,12 +5280,13 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionDropTable,
-		BinlogInfo: &model.HistoryInfo{},
+		SchemaID:    schema.ID,
+		TableID:     tb.Meta().ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: schema.State,
+		TableName:   tb.Meta().Name.L,
+		Type:        model.ActionDropTable,
+		BinlogInfo:  &model.HistoryInfo{},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5301,12 +5315,13 @@ func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionDropView,
-		BinlogInfo: &model.HistoryInfo{},
+		SchemaID:    schema.ID,
+		TableID:     tb.Meta().ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: tb.Meta().State,
+		TableName:   tb.Meta().Name.L,
+		Type:        model.ActionDropView,
+		BinlogInfo:  &model.HistoryInfo{},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5616,8 +5631,10 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
-	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
-		return errors.Trace(err)
+	if indexOption != nil {
+		if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
@@ -5808,8 +5825,10 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
-	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
-		return errors.Trace(err)
+	if indexOption != nil {
+		if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
@@ -5969,13 +5988,14 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionDropForeignKey,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{fkName},
+		SchemaID:    schema.ID,
+		TableID:     t.Meta().ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: model.StatePublic,
+		TableName:   t.Meta().Name.L,
+		Type:        model.ActionDropForeignKey,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{fkName},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6025,13 +6045,14 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       jobTp,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{indexName},
+		SchemaID:    schema.ID,
+		TableID:     t.Meta().ID,
+		SchemaName:  schema.Name.L,
+		TableName:   t.Meta().Name.L,
+		Type:        jobTp,
+		BinlogInfo:  &model.HistoryInfo{},
+		SchemaState: indexInfo.State,
+		Args:        []interface{}{indexName},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6140,24 +6161,34 @@ func isDroppableColumn(multiSchemaChange bool, tblInfo *model.TableInfo, colName
 	return nil
 }
 
-// validateCommentLength checks comment length of table, column, index and partition.
+// validateCommentLength checks comment length of table, column, or index
 // If comment length is more than the standard length truncate it
 // and store the comment length upto the standard comment length size.
-func validateCommentLength(vars *variable.SessionVars, indexName string, indexOption *ast.IndexOption) (string, error) {
-	if indexOption == nil {
+func validateCommentLength(vars *variable.SessionVars, name string, comment *string, errTooLongComment *terror.Error) (string, error) {
+	if comment == nil {
 		return "", nil
 	}
 
 	maxLen := MaxCommentLength
-	if len(indexOption.Comment) > maxLen {
-		err := dbterror.ErrTooLongIndexComment.GenWithStackByArgs(indexName, maxLen)
+	// The maximum length of table comment in MySQL 5.7 is 2048
+	// Other comment is 1024
+	switch errTooLongComment {
+	case dbterror.ErrTooLongTableComment:
+		maxLen *= 2
+	case dbterror.ErrTooLongFieldComment, dbterror.ErrTooLongIndexComment, dbterror.ErrTooLongTablePartitionComment:
+		break
+	default:
+		// add more types of terror.Error if need
+	}
+	if len(*comment) > maxLen {
+		err := errTooLongComment.GenWithStackByArgs(name, maxLen)
 		if vars.StrictSQLMode {
 			return "", err
 		}
 		vars.StmtCtx.AppendWarning(err)
-		indexOption.Comment = indexOption.Comment[:maxLen]
+		*comment = (*comment)[:maxLen]
 	}
-	return indexOption.Comment, nil
+	return *comment, nil
 }
 
 // buildAddedPartitionInfo build alter table add partition info
@@ -6275,7 +6306,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	}
 
 	unlockTables := ctx.GetAllTableLocks()
-	arg := &lockTablesArg{
+	arg := &LockTablesArg{
 		LockTables:   lockTables,
 		UnlockTables: unlockTables,
 		SessionInfo:  sessionInfo,
@@ -6303,7 +6334,7 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	if len(unlockTables) == 0 {
 		return nil
 	}
-	arg := &lockTablesArg{
+	arg := &LockTablesArg{
 		UnlockTables: unlockTables,
 		SessionInfo: model.SessionInfo{
 			ServerID:  d.GetID(),
@@ -6331,7 +6362,7 @@ func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 	if len(unlockTables) == 0 {
 		return nil
 	}
-	arg := &lockTablesArg{
+	arg := &LockTablesArg{
 		UnlockTables: unlockTables,
 		SessionInfo:  se,
 	}
@@ -6398,7 +6429,7 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 		return nil
 	}
 
-	arg := &lockTablesArg{
+	arg := &LockTablesArg{
 		UnlockTables: cleanupTables,
 		IsCleanup:    true,
 	}
@@ -6417,7 +6448,8 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 	return errors.Trace(err)
 }
 
-type lockTablesArg struct {
+// LockTablesArg is the argument for LockTables, export for test.
+type LockTablesArg struct {
 	LockTables    []model.TableLockTpInfo
 	IndexOfLock   int
 	UnlockTables  []model.TableLockTpInfo
@@ -6596,12 +6628,13 @@ func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) 
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbl.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tbl.Meta().Name.L,
-		Type:       model.ActionDropSequence,
-		BinlogInfo: &model.HistoryInfo{},
+		SchemaID:    schema.ID,
+		TableID:     tbl.Meta().ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: tbl.Meta().State,
+		TableName:   tbl.Meta().Name.L,
+		Type:        model.ActionDropSequence,
+		BinlogInfo:  &model.HistoryInfo{},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6947,7 +6980,7 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 		return err
 	}
 
-	if err = checkPlacementPolicyNotInUseFromInfoSchema(is, policy); err != nil {
+	if err = CheckPlacementPolicyNotInUseFromInfoSchema(is, policy); err != nil {
 		return err
 	}
 

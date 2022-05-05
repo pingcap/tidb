@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -424,7 +424,7 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)
-	require.False(t, utils.IsRetryableError(err), "err: %v", err)
+	require.False(t, common.IsRetryableError(err), "err: %v", err)
 }
 
 func TestWriteRowsErrorDowngradingAll(t *testing.T) {
