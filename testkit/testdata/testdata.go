@@ -40,7 +40,7 @@ import (
 var record bool
 
 func init() {
-	flag.BoolVar(&record, "record", true, "to generate test result")
+	flag.BoolVar(&record, "record", false, "to generate test result")
 }
 
 type testCases struct {
