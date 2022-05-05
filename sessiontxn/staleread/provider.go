@@ -78,6 +78,10 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
+
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	txnCtx.IsStaleness = true
+	txnCtx.InfoSchema = p.is
 	return nil
 }
 
