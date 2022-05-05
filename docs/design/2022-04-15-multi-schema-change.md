@@ -5,7 +5,7 @@
 
 ## Abstract
 
-This proposes an implementation of Multi-Schema Change.
+This proposes an implementation of applying multiple schema changes in one `ALTER TABLE` SQL statement.
 
 ## Background
 
