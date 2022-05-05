@@ -306,10 +306,6 @@ func (c *innerItemLruCache) put(tblID, id int64, item statistics.TableCacheItem,
 			c.evictIfNeeded()
 		}
 	}()
-	if c.capacity < itemMem.TrackingMemUsage() {
-		item.DropEvicted()
-		itemMem = item.MemoryUsage()
-	}
 	v, ok := c.elements[tblID]
 	if !ok {
 		c.elements[tblID] = make(map[int64]*list.Element)
