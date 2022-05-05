@@ -88,7 +88,7 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType) (flo
 	p.planCost = 0
 	// child's cost
 	for _, child := range []PhysicalPlan{p.indexPlan, p.tablePlan} {
-		childCost, err := child.GetPlanCost(taskType)
+		childCost, err := child.GetPlanCost(property.CopDoubleReadTaskType)
 		if err != nil {
 			return 0, err
 		}
