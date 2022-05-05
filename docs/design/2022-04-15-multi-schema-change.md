@@ -57,7 +57,7 @@ job := &Job {
 }
 ```
 
-In this way, we pack multiple schema changes into one job. Just like any other jobs, it enters the DDL job queue stored in TiKV and waits for a suitable worker to pick it up.
+In this way, we pack multiple schema changes into one job. Just like any other jobs, it enters the DDL job queue stored in the storage, waits for a suitable worker to pick it up and handle it.
 
 In normal cases, the worker executes the sub-jobs one by one serially as if they are plain jobs. However, the thing gets complex in abnormal cases.
 
