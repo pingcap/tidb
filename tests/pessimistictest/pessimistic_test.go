@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,51 +12,169 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session_test
+package pessimistictest
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/driver"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/goleak"
+	"google.golang.org/grpc"
 
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
-	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = SerialSuites(&testPessimisticSuite{})
+var withRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
 
-func (s *testPessimisticSuite) newAsyncCommitTestKitWithInit(c *C) *testkit.TestKit {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableAsyncCommit = true
+func TestMain(m *testing.M) {
+	testbridge.SetupForCommonTest()
+	flag.Parse()
+	session.SetSchemaLease(20 * time.Millisecond)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+	tikv.EnableFailpoints()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransport"),
+		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
+		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
+		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+	}
+	goleak.VerifyTestMain(m, opts...)
+}
+
+func clearTiKVStorage(t *testing.T, store kv.Storage) {
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	iter, err := txn.Iter(nil, nil)
+	require.NoError(t, err)
+	for iter.Valid() {
+		require.NoError(t, txn.Delete(iter.Key()))
+		require.NoError(t, iter.Next())
+	}
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
+func clearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
+	endpoints, err := backend.EtcdAddrs()
+	require.NoError(t, err)
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:        endpoints,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithBackoffMaxDelay(time.Second * 3),
+		},
+		TLS: backend.TLSConfig(),
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, cli.Close()) }()
+	resp, err := cli.Get(context.Background(), "/tidb", clientv3.WithPrefix())
+	require.NoError(t, err)
+	for _, entry := range resp.Kvs {
+		if entry.Lease != 0 {
+			_, err := cli.Revoke(context.Background(), clientv3.LeaseID(entry.Lease))
+			require.NoError(t, err)
+		}
+	}
+	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())
+	require.NoError(t, err)
+}
+
+func createMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
+	// set it to 5 seconds for testing lock resolve.
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
+	transaction.PrewriteMaxBackoff = 500
+
+	var store kv.Storage
+	var dom *domain.Domain
+	var err error
+
+	if *withRealTiKV {
+		var d driver.TiKVDriver
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TxnLocalLatches.Enabled = false
+		})
+		store, err = d.Open("tikv://127.0.0.1:2379?disableGC=true")
+		require.NoError(t, err)
+
+		clearTiKVStorage(t, store)
+		clearEtcdStorage(t, store.(kv.EtcdBackend))
+
+		session.ResetStoreForWithTiKVTest(store)
+		dom, err = session.BootstrapSession(store)
+		require.NoError(t, err)
+
+	} else {
+		store, err = mockstore.NewMockStore(opts...)
+		require.NoError(t, err)
+		session.DisableStats4Test()
+		dom, err = session.BootstrapSession(store)
+		require.NoError(t, err)
+	}
+
+	return store, func() {
+		transaction.PrewriteMaxBackoff = 20000
+		dom.Close()
+		require.NoError(t, store.Close())
+	}
+}
+
+func createAsyncCommitTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().EnableAsyncCommit = true
+	tk.MustExec("use test")
 	return tk
 }
 
-func (s *testPessimisticSuite) new1PCTestKitWithInit(c *C) *testkit.TestKit {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().Enable1PC = true
+// TODO: figure out a stable way to run Test1PCWithSchemaChange
+//nolint:unused
+func create1PCTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().Enable1PC = true
+	tk.MustExec("use test")
 	return tk
 }
 
@@ -66,26 +184,16 @@ func setLockTTL(v uint64) lockTTL { return lockTTL(atomic.SwapUint64(&transactio
 
 func (v lockTTL) restore() { atomic.StoreUint64(&transaction.ManagedLockTTL, uint64(v)) }
 
-type testPessimisticSuite struct {
-	testSessionSuiteBase
-}
+func TestPessimisticTxn(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
 
-func (s *testPessimisticSuite) SetUpSuite(c *C) {
-	s.testSessionSuiteBase.SetUpSuite(c)
-	// Set it to 5s for testing lock resolve.
-	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
-	transaction.PrewriteMaxBackoff = 500
-}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
-func (s *testPessimisticSuite) TearDownSuite(c *C) {
-	s.testSessionSuiteBase.TearDownSuite(c)
-	transaction.PrewriteMaxBackoff = 20000
-}
-
-func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
 	// Make the name has different indent for easier read.
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 
 	tk.MustExec("drop table if exists pessimistic")
 	tk.MustExec("create table pessimistic (k int, v int)")
@@ -98,14 +206,14 @@ func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
 
 	// Update can see the change, so this statement affects 0 rows.
 	tk1.MustExec("update pessimistic set v = 3 where v = 1")
-	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(0))
-	c.Assert(session.GetHistory(tk1.Se).Count(), Equals, 0)
+	require.Equal(t, uint64(0), tk1.Session().AffectedRows())
+	require.Equal(t, 0, session.GetHistory(tk1.Session()).Count())
 	// select for update can see the change of another transaction.
 	tk1.MustQuery("select * from pessimistic for update").Check(testkit.Rows("1 2"))
 	// plain select can not see the change of another transaction.
 	tk1.MustQuery("select * from pessimistic").Check(testkit.Rows("1 1"))
 	tk1.MustExec("update pessimistic set v = 3 where v = 2")
-	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), tk1.Session().AffectedRows())
 
 	// pessimistic lock doesn't block read operation of other transactions.
 	tk.MustQuery("select * from pessimistic").Check(testkit.Rows("1 2"))
@@ -128,8 +236,13 @@ func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
 	tk.MustQuery("select * from pessimistic").Check(testkit.Rows("1 5"))
 }
 
-func (s *testPessimisticSuite) TestTxnMode(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestTxnMode(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
 	tests := []struct {
 		beginStmt     string
 		txnMode       string
@@ -148,7 +261,7 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 	for _, tt := range tests {
 		tk.MustExec(fmt.Sprintf("set @@tidb_txn_mode = '%s'", tt.txnMode))
 		tk.MustExec("begin " + tt.beginStmt)
-		c.Check(tk.Se.GetSessionVars().TxnCtx.IsPessimistic, Equals, tt.isPessimistic)
+		require.Equal(t, tt.isPessimistic, tk.Session().GetSessionVars().TxnCtx.IsPessimistic)
 		tk.MustExec("rollback")
 	}
 
@@ -166,43 +279,51 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 		tk.MustExec(fmt.Sprintf("set @@tidb_txn_mode = '%s'", tt.txnMode))
 		tk.MustExec("rollback")
 		tk.MustExec("insert txn_mode values (1)")
-		c.Check(tk.Se.GetSessionVars().TxnCtx.IsPessimistic, Equals, tt.isPessimistic)
+		require.Equal(t, tt.isPessimistic, tk.Session().GetSessionVars().TxnCtx.IsPessimistic)
 		tk.MustExec("rollback")
 	}
 	tk.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 	tk1.MustQuery("select @@tidb_txn_mode").Check(testkit.Rows("pessimistic"))
 	tk1.MustExec("set @@autocommit = 0")
 	tk1.MustExec("insert txn_mode values (2)")
-	c.Check(tk1.Se.GetSessionVars().TxnCtx.IsPessimistic, IsTrue)
+	require.True(t, tk1.Session().GetSessionVars().TxnCtx.IsPessimistic)
 	tk1.MustExec("set @@tidb_txn_mode = ''")
 	tk1.MustExec("rollback")
 	tk1.MustExec("insert txn_mode values (2)")
-	c.Check(tk1.Se.GetSessionVars().TxnCtx.IsPessimistic, IsFalse)
+	require.False(t, tk1.Session().GetSessionVars().TxnCtx.IsPessimistic)
 	tk1.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestDeadlock(c *C) {
+func TestDeadlock(t *testing.T) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
 	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
 	// Use the root user so that the statements can be recorded into statements_summary table, which is necessary
 	// for fetching
-	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk1.MustExec("drop table if exists deadlock")
 	tk1.MustExec("create table deadlock (k int primary key, v int)")
 	tk1.MustExec("insert into deadlock values (1, 1), (2, 1)")
 	tk1.MustExec("begin pessimistic")
 	tk1.MustExec("update deadlock set v = v + 1 where k = 1")
 	ts1, err := strconv.ParseUint(tk1.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(tk2.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk2.MustExec("begin pessimistic")
 	ts2, err := strconv.ParseUint(tk2.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	syncCh := make(chan error)
 	go func() {
@@ -218,14 +339,14 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	err2 := <-syncCh
 	// Either err1 or err2 is deadlock error.
 	if err1 != nil {
-		c.Assert(err2, IsNil)
+		require.NoError(t, err2)
 		err = err1
 	} else {
 		err = err2
 	}
 	e, ok := errors.Cause(err).(*terror.Error)
-	c.Assert(ok, IsTrue)
-	c.Assert(int(e.Code()), Equals, mysql.ErrLockDeadlock)
+	require.True(t, ok)
+	require.Equal(t, mysql.ErrLockDeadlock, int(e.Code()))
 
 	_, digest := parser.NormalizeDigest("update deadlock set v = v + 1 where k = 1")
 
@@ -240,64 +361,88 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	}
 	res := tk1.MustQuery("select deadlock_id, try_lock_trx_id, trx_holding_lock, current_sql_digest, current_sql_digest_text from information_schema.deadlocks")
 	res.CheckAt([]int{1, 2, 3, 4}, testkit.RowsWithSep("/", expectedDeadlockInfo...))
-	c.Assert(res.Rows()[0][0], Equals, res.Rows()[1][0])
+	require.Equal(t, res.Rows()[1][0], res.Rows()[0][0])
 }
 
-func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
-	if *withTiKV {
-		c.Skip("skip with tikv because cluster manipulate is not available")
+func TestSingleStatementRollback(t *testing.T) {
+	if *withRealTiKV {
+		t.Skip("skip with tikv because cluster manipulate is not available")
 	}
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
-	tk.MustExec("drop table if exists pessimistic")
-	tk.MustExec("create table single_statement (id int primary key, v int)")
-	tk.MustExec("insert into single_statement values (1, 1), (2, 1), (3, 1), (4, 1)")
-	tblID := tk.GetTableID("single_statement")
+	var cluster testutils.Cluster
+	store, clean := createMockStoreAndSetup(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+		mockstore.BootstrapWithSingleStore(c)
+		cluster = c
+	}))
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk1.MustExec("drop table if exists pessimistic")
+	tk1.MustExec("create table single_statement (id int primary key, v int)")
+	tk1.MustExec("insert into single_statement values (1, 1), (2, 1), (3, 1), (4, 1)")
+
+	dom := domain.GetDomain(tk1.Session())
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("single_statement"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
-	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 2)
+	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 2)
 	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(1)))
-	region1, _, _ := s.cluster.GetRegionByKey(region1Key)
+	region1, _, _ := cluster.GetRegionByKey(region1Key)
 	region1ID := region1.Id
 	region2Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(3)))
-	region2, _, _ := s.cluster.GetRegionByKey(region2Key)
+	region2, _, _ := cluster.GetRegionByKey(region2Key)
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
-	c.Assert(failpoint.Enable("tikvclient/SingleStmtDeadLockRetrySleep", "return"), IsNil)
+	require.NoError(t, failpoint.Enable("tikvclient/SingleStmtDeadLockRetrySleep", "return"))
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		<-syncCh
-		// tk2 will go first, so tk will meet deadlock and retry, tk2 will resolve pessimistic rollback
+		// tk2 will go first, so tk1 will meet deadlock and retry, tk2 will resolve pessimistic rollback
 		// lock on key 3 after lock ttl
-		s.cluster.ScheduleDelay(tk2.Se.GetSessionVars().TxnCtx.StartTS, region2ID, time.Millisecond*3)
+		cluster.ScheduleDelay(tk2.Session().GetSessionVars().TxnCtx.StartTS, region2ID, time.Millisecond*3)
 		tk2.MustExec("update single_statement set v = v + 1")
 		tk2.MustExec("commit")
 		<-syncCh
 	}()
-	tk.MustExec("begin pessimistic")
+	tk1.MustExec("begin pessimistic")
 	syncCh <- true
-	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*10)
-	tk.MustExec("update single_statement set v = v + 1")
-	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("tikvclient/SingleStmtDeadLockRetrySleep"), IsNil)
+	cluster.ScheduleDelay(tk1.Session().GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*10)
+	tk1.MustExec("update single_statement set v = v + 1")
+	tk1.MustExec("commit")
+	require.NoError(t, failpoint.Disable("tikvclient/SingleStmtDeadLockRetrySleep"))
 	syncCh <- true
 }
 
-func (s *testPessimisticSuite) TestFirstStatementFail(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestFirstStatementFail(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists first")
 	tk.MustExec("create table first (k int unique)")
 	tk.MustExec("insert first values (1)")
 	tk.MustExec("begin pessimistic")
 	_, err := tk.Exec("insert first values (1)")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("insert first values (2)")
 	tk.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestKeyExistsCheck(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestKeyExistsCheck(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists chk")
 	tk.MustExec("create table chk (k int primary key)")
 	tk.MustExec("insert chk values (1)")
@@ -306,20 +451,27 @@ func (s *testPessimisticSuite) TestKeyExistsCheck(c *C) {
 	tk.MustExec("insert chk values (1)")
 	tk.MustExec("commit")
 
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 	tk1.MustExec("begin optimistic")
 	tk1.MustExec("insert chk values (1), (2), (3)")
 	_, err := tk1.Exec("commit")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert chk values (2)")
 	tk.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestInsertOnDup(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestInsertOnDup(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists dup")
 	tk.MustExec("create table dup (id int primary key, c int)")
 	tk.MustExec("begin pessimistic")
@@ -330,17 +482,27 @@ func (s *testPessimisticSuite) TestInsertOnDup(c *C) {
 	tk.MustQuery("select * from dup").Check(testkit.Rows("1 2"))
 }
 
-func (s *testPessimisticSuite) TestPointGetOverflow(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestPointGetOverflow(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("create table t(k tinyint, v int, unique key(k))")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t set v = 100 where k = -200;")
 	tk.MustExec("update t set v = 100 where k in (-200, -400);")
 }
 
-func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestPointGetKeyLock(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists point")
 	tk.MustExec("create table point (id int primary key, u int unique, c int)")
 	syncCh := make(chan struct{})
@@ -351,9 +513,9 @@ func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		_, err1 := tk2.Exec("insert point values (1, 1, 1)")
-		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		require.True(t, kv.ErrKeyExists.Equal(err1))
 		_, err1 = tk2.Exec("insert point values (2, 2, 2)")
-		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		require.True(t, kv.ErrKeyExists.Equal(err1))
 		tk2.MustExec("rollback")
 		<-syncCh
 	}()
@@ -369,9 +531,9 @@ func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		_, err1 := tk2.Exec("insert point values (3, 3, 3)")
-		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		require.True(t, kv.ErrKeyExists.Equal(err1))
 		_, err1 = tk2.Exec("insert point values (4, 4, 4)")
-		c.Check(kv.ErrKeyExists.Equal(err1), IsTrue)
+		require.True(t, kv.ErrKeyExists.Equal(err1))
 		tk2.MustExec("rollback")
 		<-syncCh
 	}()
@@ -382,9 +544,15 @@ func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {
 	syncCh <- struct{}{}
 }
 
-func (s *testPessimisticSuite) TestBankTransfer(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestBankTransfer(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists accounts")
 	tk.MustExec("create table accounts (id int primary key, c int)")
 	tk.MustExec("insert accounts values (1, 100), (2, 100), (3, 100)")
@@ -411,9 +579,15 @@ func (s *testPessimisticSuite) TestBankTransfer(c *C) {
 	tk.MustQuery("select sum(c) from accounts").Check(testkit.Rows("300"))
 }
 
-func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestLockUnchangedRowKey(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists unchanged")
 	tk.MustExec("create table unchanged (id int primary key, c int)")
 	tk.MustExec("insert unchanged values (1, 1), (2, 2)")
@@ -423,7 +597,7 @@ func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
 
 	tk2.MustExec("begin pessimistic")
 	err := tk2.ExecToErr("select * from unchanged where id = 1 for update nowait")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	tk.MustExec("rollback")
 
@@ -433,7 +607,7 @@ func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
 	tk.MustExec("insert unchanged values (2, 2) on duplicate key update c = values(c)")
 
 	err = tk2.ExecToErr("select * from unchanged where id = 2 for update nowait")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	tk.MustExec("commit")
 
@@ -441,9 +615,15 @@ func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
 	tk2.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestOptimisticConflicts(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists conflict")
 	tk.MustExec("create table conflict (id int primary key, c int)")
 	tk.MustExec("insert conflict values (1, 1)")
@@ -465,8 +645,7 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk.MustExec("update conflict set c = 4 where id = 1")
 	tk2.MustExec("begin optimistic")
 	tk2.MustExec("update conflict set c = 5 where id = 1")
-	_, err := tk2.Exec("commit")
-	c.Check(err, NotNil)
+	require.Error(t, tk2.ExecToErr("commit"))
 	tk.MustExec("rollback")
 
 	// Update snapshotTS after a conflict, invalidate snapshot cache.
@@ -487,10 +666,16 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk.MustQuery("select * from conflict").Check(testkit.Rows("1 3"))
 }
 
-func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
+func TestSelectForUpdateNoWait(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk3.MustExec("use test")
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -506,13 +691,13 @@ func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
 
 	tk2.MustExec("begin pessimistic")
 	_, err := tk2.Exec("select * from tk where c1 = 2 for update nowait")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("commit")
 	tk2.MustExec("select * from tk where c1 = 2 for update nowait") // lock succ
 
 	tk3.MustExec("begin pessimistic")
 	_, err = tk3.Exec("select * from tk where c1 = 2 for update nowait")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 
 	tk2.MustExec("commit")
 	tk3.MustExec("select * from tk where c1 = 2 for update")
@@ -523,7 +708,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
 	tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 3")
 	tk2.MustExec("begin pessimistic")
 	_, err = tk2.Exec("select * from tk where c1 = 3 for update nowait")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 	tk3.MustExec("commit")
 	tk2.MustExec("select * from tk where c1 = 3 for update nowait")
 	tk2.MustExec("commit")
@@ -537,9 +722,9 @@ func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
 	tk.MustExec("select * from tk where c1 >= 2 for update")
 	tk2.MustExec("begin pessimistic")
 	_, err = tk2.Exec("select * from tk where c1 = 2 for update nowait")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 	_, err = tk2.Exec("select * from tk where c1 > 3 for update nowait")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 	tk2.MustExec("select * from tk where c1 = 1 for update nowait")
 	tk2.MustExec("commit")
 	tk.MustQuery("select * from tk where c1 >= 2 for update").Check(testkit.Rows("2 2", "3 4", "4 4", "5 5"))
@@ -548,7 +733,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
 	tk.MustExec("update tk set c2 = c2 + 10 where c1 > 3")
 	tk3.MustExec("begin pessimistic")
 	_, err = tk3.Exec("select * from tk where c1 = 5 for update nowait")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 	tk3.MustExec("select * from tk where c1 = 1 for update nowait")
 	tk.MustExec("commit")
 	tk3.MustQuery("select * from tk where c1 > 3 for update nowait").Check(testkit.Rows("4 14", "5 15"))
@@ -559,13 +744,13 @@ func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
 	tk3.MustExec("delete from tk where c1 <= 2")
 	tk.MustExec("begin pessimistic")
 	_, err = tk.Exec("select * from tk where c1 = 1 for update nowait")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 	tk3.MustExec("commit")
 	tk.MustQuery("select * from tk where c1 > 1 for update nowait").Check(testkit.Rows("3 4", "4 14", "5 15"))
 	tk.MustExec("update tk set c2 = c2 + 1 where c1 = 5")
 	tk2.MustExec("begin pessimistic")
 	_, err = tk2.Exec("select * from tk where c1 = 5 for update nowait")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 16"))
 	tk2.MustExec("update tk set c2 = c2 + 1 where c1 = 5")
@@ -573,10 +758,17 @@ func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
 	tk2.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
+func TestAsyncRollBackNoWait(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk3.MustExec("use test")
+
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,17)")
@@ -588,18 +780,18 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	// test get ts failed for handlePessimisticLockError when using nowait
 	// even though async rollback for pessimistic lock may rollback later locked key if get ts failed from pd
 	// the txn correctness should be ensured
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/ExecStmtGetTsError", "return"), IsNil)
-	c.Assert(failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", "sleep(100)"), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/ExecStmtGetTsError", "return"))
+	require.NoError(t, failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", "sleep(100)"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/ExecStmtGetTsError"), IsNil)
-		c.Assert(failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/ExecStmtGetTsError"))
+		require.NoError(t, failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"))
 	}()
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from tk where c1 > 0 for update nowait")
 	tk2.MustExec("begin pessimistic")
 	// The lock rollback of this statement is delayed by failpoint beforeAsyncPessimisticRollback.
 	_, err := tk2.Exec("select * from tk where c1 > 0 for update nowait")
-	c.Check(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("commit")
 	// This statement success for now, but its lock will be rollbacked later by the
 	// lingering rollback request, as forUpdateTS doesn't change.
@@ -614,13 +806,13 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	tk3.MustExec("rollback")
 	// ----------------------
 
-	c.Skip("tk3 is blocking because tk2 didn't rollback itself")
+	t.Skip("tk3 is blocking because tk2 didn't rollback itself")
 	// tk3 succ because tk2 rollback itself.
 	tk3.MustExec("update tk set c2 = 1 where c1 = 5")
 	// This will not take effect because the lock of tk2 was gone.
 	tk2.MustExec("update tk set c2 = c2 + 100 where c1 > 0")
 	_, err = tk2.Exec("commit")
-	c.Check(err, NotNil) // txn abort because pessimistic lock not found
+	require.Error(t, err) // txn abort because pessimistic lock not found
 	tk3.MustExec("commit")
 	tk3.MustExec("begin pessimistic")
 	tk3.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 1"))
@@ -629,10 +821,16 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	tk3.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
+func TestWaitLockKill(t *testing.T) {
 	// Test kill command works on waiting pessimistic lock.
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists test_kill")
 	tk.MustExec("create table test_kill (id int primary key, c int)")
 	tk.MustExec("insert test_kill values (1, 1)")
@@ -645,82 +843,99 @@ func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
 	wg.Add(1)
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		sessVars := tk2.Se.GetSessionVars()
+		sessVars := tk2.Session().GetSessionVars()
 		succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
-		c.Assert(succ, IsTrue)
+		require.True(t, succ)
 		wg.Wait()
 	}()
 	_, err := tk2.Exec("update test_kill set c = c + 1 where id = 1")
 	wg.Done()
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, storeerr.ErrQueryInterrupted), IsTrue)
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, storeerr.ErrQueryInterrupted))
 	tk.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestKillStopTTLManager(c *C) {
+func TestKillStopTTLManager(t *testing.T) {
 	// Test killing an idle pessimistic session stop its ttlManager.
 	defer setLockTTL(300).restore()
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists test_kill")
 	tk.MustExec("create table test_kill (id int primary key, c int)")
 	tk.MustExec("insert test_kill values (1, 1)")
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
 	tk.MustQuery("select * from test_kill where id = 1 for update")
-	sessVars := tk.Se.GetSessionVars()
+	sessVars := tk.Session().GetSessionVars()
 	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
-	c.Assert(succ, IsTrue)
+	require.True(t, succ)
 
 	// This query should success rather than returning a ResolveLock error.
 	tk2.MustExec("update test_kill set c = c + 1 where id = 1")
 	succ = atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)
-	c.Assert(succ, IsTrue)
+	require.True(t, succ)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestConcurrentInsert(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestConcurrentInsert(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert tk values (1, 1)")
 	tk.MustExec("create table tk1 (c1 int, c2 int)")
 
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("begin pessimistic")
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	forUpdateTsA := tk1.Se.GetSessionVars().TxnCtx.GetForUpdateTS()
+	forUpdateTsA := tk1.Session().GetSessionVars().TxnCtx.GetForUpdateTS()
 	tk1.MustQuery("select * from tk where c1 = 1 for update")
-	forUpdateTsB := tk1.Se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	c.Assert(forUpdateTsA, Equals, forUpdateTsB)
+	forUpdateTsB := tk1.Session().GetSessionVars().TxnCtx.GetForUpdateTS()
+	require.Equal(t, forUpdateTsB, forUpdateTsA)
 	tk1.MustQuery("select * from tk where c1 > 0 for update")
-	forUpdateTsC := tk1.Se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	c.Assert(forUpdateTsC, Greater, forUpdateTsB)
+	forUpdateTsC := tk1.Session().GetSessionVars().TxnCtx.GetForUpdateTS()
+	require.Greater(t, forUpdateTsC, forUpdateTsB)
 
 	tk2.MustExec("insert tk values (2, 2)")
 	tk1.MustQuery("select * from tk for update").Check(testkit.Rows("1 1", "2 2"))
 	tk2.MustExec("insert tk values (3, 3)")
 	tk1.MustExec("update tk set c2 = c2 + 1")
-	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(3))
+	require.Equal(t, uint64(3), tk1.Session().AffectedRows())
 	tk2.MustExec("insert tk values (4, 4)")
 	tk1.MustExec("delete from tk")
-	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(4))
+	require.Equal(t, uint64(4), tk1.Session().AffectedRows())
 	tk2.MustExec("insert tk values (5, 5)")
 	tk1.MustExec("insert into tk1 select * from tk")
-	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), tk1.Session().AffectedRows())
 	tk2.MustExec("insert tk values (6, 6)")
 	tk1.MustExec("replace into tk1 select * from tk")
-	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), tk1.Session().AffectedRows())
 	tk2.MustExec("insert tk values (7, 7)")
 	// This test is used to test when the selectPlan is a PointGetPlan, and we didn't update its forUpdateTS.
 	tk1.MustExec("insert into tk1 select * from tk where c1 = 7")
-	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), tk1.Session().AffectedRows())
 	tk1.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestInnodbLockWaitTimeout(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
@@ -728,7 +943,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	tk.MustExec("set global innodb_lock_wait_timeout = 3")
 	tk.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 50"))
 
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
 	tk2.MustExec("set innodb_lock_wait_timeout = 2")
 	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 2"))
@@ -737,7 +953,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3600"))
 	tk2.MustExec("set innodb_lock_wait_timeout = 2")
 
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
 	tk3.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
 	tk3.MustExec("set innodb_lock_wait_timeout = 1")
 	tk3.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1"))
@@ -745,7 +962,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	tk2.MustExec("set @@autocommit = 0")
 	tk3.MustExec("set @@autocommit = 0")
 
-	tk4 := testkit.NewTestKitWithInit(c, s.store)
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec("use test")
 	tk4.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
 	tk4.MustExec("set @@autocommit = 0")
 
@@ -769,7 +987,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	go func() {
 		defer wg.Done()
 		// tk5 try lock c1 = 1 timeout 2sec
-		tk5 := testkit.NewTestKitWithInit(c, s.store)
+		tk5 := testkit.NewTestKit(t, store)
+		tk5.MustExec("use test")
 		tk5.MustExec("set innodb_lock_wait_timeout = 2")
 		tk5.MustExec("begin pessimistic")
 		_, err := tk5.Exec("update tk set c2 = c2 - 1 where c1 = 1")
@@ -778,11 +997,11 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	}()
 
 	timeoutErr := <-timeoutErrCh
-	c.Assert(timeoutErr, NotNil)
-	c.Assert(timeoutErr.Error(), Equals, storeerr.ErrLockWaitTimeout.Error())
+	require.Error(t, timeoutErr)
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), timeoutErr.Error())
 	timeoutErr = <-timeoutErrCh
-	c.Assert(timeoutErr, NotNil)
-	c.Assert(timeoutErr.Error(), Equals, storeerr.ErrLockWaitTimeout.Error())
+	require.Error(t, timeoutErr)
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), timeoutErr.Error())
 
 	// tk4 lock c1 = 2
 	tk4.MustExec("begin pessimistic")
@@ -793,9 +1012,9 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 
 	start := time.Now()
 	_, err := tk2.Exec("delete from tk where c1 = 2")
-	c.Check(time.Since(start), GreaterEqual, 1000*time.Millisecond)
-	c.Check(time.Since(start), Less, 3000*time.Millisecond) // unit test diff should not be too big
-	c.Check(err.Error(), Equals, storeerr.ErrLockWaitTimeout.Error())
+	require.GreaterOrEqual(t, time.Since(start), 1000*time.Millisecond)
+	require.Less(t, time.Since(start), 3000*time.Millisecond) // unit test diff should not be too big
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
 
 	tk4.MustExec("commit")
 
@@ -811,9 +1030,9 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 
 	start = time.Now()
 	_, err = tk2.Exec("delete from tk where c1 = 3") // tk2 tries to lock c1 = 3 fail, this delete should be rollback, but previous update should be keeped
-	c.Check(time.Since(start), GreaterEqual, 1000*time.Millisecond)
-	c.Check(time.Since(start), Less, 3000*time.Millisecond) // unit test diff should not be too big
-	c.Check(err.Error(), Equals, storeerr.ErrLockWaitTimeout.Error())
+	require.GreaterOrEqual(t, time.Since(start), 1000*time.Millisecond)
+	require.Less(t, time.Since(start), 3000*time.Millisecond) // unit test diff should not be too big
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), err.Error())
 
 	tk2.MustExec("commit")
 	tk3.MustExec("commit")
@@ -831,9 +1050,15 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	wg.Wait()
 }
 
-func (s *testPessimisticSuite) TestPushConditionCheckForPessimisticTxn(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+func TestPushConditionCheckForPessimisticTxn(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (i int key)")
@@ -847,9 +1072,14 @@ func (s *testPessimisticSuite) TestPushConditionCheckForPessimisticTxn(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 }
 
-func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
+func TestInnodbLockWaitTimeoutWaitStart(t *testing.T) {
 	// prepare work
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
 	defer tk.MustExec("drop table if exists tk")
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -857,8 +1087,11 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	tk.MustExec("set global innodb_lock_wait_timeout = 1")
 
 	// raise pessimistic transaction in tk2 and trigger failpoint returning ErrWriteConflict
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
 	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1"))
 
 	// tk3 gets the pessimistic lock
@@ -867,7 +1100,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 
 	tk2.MustExec("begin pessimistic")
 	done := make(chan error)
-	c.Assert(failpoint.Enable("tikvclient/PessimisticLockErrWriteConflict", "return"), IsNil)
+	require.NoError(t, failpoint.Enable("tikvclient/PessimisticLockErrWriteConflict", "return"))
 	var duration time.Duration
 	go func() {
 		var err error
@@ -879,21 +1112,25 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(failpoint.Disable("tikvclient/PessimisticLockErrWriteConflict"), IsNil)
+	require.NoError(t, failpoint.Disable("tikvclient/PessimisticLockErrWriteConflict"))
 	waitErr := <-done
-	c.Assert(waitErr, NotNil)
-	c.Check(waitErr.Error(), Equals, storeerr.ErrLockWaitTimeout.Error())
-	c.Check(duration, GreaterEqual, 1000*time.Millisecond)
-	c.Check(duration, LessEqual, 3000*time.Millisecond)
+	require.Error(t, waitErr)
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), waitErr.Error())
+	require.GreaterOrEqual(t, duration, 1000*time.Millisecond)
+	require.LessOrEqual(t, duration, 3000*time.Millisecond)
 	tk2.MustExec("rollback")
 	tk3.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestBatchPointGetWriteConflict(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestBatchPointGetWriteConflict(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (i int primary key, c int);")
 	tk.MustExec("insert t values (1, 1), (2, 2), (3, 3)")
@@ -904,10 +1141,13 @@ func (s *testPessimisticSuite) TestBatchPointGetWriteConflict(c *C) {
 	tk1.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestPessimisticSerializable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestPessimisticSerializable(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
@@ -943,7 +1183,7 @@ func (s *testPessimisticSuite) TestPessimisticSerializable(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		tk1.ExecToErr("delete from test where value = 20;")
+		_, _ = tk1.Exec("delete from test where value = 20;")
 		wg.Done()
 	}()
 	tk.MustExec("commit;")
@@ -963,7 +1203,7 @@ func (s *testPessimisticSuite) TestPessimisticSerializable(c *C) {
 
 	wg.Add(1)
 	go func() {
-		tk1.ExecToErr("update test set value = 11 where id = 1;")
+		_, _ = tk1.Exec("update test set value = 11 where id = 1;")
 		wg.Done()
 	}()
 	tk.MustExec("commit;")
@@ -1009,7 +1249,7 @@ func (s *testPessimisticSuite) TestPessimisticSerializable(c *C) {
 	tk1.MustExec("update test set value = 12 where id = 1;")
 	tk1.MustExec("update test set value = 18 where id = 1;")
 	tk1.MustExec("commit;")
-	tk.ExecToErr("delete from test where value = 20;")
+	_, _ = tk.Exec("delete from test where value = 20;")
 	tk.MustExec("rollback;")
 
 	// Write Skew (G2-item)
@@ -1043,10 +1283,13 @@ func (s *testPessimisticSuite) TestPessimisticSerializable(c *C) {
 	tk.MustQuery("select * from test where mod(value, 3) = 0;").Check(testkit.Rows("3 30", "4 60"))
 }
 
-func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestPessimisticReadCommitted(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
@@ -1155,9 +1398,15 @@ func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
 	tk.MustExec("commit;")
 }
 
-func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+func TestPessimisticLockNonExistsKey(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (k int primary key, c int)")
 	tk.MustExec("insert t values (1, 1), (3, 3), (5, 5)")
@@ -1167,16 +1416,16 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 	tk.MustExec("insert t values (8, 8)") // Make the transaction dirty.
 	tk.MustQuery("select c + 1 from t where k = 2 and c = 2 for update").Check(testkit.Rows())
 	explainStr := tk.MustQuery("explain select c + 1 from t where k = 2 and c = 2 for update").Rows()[0][0].(string)
-	c.Assert(strings.Contains(explainStr, "UnionScan"), IsFalse)
+	require.False(t, strings.Contains(explainStr, "UnionScan"))
 	tk.MustQuery("select * from t where k in (4, 5, 7) for update").Check(testkit.Rows("5 5"))
 
 	tk1.MustExec("begin pessimistic")
 	err := tk1.ExecToErr("select * from t where k = 2 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
+	require.True(t, storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), fmt.Sprintf("err %v", err))
 	err = tk1.ExecToErr("select * from t where k = 4 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
+	require.True(t, storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), fmt.Sprintf("err %v", err))
 	err = tk1.ExecToErr("select * from t where k = 7 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
+	require.True(t, storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), fmt.Sprintf("err %v", err))
 	tk.MustExec("rollback")
 	tk1.MustExec("rollback")
 
@@ -1188,18 +1437,21 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 
 	tk1.MustExec("begin pessimistic")
 	err = tk1.ExecToErr("select * from t where k = 2 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
+	require.True(t, storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), fmt.Sprintf("err %v", err))
 	err = tk1.ExecToErr("select * from t where k = 6 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
+	require.True(t, storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), fmt.Sprintf("err %v", err))
 	tk.MustExec("rollback")
 	tk1.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
+func TestPessimisticCommitReadLock(t *testing.T) {
 	// tk1 lock wait timeout is 2s
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
@@ -1240,18 +1492,21 @@ func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
 	time.Sleep(time.Millisecond * 50)
 	tk.MustExec("commit")
 	waitErr := <-done
-	c.Assert(waitErr, IsNil)
+	require.NoError(t, waitErr)
 }
 
-func (s *testPessimisticSuite) TestPessimisticLockReadValue(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestPessimisticLockReadValue(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(i int, j int, k int, unique key uk(j));")
 	tk.MustExec("insert into t values (1, 1, 1);")
 
 	// tk1 will left op_lock record
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("begin optimistic")
 	tk1.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
@@ -1259,15 +1514,19 @@ func (s *testPessimisticSuite) TestPessimisticLockReadValue(c *C) {
 	tk1.MustExec("commit")
 
 	// tk2 pessimistic lock read value
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 	tk2.MustExec("begin pessimistic")
 	tk2.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
 	tk2.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
 	tk2.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestRCWaitTSOTwice(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestRCWaitTSOTwice(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (i int key)")
 	tk.MustExec("insert into t values (1)")
@@ -1278,10 +1537,15 @@ func (s *testPessimisticSuite) TestRCWaitTSOTwice(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestNonAutoCommitWithPessimisticMode(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestNonAutoCommitWithPessimisticMode(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int)")
 	tk.MustExec("insert into t1 values (1, 1)")
@@ -1299,11 +1563,15 @@ func (s *testPessimisticSuite) TestNonAutoCommitWithPessimisticMode(c *C) {
 	tk.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk2.MustExec("use test")
+func TestBatchPointGetLockIndex(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, unique key uk(c2))")
 	tk.MustExec("insert into t1 values (1, 1, 1)")
@@ -1315,20 +1583,24 @@ func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
 	tk2.MustExec("set innodb_lock_wait_timeout = 1")
 	tk2.MustExec("begin pessimistic")
 	err := tk2.ExecToErr("insert into t1 values(2, 2, 2)")
-	c.Assert(err, NotNil)
-	c.Assert(storeerr.ErrLockWaitTimeout.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, storeerr.ErrLockWaitTimeout.Equal(err))
 	err = tk2.ExecToErr("select * from t1 where c2 = 3 for update nowait")
-	c.Assert(err, NotNil)
-	c.Assert(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err))
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestLockGotKeysInRC(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestLockGotKeysInRC(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
+
 	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
 	tk2.MustExec("set tx_isolation = 'READ-COMMITTED'")
 	tk.MustExec("drop table if exists t1")
@@ -1349,8 +1621,12 @@ func (s *testPessimisticSuite) TestLockGotKeysInRC(c *C) {
 	tk2.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestBatchPointGetAlreadyLocked(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestBatchPointGetAlreadyLocked(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 int, c2 int, c3 int, primary key(c1, c2))")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2)")
@@ -1360,19 +1636,23 @@ func (s *testPessimisticSuite) TestBatchPointGetAlreadyLocked(c *C) {
 	tk.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk2.MustExec("use test")
+func TestRollbackWakeupBlockedTxn(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, unique key uk(c2))")
 	tk.MustExec("insert into t1 values (1, 1, 1)")
 	tk.MustExec("insert into t1 values (5, 5, 5)")
 	tk.MustExec("insert into t1 values (10, 10, 10)")
 
-	c.Assert(failpoint.Enable("tikvclient/txnExpireRetTTL", "return"), IsNil)
-	c.Assert(failpoint.Enable("tikvclient/getTxnStatusDelay", "return"), IsNil)
+	require.NoError(t, failpoint.Enable("tikvclient/txnExpireRetTTL", "return"))
+	require.NoError(t, failpoint.Enable("tikvclient/getTxnStatusDelay", "return"))
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("set innodb_lock_wait_timeout = 1")
 	tk2.MustExec("begin pessimistic")
@@ -1391,14 +1671,21 @@ func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
 	time.Sleep(time.Millisecond * 30)
 	tk.MustExec("rollback")
 	err := <-errCh
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tk2.MustExec("rollback")
-	c.Assert(failpoint.Disable("tikvclient/txnExpireRetTTL"), IsNil)
-	c.Assert(failpoint.Disable("tikvclient/getTxnStatusDelay"), IsNil)
+	require.NoError(t, failpoint.Disable("tikvclient/txnExpireRetTTL"))
+	require.NoError(t, failpoint.Disable("tikvclient/getTxnStatusDelay"))
 }
 
-func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestRCSubQuery(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table `t` ( `c1` int(11) not null, `c2` int(11) default null, primary key (`c1`) )")
 	tk.MustExec("insert into t values(1, 3)")
@@ -1407,7 +1694,6 @@ func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
 	tk.MustExec("set transaction isolation level read committed")
 	tk.MustExec("begin pessimistic")
 
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("update t1 set c2 = c2 + 1")
 
 	tk.MustQuery("select * from t1 where c1 = (select 1) and 1=1;").Check(testkit.Rows("1 4"))
@@ -1415,8 +1701,15 @@ func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestRCIndexMerge(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestRCIndexMerge(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int primary key, v int, a int not null, b int not null,
 		index ia (a), index ib (b))`)
@@ -1431,12 +1724,11 @@ func (s *testPessimisticSuite) TestRCIndexMerge(c *C) {
 		testkit.Rows("1 10 1 1"),
 	)
 
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("update t set v = 11 where id = 1")
 
 	// Make sure index merge plan is used.
 	plan := tk.MustQuery("explain select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Rows()[0][0].(string)
-	c.Assert(strings.Contains(plan, "IndexMerge_"), IsTrue)
+	require.True(t, strings.Contains(plan, "IndexMerge_"))
 	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Check(
 		testkit.Rows("1 11 1 1"),
 	)
@@ -1445,8 +1737,13 @@ func (s *testPessimisticSuite) TestRCIndexMerge(c *C) {
 	)
 }
 
-func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestGenerateColPointGet(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", variable.DefTiDBRowFormatV2))
 	}()
@@ -1460,16 +1757,17 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		// test point get lock
 		tk.MustExec("begin pessimistic")
 		tk.MustQuery("select * from tu where z = 3 for update").Check(testkit.Rows("1 2 3"))
-		tk2 := testkit.NewTestKitWithInit(c, s.store)
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
 		tk2.MustExec("begin pessimistic")
 		err := tk2.ExecToErr("select * from tu where z = 3 for update nowait")
-		c.Assert(err, NotNil)
-		c.Assert(terror.ErrorEqual(err, storeerr.ErrLockAcquireFailAndNoWaitSet), IsTrue)
+		require.Error(t, err)
+		require.True(t, terror.ErrorEqual(err, storeerr.ErrLockAcquireFailAndNoWaitSet))
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(2, 2);")
 		err = tk2.ExecToErr("select * from tu where z = 4 for update nowait")
-		c.Assert(err, NotNil)
-		c.Assert(terror.ErrorEqual(err, storeerr.ErrLockAcquireFailAndNoWaitSet), IsTrue)
+		require.Error(t, err)
+		require.True(t, terror.ErrorEqual(err, storeerr.ErrLockAcquireFailAndNoWaitSet))
 
 		// test batch point get lock
 		tk.MustExec("begin pessimistic")
@@ -1477,21 +1775,24 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		tk.MustQuery("select * from tu where z in (1, 3, 5) for update").Check(testkit.Rows("1 2 3"))
 		tk2.MustExec("begin pessimistic")
 		err = tk2.ExecToErr("select x from tu where z in (3, 7, 9) for update nowait")
-		c.Assert(err, NotNil)
-		c.Assert(terror.ErrorEqual(err, storeerr.ErrLockAcquireFailAndNoWaitSet), IsTrue)
+		require.Error(t, err)
+		require.True(t, terror.ErrorEqual(err, storeerr.ErrLockAcquireFailAndNoWaitSet))
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(5, 6);")
 		err = tk2.ExecToErr("select * from tu where z = 11 for update nowait")
-		c.Assert(err, NotNil)
-		c.Assert(terror.ErrorEqual(err, storeerr.ErrLockAcquireFailAndNoWaitSet), IsTrue)
+		require.Error(t, err)
+		require.True(t, terror.ErrorEqual(err, storeerr.ErrLockAcquireFailAndNoWaitSet))
 
 		tk.MustExec("commit")
 		tk2.MustExec("commit")
 	}
 }
 
-func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestTxnWithExpiredPessimisticLocks(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, unique key uk(c2))")
@@ -1501,26 +1802,31 @@ func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 where c1 in(1, 5) for update").Check(testkit.Rows("1 1 1", "5 5 5"))
-	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 1)
+	atomic.StoreUint32(&tk.Session().GetSessionVars().TxnCtx.LockExpire, 1)
 	err := tk.ExecToErr("select * from t1 where c1 in(1, 5)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrLockExpire), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrLockExpire))
 	tk.MustExec("commit")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 where c1 in(1, 5) for update").Check(testkit.Rows("1 1 1", "5 5 5"))
-	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 1)
+	atomic.StoreUint32(&tk.Session().GetSessionVars().TxnCtx.LockExpire, 1)
 	err = tk.ExecToErr("update t1 set c2 = c2 + 1")
-	c.Assert(terror.ErrorEqual(err, kv.ErrLockExpire), IsTrue)
-	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 0)
+	require.True(t, terror.ErrorEqual(err, kv.ErrLockExpire))
+	atomic.StoreUint32(&tk.Session().GetSessionVars().TxnCtx.LockExpire, 0)
 	tk.MustExec("update t1 set c2 = c2 + 1")
 	tk.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestKillWaitLockTxn(c *C) {
+func TestKillWaitLockTxn(t *testing.T) {
 	// Test kill command works on waiting pessimistic lock.
 	defer setLockTTL(300).restore()
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists test_kill")
 	tk.MustExec("create table test_kill (id int primary key, c int)")
 	tk.MustExec("insert test_kill values (1, 1)")
@@ -1542,21 +1848,26 @@ func (s *testPessimisticSuite) TestKillWaitLockTxn(c *C) {
 		}
 	}()
 	time.Sleep(100 * time.Millisecond)
-	sessVars := tk.Se.GetSessionVars()
+	sessVars := tk.Session().GetSessionVars()
 	// lock query in tk is killed, the ttl manager will stop
 	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
-	c.Assert(succ, IsTrue)
+	require.True(t, succ)
 	err := <-errCh
-	c.Assert(err, IsNil)
-	tk.Exec("rollback")
+	require.NoError(t, err)
+	_, _ = tk.Exec("rollback")
 	// reset kill
 	atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestDupLockInconsistency(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestDupLockInconsistency(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index b (b))")
 	tk.MustExec("insert t (a) values (1), (1)")
@@ -1566,10 +1877,17 @@ func (s *testPessimisticSuite) TestDupLockInconsistency(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-func (s *testPessimisticSuite) TestUseLockCacheInRCMode(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
+func TestUseLockCacheInRCMode(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk3.MustExec("use test")
+
 	tk.MustExec("drop table if exists test_kill")
 	tk.MustExec("CREATE TABLE SEQUENCE_VALUE_ITEM(SEQ_NAME varchar(60) NOT NULL, SEQ_ID decimal(18,0) DEFAULT NULL, " +
 		"PRIMARY KEY (SEQ_NAME))")
@@ -1633,9 +1951,14 @@ func (s *testPessimisticSuite) TestUseLockCacheInRCMode(c *C) {
 	tk3.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestPointGetWithDeleteInMem(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestPointGetWithDeleteInMem(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists uk")
 	tk.MustExec("create table uk (c1 int primary key, c2 int, unique key uk(c2))")
 	tk.MustExec("insert uk values (1, 77), (2, 88), (3, 99)")
@@ -1659,9 +1982,14 @@ func (s *testPessimisticSuite) TestPointGetWithDeleteInMem(c *C) {
 	tk.MustExec("drop table if exists uk")
 }
 
-func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestPessimisticTxnWithDDLAddDropColumn(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int)")
 	tk.MustExec("insert t1 values (1, 77), (2, 88)")
@@ -1686,13 +2014,15 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "5"))
 }
 
-func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 varchar(10))")
 	tk.MustExec("insert t1 values (1, 77, 'a'), (2, 88, 'b')")
@@ -1714,8 +2044,7 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1(c1) values(100)")
 	tk2.MustExec("alter table t1 change column c2 cc2 bigint not null")
-	err := tk.ExecToErr("commit")
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr("commit"))
 
 	// Change default value is rejected.
 	tk2.MustExec("create table ta(a bigint primary key auto_random(3), b varchar(255) default 'old');")
@@ -1723,8 +2052,7 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into ta values()")
 	tk2.MustExec("alter table ta modify column b varchar(300) default 'new';")
-	err = tk.ExecToErr("commit")
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustQuery("select b from ta").Check(testkit.Rows("a"))
 
 	// Change default value with add index. There is a new MultipleKeyFlag flag on the index key, and the column is changed,
@@ -1737,7 +2065,7 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk2.MustExec("alter table ta add index i1(b)")
 	tk2.MustExec("alter table ta change column b b varchar(301) default 'newest'")
 	tk2.MustExec("alter table ta modify column b varchar(301) default 'new'")
-	c.Assert(tk.ExecToErr("commit"), NotNil)
+	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustExec("admin check table ta")
 	tk2.MustQuery("select count(b) from ta use index(i1) where b = 'new'").Check(testkit.Rows("1"))
 
@@ -1749,14 +2077,17 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk2.MustExec("alter table tbl_time modify column c_time timestamp default now()")
 	tk2.MustExec("insert into tbl_time(c1) values(3)")
 	tk2.MustExec("insert into tbl_time(c1) values(4)")
-	c.Assert(tk.ExecToErr("commit"), NotNil)
+	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustQuery("select count(1) from tbl_time where c_time is not null").Check(testkit.Rows("2"))
-
-	tk2.MustExec("drop database if exists test_db")
 }
 
-func (s *testPessimisticSuite) TestPessimisticUnionForUpdate(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestPessimisticUnionForUpdate(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int, v int, k int, primary key (id), key kk(k))")
 	tk.MustExec("insert into t select 1, 1, 1")
@@ -1767,13 +2098,15 @@ func (s *testPessimisticSuite) TestPessimisticUnionForUpdate(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-func (s *testPessimisticSuite) TestInsertDupKeyAfterLock(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+func TestInsertDupKeyAfterLock(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk2.MustExec("drop table if exists t1")
 	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
 	tk2.MustExec("insert into t1 values(1, 2, 3);")
@@ -1782,33 +2115,33 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLock(c *C) {
 	// Test insert after lock.
 	tk.MustExec("begin pessimistic")
 	err := tk.ExecToErr("update t1 set c2 = 20 where c1 = 1;")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from t1 for update")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from t1 where c2 = 2 for update")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	// Test insert after insert.
 	tk.MustExec("begin pessimistic")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("insert into t1 values(5, 6, 7)")
 	err = tk.ExecToErr("insert into t1 values(6, 6, 7);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "5 6 7", "10 20 30"))
 
@@ -1817,20 +2150,20 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLock(c *C) {
 	tk.MustExec("delete from t1 where c2 > 2")
 	tk.MustExec("insert into t1 values(10, 20, 500);")
 	err = tk.ExecToErr("insert into t1 values(20, 20, 30);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	err = tk.ExecToErr("insert into t1 values(1, 20, 30);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 500"))
 
 	// Test range.
 	tk.MustExec("begin pessimistic")
 	err = tk.ExecToErr("update t1 set c2 = 20 where c1 >= 1 and c1 < 5;")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	err = tk.ExecToErr("update t1 set c2 = 20 where c1 >= 1 and c1 < 50;")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 500"))
 
@@ -1841,9 +2174,9 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLock(c *C) {
 	tk.MustExec("select * from t1 where c1 = 6 for update")
 	tk.MustExec("select * from t1 for update")
 	err = tk.ExecToErr("insert into t1 values(7, 6, 7)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	err = tk.ExecToErr("insert into t1 values(5, 8, 6)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("select * from t1 where c1 = 5 for update")
 	tk.MustExec("select * from t1 where c2 = 8 for update")
 	tk.MustExec("select * from t1 for update")
@@ -1855,16 +2188,18 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLock(c *C) {
 	tk.MustQuery("select * from t1 where c1 = 1 for update").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("insert into t1 values(10, 10, 10)")
 	err = tk.ExecToErr("commit")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 }
 
-func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+func TestInsertDupKeyAfterLockBatchPointGet(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk2.MustExec("drop table if exists t1")
 	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
 	tk2.MustExec("insert into t1 values(1, 2, 3);")
@@ -1873,33 +2208,33 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
 	// Test insert after lock.
 	tk.MustExec("begin pessimistic")
 	err := tk.ExecToErr("update t1 set c2 = 20 where c1 in (1);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from t1 for update")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from t1 where c2 in (2) for update")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
 
 	// Test insert after insert.
 	tk.MustExec("begin pessimistic")
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("insert into t1 values(5, 6, 7)")
 	err = tk.ExecToErr("insert into t1 values(6, 6, 7);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "5 6 7", "10 20 30"))
 
@@ -1908,20 +2243,20 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
 	tk.MustExec("delete from t1 where c2 > 2")
 	tk.MustExec("insert into t1 values(10, 20, 500);")
 	err = tk.ExecToErr("insert into t1 values(20, 20, 30);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	err = tk.ExecToErr("insert into t1 values(1, 20, 30);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 500"))
 
 	// Test range.
 	tk.MustExec("begin pessimistic")
 	err = tk.ExecToErr("update t1 set c2 = 20 where c1 >= 1 and c1 < 5;")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	err = tk.ExecToErr("update t1 set c2 = 20 where c1 >= 1 and c1 < 50;")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 500"))
 
@@ -1932,9 +2267,9 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
 	tk.MustExec("select * from t1 where c1 = 6 for update")
 	tk.MustExec("select * from t1 for update")
 	err = tk.ExecToErr("insert into t1 values(7, 6, 7)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	err = tk.ExecToErr("insert into t1 values(5, 8, 6)")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 	tk.MustExec("select * from t1 where c2 = 8 for update")
 	tk.MustExec("select * from t1 where c1 in (5, 8) for update")
 	tk.MustExec("select * from t1 for update")
@@ -1946,22 +2281,24 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
 	tk.MustQuery("select * from t1 where c1 in (1) for update").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("insert into t1 values(10, 10, 10)")
 	err = tk.ExecToErr("commit")
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists))
 }
 
-func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+func TestAmendTxnVariable(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
 	tk2.MustExec("drop table if exists t1")
 	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
 	tk2.MustExec("insert into t1 values(1, 1, 1);")
 	tk2.MustExec("insert into t1 values(2, 2, 2);")
-	tk3.MustExec("use test_db")
 
 	// Set off the session variable.
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
@@ -1971,22 +2308,22 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values(4, 4, 4)")
 	tk2.MustExec("alter table t1 add column new_col int")
-	err := tk3.ExecToErr("commit")
-	c.Assert(err, NotNil)
+	require.Error(t, tk3.ExecToErr("commit"))
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>"))
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
 
 	// Set off the global variable.
 	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 0;")
-	tk4 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec("use test")
+
 	tk4.MustQuery(`show variables like "tidb_enable_amend_pessimistic_txn"`).Check(testkit.Rows("tidb_enable_amend_pessimistic_txn OFF"))
-	tk4.MustExec("use test_db")
 	tk4.MustExec("begin pessimistic")
 	tk4.MustExec("insert into t1 values(5, 5, 5, 5)")
 	tk2.MustExec("alter table t1 drop column new_col")
-	err = tk4.ExecToErr("commit")
-	c.Assert(err, NotNil)
+	require.Error(t, tk4.ExecToErr("commit"))
 	tk4.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk4.MustExec("begin pessimistic")
 	tk4.MustExec("insert into t1 values(5, 5, 5)")
@@ -1995,15 +2332,24 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>", "5 5 5 <nil>"))
 }
 
-func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestSelectForUpdateWaitSeconds(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
-	tk4 := testkit.NewTestKitWithInit(c, s.store)
-	tk5 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec("use test")
+	tk5 := testkit.NewTestKit(t, store)
+	tk5.MustExec("use test")
 
 	// tk2 lock c1 = 5
 	tk2.MustExec("begin pessimistic")
@@ -2031,33 +2377,36 @@ func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
 	waitErr := <-errCh
 	waitErr2 := <-errCh
 	waitErr3 := <-errCh
-	c.Assert(waitErr, NotNil)
-	c.Check(waitErr.Error(), Equals, storeerr.ErrLockWaitTimeout.Error())
-	c.Assert(waitErr2, NotNil)
-	c.Check(waitErr2.Error(), Equals, storeerr.ErrLockWaitTimeout.Error())
-	c.Assert(waitErr3, NotNil)
-	c.Check(waitErr3.Error(), Equals, storeerr.ErrLockWaitTimeout.Error())
-	c.Assert(time.Since(start).Seconds(), Less, 45.0)
+	require.Error(t, waitErr)
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), waitErr.Error())
+	require.Error(t, waitErr2)
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), waitErr2.Error())
+	require.Error(t, waitErr3)
+	require.Equal(t, storeerr.ErrLockWaitTimeout.Error(), waitErr3.Error())
+	require.Less(t, time.Since(start).Seconds(), 45.0)
 	tk2.MustExec("commit")
 	tk3.MustExec("rollback")
 	tk4.MustExec("rollback")
 	tk5.MustExec("rollback")
 }
 
-func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
+func TestSelectForUpdateConflictRetry(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	tk := s.newAsyncCommitTestKitWithInit(c)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := createAsyncCommitTestKit(t, store)
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values(1,1),(2,2)")
-	tk2 := s.newAsyncCommitTestKitWithInit(c)
-	tk3 := s.newAsyncCommitTestKitWithInit(c)
 
+	tk2 := createAsyncCommitTestKit(t, store)
+	tk3 := createAsyncCommitTestKit(t, store)
 	tk2.MustExec("begin pessimistic")
 	tk3.MustExec("begin pessimistic")
 	tk2.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
@@ -2065,29 +2414,30 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	tsCh := make(chan uint64)
 	go func() {
 		tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
-		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: kv.GlobalTxnScope})
-		c.Assert(err, IsNil)
+		lastTS, err := store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: kv.GlobalTxnScope})
+		require.NoError(t, err)
 		tsCh <- lastTS
 		tk3.MustExec("commit")
 		tsCh <- lastTS
 	}()
 	// tk2LastTS should be its forUpdateTS
-	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: kv.GlobalTxnScope})
-	c.Assert(err, IsNil)
+	tk2LastTS, err := store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: kv.GlobalTxnScope})
+	require.NoError(t, err)
 	tk2.MustExec("commit")
 
 	tk3LastTs := <-tsCh
 	// it must get a new ts on pessimistic write conflict so the latest timestamp
 	// should increase
-	c.Assert(tk3LastTs, Greater, tk2LastTS)
+	require.Greater(t, tk3LastTs, tk2LastTS)
 	// wait until the goroutine exists
 	<-tsCh
 }
 
-func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
-	// TODO: implement commit_ts calculation in unistore
-	if !*withTiKV {
-		return
+func TestAsyncCommitWithSchemaChange(t *testing.T) {
+	if !*withRealTiKV {
+		t.Skip("TODO: implement commit_ts calculation in unistore")
+	} else {
+		t.Skip("This test is unstable as depending on time.Sleep")
 	}
 
 	defer config.RestoreFunc()()
@@ -2095,17 +2445,18 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
-	c.Assert(failpoint.Enable("tikvclient/asyncCommitDoNothing", "return"), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("tikvclient/asyncCommitDoNothing"), IsNil)
-	}()
+	require.NoError(t, failpoint.Enable("tikvclient/asyncCommitDoNothing", "return"))
+	defer func() { require.NoError(t, failpoint.Disable("tikvclient/asyncCommitDoNothing")) }()
 
-	tk := s.newAsyncCommitTestKitWithInit(c)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := createAsyncCommitTestKit(t, store)
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int, c3 int)")
 	tk.MustExec("insert into tk values(1, 1, 1)")
-	tk2 := s.newAsyncCommitTestKitWithInit(c)
-	tk3 := s.newAsyncCommitTestKitWithInit(c)
+	tk2 := createAsyncCommitTestKit(t, store)
+	tk3 := createAsyncCommitTestKit(t, store)
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
@@ -2145,11 +2496,11 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(1, 1)")
-	c.Assert(failpoint.Enable("tikvclient/beforePrewrite", "1*pause"), IsNil)
+	require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "1*pause"))
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		tk2.MustExec("alter table tk add index k2(c2)")
-		c.Assert(failpoint.Disable("tikvclient/beforePrewrite"), IsNil)
+		require.NoError(t, failpoint.Disable("tikvclient/beforePrewrite"))
 		ch <- struct{}{}
 	}()
 	tk.MustExec("commit")
@@ -2158,10 +2509,11 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	tk3.MustExec("admin check table tk")
 }
 
-func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
-	// TODO: implement commit_ts calculation in unistore
-	if !*withTiKV {
-		return
+func Test1PCWithSchemaChange(t *testing.T) {
+	if !*withRealTiKV {
+		t.Skip("TODO: implement commit_ts calculation in unistore")
+	} else {
+		t.Skip("This test is unstable as depending on time.Sleep")
 	}
 
 	defer config.RestoreFunc()()
@@ -2170,9 +2522,12 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	tk := s.new1PCTestKitWithInit(c)
-	tk2 := s.new1PCTestKitWithInit(c)
-	tk3 := s.new1PCTestKitWithInit(c)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := create1PCTestKit(t, store)
+	tk2 := create1PCTestKit(t, store)
+	tk3 := create1PCTestKit(t, store)
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -2204,11 +2559,11 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(1, 1)")
-	c.Assert(failpoint.Enable("tikvclient/beforePrewrite", "1*pause"), IsNil)
+	require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "1*pause"))
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		tk2.MustExec("alter table tk add index k2(c2)")
-		c.Assert(failpoint.Disable("tikvclient/beforePrewrite"), IsNil)
+		require.NoError(t, failpoint.Disable("tikvclient/beforePrewrite"))
 		ch <- struct{}{}
 	}()
 	tk.MustExec("commit")
@@ -2217,15 +2572,17 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	tk3.MustExec("admin check table tk")
 }
 
-func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
-	c.Skip("Skip this unstable test(#25986) and bring it back before 2021-07-29.")
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestAmendForUniqueIndex(t *testing.T) {
+	t.Skip("Skip this unstable test(#25986) and bring it back before 2021-07-29.")
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+
 	tk2.MustExec("drop table if exists t1")
 	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
 	tk2.MustExec("insert into t1 values(1, 1, 1);")
@@ -2236,8 +2593,7 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk.MustExec("insert into t1 values(3, 3, 3)")
 	tk.MustExec("insert into t1 values(4, 4, 3)")
 	tk2.MustExec("alter table t1 add unique index uk1(c3)")
-	err := tk.ExecToErr("commit")
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustExec("alter table t1 drop index uk1")
 	tk2.MustExec("admin check table t1")
 
@@ -2246,8 +2602,7 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk.MustExec("insert into t1 values(3, 3, 3)")
 	tk.MustExec("insert into t1 values(4, 4, 1)")
 	tk2.MustExec("alter table t1 add unique index uk1(c3)")
-	err = tk.ExecToErr("commit")
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustExec("admin check table t1")
 
 	// Put new values.
@@ -2266,8 +2621,7 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("alter table t add unique index uk(c);")
 	tk.MustExec("update t set c = 2 where id = 3;")
-	err = tk.ExecToErr("commit")
-	c.Assert(err, NotNil)
+	require.Error(t, tk.ExecToErr("commit"))
 	tk2.MustExec("admin check table t")
 
 	// Update the old value with same unique key, but the row key has changed.
@@ -2283,8 +2637,8 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	}()
 	time.Sleep(300 * time.Millisecond)
 	tk.MustExec("commit")
-	err = <-finishCh
-	c.Assert(err, IsNil)
+	err := <-finishCh
+	require.NoError(t, err)
 	tk2.MustExec("admin check table t")
 
 	// Update the old value with same unique key, but the row key has changed.
@@ -2333,20 +2687,22 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 		errCh <- err
 	}()
 	err = <-errCh
-	c.Assert(err, Equals, nil)
+	require.Equal(t, nil, err)
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 	err = <-errCh
-	c.Assert(err, Equals, nil)
+	require.Equal(t, nil, err)
 }
 
-func (s *testPessimisticSuite) TestAmendWithColumnTypeChange(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+func TestAmendWithColumnTypeChange(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	tk2.MustExec("drop table if exists t")
@@ -2354,12 +2710,17 @@ func (s *testPessimisticSuite) TestAmendWithColumnTypeChange(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t values (1, \"123456789\")")
 	tk2.MustExec("alter table t modify column v varchar(5);")
-	c.Assert(tk.ExecToErr("commit"), NotNil)
+	require.Error(t, tk.ExecToErr("commit"))
 }
 
-func (s *testPessimisticSuite) TestIssue21498(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue21498(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 
 	for _, partition := range []bool{false, true} {
@@ -2400,18 +2761,18 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		tk2.MustExec("alter table t drop index iv")
 		tk2.MustExec("update t set v = 11 where id = 1")
 		err := tk.ExecToErr("select * from t use index (iv) where v = 10")
-		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
+		require.Equal(t, "[planner:1176]Key 'iv' doesn't exist in table 't'", err.Error())
 		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
 		tk2.MustExec("update t set id = 5 where id = 1")
 		err = tk.ExecToErr("select * from t use index (iv) where v = 10") // select with
-		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
+		require.Equal(t, "[planner:1176]Key 'iv' doesn't exist in table 't'", err.Error())
 		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
 		if !partition {
 			// amend transaction does not support partition table
 			tk.MustExec("insert into t(id, v, v2) select 6, v + 20, v2 + 200 from t where id = 4") // insert ... select with index unchanged
 		}
 		err = tk.ExecToErr("insert into t(id, v, v2) select 7, v + 30, v2 + 300 from t use index (iv) where id = 4") // insert ... select with index changed
-		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
+		require.Equal(t, "[planner:1176]Key 'iv' doesn't exist in table 't'", err.Error())
 		tk.MustExec("admin check table t") // check consistency inside txn
 		tk.MustExec("commit")
 		if !partition {
@@ -2489,8 +2850,8 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		tk.MustExec("insert into t(id, v, v2) select (select 4 * id from t where v = 32) id, 4 * v, 4 * v2 from t where v = 33")
 		tk.CheckExecResult(1, 0)
 		err = tk.ExecToErr("insert into t(id, v, v2) select (select 4 * id from t where v = 33) id, 4 * v, 4 * v2 from t where v = 33")
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "[table:1048]Column 'id' cannot be null")
+		require.Error(t, err)
+		require.Equal(t, "[table:1048]Column 'id' cannot be null", err.Error())
 		tk.MustExec("commit")
 		tk.MustQuery("select * from t").Check(testkit.Rows("3 33 300", "5 11 100", "6 60 600", "9 99 900", "12 132 1200"))
 
@@ -2510,16 +2871,20 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 	}
 }
 
-func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
+func TestPlanCacheSchemaChange(t *testing.T) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
 
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+
 	ctx := context.Background()
 
 	tk.MustExec("use test")
@@ -2538,10 +2903,10 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 	tk.MustExec("set @v = 1")
 	tk.MustExec("execute update_stmt using @v")
 
-	stmtID, _, _, err := tk2.Se.PrepareStmt("update t set vv = vv + 1 where v = ?")
-	c.Assert(err, IsNil)
-	_, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
-	c.Assert(err, IsNil)
+	stmtID, _, _, err := tk2.Session().PrepareStmt("update t set vv = vv + 1 where v = ?")
+	require.NoError(t, err)
+	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+	require.NoError(t, err)
 
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
@@ -2559,12 +2924,12 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 	tk.CheckExecResult(1, 0)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	_, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(4)})
-	c.Assert(err, IsNil)
+	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(4)})
+	require.NoError(t, err)
 	tk2.CheckExecResult(0, 0)
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	_, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(5)})
-	c.Assert(err, IsNil)
+	_, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(5)})
+	require.NoError(t, err)
 	tk2.CheckExecResult(1, 0)
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -2574,15 +2939,18 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 3", "2 3 3", "4 5 5"))
 }
 
-func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
+func TestAsyncCommitCalTSFail(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	tk := s.newAsyncCommitTestKitWithInit(c)
-	tk2 := s.newAsyncCommitTestKitWithInit(c)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := createAsyncCommitTestKit(t, store)
+	tk2 := createAsyncCommitTestKit(t, store)
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -2591,9 +2959,9 @@ func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
 	tk.MustExec("set tidb_enable_1pc = true")
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from tk for update").Check(testkit.Rows("1 1"))
-	c.Assert(failpoint.Enable("tikvclient/failCheckSchemaValid", "return"), IsNil)
-	c.Assert(tk.ExecToErr("commit"), NotNil)
-	c.Assert(failpoint.Disable("tikvclient/failCheckSchemaValid"), IsNil)
+	require.NoError(t, failpoint.Enable("tikvclient/failCheckSchemaValid", "return"))
+	require.Error(t, tk.ExecToErr("commit"))
+	require.NoError(t, failpoint.Disable("tikvclient/failCheckSchemaValid"))
 
 	// The lock should not be blocked.
 	tk2.MustExec("set innodb_lock_wait_timeout = 5")
@@ -2602,12 +2970,15 @@ func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
 	tk2.MustExec("commit")
 }
 
-func (s *testPessimisticSuite) TestChangeLockToPut(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestChangeLockToPut(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
 
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
+
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table t1(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
 	tk.MustExec(`insert into t1 values ("1", 1, 1), ("2", 2, 2), ("3", 3, 3)`)
@@ -2679,21 +3050,24 @@ func createTable(part bool, columnNames []string, columnTypes []string) string {
 	return str
 }
 
-func (s *testPessimisticSuite) TestAmendForIndexChange(c *C) {
+func TestAmendForIndexChange(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
-	tk.Se.GetSessionVars().EnableAsyncCommit = false
-	tk.Se.GetSessionVars().Enable1PC = false
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
+	tk.Session().GetSessionVars().EnableAsyncCommit = false
+	tk.Session().GetSessionVars().Enable1PC = false
+
 	tk2.MustExec("drop table if exists t1")
 
 	// Add some different column types.
@@ -2743,29 +3117,29 @@ func (s *testPessimisticSuite) TestAmendForIndexChange(c *C) {
 			tk.MustExec("begin pessimistic")
 			tk.MustExec(`insert into t_part values(5, "555", "2000-01-05", "2020-01-05", "5.5", "555.555", 5.5)`)
 			tk2.MustExec(addIndexFunc(idxName, true, i, j))
-			c.Assert(tk.ExecToErr("commit"), NotNil)
+			require.Error(t, tk.ExecToErr("commit"))
 			tk2.MustExec("admin check table t_part")
 
 			tk.MustExec("begin pessimistic")
 			tk.MustExec(`insert into t_part values(6, "666", "2000-01-06", "2020-01-06", "6.6", "666.666", 6.6)`)
 			tk2.MustExec(fmt.Sprintf(`alter table t_part drop index %s`, idxName))
-			c.Assert(tk.ExecToErr("commit"), NotNil)
+			require.Error(t, tk.ExecToErr("commit"))
 			tk2.MustExec("admin check table t_part")
 			tk2.MustQuery("select count(*) from t_part").Check(testkit.Rows("2"))
 		}
 	}
-
-	tk2.MustExec("drop database test_db")
 }
 
-func (s *testPessimisticSuite) TestAmendForColumnChange(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+func TestAmendForColumnChange(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
-	tk2.MustExec("use test_db")
 	tk2.MustExec("drop table if exists t1")
 
 	// Add some different column types.
@@ -2820,7 +3194,7 @@ func (s *testPessimisticSuite) TestAmendForColumnChange(c *C) {
 		if amendSucc[i] {
 			tk.MustExec("commit")
 		} else {
-			c.Assert(tk.ExecToErr("commit"), NotNil)
+			require.Error(t, tk.ExecToErr("commit"))
 		}
 		tk2.MustExec("admin check table t")
 		if amendSucc[i] {
@@ -2833,20 +3207,20 @@ func (s *testPessimisticSuite) TestAmendForColumnChange(c *C) {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec(`insert into t_part values(5, "555", "2000-01-05", "2020-01-05", "5.5", "555.555", 5.5)`)
 		tk2.MustExec(colChangeFunc(true, i))
-		c.Assert(tk.ExecToErr("commit"), NotNil)
+		require.Error(t, tk.ExecToErr("commit"))
 		tk2.MustExec("admin check table t_part")
 		tk2.MustQuery("select count(*) from t_part").Check(testkit.Rows("2"))
 	}
-
-	tk2.MustExec("drop database test_db")
 }
 
-func (s *testPessimisticSuite) TestPessimisticAutoCommitTxn(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestPessimisticAutoCommitTxn(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
-	tk.MustExec("drop database if exists test_db")
-	tk.MustExec("create database test_db")
-	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (i int)")
 	tk.MustExec("insert into t values (1)")
@@ -2854,7 +3228,7 @@ func (s *testPessimisticSuite) TestPessimisticAutoCommitTxn(c *C) {
 
 	rows := tk.MustQuery("explain update t set i = -i").Rows()
 	explain := fmt.Sprintf("%v", rows[1])
-	c.Assert(explain, Not(Matches), ".*SelectLock.*")
+	require.NotRegexp(t, ".*SelectLock.*", explain)
 
 	originCfg := config.GetGlobalConfig()
 	defer config.StoreGlobalConfig(originCfg)
@@ -2864,5 +3238,5 @@ func (s *testPessimisticSuite) TestPessimisticAutoCommitTxn(c *C) {
 
 	rows = tk.MustQuery("explain update t set i = -i").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
-	c.Assert(explain, Matches, ".*SelectLock.*")
+	require.Regexp(t, ".*SelectLock.*", explain)
 }
