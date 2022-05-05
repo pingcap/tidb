@@ -74,7 +74,7 @@ func (s *statsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
 		return nil, false
 	}
 	// move index element
-	for idxID := range element.tblMemUsage.IndicesMemUsage {
+	for idxID := range element.tbl.Indices {
 		s.lru.get(tblID, idxID)
 	}
 	return element.tbl, true
@@ -157,7 +157,7 @@ func (s *statsInnerCache) Del(tblID int64) {
 		return
 	}
 	// remove indices
-	for idxID := range element.tblMemUsage.IndicesMemUsage {
+	for idxID := range element.tbl.Indices {
 		s.lru.del(tblID, idxID)
 	}
 	delete(s.elements, tblID)
