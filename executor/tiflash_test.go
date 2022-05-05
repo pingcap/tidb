@@ -959,3 +959,20 @@ func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
 	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
 	c.Assert(strings.Contains(res, "tikv"), IsTrue)
 }
+
+func (s *tiflashTestSuite) TestIssue29154(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	time.Sleep(2 * time.Second)
+	tk.MustExec("set session tidb_isolation_read_engines=\"tiflash\";")
+	tk.MustQuery("explain select * from t where trim('x' from a)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Scalar function 'trim'(signature: Trim2Args, return type: var_string(5)) can not be pushed to storage layer"))
+	tk.MustQuery("explain select * from t where trim(trailing 'x' from a)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Scalar function 'trim'(signature: Trim3Args, return type: var_string(20)) can not be pushed to storage layer"))
+}
