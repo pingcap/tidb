@@ -31,7 +31,7 @@ The implementation is based on the [online DDL architecture](https://github.com/
 
 The Multi-Schema Change DDL jobs have the type `ActionMultiSchemaChange`. In the current worker model, there is a dedicated code path (`onMultiSchemaChange()`) to run these jobs. Only Multi-Schema Change jobs can have sub-jobs.
 
-For example, the DDL
+For example, the DDL statement
 
 ```SQL
 ALTER TABLE t ADD COLUMN b INT, MODIFY COLUMN a CHAR(255);
