@@ -1102,6 +1102,32 @@ func TestModifyingColumn4NewCollations(t *testing.T) {
 	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
 }
 
+func TestAlterTableCharsetAndCollate(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(20), key i(a)) charset=latin1")
+	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_unicode_ci", "[ddl:8200]Unsupported converting collation of column 'a' from 'latin1_bin' to 'utf8_unicode_ci' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[ddl:8200]Unsupported converting collation of column 'a' from 'latin1_bin' to 'utf8_general_ci' when index is defined on it.")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
+	tk.MustGetErrMsg("alter table t convert to charset latin1", "[ddl:8200]Unsupported modify charset from utf8 to latin1")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(20)) charset=latin1")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_unicode_ci")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(20)) charset=latin1")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(20)) charset=latin1")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
+}
+
 func TestForbidUnsupportedCollations(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1133,10 +1159,6 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
-
-	// TODO(bb7133): fix the following cases by setting charset from collate firstly.
-	// mustGetUnsupportedCollation("create database ucd collate utf8mb4_unicode_ci", errMsgUnsupportedUnicodeCI)
-	// mustGetUnsupportedCollation("alter table t convert to collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
 }
 
 func TestCreateTableNoBlock(t *testing.T) {
