@@ -454,7 +454,10 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoIncID, autoRandID)
+		tableInfo := tblInfo.Clone()
+		tableInfo.State = model.StatePublic
+		tableInfo.UpdateTS = t.StartTS
+		err = t.CreateTableAndSetAutoID(schemaID, tableInfo, autoIncID, autoRandID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -477,7 +480,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 				failpoint.Return(ver, errors.New("recoverTableMockError"))
 			}
 		})
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(d, t, job, tableInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
