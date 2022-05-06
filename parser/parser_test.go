@@ -4192,6 +4192,38 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints, 2)
 	require.Equal(t, "limit_to_cop", hints[0].HintName.L)
 	require.Equal(t, "limit_to_cop", hints[1].HintName.L)
+
+	// Test STRAIGHT_JOIN
+	stmt, _, err = p.Parse("select /*+ STRAIGHT_JOIN(), straight_join() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "straight_join", hints[0].HintName.L)
+	require.Equal(t, "straight_join", hints[1].HintName.L)
+
+	// Test LEADING
+	stmt, _, err = p.Parse("select /*+ LEADING(T1), LEADING(t2, t3), LEADING(T4, t5, t6) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 3)
+	require.Equal(t, "leading", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 1)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+
+	require.Equal(t, "leading", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 2)
+	require.Equal(t, "t2", hints[1].Tables[0].TableName.L)
+	require.Equal(t, "t3", hints[1].Tables[1].TableName.L)
+
+	require.Equal(t, "leading", hints[2].HintName.L)
+	require.Len(t, hints[2].Tables, 3)
+	require.Equal(t, "t4", hints[2].Tables[0].TableName.L)
+	require.Equal(t, "t5", hints[2].Tables[1].TableName.L)
+	require.Equal(t, "t6", hints[2].Tables[2].TableName.L)
 }
 
 func TestType(t *testing.T) {
