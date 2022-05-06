@@ -318,6 +318,9 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 		return task, nil
 	}
 
+	if task != nil {
+		task.memTracker.Detach()
+	}
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
@@ -559,7 +562,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				return nil, err
 			}
 			if rowIdx == 0 {
-				iw.lookup.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, numRows))
+				iw.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, numRows))
 			}
 			if dHashKey == nil {
 				// Append null to make lookUpKeys the same length as outer Result.
