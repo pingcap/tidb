@@ -67,7 +67,7 @@ func IsFinite(f float64) bool {
 	return !math.IsNaN(f - f)
 }
 
-// Max choice biggest number from its arguments.
+// Max returns the largest one from its arguments.
 func Max[v constraints.Ordered](x v, xs ...v) v {
 	max := x
 	for _, n := range xs {
