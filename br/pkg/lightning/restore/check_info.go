@@ -48,9 +48,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"modernc.org/mathutil"
 )
 
 const (
@@ -1092,7 +1092,7 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 
 	var lock sync.Mutex
 	tableNames := make([]string, 0)
-	concurrency := utils.MinInt(tableCount, rc.cfg.App.RegionConcurrency)
+	concurrency := mathutil.Min(tableCount, rc.cfg.App.RegionConcurrency)
 	ch := make(chan string, concurrency)
 	eg, gCtx := errgroup.WithContext(ctx)
 
