@@ -692,12 +692,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBAnalyzeGCTrigger, Value: strconv.Itoa(DefTiDBAnalyzeGCTrigger), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64,
+	{Scope: ScopeGlobal, Name: TiDBGCManualTrigger, Value: strconv.Itoa(DefTiDBGCManualTrigger), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64,
 		GetGlobal: func(s *SessionVars) (string, error) {
-			return strconv.FormatInt(AnalyzeGCTrigger.Load(), 10), nil
+			return strconv.FormatInt(GCManualTrigger.Load(), 10), nil
 		},
 		SetGlobal: func(s *SessionVars, val string) error {
-			AnalyzeGCTrigger.Store(TidbOptInt64(val, DefTiDBAnalyzeGCTrigger))
+			GCManualTrigger.Store(TidbOptInt64(val, DefTiDBGCManualTrigger))
 			return nil
 		},
 	},

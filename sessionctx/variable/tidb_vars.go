@@ -670,8 +670,8 @@ const (
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
-	// TiDBAnalyzeGCTrigger indicates the memory size to trigger manual GC in analyze.
-	TiDBAnalyzeGCTrigger = "tidb_analyze_gc_trigger"
+	// TiDBGCManualTrigger indicates the memory size to trigger manual GC.
+	TiDBGCManualTrigger = "tidb_gc_manual_trigger"
 )
 
 // TiDB intentional limits
@@ -846,7 +846,7 @@ const (
 	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
 	DefTiDBQueryLogMaxLen                        = 4096
 	DefTiDBMemQuotaAnalyze                       = -1
-	DefTiDBAnalyzeGCTrigger                      = 524288000 // 500MB
+	DefTiDBGCManualTrigger                       = 524288000 // 500MB
 )
 
 // Process global variables.
@@ -883,7 +883,7 @@ var (
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
-	AnalyzeGCTrigger                      = atomic.NewInt64(DefTiDBAnalyzeGCTrigger)
+	GCManualTrigger                       = atomic.NewInt64(DefTiDBGCManualTrigger)
 )
 
 var (

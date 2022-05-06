@@ -89,24 +89,6 @@ const (
 	maxSketchSize       = 10000
 )
 
-var (
-	memToGC = atomicutil.NewInt64(0)
-	inGC    = atomicutil.NewBool(false)
-)
-
-func tryGC(memTracker *memory.Tracker, force bool) {
-	if inGC.CAS(false, true) {
-		defer inGC.Store(false)
-		toGC := memToGC.Load()
-		gcTrigger := variable.AnalyzeGCTrigger.Load()
-		if force || (gcTrigger > 0 && toGC > gcTrigger) {
-			runtime.GC()
-			memTracker.Consume(-toGC)
-			memToGC.Add(-toGC)
-		}
-	}
-}
-
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
@@ -764,11 +746,11 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		defer wg.Wait()
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
-			memToGC.Add(colExec.memTracker.BytesConsumed())
-			tryGC(colExec.memTracker, true)
+			recordMemToGC(colExec.memTracker, colExec.memTracker.BytesConsumed())
+			tryGC(true)
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
-		tryGC(colExec.memTracker, true)
+		tryGC(true)
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
 		colGroupResult := &statistics.AnalyzeResult{
 			Hist:    hists[cLen:],
@@ -1034,7 +1016,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
-		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i, e.memTracker)
+		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i)
 	}
 	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker); err != nil {
 		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
@@ -1042,7 +1024,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	mergeWorkerPanicCnt := 0
 	for mergeWorkerPanicCnt < statsConcurrency {
-		tryGC(e.memTracker, false)
+		tryGC(false)
 		mergeResult, ok := <-mergeResultCh
 		if !ok {
 			break
@@ -1057,7 +1039,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		oldRootCollectorSize := rootCollectorSize
 		rootRowCollector.MergeCollector(mergeResult.collector)
 		rootCollectorSize = rootRowCollector.Base().MemSize
-		memToGC.Add(oldRootCollectorSize + mergeResult.collector.Base().MemSize - rootCollectorSize)
+		recordMemToGC(e.memTracker, oldRootCollectorSize+mergeResult.collector.Base().MemSize-rootCollectorSize)
 	}
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -1157,7 +1139,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	close(buildTaskChan)
 	panicCnt := 0
 	for panicCnt < statsConcurrency {
-		tryGC(e.memTracker, false)
+		tryGC(false)
 		err1, ok := <-buildResultChan
 		if !ok {
 			break
@@ -1181,7 +1163,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			return 0, nil, nil, nil, nil, err
 		}
 	}
-	memToGC.Add(rootCollectorSize)
+	recordMemToGC(e.memTracker, rootCollectorSize)
 	return
 }
 
@@ -1356,8 +1338,7 @@ type samplingMergeResult struct {
 func (e *AnalyzeColumnsExec) subMergeWorker(
 	resultCh chan<- *samplingMergeResult,
 	taskCh <-chan []byte,
-	l int, idx int,
-	memTracker *memory.Tracker) {
+	l int, idx int) {
 	isClosedChanThread := idx == 0
 	defer func() {
 		if r := recover(); r != nil {
@@ -1388,7 +1369,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	for i := 0; i < l; i++ {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
-	memTracker.Consume(retCollector.Base().MemSize)
+	e.memTracker.Consume(retCollector.Base().MemSize)
 	for {
 		data, ok := <-taskCh
 		if !ok {
@@ -1402,7 +1383,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			return
 		}
 		colRespSize := int64(colResp.Size())
-		memTracker.Consume(colRespSize)
+		e.memTracker.Consume(colRespSize)
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 		tmpMemSize := subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
 		UpdateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
@@ -1410,8 +1391,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 		retCollector.MergeCollector(subCollector)
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
-		memToGC.Add(dataSize + colRespSize + tmpMemSize)
-		memToGC.Add(oldRetCollectorSize + subCollectorSize - newRetCollectorSize)
+		recordMemToGC(e.memTracker, dataSize+colRespSize+tmpMemSize+oldRetCollectorSize+subCollectorSize-newRetCollectorSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -1557,7 +1537,7 @@ workLoop:
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
-			memToGC.Add(totalMemInc)
+			recordMemToGC(e.memTracker, totalMemInc)
 		case <-exitCh:
 			return
 		}
@@ -2570,4 +2550,52 @@ func (w *notifyErrorWaitGroupWrapper) Run(exec func()) {
 		}()
 		exec()
 	}(old)
+}
+
+var memMapToGC = newGCMemMap()
+
+type gcMemMap struct {
+	sync.RWMutex
+	total  int64
+	memMap map[*memory.Tracker]int64
+}
+
+func newGCMemMap() gcMemMap {
+	gcMap := gcMemMap{total: 0}
+	gcMap.memMap = make(map[*memory.Tracker]int64)
+	return gcMap
+}
+
+// recordMemToGC is used to track memory to GC for each tracker
+func recordMemToGC(memTracker *memory.Tracker, toGC int64) {
+	gcTrigger := variable.GCManualTrigger.Load()
+	if gcTrigger <= 0 {
+		return
+	}
+	memMapToGC.Lock()
+	defer memMapToGC.Unlock()
+	memMapToGC.total += toGC
+	if memVal, exists := memMapToGC.memMap[memTracker]; exists {
+		memMapToGC.memMap[memTracker] = memVal + toGC
+	} else {
+		memMapToGC.memMap[memTracker] = toGC
+	}
+}
+
+// tryGC is called when operator has much to GC but needs to trigger
+func tryGC(force bool) {
+	gcTrigger := variable.GCManualTrigger.Load()
+	if gcTrigger <= 0 {
+		return
+	}
+	memMapToGC.Lock()
+	defer memMapToGC.Unlock()
+	if force || memMapToGC.total > gcTrigger {
+		runtime.GC()
+		for tracker, memVal := range memMapToGC.memMap {
+			tracker.Consume(-memVal)
+		}
+		memMapToGC.memMap = make(map[*memory.Tracker]int64)
+		memMapToGC.total = 0
+	}
 }
