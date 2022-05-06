@@ -704,7 +704,25 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 		bindSQL = bindSQL[updateIdx:]
 		return strings.Replace(bindSQL, "UPDATE", fmt.Sprintf("UPDATE /*+ %s*/", planHint), 1)
 	case *ast.SelectStmt:
+<<<<<<< HEAD
 		selectIdx := strings.Index(bindSQL, "SELECT")
+=======
+		var selectIdx int
+		if n.With != nil {
+			var withSb strings.Builder
+			withIdx := strings.Index(bindSQL, "WITH")
+			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
+			restoreCtx.DefaultDB = defaultDB
+			if err := n.With.Restore(restoreCtx); err != nil {
+				logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
+				return ""
+			}
+			withEnd := withIdx + len(withSb.String())
+			tmp := strings.Replace(bindSQL[withEnd:], "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+			return strings.Join([]string{bindSQL[withIdx:withEnd], tmp}, "")
+		}
+		selectIdx = strings.Index(bindSQL, "SELECT")
+>>>>>>> fa5e19010... planner: `preprocessor` add CTE recursive check when `handleTableName` (#34133)
 		// Remove possible `explain` prefix.
 		bindSQL = bindSQL[selectIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
