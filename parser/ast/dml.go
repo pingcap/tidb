@@ -1048,6 +1048,51 @@ type CommonTableExpression struct {
 	Name        model.CIStr
 	Query       *SubqueryExpr
 	ColNameList []model.CIStr
+	IsRecursive bool
+}
+
+// Restore implements Node interface
+func (c *CommonTableExpression) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteName(c.Name.String())
+	if c.IsRecursive {
+		// If the CTE is recursive, we should make it visible for the CTE's query.
+		// Otherwise, we should put it to stack after building the CTE's query.
+		ctx.RecordCTEName(c.Name.L)
+	}
+	if len(c.ColNameList) > 0 {
+		ctx.WritePlain(" (")
+		for j, name := range c.ColNameList {
+			if j != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(name.String())
+		}
+		ctx.WritePlain(")")
+	}
+	ctx.WriteKeyWord(" AS ")
+	err := c.Query.Restore(ctx)
+	if err != nil {
+		return err
+	}
+	if !c.IsRecursive {
+		ctx.RecordCTEName(c.Name.L)
+	}
+	return nil
+}
+
+// Accept implements Node interface
+func (c *CommonTableExpression) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(c)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	node, ok := c.Query.Accept(v)
+	if !ok {
+		return c, false
+	}
+	c.Query = node.(*SubqueryExpr)
+	return v.Leave(c)
 }
 
 type WithClause struct {
@@ -1117,6 +1162,7 @@ func (n *WithClause) Restore(ctx *format.RestoreCtx) error {
 		if i != 0 {
 			ctx.WritePlain(", ")
 		}
+<<<<<<< HEAD
 		ctx.WriteName(cte.Name.String())
 		if n.IsRecursive {
 			// If the CTE is recursive, we should make it visible for the CTE's query.
@@ -1141,6 +1187,11 @@ func (n *WithClause) Restore(ctx *format.RestoreCtx) error {
 		if !n.IsRecursive {
 			ctx.CTENames = append(ctx.CTENames, cte.Name.L)
 		}
+=======
+		if err := cte.Restore(ctx); err != nil {
+			return err
+		}
+>>>>>>> fa5e19010... planner: `preprocessor` add CTE recursive check when `handleTableName` (#34133)
 	}
 	ctx.WritePlain(" ")
 	return nil
@@ -1153,11 +1204,9 @@ func (n *WithClause) Accept(v Visitor) (Node, bool) {
 	}
 
 	for _, cte := range n.CTEs {
-		node, ok := cte.Query.Accept(v)
-		if !ok {
+		if _, ok := cte.Accept(v); !ok {
 			return n, false
 		}
-		cte.Query = node.(*SubqueryExpr)
 	}
 	return v.Leave(n)
 }
@@ -1181,6 +1230,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 		}()
 	}
 	if !n.WithBeforeBraces && n.With != nil {
+		defer ctx.RestoreCTEFunc()()
 		err := n.With.Restore(ctx)
 		if err != nil {
 			return err
