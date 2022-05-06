@@ -267,14 +267,14 @@ func makeSourceFileRegion(
 	}
 
 	dataFileSize := fi.FileMeta.FileSize
-	// divisor := int64(columns)
+	divisor := int64(columns)
 	isCsvFile := fi.FileMeta.Type == SourceTypeCSV
-	// if !isCsvFile {
-	// 	divisor += 2
-	// }
+	if !isCsvFile {
+		divisor += 2
+	}
 	sizePerRow, err := sampleAndGetAvgRowSize(&fi, cfg, ioWorkers, store)
-	if err != nil {
-		return nil, nil, err
+	if err == nil {
+		divisor = sizePerRow
 	}
 	// If a csv file is overlarge, we need to split it into multiple regions.
 	// Note: We can only split a csv file whose format is strict.
@@ -282,7 +282,7 @@ func makeSourceFileRegion(
 	// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
 	// avoid split a lot of small chunks.
 	if isCsvFile && cfg.Mydumper.StrictFormat && dataFileSize > int64(cfg.Mydumper.MaxRegionSize+cfg.Mydumper.MaxRegionSize/largeCSVLowerThresholdRation) {
-		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, sizePerRow, 0, ioWorkers, store)
+		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
 		return regions, subFileSizes, err
 	}
 
@@ -294,7 +294,7 @@ func makeSourceFileRegion(
 			Offset:       0,
 			EndOffset:    fi.FileMeta.FileSize,
 			PrevRowIDMax: 0,
-			RowIDMax:     fi.FileMeta.FileSize / sizePerRow,
+			RowIDMax:     fi.FileMeta.FileSize / divisor,
 		},
 	}
 
@@ -313,7 +313,9 @@ func sampleAndGetAvgRowSize(
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
 ) (int64, error) {
-	reader, err := store.Open(context.Background(), fileInfo.FileMeta.Path)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	reader, err := store.Open(ctx, fileInfo.FileMeta.Path)
 	if err != nil {
 		return 0, nil
 	}

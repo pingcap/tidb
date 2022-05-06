@@ -40,6 +40,8 @@ import (
 */
 func TestTableRegion(t *testing.T) {
 	cfg := newConfigWithSourceDir("./examples")
+	// specify ReadBlockSize because we need to sample files
+	cfg.Mydumper.ReadBlockSize = config.ReadBlockSize
 	loader, _ := NewMyDumpLoader(context.Background(), cfg)
 	dbMeta := loader.GetDatabases()[0]
 
