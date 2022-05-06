@@ -88,12 +88,25 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType) (flo
 	p.planCost = 0
 	// child's cost
 	for _, child := range []PhysicalPlan{p.indexPlan, p.tablePlan} {
-		childCost, err := child.GetPlanCost(taskType)
+		childCost, err := child.GetPlanCost(property.CopDoubleReadTaskType)
 		if err != nil {
 			return 0, err
 		}
 		p.planCost += childCost
 	}
+
+	// to keep compatible with the previous cost implementation, re-calculate table-scan cost by using index stats-count again (see copTask.finishIndexPlan).
+	// TODO: amend table-side cost here later
+	var tmp PhysicalPlan
+	for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
+	}
+	ts := tmp.(*PhysicalTableScan)
+	tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType)
+	if err != nil {
+		return 0, err
+	}
+	p.planCost -= tblCost
+	p.planCost += p.indexPlan.StatsCount() * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
 
 	// index-side net I/O cost: rows * row-size * net-factor
 	netFactor := getTableNetFactor(p.tablePlan)

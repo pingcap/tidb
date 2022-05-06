@@ -36,8 +36,8 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
-	"modernc.org/mathutil"
 )
 
 type CheckpointStatus uint8
@@ -462,7 +462,7 @@ type RebaseCheckpointMerger struct {
 
 func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.hasRebase = true
-	cpd.allocBase = mathutil.MaxInt64(cpd.allocBase, merger.AllocBase)
+	cpd.allocBase = mathutil.Max(cpd.allocBase, merger.AllocBase)
 }
 
 type DestroyedTableCheckpoint struct {
