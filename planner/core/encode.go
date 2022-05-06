@@ -33,6 +33,12 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	if len(flat.Main) == 0 {
 		return ""
 	}
+	if flat.InExecute {
+		return ""
+	}
+	if !flat.Main[0].IsPhysicalPlan {
+		return ""
+	}
 	for _, op := range flat.Main {
 		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
 		analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoFromExplainedOp(op)
@@ -214,6 +220,9 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	var buf bytes.Buffer
 	selectPlan := flat.Main.GetSelectPlan()
 	if len(selectPlan) == 0 {
+		return "", parser.NewDigest(nil)
+	}
+	if !selectPlan[0].IsPhysicalPlan {
 		return "", parser.NewDigest(nil)
 	}
 	for _, op := range selectPlan {

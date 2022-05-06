@@ -35,7 +35,11 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 		nodeTp = utilhint.TypeDelete
 	}
 	var hints []*ast.TableOptimizerHint
-	for _, op := range flat.Main.GetSelectPlan() {
+	selectPlan := flat.Main.GetSelectPlan()
+	if !selectPlan[0].IsPhysicalPlan {
+		return nil
+	}
+	for _, op := range selectPlan {
 		p := op.Origin.(PhysicalPlan)
 		hints = genHintsFromSingle(p, nodeTp, hints)
 	}
@@ -156,7 +160,7 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.recursivePartPhysicalPlan, nodeType)...)
 	}
 
-	return genHintsFromSingle(p, nodeType, nil)
+	return genHintsFromSingle(p, nodeType, res)
 }
 
 func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {

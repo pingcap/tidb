@@ -28,8 +28,10 @@ type FlatPhysicalPlan struct {
 	Main FlatPlanTree
 	CTEs []FlatPlanTree
 
-	ctesToFlatten []*PhysicalCTE
+	// InExecute means if the plan tree contains Execute. It's useful for some special case.
+	InExecute bool
 
+	ctesToFlatten []*PhysicalCTE
 	// We'll need the session to get the runtime stats.
 	stmtCtx *stmtctx.StatementContext
 }
@@ -158,8 +160,10 @@ func FlattenPhysicalPlan(p Plan, stmtCtx *stmtctx.StatementContext) *FlatPhysica
 
 func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
 	explainID := p.ExplainID().String()
-	// Explain operator doesn't have a meaningful explain ID. It's explain ID is "_0", we skip such operator.
-	if explainID == "_0" {
+	// Some operators are not inited and given an ExplainID. So their explain IDs are "_0"
+	// (when in EXPLAIN FORMAT = 'brief' it will be ""), we skip such operators.
+	// Examples: Explain, Execute
+	if explainID == "_0" || explainID == "" {
 		return nil
 	}
 	res := &FlatOperator{
@@ -328,6 +332,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			target = f.flattenRecursively(plan.SelectPlan, childInfo, target)
 		}
 	case *Execute:
+		f.InExecute = true
 		if plan.Plan != nil {
 			childInfo.isRoot = true
 			childInfo.indent = info.indent
