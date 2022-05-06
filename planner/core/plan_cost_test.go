@@ -388,7 +388,7 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 		for _, q := range queries {
 			checkCost(t, tk, q, fmt.Sprintf("allowMPP=%v", allowMPP))
 		}
-  }
+	}
 }
 
 func TestNewCostInterfaceRandGen(t *testing.T) {
