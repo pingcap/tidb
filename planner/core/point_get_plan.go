@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
@@ -80,6 +80,12 @@ type PointGetPlan struct {
 	partitionColumnPos int
 	Columns            []*model.ColumnInfo
 	cost               float64
+
+	// required by cost model
+	planCostInit bool
+	planCost     float64
+	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
+	accessCols []*expression.Column
 }
 
 type nameValuePair struct {
@@ -256,7 +262,11 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 }
 
 // GetCost returns cost of the PointGetPlan.
-func (p *PointGetPlan) GetCost(cols []*expression.Column) float64 {
+func (p *PointGetPlan) GetCost() float64 {
+	cols := p.accessCols
+	if cols == nil {
+		return 0 // the cost of PointGet generated in fast plan optimization is always 0
+	}
 	sessVars := p.ctx.GetSessionVars()
 	var rowSize float64
 	cost := 0.0
@@ -305,6 +315,12 @@ type BatchPointGetPlan struct {
 	SinglePart bool
 	// PartTblID is the table ID for the specific table partition.
 	PartTblID int64
+
+	// required by cost model
+	planCostInit bool
+	planCost     float64
+	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
+	accessCols []*expression.Column
 }
 
 // Cost implements PhysicalPlan interface
@@ -444,7 +460,11 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 }
 
 // GetCost returns cost of the PointGetPlan.
-func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
+func (p *BatchPointGetPlan) GetCost() float64 {
+	cols := p.accessCols
+	if cols == nil {
+		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
+	}
 	sessVars := p.ctx.GetSessionVars()
 	var rowSize, rowCount float64
 	cost := 0.0
@@ -1631,7 +1651,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		for i, pair := range pairs {
 			if partitionColName.Name.L == pair.colName {
 				val := pair.value.GetInt64()
-				pos := math.Abs(val % int64(pi.Num))
+				pos := mathutil.Abs(val % int64(pi.Num))
 				return &pi.Definitions[pos], i, false
 			}
 		}

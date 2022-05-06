@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/logutil"
-	tidbMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
 )
 
@@ -2283,45 +2283,45 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 	}
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxValueSeconds*1000 {
+		if strictCheck && mathutil.Abs(riv) > TimeMaxValueSeconds*1000 {
 			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / int64(GoDurationDay/gotime.Microsecond)
 		riv %= int64(GoDurationDay / gotime.Microsecond)
 		return 0, 0, dayCount, riv * int64(gotime.Microsecond), err
 	case "SECOND":
-		if strictCheck && tidbMath.Abs(iv) > TimeMaxValueSeconds {
+		if strictCheck && mathutil.Abs(iv) > TimeMaxValueSeconds {
 			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := iv / int64(GoDurationDay/gotime.Second)
 		iv %= int64(GoDurationDay / gotime.Second)
 		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), err
 	case "MINUTE":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour*60+TimeMaxMinute {
+		if strictCheck && mathutil.Abs(riv) > TimeMaxHour*60+TimeMaxMinute {
 			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / int64(GoDurationDay/gotime.Minute)
 		riv %= int64(GoDurationDay / gotime.Minute)
 		return 0, 0, dayCount, riv * int64(gotime.Minute), err
 	case "HOUR":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour {
+		if strictCheck && mathutil.Abs(riv) > TimeMaxHour {
 			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / 24
 		riv %= 24
 		return 0, 0, dayCount, riv * int64(gotime.Hour), err
 	case "DAY":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour/24 {
+		if strictCheck && mathutil.Abs(riv) > TimeMaxHour/24 {
 			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		return 0, 0, riv, 0, err
 	case "WEEK":
-		if strictCheck && 7*tidbMath.Abs(riv) > TimeMaxHour/24 {
+		if strictCheck && 7*mathutil.Abs(riv) > TimeMaxHour/24 {
 			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		return 0, 0, 7 * riv, 0, err
 	case "MONTH":
-		if strictCheck && tidbMath.Abs(riv) > 1 {
+		if strictCheck && mathutil.Abs(riv) > 1 {
 			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		return 0, riv, 0, 0, err
@@ -2409,11 +2409,11 @@ func parseAndValidateDurationValue(format string, index, cnt int) (int64, error)
 	if err != nil {
 		return 0, err
 	}
-	if year != 0 || month != 0 || tidbMath.Abs(day) > TimeMaxHour/24 {
+	if year != 0 || month != 0 || mathutil.Abs(day) > TimeMaxHour/24 {
 		return 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	}
 	dur := day*int64(GoDurationDay) + nano
-	if tidbMath.Abs(dur) > int64(MaxTime) {
+	if mathutil.Abs(dur) > int64(MaxTime) {
 		return 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	}
 	return dur, nil

@@ -446,7 +446,7 @@ rowLoop:
 			switch {
 			case err == nil:
 				continue rowLoop
-			case utils.IsRetryableError(err):
+			case common.IsRetryableError(err):
 				// retry next loop
 			case be.errorMgr.TypeErrorsRemain() > 0:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
@@ -562,7 +562,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 					return errors.Trace(err)
 				}
 				// Retry the non-batch insert here if this is not the last retry.
-				if utils.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
+				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
 					continue
 				}
 				firstRow := stmtTask.rows[0]
