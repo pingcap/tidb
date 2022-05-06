@@ -22,7 +22,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )

@@ -29,7 +29,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -57,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -2257,7 +2257,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		})
 		collector.CalcTotalSize()
 		// Adjust the row count in case the count of `tblStats` is not accurate and too small.
-		rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
+		rowCount = mathutil.Max(rowCount, int64(len(collector.Samples)))
 		// Scale the total column size.
 		if len(collector.Samples) > 0 {
 			collector.TotalSize *= rowCount / int64(len(collector.Samples))
