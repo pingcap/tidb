@@ -318,6 +318,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 		return task, nil
 	}
 
+	// The previous task has been processed, so release the occupied memory
 	if task != nil {
 		task.memTracker.Detach()
 	}
