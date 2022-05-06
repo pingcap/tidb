@@ -370,7 +370,7 @@ type analyzeTask struct {
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
-var errAnalyzeOOM = errors.Errorf("analyze panic due to memory quota exceeds, please try with smaller samplerate(refer to %d/count).", config.DefRowsForSampleRate)
+var errAnalyzeOOM = errors.Errorf("analyze panic due to memory quota exceeds, please try with smaller samplerate(refer to %d/count)", config.DefRowsForSampleRate)
 
 func isAnalyzeWorkerPanic(err error) bool {
 	return err == errAnalyzeWorkerPanic || err == errAnalyzeOOM
