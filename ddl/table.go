@@ -408,12 +408,17 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
-		job.SchemaState = model.StateWriteOnly
-		tblInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, false)
+		failpoint.Inject("recoverTableMockError", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(ver, errors.New("recoverTableMockError"))
+			}
+		})
+		ver, err = updateSchemaVersion(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		job.SchemaState = model.StateWriteOnly
+		tblInfo.State = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> public
 		// do recover table.
@@ -449,8 +454,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		tblInfo.State = model.StatePublic
-		tblInfo.UpdateTS = t.StartTS
 		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoIncID, autoRandID)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -469,11 +472,18 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 
 		job.CtxVars = []interface{}{tids}
+		failpoint.Inject("recoverTableMockError", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(ver, errors.New("recoverTableMockError"))
+			}
+		})
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
+		tblInfo.State = model.StatePublic
+		tblInfo.UpdateTS = t.StartTS
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
