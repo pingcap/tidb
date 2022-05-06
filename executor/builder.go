@@ -27,7 +27,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -62,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -699,7 +699,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 	if b.err != nil {
 		return nil
 	}
-	n := int(mathutil.MinUint64(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
+	n := int(mathutil.Min(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	base.initCap = n
 	e := &LimitExec{

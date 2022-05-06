@@ -1443,10 +1443,8 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
 		s.sessionVars.InRestrictedSQL = origin
-		if topsqlstate.TopSQLEnabled() {
-			//  Restore the goroutine label by using the original ctx after execution is finished.
-			pprof.SetGoroutineLabels(ctx)
-		}
+		// Restore the goroutine label by using the original ctx after execution is finished.
+		pprof.SetGoroutineLabels(ctx)
 	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -1660,9 +1658,7 @@ func ParseWithParams4Test(ctx context.Context, s Session,
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
-	if topsqlstate.TopSQLEnabled() {
-		defer pprof.SetGoroutineLabels(ctx)
-	}
+	defer pprof.SetGoroutineLabels(ctx)
 	execOption := sqlexec.GetExecOption(opts)
 	var se *session
 	var clean func()
@@ -1831,9 +1827,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		if topsqlstate.TopSQLEnabled() {
-			defer pprof.SetGoroutineLabels(ctx)
-		}
+		defer pprof.SetGoroutineLabels(ctx)
 		startTime := time.Now()
 		metrics.SessionRestrictedSQLCounter.Inc()
 		ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
