@@ -591,7 +591,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		if i >= len(cols) {
 			if e.FieldMappings[i].Column == nil {
 				sessionVars := e.Ctx.GetSessionVars()
-				sessionVars.SetUserVar(strings.ToLower(e.FieldMappings[i].UserVar.Name), "", mysql.DefaultCollationName)
+				sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, "", mysql.DefaultCollationName)
 				continue
 			}
 
@@ -607,7 +607,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 
 		if e.FieldMappings[i].Column == nil {
 			sessionVars := e.Ctx.GetSessionVars()
-			sessionVars.SetUserVar(strings.ToLower(e.FieldMappings[i].UserVar.Name), string(cols[i].str), mysql.DefaultCollationName)
+			sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, string(cols[i].str), mysql.DefaultCollationName)
 			continue
 		}
 
