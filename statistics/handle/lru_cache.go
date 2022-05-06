@@ -250,6 +250,7 @@ func (s *statsInnerCache) Copy() statsCacheInner {
 	for tblID, element := range s.elements {
 		newCache.elements[tblID] = element
 	}
+	newCache.lru.onEvict = newCache.onEvict
 	return newCache
 }
 
