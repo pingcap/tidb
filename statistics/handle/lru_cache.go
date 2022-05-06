@@ -281,6 +281,7 @@ func (c *innerItemLruCache) get(tblID, id int64) (*lruCacheItem, bool) {
 	if !ok {
 		return nil, false
 	}
+	c.cache.MoveToFront(ele)
 	return ele.Value.(*lruCacheItem), true
 }
 
