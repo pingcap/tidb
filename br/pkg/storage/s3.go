@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
@@ -52,6 +53,7 @@ const (
 
 	// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
 	hardcodedS3ChunkSize = 5 * 1024 * 1024
+	defaultRegion        = "us-east-1"
 )
 
 var permissionCheckFn = map[Permission]func(*s3.S3, *backuppb.S3) error{
@@ -129,7 +131,7 @@ type S3BackendOptions struct {
 // Apply apply s3 options on backuppb.S3.
 func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	if options.Region == "" {
-		options.Region = "us-east-1"
+		options.Region = defaultRegion
 	}
 	if options.Endpoint != "" {
 		u, err := url.Parse(options.Endpoint)
@@ -285,6 +287,23 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	}
 
 	c := s3.New(ses)
+	region, err := s3manager.GetBucketRegionWithClient(context.TODO(), c, qs.Bucket)
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
+	}
+
+	if qs.Region != region {
+		log.Warn("bucket region from input is not equal to bucket region from s3",
+			zap.String("input bucket region", qs.Region),
+			zap.String("real s3 bucket region", region))
+
+		qs.Region = region
+		awsConfig.WithRegion(region)
+		c = s3.New(ses, awsConfig)
+	} else {
+		log.Info("succeed to get bucket region from s3", zap.String("bucket region", region))
+	}
+
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
 	}
