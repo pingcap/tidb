@@ -17,7 +17,6 @@ package owner
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"strconv"
 	"sync"
@@ -26,7 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -64,11 +63,7 @@ type Manager interface {
 }
 
 const (
-	// NewSessionDefaultRetryCnt is the default retry times when create new session.
-	NewSessionDefaultRetryCnt = 3
-	// NewSessionRetryUnlimited is the unlimited retry times when create new session.
-	NewSessionRetryUnlimited = math.MaxInt64
-	keyOpDefaultTimeout      = 5 * time.Second
+	keyOpDefaultTimeout = 5 * time.Second
 )
 
 // DDLOwnerChecker is used to check whether tidb is owner.
@@ -145,55 +140,11 @@ func setManagerSessionTTL() error {
 	return nil
 }
 
-// NewSession creates a new etcd session.
-func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
-	var err error
-
-	var etcdSession *concurrency.Session
-	failedCnt := 0
-	for i := 0; i < retryCnt; i++ {
-		if err = contextDone(ctx, err); err != nil {
-			return etcdSession, errors.Trace(err)
-		}
-
-		failpoint.Inject("closeClient", func(val failpoint.Value) {
-			if val.(bool) {
-				if err := etcdCli.Close(); err != nil {
-					failpoint.Return(etcdSession, errors.Trace(err))
-				}
-			}
-		})
-
-		failpoint.Inject("closeGrpc", func(val failpoint.Value) {
-			if val.(bool) {
-				if err := etcdCli.ActiveConnection().Close(); err != nil {
-					failpoint.Return(etcdSession, errors.Trace(err))
-				}
-			}
-		})
-
-		startTime := time.Now()
-		etcdSession, err = concurrency.NewSession(etcdCli,
-			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))
-		metrics.NewSessionHistogram.WithLabelValues(logPrefix, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-		if err == nil {
-			break
-		}
-		if failedCnt%logIntervalCnt == 0 {
-			logutil.BgLogger().Warn("failed to new session to etcd", zap.String("ownerInfo", logPrefix), zap.Error(err))
-		}
-
-		time.Sleep(newSessionRetryInterval)
-		failedCnt++
-	}
-	return etcdSession, errors.Trace(err)
-}
-
 // CampaignOwner implements Manager.CampaignOwner interface.
 func (m *ownerManager) CampaignOwner() error {
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
 	logutil.BgLogger().Info("start campaign owner", zap.String("ownerInfo", logPrefix))
-	session, err := NewSession(m.ctx, logPrefix, m.etcdCli, NewSessionDefaultRetryCnt, ManagerSessionTTL)
+	session, err := util.NewSession(m.ctx, logPrefix, m.etcdCli, util.NewSessionDefaultRetryCnt, ManagerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -253,7 +204,7 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 		case <-etcdSession.Done():
 			logutil.Logger(logCtx).Info("etcd session is done, creates a new one")
 			leaseID := etcdSession.Lease()
-			etcdSession, err = NewSession(ctx, logPrefix, m.etcdCli, NewSessionRetryUnlimited, ManagerSessionTTL)
+			etcdSession, err = util.NewSession(ctx, logPrefix, m.etcdCli, util.NewSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
 				logutil.Logger(logCtx).Info("break campaign loop, NewSession failed", zap.Error(err))
 				m.revokeSession(logPrefix, leaseID)

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
@@ -69,7 +68,7 @@ func TestTopology(t *testing.T) {
 	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, false)
 	require.NoError(t, err)
 
-	err = info.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	err = info.newTopologySessionAndStoreServerInfo(ctx, util.NewSessionDefaultRetryCnt)
 	require.NoError(t, err)
 
 	topology, err := info.getTopologyFromEtcd(ctx)
@@ -84,7 +83,7 @@ func TestTopology(t *testing.T) {
 	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
 	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.info.IP, info.info.Port)
 
-	err = util.DeleteKeyFromEtcd(nonTTLKey, client, owner.NewSessionDefaultRetryCnt, time.Second)
+	err = util.DeleteKeyFromEtcd(nonTTLKey, client, util.NewSessionDefaultRetryCnt, time.Second)
 	require.NoError(t, err)
 
 	// Refresh and re-test if the key exists
@@ -107,7 +106,7 @@ func TestTopology(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ttlExists)
 
-	err = util.DeleteKeyFromEtcd(ttlKey, client, owner.NewSessionDefaultRetryCnt, time.Second)
+	err = util.DeleteKeyFromEtcd(ttlKey, client, util.NewSessionDefaultRetryCnt, time.Second)
 	require.NoError(t, err)
 
 	err = info.updateTopologyAliveness(ctx)
