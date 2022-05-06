@@ -968,3 +968,29 @@ func TestTiDBQueryLogMaxLen(t *testing.T) {
 	require.Equal(t, val, fmt.Sprintf("%d", expected))
 	require.NoError(t, err)
 }
+
+func TestTiDBTxnTotalSizeLimit(t *testing.T) {
+	sv := GetSysVar(TiDBTxnTotalSizeLimit)
+	vars := NewSessionVars()
+
+	newVal := 10485760
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, "10485760", val)
+	require.NoError(t, err)
+
+	// out of range
+	newVal = 1099511627777
+	expected := 1099511627776
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, fmt.Sprintf("%d", expected), val)
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 1024
+	expected = 10485760
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, fmt.Sprintf("%d", expected), val)
+	require.Error(t, err)
+}
