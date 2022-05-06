@@ -2873,7 +2873,7 @@ func TestTiDBIsOwnerFunc(t *testing.T) {
 	ddlOwnerChecker := tk.Session().DDLOwnerChecker()
 	require.NotNil(t, ddlOwnerChecker)
 	var ret int64
-	if ddlOwnerChecker.IsOwner() {
+	if ddlOwnerChecker.IsDDLOwner() {
 		ret = 1
 	}
 	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))

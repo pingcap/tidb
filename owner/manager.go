@@ -59,6 +59,8 @@ type Manager interface {
 	ResignOwner(ctx context.Context) error
 	// Cancel cancels this etcd ownerManager campaign.
 	Cancel()
+	// RequireOwner requires the ownerManager is owner.
+	RequireOwner(ctx context.Context) error
 }
 
 const (
@@ -119,6 +121,11 @@ func (m *ownerManager) IsOwner() bool {
 func (m *ownerManager) Cancel() {
 	m.cancel()
 	m.wg.Wait()
+}
+
+// RequireOwner implements Manager.Cancel interface.
+func (m *ownerManager) RequireOwner(ctx context.Context) error {
+	return nil
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
