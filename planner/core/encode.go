@@ -36,7 +36,8 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	if flat.InExecute {
 		return ""
 	}
-	if !flat.Main[0].IsPhysicalPlan {
+	selectPlan := flat.Main.GetSelectPlan()
+	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return ""
 	}
 	for _, op := range flat.Main {
