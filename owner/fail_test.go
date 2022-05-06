@@ -75,9 +75,9 @@ func TestFailNewSession(t *testing.T) {
 			if cli != nil {
 				_ = cli.Close()
 			}
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeClient"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/util/closeClient"))
 		}()
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/util/closeClient", `return(true)`))
 
 		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
 		// The config is hard coded, not way to control it outside.
@@ -100,9 +100,9 @@ func TestFailNewSession(t *testing.T) {
 			if cli != nil {
 				_ = cli.Close()
 			}
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeGrpc"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/util/closeGrpc"))
 		}()
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/util/closeGrpc", `return(true)`))
 
 		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
 		// The config is hard coded, not way to control it outside.
