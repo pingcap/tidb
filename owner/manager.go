@@ -34,12 +34,6 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-)
-
-const (
-	newSessionRetryInterval = 200 * time.Millisecond
-	logIntervalCnt          = int(3 * time.Second / newSessionRetryInterval)
 )
 
 // Manager is used to campaign the owner and manage the owner information.
@@ -329,22 +323,4 @@ func init() {
 	if err != nil {
 		logutil.BgLogger().Warn("set manager session TTL failed", zap.Error(err))
 	}
-}
-
-func contextDone(ctx context.Context, err error) error {
-	select {
-	case <-ctx.Done():
-		return errors.Trace(ctx.Err())
-	default:
-	}
-	// Sometime the ctx isn't closed, but the etcd client is closed,
-	// we need to treat it as if context is done.
-	// TODO: Make sure ctx is closed with etcd client.
-	if terror.ErrorEqual(err, context.Canceled) ||
-		terror.ErrorEqual(err, context.DeadlineExceeded) ||
-		terror.ErrorEqual(err, grpc.ErrClientConnClosing) {
-		return errors.Trace(err)
-	}
-
-	return nil
 }
