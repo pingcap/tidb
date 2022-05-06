@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -297,6 +296,8 @@ func TestSchemaWaitJob(t *testing.T) {
 
 	// d2 must not be owner.
 	d2.OwnerManager().RetireOwner()
+	// wait one-second makes d2 stop pick up jobs.
+	time.Sleep(1 * time.Second)
 
 	dbInfo, err := testSchemaInfo(store, "test_schema")
 	require.NoError(t, err)
@@ -310,7 +311,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	schemaID := genIDs[0]
-	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, se, d2, store)
+	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
 }
 
 func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, d ddl.DDL, store kv.Storage) *model.Job {
@@ -322,6 +323,7 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	// TODO: check error detail
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.Error(t, d.DoDDLJob(ctx, job))
 	testCheckJobCancelled(t, store, job, nil)
 
@@ -329,8 +331,7 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 }
 
 func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state *model.SchemaState) {
-	se := mock.NewContext()
-	se.Store = store
+	se := testkit.NewTestKit(t, store).Session()
 	historyJob, err := ddl.GetHistoryJobFromStore(se, store, job.ID)
 	require.NoError(t, err)
 	require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)

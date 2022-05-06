@@ -51,6 +51,7 @@ func TestDDLStatsInfo(t *testing.T) {
 	require.NoError(t, err)
 	_, err = m.AddRecord(ctx, types.MakeDatums(3, 3))
 	require.NoError(t, err)
+	ctx.StmtCommit()
 	require.NoError(t, ctx.CommitTxn(context.Background()))
 
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "idx", "c1")
@@ -60,6 +61,7 @@ func TestDDLStatsInfo(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
 	}()
 
+	ctx = testkit.NewTestKit(t, store).Session()
 	done := make(chan error, 1)
 	go func() {
 		ctx.SetValue(sessionctx.QueryString, "skip")
@@ -78,7 +80,7 @@ func TestDDLStatsInfo(t *testing.T) {
 			varMap, err := d.Stats(nil)
 			wg.Done()
 			require.NoError(t, err)
-			require.Equal(t, varMap[ddlJobReorgHandle], "1")
+			require.Equal(t, "1", varMap[ddlJobReorgHandle])
 		}
 	}
 }

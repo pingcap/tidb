@@ -93,6 +93,45 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
+// GetDDLInfoFromTable returns DDL information for new ddl framework.
+func GetDDLInfoFromTable(txn kv.Transaction, sess sessionctx.Context) (*DDLInfo, error) {
+	info := &DDLInfo{}
+	jobs, err := getJobsBySQL(sess, "tidb_ddl_job", "not reorg order by job_id limit 1", nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(jobs) != 0 {
+		info.Jobs = append(info.Jobs, jobs[0])
+	}
+	jobs, err = getJobsBySQL(sess, "tidb_ddl_job", "reorg order by job_id limit 1", nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(jobs) != 0 {
+		info.Jobs = append(info.Jobs, jobs[0])
+	}
+
+	t := meta.NewMeta(txn)
+	info.SchemaVer, err = t.GetSchemaVersion()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(jobs) == 0 {
+		return info, nil
+	}
+
+	_, info.ReorgHandle, _, _, err = GetDDLReorgHandle(jobs[0], sess)
+	if err != nil {
+		if meta.ErrDDLReorgElementNotExist.Equal(err) {
+			return info, nil
+		}
+		return nil, errors.Trace(err)
+	}
+
+	return info, nil
+}
+
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
