@@ -32,6 +32,8 @@ const (
 	// EnterNewTxnWithBeginStmt indicates to enter a new txn when execute 'BEGIN' or 'START TRANSACTION'
 	EnterNewTxnWithBeginStmt
 	// EnterNewTxnBeforeStmt indicates to enter a new txn before each statement when the txn is not present
+	// If `EnterNewTxnBeforeStmt` is used, the new txn will always act as the 'lazy' mode. That means the inner transaction
+	// is only activated when needed to reduce unnecessary overhead.
 	EnterNewTxnBeforeStmt
 	// EnterNewTxnWithReplaceProvider indicates to replace the current provider. Now only stale read are using this
 	EnterNewTxnWithReplaceProvider

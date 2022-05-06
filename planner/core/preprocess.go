@@ -1687,6 +1687,8 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 	}
 
 	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
+		// When the current provider is `legacy.SimpleTxnContextProvider` it should to keep the logic equals to the old implement.
+		// After refactoring, the `legacy.SimpleTxnContextProvider` will be removed, and this code will be removed too.
 		provider.InfoSchema = p.ensureInfoSchema()
 	}
 }

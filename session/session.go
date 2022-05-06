@@ -2363,12 +2363,12 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 
-	txManager := sessiontxn.GetTxnManager(s)
+	txnManager := sessiontxn.GetTxnManager(s)
 	if staleReadProcessor.IsStaleness() {
 		snapshotTS = staleReadProcessor.GetStalenessReadTS()
 		is = staleReadProcessor.GetStalenessInfoSchema()
 		replicaReadScope = config.GetTxnScopeFromConfig()
-		err = txManager.EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+		err = txnManager.EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
 			Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
 			Provider: staleread.NewStalenessTxnContextProvider(s, snapshotTS, is),
 		})
@@ -2391,18 +2391,18 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
 
-	if err = txManager.OnStmtStart(ctx); err != nil {
+	if err = txnManager.OnStmtStart(ctx); err != nil {
 		return nil, err
 	}
 
-	if p, isOK := txManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); isOK {
+	if p, isOK := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); isOK {
 		p.InfoSchema = is
 	}
 
 	if ok {
-		return s.cachedPlanExec(ctx, txManager.GetTxnInfoSchema(), stmtID, preparedStmt, replicaReadScope, args)
+		return s.cachedPlanExec(ctx, txnManager.GetTxnInfoSchema(), stmtID, preparedStmt, replicaReadScope, args)
 	}
-	return s.preparedStmtExec(ctx, txManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, replicaReadScope, args)
+	return s.preparedStmtExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, replicaReadScope, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
