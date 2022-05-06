@@ -2083,6 +2083,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		is := s.GetInfoSchema().(infoschema.InfoSchema)
 		if prepared.SchemaVersion != is.SchemaMetaVersion() {
 			prepared.CachedPlan = nil
+			preparedStmt.ColumnInfos = nil
 			return false, nil
 		}
 	}
