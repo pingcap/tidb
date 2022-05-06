@@ -166,7 +166,7 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (ncu *NewClusterIndexUsage
 	}
 
 	// check ClusterIndex information for each table
-	// row: 0 = table_name_hash, 1 = TIDB_PK_TYPE, 2 = TABLE_SCHEMA (db), 3 = TABLE_NAME
+	// row: 0 = TIDB_PK_TYPE
 	for _, row := range rows {
 		if row.Len() < 1 {
 			continue
