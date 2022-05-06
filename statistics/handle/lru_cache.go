@@ -262,12 +262,10 @@ func (s *statsInnerCache) onEvict(tblID int64) {
 }
 
 func (s *statsInnerCache) freshTableCost(tblID int64, element *lruMapElement) {
-	newTblMem := element.tbl.MemoryUsage()
-	for idxID, idx := range element.tbl.Indices {
-		s.lru.put(tblID, idxID, idx, newTblMem.IndicesMemUsage[idxID], true, false)
-	}
-	// tbl mem usage might be changed due to evict
 	element.tblMemUsage = element.tbl.MemoryUsage()
+	for idxID, idx := range element.tbl.Indices {
+		s.lru.put(tblID, idxID, idx, element.tblMemUsage.IndicesMemUsage[idxID], true, false)
+	}
 }
 
 func (s *statsInnerCache) capacity() int64 {
