@@ -89,6 +89,9 @@ func newCheckSumCommand() *cobra.Command {
 				if err != nil {
 					return errors.Trace(err)
 				}
+				if schema.Table == nil {
+					continue
+				}
 				tblInfo := &model.TableInfo{}
 				err = json.Unmarshal(schema.Table, tblInfo)
 				if err != nil {
