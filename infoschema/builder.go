@@ -111,6 +111,31 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			return nil, errors.Trace(err)
 		}
 	}
+	if diff.AffectedOpts != nil {
+		for _, opt := range diff.AffectedOpts {
+			// Reduce the impact on DML when executing partition DDL. eg.
+			// While session 1 performs the DML operation associated with partition 1,
+			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
+			if diff.Type == model.ActionTruncateTablePartition {
+				tblIDs = append(tblIDs, opt.OldTableID)
+				continue
+			}
+			var err error
+			affectedDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        diff.Type,
+				SchemaID:    opt.SchemaID,
+				TableID:     opt.TableID,
+				OldSchemaID: opt.OldSchemaID,
+				OldTableID:  opt.OldTableID,
+			}
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tblIDs = append(tblIDs, affectedIDs...)
+		}
+	}
 	return tblIDs, nil
 }
 
@@ -235,7 +260,9 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
-	affected = appendAffectedIDs(affected, tblInfo)
+	if tp != model.ActionTruncateTablePartition {
+		affected = appendAffectedIDs(affected, tblInfo)
+	}
 
 	// Failpoint check whether tableInfo should be added to repairInfo.
 	// Typically used in repair table test to load mock `bad` tableInfo into repairInfo.
