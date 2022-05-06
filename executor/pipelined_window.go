@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type dataInfo struct {
@@ -258,7 +258,7 @@ func (e *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
 	}
 	if e.isRangeFrame {
 		var start uint64
-		for start = mathutil.MaxUint64(e.lastStartRow, e.stagedStartRow); start < e.rowCnt; start++ {
+		for start = mathutil.Max(e.lastStartRow, e.stagedStartRow); start < e.rowCnt; start++ {
 			var res int64
 			var err error
 			for i := range e.orderByCols {
@@ -298,7 +298,7 @@ func (e *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
 	}
 	if e.isRangeFrame {
 		var end uint64
-		for end = mathutil.MaxUint64(e.lastEndRow, e.stagedEndRow); end < e.rowCnt; end++ {
+		for end = mathutil.Max(e.lastEndRow, e.stagedEndRow); end < e.rowCnt; end++ {
 			var res int64
 			var err error
 			for i := range e.orderByCols {
@@ -412,7 +412,7 @@ func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 		produced++
 		remained--
 	}
-	extend := mathutil.MinUint64Val(e.curRowIdx, e.lastEndRow, e.lastStartRow)
+	extend := mathutil.Min(e.curRowIdx, e.lastEndRow, e.lastStartRow)
 	if extend > e.rowStart {
 		numDrop := extend - e.rowStart
 		e.dropped += numDrop
