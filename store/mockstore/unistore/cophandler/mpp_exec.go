@@ -894,7 +894,7 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 		aggCtxs := e.getContexts(gk)
 		for i, agg := range e.aggExprs {
 			result := agg.GetResult(aggCtxs[i])
-			if e.fieldTypes[i].Tp == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
+			if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
 				var err error
 				result, err = result.ConvertTo(e.sc, e.fieldTypes[i])
 				if err != nil {

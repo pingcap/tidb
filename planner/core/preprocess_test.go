@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -362,5 +364,65 @@ func TestLargeVarcharAutoConv(t *testing.T) {
 	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	for i := range warns {
 		require.True(t, terror.ErrorEqual(warns[i].Err, dbterror.ErrAutoConvert))
+	}
+}
+
+func TestPreprocessCTE(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t, t1, t2;")
+	tk.MustExec("create table t  (c int);insert into t values (1), (2), (3), (4), (5);")
+	tk.MustExec("create table t1 (a int);insert into t1 values (0), (1), (2), (3), (4);")
+	tk.MustExec("create table t2 (b int);insert into t2 values (1), (2), (3), (4), (5);")
+	tk.MustExec("create table t11111 (d int);insert into t11111 values (1), (2), (3), (4), (5);")
+	tk.MustExec("drop table if exists tbl_1;\nCREATE TABLE `tbl_1` (\n  `col_2` char(65) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n  `col_3` int(11) NOT NULL\n);")
+	testCases := []struct {
+		before string
+		after  string
+	}{
+		{
+			"create view v1 as WITH t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1;",
+			"CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `test`.`v1` AS WITH `t1` AS (SELECT `a` FROM `test`.`t2` WHERE `t2`.`a`=3 UNION SELECT `t2`.`a`+1 FROM (`test`.`t1`) JOIN `test`.`t2` WHERE `t1`.`a`=`t2`.`a`) SELECT * FROM `t1`",
+		},
+		{
+			"WITH t1 AS ( SELECT(WITH t1 AS ( WITH qn AS ( SELECT 10 * a AS a FROM t1 ) SELECT 10 * a AS a FROM qn ) SELECT *  FROM t1  LIMIT 1  )  FROM t2  WHERE t2.b = 3 UNION SELECT t2.b + 1  FROM t1, t2 WHERE t1.a = t2.b) SELECT * FROM t1",
+			"WITH `t1` AS (SELECT (WITH `t1` AS (WITH `qn` AS (SELECT 10*`a` AS `a` FROM `test`.`t1`) SELECT 10*`a` AS `a` FROM `qn`) SELECT * FROM `t1` LIMIT 1) FROM `test`.`t2` WHERE `t2`.`b`=3 UNION SELECT `t2`.`b`+1 FROM (`test`.`t1`) JOIN `test`.`t2` WHERE `t1`.`a`=`t2`.`b`) SELECT * FROM `t1`",
+		},
+		{
+			"with recursive cte_8932 (col_34891,col_34892) AS ( with recursive cte_8932 (col_34893,col_34894,col_34895) AS ( with tbl_1 (col_34896,col_34897,col_34898,col_34899) AS ( select 1, \"2\",3,col_3 from tbl_1 ) select cte_as_8958.col_34896,cte_as_8958.col_34898,cte_as_8958.col_34899 from tbl_1 as cte_as_8958 UNION DISTINCT select col_34893 + 1,concat(col_34894, 1),col_34895 + 1 from cte_8932 where col_34893 < 5 ) select cte_as_8959.col_34893,cte_as_8959.col_34895 from cte_8932 as cte_as_8959 ) select * from cte_8932 as cte_as_8960 order by cte_as_8960.col_34891,cte_as_8960.col_34892;",
+			"WITH RECURSIVE `cte_8932` (`col_34891`, `col_34892`) AS (WITH RECURSIVE `cte_8932` (`col_34893`, `col_34894`, `col_34895`) AS (WITH `tbl_1` (`col_34896`, `col_34897`, `col_34898`, `col_34899`) AS (SELECT 1,_UTF8MB4'2',3,`col_3` FROM `test`.`tbl_1`) SELECT `cte_as_8958`.`col_34896`,`cte_as_8958`.`col_34898`,`cte_as_8958`.`col_34899` FROM `tbl_1` AS `cte_as_8958` UNION SELECT `col_34893`+1,CONCAT(`col_34894`, 1),`col_34895`+1 FROM `cte_8932` WHERE `col_34893`<5) SELECT `cte_as_8959`.`col_34893`,`cte_as_8959`.`col_34895` FROM `cte_8932` AS `cte_as_8959`) SELECT * FROM `cte_8932` AS `cte_as_8960` ORDER BY `cte_as_8960`.`col_34891`,`cte_as_8960`.`col_34892`",
+		},
+		{
+			"with t1 as (with t11 as (select * from t) select * from t1, t2) select * from t1;",
+			"WITH `t1` AS (WITH `t11` AS (SELECT * FROM `test`.`t`) SELECT * FROM (`test`.`t1`) JOIN `test`.`t2`) SELECT * FROM `t1`",
+		},
+		{
+			"with t1 as (with t1 as (select * from t) select * from t1, t2) select * from t1;",
+			"WITH `t1` AS (WITH `t1` AS (SELECT * FROM `test`.`t`) SELECT * FROM (`t1`) JOIN `test`.`t2`) SELECT * FROM `t1`",
+		},
+		{
+			"WITH t1 AS ( WITH t1 AS ( SELECT * FROM t ) SELECT ( WITH t2 AS ( SELECT * FROM t ) SELECT * FROM t limit 1 ) FROM t1, t2 ) \n\nSELECT\n* \nFROM\n\tt1;",
+			"WITH `t1` AS (WITH `t1` AS (SELECT * FROM `test`.`t`) SELECT (WITH `t2` AS (SELECT * FROM `test`.`t`) SELECT * FROM `test`.`t` LIMIT 1) FROM (`t1`) JOIN `test`.`t2`) SELECT * FROM `t1`",
+		},
+		{
+			"WITH t123 AS (WITH t11111 AS ( SELECT * FROM test.t1 ) SELECT ( WITH t2 AS ( SELECT ( WITH t23 AS ( SELECT * FROM t11111 ) SELECT * FROM t23 LIMIT 1 ) FROM t11111 ) SELECT *  FROM t2  LIMIT 1  )  FROM t11111, test.t2 ) SELECT * FROM t11111;",
+			"WITH `t123` AS (WITH `t11111` AS (SELECT * FROM `test`.`t1`) SELECT (WITH `t2` AS (SELECT (WITH `t23` AS (SELECT * FROM `t11111`) SELECT * FROM `t23` LIMIT 1) FROM `t11111`) SELECT * FROM `t2` LIMIT 1) FROM (`t11111`) JOIN `test`.`t2`) SELECT * FROM `test`.`t11111`",
+		},
+	}
+	for _, tc := range testCases {
+		stmts, warnings, err := parser.New().ParseSQL(tc.before)
+		require.Len(t, warnings, 0)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+
+		err = core.Preprocess(tk.Session(), stmts[0])
+		require.NoError(t, err)
+
+		var rs strings.Builder
+		err = stmts[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &rs))
+		require.NoError(t, err)
+		require.Equal(t, tc.after, rs.String())
 	}
 }

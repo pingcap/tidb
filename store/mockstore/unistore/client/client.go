@@ -15,10 +15,10 @@
 package client
 
 import (
+	"context"
 	"time"
 
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 // Client is a client that sends RPC.

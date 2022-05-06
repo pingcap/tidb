@@ -330,7 +330,7 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 31
+	result := 32
 	s.Require().Len(rows, result)
 
 	// More tests about the privileges.

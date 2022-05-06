@@ -48,9 +48,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"modernc.org/mathutil"
 )
 
 const (
@@ -590,8 +590,8 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 
 // hasDefault represents col has default value.
 func hasDefault(col *model.ColumnInfo) bool {
-	return col.DefaultIsExpr || col.DefaultValue != nil || !mysql.HasNotNullFlag(col.Flag) ||
-		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.Flag)
+	return col.DefaultIsExpr || col.DefaultValue != nil || !mysql.HasNotNullFlag(col.GetFlag()) ||
+		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.GetFlag())
 }
 
 func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.SourceFileMeta) (cols []string, row []types.Datum, err error) {
@@ -663,7 +663,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	core := info.Core
 	defaultCols := make(map[string]struct{})
 	for _, col := range core.Columns {
-		if hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.Flag)) {
+		if hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.GetFlag())) {
 			// this column has default value or it's auto random id, so we can ignore it
 			defaultCols[col.Name.L] = struct{}{}
 		}
@@ -1092,7 +1092,7 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 
 	var lock sync.Mutex
 	tableNames := make([]string, 0)
-	concurrency := utils.MinInt(tableCount, rc.cfg.App.RegionConcurrency)
+	concurrency := mathutil.Min(tableCount, rc.cfg.App.RegionConcurrency)
 	ch := make(chan string, concurrency)
 	eg, gCtx := errgroup.WithContext(ctx)
 

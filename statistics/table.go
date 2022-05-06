@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
@@ -671,7 +671,7 @@ func (coll *HistColl) getEqualCondSelectivity(sctx sessionctx.Context, idx *Inde
 				break
 			}
 			if col, ok := coll.Columns[colID]; ok {
-				ndv = mathutil.MaxInt64(ndv, col.Histogram.NDV)
+				ndv = mathutil.Max(ndv, col.Histogram.NDV)
 			}
 		}
 		return outOfRangeEQSelectivity(ndv, coll.Count, int64(idx.TotalRowCount())), nil
@@ -804,7 +804,7 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 			t.Columns[col.ID] = &Column{
 				PhysicalID: fakePhysicalID,
 				Info:       col,
-				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
 			}
 		}
