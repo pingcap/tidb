@@ -27,7 +27,7 @@ import (
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
-// InnerJoins to construct a join group. This join group is further used to
+// Joins to construct a join group. This join group is further used to
 // construct a new join order based on a reorder algorithm.
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
@@ -105,7 +105,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		}
 		originalSchema := p.Schema()
 
-		// Not support outer join reorder with pd
+		// Not support outer join reorder when using the DP algorithm
 		isSupportDP := true
 		for _, joinType := range joinTypes {
 			if joinType != InnerJoin {

@@ -199,7 +199,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	ctx := MockContext()
 	ctx.GetSessionVars().PlanID = -1
 
-	joinGroup := make([]LogicalPlan, 0, 6)
+	joinGroup := make([]LogicalPlan, 0, 4)
 	joinGroup = append(joinGroup, newDataSource(ctx, "a", 100))
 	joinGroup = append(joinGroup, newDataSource(ctx, "b", 100))
 	joinGroup = append(joinGroup, newDataSource(ctx, "c", 100))
