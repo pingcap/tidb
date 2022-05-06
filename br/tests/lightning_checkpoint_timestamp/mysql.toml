@@ -8,7 +8,7 @@ driver = "mysql"
 keep-after-success = true
 
 [tikv-importer]
-backend = "importer"
+backend = "local"
 
 [mydumper]
 read-block-size = 1
