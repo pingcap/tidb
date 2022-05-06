@@ -458,7 +458,7 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 }
 
 func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
-	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, nil)
+	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
 		m.StartVersion = s.cfg.StartTS
@@ -974,7 +974,7 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.RestoreTS == 0 {
+	if cfg.RestoreTS == 0 || cfg.RestoreTS == math.MaxUint64 {
 		cfg.RestoreTS = currentTS
 	}
 	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS)
@@ -990,19 +990,19 @@ func restoreStream(
 		return nil
 	}
 
-	// get full backup meta to generate rewrite rules.
-	fullBackupTables, err := initFullBackupTables(ctx, cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// read data file by given ts.
 	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// perform restore meta kv files
+	// get full backup meta to generate rewrite rules.
+	fullBackupTables, err := initFullBackupTables(ctx, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// get the schemas ID replace information.
 	schemasReplace, err := client.InitSchemasReplaceForDDL(&fullBackupTables, cfg.TableFilter)
 	if err != nil {
 		return errors.Trace(err)
@@ -1039,7 +1039,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to clean up")
 	}
 
-	if err = client.SaveSchemas(ctx, schemasReplace, logStartTS); err != nil {
+	if err = client.SaveSchemas(ctx, schemasReplace, logStartTS, cfg.RestoreTS); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1210,7 +1210,15 @@ func initFullBackupTables(
 		return nil, errors.Trace(err)
 	}
 
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
+	metaFileName := metautil.CreateMetaFileName(cfg.StartTS)
+	exist, err := s.FileExists(ctx, metaFileName)
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to check filename:%s ", metaFileName)
+	} else if !exist {
+		metaFileName = metautil.MetaFile
+	}
+
+	metaData, err := s.ReadFile(ctx, metaFileName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1302,7 +1310,8 @@ func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *s
 			}
 
 			if _, exist := rules[oldTableID]; !exist {
-				log.Info("add rewrite rule", zap.String("tableName", dbReplace.OldDBInfo.Name.O+"."+tableReplace.NewName),
+				log.Info("add rewrite rule",
+					zap.String("tableName", dbReplace.OldDBInfo.Name.O+"."+tableReplace.OldTableInfo.Name.O),
 					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.NewTableID))
 				rules[oldTableID] = restore.GetRewriteRuleOfTable(
 					oldTableID, tableReplace.NewTableID, 0, tableReplace.IndexMap, false)
@@ -1310,7 +1319,8 @@ func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *s
 
 			for oldID, newID := range tableReplace.PartitionMap {
 				if _, exist := rules[oldID]; !exist {
-					log.Info("add rewrite rule", zap.String("tableName", dbReplace.OldDBInfo.Name.O+"."+tableReplace.NewName),
+					log.Info("add rewrite rule",
+						zap.String("tableName", dbReplace.OldDBInfo.Name.O+"."+tableReplace.OldTableInfo.Name.O),
 						zap.Int64("oldID", oldID), zap.Int64("newID", newID))
 					rules[oldID] = restore.GetRewriteRuleOfTable(oldID, newID, 0, tableReplace.IndexMap, false)
 				}

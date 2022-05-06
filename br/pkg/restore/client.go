@@ -1737,7 +1737,6 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
 			OldTableInfo: t.Info,
 			NewTableID:   newTableInfo.ID,
-			NewName:      newTableInfo.Name.String(),
 			PartitionMap: getTableIDMap(newTableInfo, t.Info),
 			IndexMap:     getIndexIDMap(newTableInfo, t.Info),
 		}
@@ -1752,7 +1751,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 				zap.Int64("newID", dbReplace.NewDBID))
 			for oldTableID, tableReplace := range dbReplace.TableMap {
 				fields = append(fields,
-					zap.String("table", tableReplace.NewName),
+					zap.String("table", tableReplace.OldTableInfo.Name.String()),
 					zap.Int64("oldID", oldTableID),
 					zap.Int64("newID", tableReplace.NewTableID))
 			}
@@ -1771,10 +1770,17 @@ func (rc *Client) RestoreMetaKVFiles(
 	schemasReplace *stream.SchemasReplace,
 	progressInc func(),
 ) error {
+	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
+
+	// The k-v envets in default CF should be restored firstly. The reason is that:
+	// The error of transactions of meta will happen,
+	// if restore default CF events successfully, but failed to restore write CF events.
 	for _, f := range files {
-		log.Info("restore meta kv events", zap.String("file", f.Path),
-			zap.String("cf", f.Cf), zap.Int64(("kv-count"), f.NumberOfEntries),
-			zap.Uint64("min-ts", f.MinTs), zap.Uint64("max-ts", f.MaxTs))
+		if f.Cf == stream.WriteCF {
+			filesInWriteCF = append(filesInWriteCF, f)
+			continue
+		}
+
 		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
@@ -1782,6 +1788,16 @@ func (rc *Client) RestoreMetaKVFiles(
 		progressInc()
 	}
 
+	// Restore files in write CF.
+	for _, f := range filesInWriteCF {
+		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		progressInc()
+	}
+
+	// Update global schema version and report all of TiDBs.
 	if err := rc.UpdateSchemaVersion(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1795,6 +1811,10 @@ func (rc *Client) RestoreMetaKVFile(
 	file *backuppb.DataFileInfo,
 	sr *stream.SchemasReplace,
 ) error {
+	log.Info("restore meta kv events", zap.String("file", file.Path),
+		zap.String("cf", file.Cf), zap.Int64(("kv-count"), file.NumberOfEntries),
+		zap.Uint64("min-ts", file.MinTs), zap.Uint64("max-ts", file.MaxTs))
+
 	buff, err := rc.storage.ReadFile(ctx, file.Path)
 	if err != nil {
 		return errors.Trace(err)
@@ -1822,7 +1842,7 @@ func (rc *Client) RestoreMetaKVFile(
 		// We can restore more key-value in default CF.
 		if ts > rc.restoreTS {
 			continue
-		} else if file.Cf == "write" && ts < rc.startTS {
+		} else if file.Cf == stream.WriteCF && ts < rc.startTS {
 			continue
 		}
 
@@ -1934,15 +1954,17 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 func (rc *Client) SaveSchemas(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
-	logStartTs uint64,
+	logStartTS uint64,
+	restoreTS uint64,
 ) error {
-	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, nil)
+	metaFileName := metautil.CreateMetaFileName(restoreTS)
+	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
-		m.StartVersion = logStartTs
+		m.StartVersion = logStartTS
 	})
 
-	schemas := sr.TranslateToSchema()
+	schemas := sr.TidyOldSchemas()
 	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
 	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
