@@ -2560,8 +2560,8 @@ type gcMemMap struct {
 	memMap map[*memory.Tracker]int64
 }
 
-func newGCMemMap() gcMemMap {
-	gcMap := gcMemMap{total: 0}
+func newGCMemMap() *gcMemMap {
+	gcMap := &gcMemMap{total: 0}
 	gcMap.memMap = make(map[*memory.Tracker]int64)
 	return gcMap
 }
