@@ -78,7 +78,7 @@ func Max[v constraints.Ordered](x v, xs ...v) v {
 	return max
 }
 
-// Min is to return the smallest integer value..
+// Min returns the smallest one from its arguments.
 func Min[v constraints.Ordered](x v, xs ...v) v {
 	min := x
 	for _, n := range xs {
