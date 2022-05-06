@@ -51,8 +51,6 @@ const (
 
 	// BackendTiDB is a constant for choosing the "TiDB" backend in the configuration.
 	BackendTiDB = "tidb"
-	// BackendImporter is a constant for choosing the "Importer" backend in the configuration.
-	BackendImporter = "importer"
 	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
 	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
@@ -518,6 +516,7 @@ type FileRouteRule struct {
 }
 
 type TikvImporter struct {
+	// Deprecated: only used to keep the compatibility.
 	Addr                string                       `toml:"addr" json:"addr"`
 	Backend             string                       `toml:"backend" json:"backend"`
 	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
@@ -729,7 +728,6 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
 	cfg.Mydumper.Filter = global.Mydumper.Filter
-	cfg.TikvImporter.Addr = global.TikvImporter.Addr
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
 	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
 	cfg.Checkpoint.Enable = global.Checkpoint.Enable
@@ -873,7 +871,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		cfg.PostRestore.Checksum = OpLevelOff
 		cfg.PostRestore.Analyze = OpLevelOff
 		cfg.PostRestore.Compact = false
-	case BackendImporter, BackendLocal:
+	case BackendLocal:
 		// RegionConcurrency > NumCPU is meaningless.
 		cpuCount := runtime.NumCPU()
 		if cfg.App.RegionConcurrency > cpuCount {
