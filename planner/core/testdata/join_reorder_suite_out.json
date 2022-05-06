@@ -3,6 +3,7 @@
     "Name": "TestStraightJoinHint",
     "Cases": [
       {
+        "SQL": "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
         "Plan": [
           "HashJoin 155937656.25 root  CARTESIAN inner join",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
@@ -21,6 +22,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
         "Plan": [
           "HashJoin 155937656.25 root  CARTESIAN inner join",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
@@ -39,6 +41,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
         "Plan": [
           "HashJoin 155937656.25 root  CARTESIAN inner join",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
@@ -57,6 +60,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
         "Plan": [
           "HashJoin 155937656.25 root  CARTESIAN inner join",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
@@ -75,6 +79,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
         "Plan": [
           "HashJoin 155937656.25 root  CARTESIAN inner join",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
@@ -93,6 +98,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
         "Plan": [
           "HashJoin 15593.77 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
@@ -108,6 +114,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
         "Plan": [
           "HashJoin 124875.00 root  CARTESIAN inner join",
           "├─IndexLookUp(Build) 10.00 root  ",
@@ -123,6 +130,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
         "Plan": [
           "HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
@@ -138,6 +146,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from t2 join t1 on t1.a=t2.a join t3 on t2.b=t3.b;",
         "Plan": [
           "HashJoin 15593.77 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
@@ -153,6 +162,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
         "Plan": [
           "HashJoin 15593.77 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
@@ -168,6 +178,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from t2 join t3 on t3.a=t2.a join t1 on t2.a=t1.a;",
         "Plan": [
           "HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
@@ -183,6 +194,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
         "Plan": [
           "HashJoin 19511.72 root  inner join, equal:[eq(test.t2.a, test.t4.a)]",
           "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
@@ -202,6 +214,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t3.a;",
         "Plan": [
           "HashJoin 19511.72 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
           "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
@@ -221,6 +234,7 @@
         ]
       },
       {
+        "SQL": "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t1.a=t4.a;",
         "Plan": [
           "HashJoin 19511.72 root  inner join, equal:[eq(test.t1.a, test.t4.a)]",
           "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t4.a)]",

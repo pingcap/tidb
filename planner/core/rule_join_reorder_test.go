@@ -26,6 +26,7 @@ import (
 func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
 	var input []string
 	var output []struct {
+		SQL  string
 		Plan []string
 	}
 	joinReorderSuiteData := plannercore.GetJoinReorderSuiteData()
@@ -33,6 +34,7 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + input[i]).Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + input[i]).Check(testkit.Rows(output[i].Plan...))
