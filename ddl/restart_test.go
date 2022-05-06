@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //go:build !race
-// +build !race
 
 package ddl
 
@@ -72,11 +71,11 @@ func runInterruptedJob(d *ddl, job *model.Job, doneCh chan error) {
 	)
 
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.doDDLJob(ctx, job)
+	err = d.DoDDLJob(ctx, job)
 	if errors.Is(err, context.Canceled) {
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {
-			// imitate doDDLJob's logic, quit only find history
+			// imitate DoDDLJob's logic, quit only find history
 			history, _ = d.getHistoryDDLJob(job.ID)
 			if history != nil {
 				err = history.Error

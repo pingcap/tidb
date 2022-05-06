@@ -79,7 +79,7 @@ func BenchmarkRound(b *testing.B) {
 	b.StartTimer()
 	for n := 0; n < b.N; n++ {
 		for i := 0; i < len(tests); i++ {
-			err := tests[i].inputDec.Round(&roundTo, tests[i].scale, ModeHalfEven)
+			err := tests[i].inputDec.Round(&roundTo, tests[i].scale, ModeHalfUp)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -91,7 +91,7 @@ func BenchmarkRound(b *testing.B) {
 			}
 		}
 		for i := 0; i < len(tests); i++ {
-			err := tests[i].inputDec.Round(&roundTo, tests[i].scale, modeCeiling)
+			err := tests[i].inputDec.Round(&roundTo, tests[i].scale, ModeCeiling)
 			if err != nil {
 				b.Fatal(err)
 			}

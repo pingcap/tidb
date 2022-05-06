@@ -143,7 +143,7 @@ func TestReorg(t *testing.T) {
 					require.NoError(t, err)
 
 					m = meta.NewMeta(txn)
-					info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl, nil)
+					info, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, nil)
 					require.NoError(t, err1)
 					require.Equal(t, info.StartKey, kv.Key(handle.Encoded()))
 					require.Equal(t, info.currElement, e)
@@ -174,7 +174,7 @@ func TestReorg(t *testing.T) {
 			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
 				var err1 error
-				_, err1 = getReorgInfo(d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
+				_, err1 = getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
 				require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err1))
 				require.Equal(t, job.SnapshotVer, uint64(0))
 				return nil
@@ -185,7 +185,7 @@ func TestReorg(t *testing.T) {
 			require.NoError(t, err)
 			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
-				info1, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
+				info1, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
 				require.NoError(t, err1)
 				require.Equal(t, info1.currElement, info.currElement)
 				require.Equal(t, info1.StartKey, info.StartKey)
@@ -249,7 +249,8 @@ func TestReorgOwner(t *testing.T) {
 	tblInfo, err := testTableInfo(d1, "t", 3)
 	require.NoError(t, err)
 	testCreateTable(t, ctx, d1, dbInfo, tblInfo)
-	tbl := testGetTable(t, d1, dbInfo.ID, tblInfo.ID)
+	tbl, err := testGetTableWithError(d1, dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
 
 	num := 10
 	for i := 0; i < num; i++ {
@@ -282,4 +283,8 @@ func TestReorgOwner(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func testCheckOwner(t *testing.T, d *ddl, expectedVal bool) {
+	require.Equal(t, d.isOwner(), expectedVal)
 }

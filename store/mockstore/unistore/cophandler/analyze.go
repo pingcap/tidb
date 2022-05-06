@@ -16,6 +16,7 @@ package cophandler
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"math/rand"
 	"sort"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
-	"golang.org/x/net/context"
 )
 
 // handleCopAnalyzeRequest handles coprocessor analyze request.
@@ -300,7 +300,12 @@ func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange
 	for i := range e.fields {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}
+		ft := types.FieldType{}
+		ft.SetType(mysql.TypeBlob)
+		ft.SetFlen(mysql.MaxBlobWidth)
+		ft.SetCharset(charset.CharsetUTF8)
+		ft.SetCollate(charset.CollationUTF8)
+		rf.Column.FieldType = ft
 		e.fields[i] = rf
 	}
 
@@ -317,7 +322,7 @@ func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange
 		ft := fieldTypeFromPBColumn(col)
 		fts[i] = ft
 		if ft.EvalType() == types.ETString {
-			collators[i] = collate.GetCollator(ft.Collate)
+			collators[i] = collate.GetCollator(ft.GetCollate())
 		}
 	}
 	colReq := analyzeReq.ColReq
@@ -401,7 +406,12 @@ func handleAnalyzeFullSamplingReq(
 	for i := range e.fields {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}
+		ft := types.FieldType{}
+		ft.SetType(mysql.TypeBlob)
+		ft.SetFlen(mysql.MaxBlobWidth)
+		ft.SetCharset(charset.CharsetUTF8)
+		ft.SetCollate(charset.CollationUTF8)
+		rf.Column.FieldType = ft
 		e.fields[i] = rf
 	}
 
@@ -412,7 +422,7 @@ func handleAnalyzeFullSamplingReq(
 		ft := fieldTypeFromPBColumn(col)
 		fts[i] = ft
 		if ft.EvalType() == types.ETString {
-			collators[i] = collate.GetCollator(ft.Collate)
+			collators[i] = collate.GetCollator(ft.GetCollate())
 		}
 	}
 	colGroups := make([][]int64, 0, len(analyzeReq.ColReq.ColumnGroups))

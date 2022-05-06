@@ -299,6 +299,7 @@ var tokenMap = map[string]int{
 	"DOUBLE":                   doubleType,
 	"DRAINER":                  drainer,
 	"DROP":                     drop,
+	"DRY":                      dry,
 	"DUAL":                     dual,
 	"DUMP":                     dump,
 	"DUPLICATE":                duplicate,
@@ -607,6 +608,7 @@ var tokenMap = map[string]int{
 	"ROWS":                     rows,
 	"RTREE":                    rtree,
 	"RESUME":                   resume,
+	"RUN":                      run,
 	"RUNNING":                  running,
 	"S3":                       s3,
 	"SAMPLES":                  samples,
@@ -931,6 +933,8 @@ var hintTokenMap = map[string]int{
 	"USE_CASCADES":            hintUseCascades,
 	"NTH_PLAN":                hintNthPlan,
 	"FORCE_INDEX":             hintForceIndex,
+	"STRAIGHT_JOIN":           hintStraightJoin,
+	"LEADING":                 hintLeading,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,

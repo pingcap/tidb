@@ -67,7 +67,8 @@ If you have docker installed, you can skip step 1 and step 2 by running
 
 ## Running
 
-Run `make br_integration_test` to execute the integration tests. This command will
+Link `bin` directory by `cd br && ln -s ../bin bin` and run `make br_integration_test` to execute the integration tests.
+This command will
 
 1. Build `br`
 2. Check that all 9 required executables and `br` executable exist

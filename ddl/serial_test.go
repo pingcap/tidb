@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -45,10 +44,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -89,7 +86,7 @@ func TestIssue23872(t *testing.T) {
 		require.NoError(t, err)
 		cols := rs.Fields()
 		require.NoError(t, rs.Close())
-		require.Equal(t, test.flag, cols[0].Column.Flag)
+		require.Equal(t, test.flag, cols[0].Column.GetFlag())
 	}
 }
 
@@ -134,14 +131,14 @@ func TestCreateTableWithLike(t *testing.T) {
 	require.Nil(t, tbl1Info.ForeignKeys)
 	require.True(t, tbl1Info.PKIsHandle)
 	col := tbl1Info.Columns[0]
-	hasNotNull := mysql.HasNotNullFlag(col.Flag)
+	hasNotNull := mysql.HasNotNullFlag(col.GetFlag())
 	require.True(t, hasNotNull)
 	tbl2, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbl2Info := tbl2.Meta()
 	require.Nil(t, tbl2Info.ForeignKeys)
 	require.True(t, tbl2Info.PKIsHandle)
-	require.True(t, mysql.HasNotNullFlag(tbl2Info.Columns[0].Flag))
+	require.True(t, mysql.HasNotNullFlag(tbl2Info.Columns[0].GetFlag()))
 
 	// for different databases
 	tk.MustExec("create database ctwl_db1")
@@ -443,6 +440,8 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int)")
+
+	tkCancel := testkit.NewTestKit(t, store)
 	defer tk.MustExec("drop table t")
 	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
@@ -451,37 +450,10 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			txn, err = hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	dom.DDL().SetHook(hook)
@@ -492,10 +464,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	require.NoError(t, checkErr)
 	require.Error(t, err)
 	errMsg := err.Error()
-	// Cancelling the job can either succeed or not, it depends on whether the cancelled job takes affect.
-	// For now, there's no way to guarantee that cancelling will always take effect.
-	// TODO: After issue #17904 is fixed, there is no need to tolerate it here.
-	require.True(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job") || strings.HasPrefix(errMsg, "[ddl:8211]DDL job rollback"))
+	require.True(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job"))
 }
 
 func TestRecoverTableByJobID(t *testing.T) {

@@ -198,7 +198,7 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 				pruned = false
 				byItems = append(byItems, byItem)
 			}
-		} else if byItem.Expr.GetType().Tp == mysql.TypeNull {
+		} else if byItem.Expr.GetType().GetType() == mysql.TypeNull {
 			// do nothing, should be filtered
 		} else {
 			pruned = false

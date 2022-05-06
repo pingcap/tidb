@@ -270,11 +270,11 @@ func TestRequestBuilder1(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     false,
-		SyncLog:          false,
 		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
 
@@ -352,11 +352,11 @@ func TestRequestBuilder2(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     false,
-		SyncLog:          false,
 		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
 
@@ -400,11 +400,11 @@ func TestRequestBuilder3(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     false,
-		SyncLog:          false,
 		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
 
@@ -449,10 +449,10 @@ func TestRequestBuilder4(t *testing.T) {
 		Priority:         0,
 		Streaming:        true,
 		NotFillCache:     false,
-		SyncLog:          false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
 
@@ -493,7 +493,6 @@ func TestRequestBuilder5(t *testing.T) {
 		IsolationLevel:   kv.RC,
 		Priority:         1,
 		NotFillCache:     true,
-		SyncLog:          false,
 		Streaming:        false,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
@@ -524,7 +523,6 @@ func TestRequestBuilder6(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     true,
-		SyncLog:          false,
 		Streaming:        false,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
@@ -561,11 +559,11 @@ func TestRequestBuilder7(t *testing.T) {
 				IsolationLevel:   0,
 				Priority:         0,
 				NotFillCache:     false,
-				SyncLog:          false,
 				Streaming:        false,
 				ReplicaRead:      replicaRead.replicaReadType,
 				ReadReplicaScope: kv.GlobalReplicaScope,
 			}
+			actual.ResourceGroupTagger = nil
 			require.Equal(t, expect, actual)
 		})
 	}
@@ -588,6 +586,7 @@ func TestRequestBuilder8(t *testing.T) {
 		SchemaVar:        0,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
 

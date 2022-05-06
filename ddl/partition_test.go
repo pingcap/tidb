@@ -110,18 +110,19 @@ func buildTableInfoWithPartition(t *testing.T, d *ddl) (*model.TableInfo, []int6
 
 func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
 	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partNames},
+		SchemaID:    dbInfo.ID,
+		TableID:     tblInfo.ID,
+		SchemaState: model.StatePublic,
+		Type:        model.ActionDropTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{partNames},
 	}
 }
 
 func testDropPartition(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
 	job := buildDropPartitionJob(dbInfo, tblInfo, partNames)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -141,7 +142,7 @@ func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, p
 func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64) *model.Job {
 	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})

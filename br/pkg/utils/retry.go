@@ -4,22 +4,13 @@ package utils
 
 import (
 	"context"
-	"database/sql"
-	stderrors "errors"
-	"io"
-	"net"
-	"reflect"
-	"regexp"
 	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/multierr"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 var retryableServerError = []string{
@@ -32,6 +23,7 @@ var retryableServerError = []string{
 	"body write aborted",
 	"error during dispatch",
 	"put object timeout",
+	"internalerror",
 }
 
 // RetryableFunc presents a retryable operation.
@@ -81,63 +73,6 @@ func MessageIsRetryableStorageError(msg string) bool {
 		}
 	}
 	return false
-}
-
-// sqlmock uses fmt.Errorf to produce expectation failures, which will cause
-// unnecessary retry if not specially handled >:(
-var stdFatalErrorsRegexp = regexp.MustCompile(
-	`^call to (?s:.*) was not expected|arguments do not match:|could not match actual sql|mock non-retryable error`,
-)
-var stdErrorType = reflect.TypeOf(stderrors.New(""))
-
-// IsRetryableError returns whether the error is transient (e.g. network
-// connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
-// function returns `false` (irrecoverable) if `err == nil`.
-//
-// If the error is a multierr, returns true only if all suberrors are retryable.
-func IsRetryableError(err error) bool {
-	for _, singleError := range errors.Errors(err) {
-		if !isSingleRetryableError(singleError) {
-			return false
-		}
-	}
-	return true
-}
-
-func isSingleRetryableError(err error) bool {
-	err = errors.Cause(err)
-
-	switch err {
-	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
-		return false
-	}
-
-	switch nerr := err.(type) {
-	case net.Error:
-		return nerr.Timeout()
-	case *mysql.MySQLError:
-		switch nerr.Number {
-		// ErrLockDeadlock can retry to commit while meet deadlock
-		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrWriteConflict, tmysql.ErrWriteConflictInTiDB,
-			tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout,
-			tmysql.ErrRegionUnavailable, tmysql.ErrInfoSchemaExpired, tmysql.ErrInfoSchemaChanged, tmysql.ErrTxnRetryable:
-			return true
-		default:
-			return false
-		}
-	default:
-		switch status.Code(err) {
-		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
-			return true
-		case codes.Unknown:
-			if reflect.TypeOf(err) == stdErrorType {
-				return !stdFatalErrorsRegexp.MatchString(err.Error())
-			}
-			return true
-		default:
-			return false
-		}
-	}
 }
 
 func FallBack2CreateTable(err error) bool {

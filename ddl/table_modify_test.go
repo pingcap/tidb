@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
@@ -114,9 +113,6 @@ func TestCreateTable(t *testing.T) {
 }
 
 func TestLockTableReadOnly(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("skip race test")
-	}
 	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	defer clean()
 	tk1 := testkit.NewTestKit(t, store)
@@ -181,9 +177,6 @@ func TestLockTableReadOnly(t *testing.T) {
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
 func TestConcurrentLockTables(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("skip race test")
-	}
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tableModifyLease)
 	defer clean()
 	tk1 := testkit.NewTestKit(t, store)
