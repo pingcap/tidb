@@ -12,9 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package math
+package mathutil
 
-import "math"
+import (
+	"math"
+
+	"golang.org/x/exp/constraints"
+)
+
+// Architecture and/or implementation specific integer limits and bit widths.
+const (
+	MaxInt  = 1<<(IntBits-1) - 1
+	MinInt  = -MaxInt - 1
+	MaxUint = 1<<IntBits - 1
+	IntBits = 1 << (^uint(0)>>32&1 + ^uint(0)>>16&1 + ^uint(0)>>8&1 + 3)
+)
 
 // Abs implement the abs function according to http://cavaliercoder.com/blog/optimized-abs-for-int64-in-go.html
 func Abs(n int64) int64 {
@@ -53,4 +65,26 @@ func StrLenOfInt64Fast(x int64) int {
 // IsFinite reports whether f is neither NaN nor an infinity.
 func IsFinite(f float64) bool {
 	return !math.IsNaN(f - f)
+}
+
+// Max returns the largest one from its arguments.
+func Max[v constraints.Ordered](x v, xs ...v) v {
+	max := x
+	for _, n := range xs {
+		if n > max {
+			max = n
+		}
+	}
+	return max
+}
+
+// Min returns the smallest one from its arguments.
+func Min[v constraints.Ordered](x v, xs ...v) v {
+	min := x
+	for _, n := range xs {
+		if n < min {
+			min = n
+		}
+	}
+	return min
 }
