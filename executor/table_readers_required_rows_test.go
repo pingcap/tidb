@@ -20,7 +20,6 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
