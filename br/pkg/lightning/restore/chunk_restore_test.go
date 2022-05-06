@@ -86,7 +86,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopCancel() {
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan []deliveredKVs)
 	go cancel()
-	_, err := s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, nil, nil, rc, nil, nil, nil)
+	_, err := s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, nil, nil, rc)
 	require.Equal(s.T(), context.Canceled, errors.Cause(err))
 }
 
@@ -124,7 +124,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 
 	kvsCh := make(chan []deliveredKVs, 1)
 	kvsCh <- []deliveredKVs{}
-	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc, dataEngine, indexEngine, nil)
+	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	require.NoError(s.T(), err)
 }
 
@@ -218,7 +218,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	cfg := &config.Config{}
 	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer}
 
-	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc, dataEngine, indexEngine, &backend.LocalWriterConfig{})
+	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)
 	require.Equal(s.T(), int64(12), s.cr.chunk.Chunk.Offset)
@@ -561,7 +561,7 @@ func (s *chunkRestoreSuite) TestRestore() {
 		saveCpCh: saveCpCh,
 		backend:  importer,
 		pauser:   DeliverPauser,
-	}, dataEngine, indexEngine, &backend.LocalWriterConfig{})
+	})
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)
 }

@@ -2149,44 +2149,6 @@ type deliverResult struct {
 	err      error
 }
 
-func (cr *chunkRestore) adjustRowID(rawData *deliveredKVs, t *TableRestore, pendingDataKVs, pendingIndexKVs *kv.Rows) bool {
-	data := rawData.kvs.(*kv.KvPairs)
-	res := false
-	curRowIDs := data.GetRowIDs()
-	illegalIdx := -1
-	for i := range curRowIDs {
-		if curRowIDs[i] > cr.originalMaxRowID {
-			illegalIdx = i
-			break
-		}
-	}
-	if illegalIdx >= 0 {
-		if illegalIdx > 0 {
-			rawData.rowID = curRowIDs[illegalIdx-1]
-		}
-		invalidLen := len(curRowIDs) - illegalIdx
-		invalidKVs := data.Slice(illegalIdx)
-		if curRowIDs[illegalIdx] > cr.allocMaxRowID {
-			// re-allocate rowIDs
-			cr.allocRowIDBase, cr.allocMaxRowID = t.allocateRowIDs()
-			res = true
-		}
-		// set new rowIDs
-		for i := 0; i < invalidLen; i++ {
-			invalidKVs.SetRowID(i, cr.allocRowIDBase)
-			cr.allocRowIDBase++
-			if cr.allocRowIDBase > cr.allocMaxRowID {
-				// allocated ids run out
-				cr.allocRowIDBase, cr.allocMaxRowID = t.allocateRowIDs()
-				res = true
-			}
-		}
-		var dataChecksum, indexChecksum verify.KVChecksum
-		invalidKVs.ClassifyAndAppend(pendingDataKVs, &dataChecksum, pendingIndexKVs, &indexChecksum)
-	}
-	return res
-}
-
 //nolint:nakedret // TODO: refactor
 func (cr *chunkRestore) deliverLoop(
 	ctx context.Context,
@@ -2195,8 +2157,6 @@ func (cr *chunkRestore) deliverLoop(
 	engineID int32,
 	dataWriter, indexWriter *backend.LocalEngineWriter,
 	rc *Controller,
-	dataEngine, indexEngine *backend.OpenedEngine,
-	writerCfg *backend.LocalWriterConfig,
 ) (deliverTotalDur time.Duration, err error) {
 	var channelClosed bool
 
@@ -2209,8 +2169,6 @@ func (cr *chunkRestore) deliverLoop(
 	// Fetch enough KV pairs from the source.
 	dataKVs := rc.backend.MakeEmptyRows()
 	indexKVs := rc.backend.MakeEmptyRows()
-	pendingDataKVs := rc.backend.MakeEmptyRows()
-	pendingIndexKVs := rc.backend.MakeEmptyRows()
 
 	dataSynced := true
 	for !channelClosed {
@@ -2222,7 +2180,6 @@ func (cr *chunkRestore) deliverLoop(
 		startOffset := cr.chunk.Chunk.Offset
 		currOffset := startOffset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
-		reAlloc := false
 	populate:
 		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
 			select {
@@ -2232,11 +2189,7 @@ func (cr *chunkRestore) deliverLoop(
 					break populate
 				}
 				for _, p := range kvPacket {
-					reAlloc = cr.adjustRowID(&p, t, &pendingDataKVs, &pendingIndexKVs)
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
-					if !reAlloc {
-						// combine pendingDataKVs and dataKVs
-					}
 					columns = p.columns
 					currOffset = p.offset
 					rowID = p.rowID
@@ -2309,13 +2262,6 @@ func (cr *chunkRestore) deliverLoop(
 		if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
 			// No need to save checkpoint if nothing was delivered.
 			dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataWriter, indexWriter)
-		}
-		if reAlloc {
-			dataWriter, err = dataEngine.LocalWriter(ctx, writerCfg)
-			if err != nil {
-				return
-			}
-			indexWriter, err = indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 		}
 		failpoint.Inject("SlowDownWriteRows", func() {
 			deliverLogger.Warn("Slowed down write rows")
@@ -2543,8 +2489,6 @@ func (cr *chunkRestore) restore(
 	engineID int32,
 	dataWriter, indexWriter *backend.LocalEngineWriter,
 	rc *Controller,
-	dataEngine, indexEngine *backend.OpenedEngine,
-	writerCfg *backend.LocalWriterConfig,
 ) error {
 	// Create the encoder.
 	kvEncoder, err := rc.backend.NewEncoder(t.encTable, &kv.SessionOptions{
@@ -2569,7 +2513,7 @@ func (cr *chunkRestore) restore(
 
 	go func() {
 		defer close(deliverCompleteCh)
-		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataWriter, indexWriter, rc, dataEngine, indexEngine, writerCfg)
+		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataWriter, indexWriter, rc)
 		select {
 		case <-ctx.Done():
 		case deliverCompleteCh <- deliverResult{dur, err}:

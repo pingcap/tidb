@@ -543,7 +543,7 @@ func (tr *TableRestore) restoreEngine(
 				rc.regionWorkers.Recycle(w)
 			}()
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
-			err := cr.restore(ctx, tr, engineID, dataWriter, indexWriter, rc, dataEngine, indexEngine, dataWriterCfg)
+			err := cr.restore(ctx, tr, engineID, dataWriter, indexWriter, rc)
 			var dataFlushStatus, indexFlushStaus backend.ChunkFlushStatus
 			if err == nil {
 				dataFlushStatus, err = dataWriter.Close(ctx)
