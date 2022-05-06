@@ -1088,3 +1088,43 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, i)
 }
+
+func TestSendCreds(t *testing.T) {
+	accessKey := "ab"
+	secretAccessKey := "cd"
+	backendOpt := BackendOptions{
+		S3: S3BackendOptions{
+			AccessKey:       accessKey,
+			SecretAccessKey: secretAccessKey,
+		},
+	}
+	backend, err := ParseBackend("s3://bucket/prefix/", &backendOpt)
+	require.NoError(t, err)
+	opts := &ExternalStorageOptions{
+		SendCredentials: true,
+	}
+	_, err = New(context.TODO(), backend, opts)
+	require.NoError(t, err)
+	sentAccessKey := backend.GetS3().AccessKey
+	require.Equal(t, accessKey, sentAccessKey)
+	sentSecretAccessKey := backend.GetS3().SecretAccessKey
+	require.Equal(t, sentSecretAccessKey, sentSecretAccessKey)
+
+	backendOpt = BackendOptions{
+		S3: S3BackendOptions{
+			AccessKey:       accessKey,
+			SecretAccessKey: secretAccessKey,
+		},
+	}
+	backend, err = ParseBackend("s3://bucket/prefix/", &backendOpt)
+	require.NoError(t, err)
+	opts = &ExternalStorageOptions{
+		SendCredentials: false,
+	}
+	_, err = New(context.TODO(), backend, opts)
+	require.NoError(t, err)
+	sentAccessKey = backend.GetS3().AccessKey
+	require.Equal(t, "", sentAccessKey)
+	sentSecretAccessKey = backend.GetS3().SecretAccessKey
+	require.Equal(t, "", sentSecretAccessKey)
+}
