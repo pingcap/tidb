@@ -3,10 +3,6 @@
     "name": "TestStraightJoinHint",
     "cases": [
       "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
-      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
-      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
-      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
-      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
       "select /*+ straight_join() */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
       "select /*+ straight_join() */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
       "select /*+ straight_join() */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
