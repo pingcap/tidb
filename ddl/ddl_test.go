@@ -19,11 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -50,11 +48,6 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 	defer d.mu.Unlock()
 
 	d.mu.interceptor = i
-}
-
-// generalWorker returns the general worker.
-func (d *ddl) generalWorker() *worker {
-	return d.workers[generalWorker]
 }
 
 // GetMaxRowID is used for test.
@@ -501,29 +494,4 @@ func testCheckSchemaState(test *testing.T, d *ddl, dbInfo *model.DBInfo, state m
 			break
 		}
 	}
-}
-
-func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error) {
-	var tblInfo *model.TableInfo
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		tblInfo, err1 = t.GetTable(schemaID, tableID)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if tblInfo == nil {
-		return nil, errors.New("table not found")
-	}
-	alloc := autoid.NewAllocator(d.store, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
-	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return tbl, nil
 }
