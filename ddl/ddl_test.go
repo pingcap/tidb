@@ -17,8 +17,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"testing"
 	"time"
 
@@ -32,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
