@@ -27,7 +27,10 @@ Above all, the lack of this capability can be a blocking issue for those who wan
 
 ## Proposal
 
-The implementation is based on the [online DDL architecture](https://github.com/pingcap/tidb/blob/e0c461a84cf4ad55c7b51c3f9db7f7b9ba51bb62/docs/design/2018-10-08-online-DDL.md). Similar to the existing [Job](https://github.com/pingcap/tidb/blob/6bd54bea8a9ec25c8d65fcf1157c5ee7a141ab0b/parser/model/ddl.go/#L262) structure, we introduce a new structure "SubJob", which represents one single schema change. As its name suggests, a job can contain zero or more sub-jobs.
+The implementation is based on the [online DDL architecture](https://github.com/pingcap/tidb/blob/e0c461a84cf4ad55c7b51c3f9db7f7b9ba51bb62/docs/design/2018-10-08-online-DDL.md). Similar to the existing [Job](https://github.com/pingcap/tidb/blob/6bd54bea8a9ec25c8d65fcf1157c5ee7a141ab0b/parser/model/ddl.go/#L262) structure, we introduce a new structure "SubJob":
+
+- "Job": A job is generally the internal representation of one DDL statement.
+- "SubJob": A sub-job is a representation of one DDL schema change. A job may contain zero(when multi-schema change is not applicable) or more sub-jobs.
 
 The Multi-Schema Change DDL jobs have the type `ActionMultiSchemaChange`. In the current worker model, there is a dedicated code path (`onMultiSchemaChange()`) to run these jobs. Only Multi-Schema Change jobs can have sub-jobs.
 
@@ -122,7 +125,6 @@ MySQL's execution order is as follows:
 3. `RENAME a TO b`
 4. `ADD INDEX i(b)`
 
-
 Since this behavior is a bit counter-intuitive, we decided not to be fully compatible with MySQL.
 
 ```SQL
@@ -134,4 +136,8 @@ TiDB validates the schema changes against a snapshot schema structure retrieved 
 
 ## Alternative Proposals
 
-An alternative solution is to give up the atomicity and uses multiple DDL jobs to complete the task. This is much less complex and requires little effort. However, it may lead to a visible intermediate state confusion.
+- The 'job group' way. Unlike the 'SubJob', we can use a job group to represent multiple schema changes. However, this exposes the internal details of the job groups to the DDL job queue, making it more difficult to maintain.
+
+- The existing way, which is a case-by-case implementation (for example, [#15540](https://github.com/pingcap/tidb/pull/15540)). Although some cases can be supported, it is not extensible.
+
+- Another solution is to abandon atomization and use multiple DDL jobs to accomplish the task. This is much less complex and requires little effort. However, it can lead to confusion in the visible intermediate state.
