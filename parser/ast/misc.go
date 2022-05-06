@@ -232,7 +232,7 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 		if strings.ToLower(n.Format) != "row" {
 			ctx.WriteKeyWord("FORMAT ")
 			ctx.WritePlain("= ")
-			ctx.WritePlain(n.Format)
+			ctx.WriteString(n.Format)
 			ctx.WritePlain(" ")
 		}
 	} else {
