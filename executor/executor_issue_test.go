@@ -332,19 +332,19 @@ func TestIssue28650(t *testing.T) {
 }
 
 func TestIssue30289(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/executor/issue30289"
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	fpName := "github.com/pingcap/tidb/executor/issue30289"
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
 	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
-	require.Regexp(t, "issue30289 build return error", err.Error())
+	require.EqualError(t, err, "issue30289 build return error")
 }
 
 func TestIssue29498(t *testing.T) {
@@ -434,7 +434,7 @@ func TestIndexJoin31494(t *testing.T) {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -460,7 +460,7 @@ func TestIndexJoin31494(t *testing.T) {
 func TestFix31038(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableCollectExecutionInfo = false
+		conf.Instance.EnableCollectExecutionInfo = false
 	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

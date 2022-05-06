@@ -275,6 +275,7 @@ const (
 
 // GetAutoAnalyzeProcID returns processID for auto analyze
 // TODO support IDs for concurrent auto-analyze
-func GetAutoAnalyzeProcID() uint64 {
-	return reservedConnAnalyze
+func GetAutoAnalyzeProcID(serverIDGetter func() uint64) uint64 {
+	globalConnID := NewGlobalConnIDWithGetter(serverIDGetter, true)
+	return globalConnID.makeID(reservedConnAnalyze)
 }
