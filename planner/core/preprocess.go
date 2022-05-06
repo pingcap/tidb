@@ -112,7 +112,16 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 // Preprocess resolves table names of the node, and checks some statements' validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
+<<<<<<< HEAD
 	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
+=======
+	v := preprocessor{
+		ctx:                ctx,
+		tableAliasInJoin:   make([]map[string]interface{}, 0),
+		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
+		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
+	}
+>>>>>>> fa5e19010... planner: `preprocessor` add CTE recursive check when `handleTableName` (#34133)
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}
@@ -170,6 +179,12 @@ type PreprocessExecuteISUpdate struct {
 	Node                    ast.Node
 }
 
+// preprocessWith is used to record info from WITH statements like CTE name.
+type preprocessWith struct {
+	cteCanUsed      []string
+	cteBeforeOffset []int
+}
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
@@ -181,7 +196,7 @@ type preprocessor struct {
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
-	withName         map[string]interface{}
+	preprocessWith   *preprocessWith
 
 	// values that may be returned
 	*PreprocessorReturn
@@ -309,9 +324,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
-	case *ast.WithClause:
-		for _, cte := range node.CTEs {
-			p.withName[cte.Name.L] = struct{}{}
+	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+		with := p.preprocessWith
+		beforeOffset := len(with.cteCanUsed)
+		with.cteBeforeOffset = append(with.cteBeforeOffset, beforeOffset)
+		if cteNode, exist := node.(*ast.CommonTableExpression); exist && cteNode.IsRecursive {
+			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
 		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
@@ -555,6 +573,19 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.BRIEStmt:
 		if x.Kind == ast.BRIEKindRestore {
 			p.flag &= ^inCreateOrDropTable
+		}
+	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+		with := p.preprocessWith
+		lenWithCteBeforeOffset := len(with.cteBeforeOffset)
+		if lenWithCteBeforeOffset < 1 {
+			p.err = ErrInternal.GenWithStack("len(cteBeforeOffset) is less than one.Maybe it was deleted in somewhere.Should match in Enter and Leave")
+			break
+		}
+		beforeOffset := with.cteBeforeOffset[lenWithCteBeforeOffset-1]
+		with.cteBeforeOffset = with.cteBeforeOffset[:lenWithCteBeforeOffset-1]
+		with.cteCanUsed = with.cteCanUsed[:beforeOffset]
+		if cteNode, exist := x.(*ast.CommonTableExpression); exist {
+			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
 		}
 	}
 
@@ -1398,8 +1429,11 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		if _, ok := p.withName[tn.Name.L]; ok {
-			return
+
+		for _, cte := range p.preprocessWith.cteCanUsed {
+			if cte == tn.Name.L {
+				return
+			}
 		}
 
 		currentDB := p.ctx.GetSessionVars().CurrentDB
@@ -1407,6 +1441,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			p.err = errors.Trace(ErrNoDB)
 			return
 		}
+
 		tn.Schema = model.NewCIStr(currentDB)
 	}
 

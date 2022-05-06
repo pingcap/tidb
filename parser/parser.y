@@ -8343,6 +8343,9 @@ WithClause:
 	{
 		ws := $3.(*ast.WithClause)
 		ws.IsRecursive = true
+		for _, cte := range ws.CTEs {
+			cte.IsRecursive = true
+		}
 		$$ = ws
 	}
 
