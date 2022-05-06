@@ -626,10 +626,10 @@ type SessionVars struct {
 	// Note if you want to set `enforceMPPExecution` to `true`, you must set `allowMPPExecution` to `true` first.
 	enforceMPPExecution bool
 
-	// TiflashMaxThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
+	// TiFlashMaxThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
 	// Default value is -1, means it will not be pushed down to tiflash.
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
-	TiflashMaxThreads int64
+	TiFlashMaxThreads int64
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -1307,7 +1307,7 @@ func NewSessionVars() *SessionVars {
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
-	vars.TiflashMaxThreads = DefTiFlashMaxThreads
+	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
 	enableChunkRPC := "0"
