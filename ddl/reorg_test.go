@@ -67,6 +67,9 @@ func TestReorgOwner(t *testing.T) {
 	tbl, err := testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 
+	ctx = testkit.NewTestKit(t, store).Session()
+	err = ctx.NewTxn(context.Background())
+	require.NoError(t, err)
 	num := 10
 	for i := 0; i < num; i++ {
 		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
