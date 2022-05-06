@@ -406,7 +406,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	d1.asyncNotifyWorker(job)
 	job.Type = model.ActionCreateTable
 	d1.asyncNotifyWorker(job)
-	testCheckOwner(t, d1, false)
+	require.False(t, d1.OwnerManager().IsOwner())
 	select {
 	case <-d1.workers[addIdxWorker].ddlJobCh:
 		require.FailNow(t, "should not get the add index job notification")
