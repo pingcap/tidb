@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
 	"io"
 	"net/url"
 	"path"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
+	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client"
