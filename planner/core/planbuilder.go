@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -59,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sem"

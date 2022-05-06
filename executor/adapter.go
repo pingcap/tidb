@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -54,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -929,9 +929,12 @@ func (a *ExecStmt) logAudit() {
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
 func FormatSQL(sql string) stringutil.StringerFunc {
 	return func() string {
-		cfg := config.GetGlobalConfig()
 		length := len(sql)
-		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
+		maxQueryLen := variable.QueryLogMaxLen.Load()
+		if maxQueryLen <= 0 {
+			return QueryReplacer.Replace(sql) // no limit
+		}
+		if int32(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
 		return QueryReplacer.Replace(sql)
