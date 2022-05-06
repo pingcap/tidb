@@ -214,7 +214,7 @@ func TestLRUPutTooBig(t *testing.T) {
 	lru.Put(int64(1), mockTable)
 	_, ok := lru.Get(int64(1))
 	require.True(t, ok)
-	require.Equal(t, lru.TotalCost(), indexMemoryUsage)
+	require.Equal(t, lru.TotalCost(), columnMemoryUsage)
 	require.Equal(t, lru.Cost(), int64(0))
 	require.Equal(t, mockTable.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
 }
