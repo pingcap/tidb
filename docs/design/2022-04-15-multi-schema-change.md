@@ -21,9 +21,9 @@ ALTER TABLE t ADD COLUMN b INT AUTO_INCREMENT PRIMARY KEY,
 
 Currently, TiDB only supports one schema change per SQL statement and limited multi-schema changes for some rare cases.
 
-When users try to migrate data from MySQL-like databases, they have to spend extra effort to rewrite a multi-schema change DDL to several single-schema change DDLs. For the users who rely on ORM frameworks like [Flyway](https://flywaydb.org/) to construct SQLs automatically, rewriting SQL could be tedious and the scripts are hard to maintain.
+When users attempt to migrate data from MySQL-like databases, they may expend additional effort to rewrite a multi-schema change DDL to several single-schema change DDLs. For users who rely on ORM frameworks such as [Flyway](https://flywaydb.org/) to automatically construct SQLs, rewriting SQL could be tedious and the scripts are difficult to maintain.
 
-Above all, the lack of this capability can be a blocking issue for those who want to use TiDB.
+Above all, the lack of this capability can be a blocking issue for those who wish to use TiDB.
 
 ## Proposal
 
@@ -60,15 +60,15 @@ job := &Job {
 }
 ```
 
-In this way, we pack multiple schema changes into one job. Just like any other jobs, it enters the DDL job queue stored in the storage, waits for a suitable worker to pick it up and handle it.
+In this way, we pack multiple schema changes into one job. Like any other job, it enqueue the DDL job queue stored in the storage and waits for an appropriate worker to pick it up and process it.
 
-In normal cases, the worker executes the sub-jobs one by one serially as if they are plain jobs. However, the thing gets complex in abnormal cases.
+Normally, the worker executes the sub-jobs one by one serially as if they were plain jobs. However, in abnormal cases, things become complex.
 
-To ensure the atomicity of a Multi-Schema Change execution, we need to maintain the changing schema object states carefully. Take the above SQL as an example, if the second sub-job `MODIFY COLUMN a CHAR(255)` failed for some reason, the first sub-job should be able to rollback its changes(rollback the added column `b`).
+To ensure atomic execution of a Multi-Schema Change execution, we need to carefully manage the states of the changing schema objects. Let's take the above SQL as an example: If the second sub-job `MODIFY COLUMN a CHAR (255)` fails for some reason, the first sub-job should be able to roll back its changes (roll back the added column `b`).
 
-This requirement means we cannot simply public the schema object when a sub-job is finished. Instead, it should stay in a state which is still unnoticeable to users, and wait for the other sub-jobs, finally public all at once when all the sub-jobs are confirmed to be successful. This method is kind of like 2PC: the "commit" can only be started when "prewrites" are complete.
+This requirement means that we cannot simply publish the schema object when a sub-job is finished. Instead, it should remain in a state unnoticeable to users, waiting for the other sub-jobs to complete, eventually publishing all at once when it is confirmed that all sub-jobs have succeeded. This method is similar to 2PC: the "commit" cannot be started until the "prewrites" are completed.
 
-Here is the table of schema states that may occur in different DDLs. Note the "Revertible States" means the changes are unnoticeable to the users.
+Here is the table of schema states that can occur in different DDLs. Note that the "Revertible States" means that the changes are unnoticeable to the users.
 
 | DDL (Schema Change)     | Revertible States                          | Non-revertible States                       |
 |-------------------------|--------------------------------------------|---------------------------------------------|
@@ -79,11 +79,11 @@ Here is the table of schema states that may occur in different DDLs. Note the "R
 | Non-reorg Modify Column | Public (before meta change)                | Public (after meta change)                  |
 | Reorg Modify Column     | None, Delete-Only, Write-Only, Write-Reorg | Public                                      |
 
-To achieve this behavior, we introduce a flag in the sub-job named "non-revertible". This flag is set when a schema object has stepped to the last revertible state. When all sub-jobs become non-revertible, all the related schema objects step to the next state in one transaction. After that, the sub-jobs are executed serially to do the rest.
+To achieve this behavior, we introduce a flag named "non-revertible" in the sub-job. This flag is set when a schema object has reached the last revertible state. When all sub-jobs are non-revertible, all associated schema objects change to the next state in one transaction. After that, the sub-jobs are executed serially to do the rest.
 
-On the other hand, if there is an error returned by any sub-job before all of them become non-revertible, the whole job is switched to a `rollingback` state. For the executed sub-jobs, we set them to `cancelling`; for the sub-job that have not been executed, we set them to `cancelled`.
+On the other hand, if there is an error returned by any sub-job before all of them become non-revertible, the entire job is placed in to a `rollingback` state. For the executed sub-jobs, we set them to `cancelling`; for the unexecuted sub-jobs, we set them to `cancelled`.
 
-Finally, we consider the extreme case: an error occurs while all the sub-jobs are non-revertible. In this situation, we tend to believe that the error can be solved in a trivial way like retrying. This behavior is compatible with the current DDL implementation. Take `DROP COLUMN` as an example, once the column steps to the "Write-Only" state, there is no way to cancel this job.
+Finally, we consider the extreme case: an error occurs while all the sub-jobs are non-revertible. In this situation, we tend to assume that the error can be resolved in a trivial way, e.g., by retrying. This behavior is consistent with the current DDL implementation. Let's take `DROP COLUMN` as an example: Once the column enters the "Write-Only" state, there is no way to abort this job.
 
 ## Compatibility
 
