@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -4190,8 +4190,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, canReorderHandles bool) (*TableReaderExecutor, error) {
 	if canReorderHandles {
-		sort.Slice(handles, func(i, j int) bool {
-			return handles[i].Compare(handles[j]) < 0
+		slices.SortFunc(handles, func(i, j kv.Handle) bool {
+			return i.Compare(j) < 0
 		})
 	}
 	var b distsql.RequestBuilder
@@ -4436,8 +4436,8 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		memTracker.Consume(2 * int64(len(tmpDatumRanges)) * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
 	}
 	if cwc == nil {
-		sort.Slice(kvRanges, func(i, j int) bool {
-			return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
+		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
 		})
 		return kvRanges, nil
 	}

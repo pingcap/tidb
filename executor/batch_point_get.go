@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"golang.org/x/exp/slices"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
@@ -302,11 +303,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			toFetchIndexKeys = append(toFetchIndexKeys, idxKey)
 		}
 		if e.keepOrder {
-			sort.Slice(toFetchIndexKeys, func(i int, j int) bool {
+			slices.SortFunc(toFetchIndexKeys, func(i, j kv.Key) bool {
 				if e.desc {
-					return toFetchIndexKeys[i].Cmp(toFetchIndexKeys[j]) > 0
+					return i.Cmp(j) > 0
 				}
-				return toFetchIndexKeys[i].Cmp(toFetchIndexKeys[j]) < 0
+				return i.Cmp(j) < 0
 			})
 		}
 
@@ -370,12 +371,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
 		})
 	} else if e.keepOrder {
-		less := func(i int, j int) bool {
+		less := func(i, j kv.Handle) bool {
 			if e.desc {
-				return e.handles[i].Compare(e.handles[j]) > 0
+				return i.Compare(j) > 0
 			}
-			return e.handles[i].Compare(e.handles[j]) < 0
-
+			return i.Compare(j) < 0
 		}
 		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().GetFlag()) {
 			uintComparator := func(i, h kv.Handle) int {
@@ -392,14 +392,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				}
 				return 0
 			}
-			less = func(i int, j int) bool {
+			less = func(i, j kv.Handle) bool {
 				if e.desc {
-					return uintComparator(e.handles[i], e.handles[j]) > 0
+					return uintComparator(i, j) > 0
 				}
-				return uintComparator(e.handles[i], e.handles[j]) < 0
+				return uintComparator(i, j) < 0
 			}
 		}
-		sort.Slice(e.handles, less)
+		slices.SortFunc(e.handles, less)
 	}
 
 	keys := make([]kv.Key, 0, len(e.handles))

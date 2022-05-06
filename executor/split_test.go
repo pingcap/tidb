@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"math"
 	"math/rand"
-	"sort"
 	"testing"
 	"time"
 
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestLongestCommonPrefixLen(t *testing.T) {
@@ -133,7 +133,7 @@ func TestSplitIndex(t *testing.T) {
 		num:          10,
 	}
 	valueList, err := e.getSplitIdxKeys()
-	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
+	slices.SortFunc(valueList, func(i, j []byte) bool { return bytes.Compare(i, j) < 0 })
 	require.NoError(t, err)
 	require.Len(t, valueList, e.num+1)
 
@@ -189,7 +189,7 @@ func TestSplitIndex(t *testing.T) {
 	tbInfo.Columns[0].FieldType = *types.NewFieldType(mysql.TypeVarchar)
 
 	valueList, err = e.getSplitIdxKeys()
-	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
+	slices.SortFunc(valueList, func(i, j []byte) bool { return bytes.Compare(i, j) < 0 })
 	require.NoError(t, err)
 	require.Len(t, valueList, e.num+1)
 
@@ -241,7 +241,7 @@ func TestSplitIndex(t *testing.T) {
 	tbInfo.Columns[0].FieldType = *types.NewFieldType(mysql.TypeTimestamp)
 
 	valueList, err = e.getSplitIdxKeys()
-	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
+	slices.SortFunc(valueList, func(i, j []byte) bool { return bytes.Compare(i, j) < 0 })
 	require.NoError(t, err)
 	require.Len(t, valueList, e.num+1)
 

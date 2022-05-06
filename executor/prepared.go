@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"math"
-	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -49,22 +49,6 @@ var (
 	_ Executor = &ExecuteExec{}
 	_ Executor = &PrepareExec{}
 )
-
-type paramMarkerSorter struct {
-	markers []ast.ParamMarkerExpr
-}
-
-func (p *paramMarkerSorter) Len() int {
-	return len(p.markers)
-}
-
-func (p *paramMarkerSorter) Less(i, j int) bool {
-	return p.markers[i].(*driver.ParamMarkerExpr).Offset < p.markers[j].(*driver.ParamMarkerExpr).Offset
-}
-
-func (p *paramMarkerSorter) Swap(i, j int) {
-	p.markers[i], p.markers[j] = p.markers[j], p.markers[i]
-}
 
 type paramMarkerExtractor struct {
 	markers []ast.ParamMarkerExpr
@@ -184,16 +168,17 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The parameter markers are appended in visiting order, which may not
 	// be the same as the position order in the query string. We need to
 	// sort it by position.
-	sorter := &paramMarkerSorter{markers: extractor.markers}
-	sort.Sort(sorter)
-	e.ParamCount = len(sorter.markers)
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) bool {
+		return i.(*driver.ParamMarkerExpr).Offset < j.(*driver.ParamMarkerExpr).Offset
+	})
+	e.ParamCount = len(extractor.markers)
 	for i := 0; i < e.ParamCount; i++ {
-		sorter.markers[i].SetOrder(i)
+		extractor.markers[i].SetOrder(i)
 	}
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
 		StmtType:      GetStmtLabel(stmt),
-		Params:        sorter.markers,
+		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())

@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"golang.org/x/exp/slices"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -289,21 +290,21 @@ func (e *ShowExec) fetchShowBind() error {
 	parser := parser.New()
 	for _, bindData := range bindRecords {
 		// For the same origin_sql, sort the bindings according to their update time.
-		sort.Slice(bindData.Bindings, func(i int, j int) bool {
-			cmpResult := bindData.Bindings[i].UpdateTime.Compare(bindData.Bindings[j].UpdateTime)
+		slices.SortFunc(bindData.Bindings, func(i, j bindinfo.Binding) bool {
+			cmpResult := i.UpdateTime.Compare(j.UpdateTime)
 			if cmpResult == 0 {
 				// Because the create time must be different, the result of sorting is stable.
-				cmpResult = bindData.Bindings[i].CreateTime.Compare(bindData.Bindings[j].CreateTime)
+				cmpResult = i.CreateTime.Compare(j.CreateTime)
 			}
 			return cmpResult > 0
 		})
 	}
 	// For the different origin_sql, sort the bindRecords according to their max update time.
-	sort.Slice(bindRecords, func(i int, j int) bool {
-		cmpResult := bindRecords[i].Bindings[0].UpdateTime.Compare(bindRecords[j].Bindings[0].UpdateTime)
+	slices.SortFunc(bindRecords, func(i, j *bindinfo.BindRecord) bool {
+		cmpResult := i.Bindings[0].UpdateTime.Compare(j.Bindings[0].UpdateTime)
 		if cmpResult == 0 {
 			// Because the create time must be different, the result of sorting is stable.
-			cmpResult = bindRecords[i].Bindings[0].CreateTime.Compare(bindRecords[j].Bindings[0].CreateTime)
+			cmpResult = i.Bindings[0].CreateTime.Compare(j.Bindings[0].CreateTime)
 		}
 		return cmpResult > 0
 	})
@@ -399,7 +400,7 @@ func moveInfoSchemaToFront(dbs []string) {
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	sort.Strings(dbs)
+	slices.Sort(dbs)
 	// let information_schema be the first database
 	moveInfoSchemaToFront(dbs)
 	for _, d := range dbs {
@@ -496,7 +497,7 @@ func (e *ShowExec) fetchShowTables() error {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
 	}
-	sort.Strings(tableNames)
+	slices.Sort(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
 			e.appendRow([]interface{}{v, tableTypes[v]})
