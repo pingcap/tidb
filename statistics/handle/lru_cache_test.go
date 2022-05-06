@@ -238,3 +238,21 @@ func TestCacheLen(t *testing.T) {
 	require.Equal(t, t1.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
 	require.Equal(t, stats.Len(), 3)
 }
+
+func TestLRUMove(t *testing.T) {
+	capacity := int64(100)
+	s := newStatsLruCache(capacity)
+	t1 := newMockStatisticsTable(1, 1)
+	t1ID := int64(1)
+	t2 := newMockStatisticsTable(1, 1)
+	t2ID := int64(1)
+	s.Put(t1ID, t1)
+	s.Put(t2ID, t2)
+	// assert t2 element should be front element
+	front := s.lru.cache.Front().Value.(*lruCacheItem)
+	require.Equal(t, t2ID, front.tblID)
+	// assert t1 element should be front element after GetByQuery
+	s.GetByQuery(t1ID)
+	front = s.lru.cache.Front().Value.(*lruCacheItem)
+	require.Equal(t, t2ID, front.tblID)
+}
