@@ -16,6 +16,7 @@ package variable
 
 import (
 	"math"
+	"sync"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -880,4 +881,5 @@ var (
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
+	tikvConfigLock                 sync.Mutex
 )

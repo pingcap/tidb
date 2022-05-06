@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/tikvutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -41,6 +40,7 @@ import (
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	atomic2 "go.uber.org/atomic"
+	"modernc.org/mathutil"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -686,6 +686,8 @@ var defaultSysVars = []*SysVar{
 		return fmt.Sprint(QueryLogMaxLen.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBCommitterConcurrency, Value: strconv.Itoa(DefTiDBCommitterConcurrency), Type: TypeInt, MinValue: 1, MaxValue: 10000, SetGlobal: func(s *SessionVars, val string) error {
+		tikvConfigLock.Lock()
+		defer tikvConfigLock.Unlock()
 		tikvutil.CommitterConcurrency.Store(int32(TidbOptInt64(val, DefTiDBCommitterConcurrency)))
 		cfg := config.GetGlobalConfig().GetTiKVConfig()
 		tikvcfg.StoreGlobalConfig(cfg)
