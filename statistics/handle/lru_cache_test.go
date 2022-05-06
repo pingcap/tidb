@@ -245,7 +245,7 @@ func TestLRUMove(t *testing.T) {
 	t1 := newMockStatisticsTable(1, 1)
 	t1ID := int64(1)
 	t2 := newMockStatisticsTable(1, 1)
-	t2ID := int64(1)
+	t2ID := int64(2)
 	s.Put(t1ID, t1)
 	s.Put(t2ID, t2)
 	// assert t2 element should be front element
@@ -254,5 +254,5 @@ func TestLRUMove(t *testing.T) {
 	// assert t1 element should be front element after GetByQuery
 	s.GetByQuery(t1ID)
 	front = s.lru.cache.Front().Value.(*lruCacheItem)
-	require.Equal(t, t2ID, front.tblID)
+	require.Equal(t, t1ID, front.tblID)
 }
