@@ -170,9 +170,9 @@ func (s *statsInnerCache) Cost() int64 {
 	return s.lru.trackingCost
 }
 
-func (s *statsInnerCache) totalCost() int64 {
-	s.RLock()
-	defer s.RUnlock()
+func (s *statsInnerCache) TotalCost() int64 {
+	s.Lock()
+	defer s.Unlock()
 	totalCost := int64(0)
 	for tblID, ele := range s.elements {
 		s.freshTableCost(tblID, ele)

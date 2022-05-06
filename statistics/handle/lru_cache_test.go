@@ -98,13 +98,13 @@ func TestLRUEvict(t *testing.T) {
 
 	// Put t1, assert TotalMemUsage and TotalColTrackingMemUsage
 	lru.Put(int64(1), t1)
-	require.Equal(t, lru.totalCost(), t1.MemoryUsage().TotalMemUsage)
+	require.Equal(t, lru.TotalCost(), t1.MemoryUsage().TotalMemUsage)
 	require.Equal(t, lru.Cost(), t1.MemoryUsage().TotalIdxTrackingMemUsage())
 
 	// Put t2, assert TotalMemUsage and TotalColTrackingMemUsage
 	t2 := newMockStatisticsTable(2, 1)
 	lru.Put(int64(2), t2)
-	require.Equal(t, lru.totalCost(), t1.MemoryUsage().TotalMemUsage+t2.MemoryUsage().TotalMemUsage)
+	require.Equal(t, lru.TotalCost(), t1.MemoryUsage().TotalMemUsage+t2.MemoryUsage().TotalMemUsage)
 	require.Equal(t, lru.Cost(), t1.MemoryUsage().TotalIdxTrackingMemUsage()+t2.MemoryUsage().TotalIdxTrackingMemUsage())
 
 	// Put t3, an index CMSketch of t1 should be evicted
@@ -112,9 +112,9 @@ func TestLRUEvict(t *testing.T) {
 	lru.Put(int64(3), t3)
 	require.Equal(t, lru.Len(), 3)
 	require.Equal(t, t1.MemoryUsage().TotalIdxTrackingMemUsage(), indexMemoryUsage)
-	require.Equal(t, lru.totalCost(), 6*columnMemoryUsage+3*indexMemoryUsage)
+	require.Equal(t, lru.TotalCost(), 6*columnMemoryUsage+3*indexMemoryUsage)
 	require.Equal(t, lru.Cost(), 3*indexMemoryUsage)
-	require.Equal(t, lru.totalCost(), t1.MemoryUsage().TotalMemUsage+t2.MemoryUsage().TotalMemUsage+t3.MemoryUsage().TotalMemUsage)
+	require.Equal(t, lru.TotalCost(), t1.MemoryUsage().TotalMemUsage+t2.MemoryUsage().TotalMemUsage+t3.MemoryUsage().TotalMemUsage)
 	require.Equal(t, lru.Cost(), t1.MemoryUsage().TotalIdxTrackingMemUsage()+
 		t2.MemoryUsage().TotalIdxTrackingMemUsage()+t3.MemoryUsage().TotalIdxTrackingMemUsage())
 
@@ -125,7 +125,7 @@ func TestLRUEvict(t *testing.T) {
 	require.Equal(t, t1.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
 	require.Equal(t, t2.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
 	require.Equal(t, t3.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
-	require.Equal(t, lru.totalCost(), 3*indexMemoryUsage+10*columnMemoryUsage)
+	require.Equal(t, lru.TotalCost(), 3*indexMemoryUsage+10*columnMemoryUsage)
 	require.Equal(t, lru.Cost(), 3*indexMemoryUsage)
 }
 
@@ -175,15 +175,15 @@ func TestLRUFreshMemUsage(t *testing.T) {
 	lru.Put(int64(1), t1)
 	lru.Put(int64(2), t2)
 	lru.Put(int64(3), t3)
-	require.Equal(t, lru.totalCost(), 6*columnMemoryUsage+6*indexMemoryUsage)
+	require.Equal(t, lru.TotalCost(), 6*columnMemoryUsage+6*indexMemoryUsage)
 	require.Equal(t, lru.Cost(), 6*indexMemoryUsage)
 	mockTableAppendColumn(t1)
 	lru.FreshMemUsage()
-	require.Equal(t, lru.totalCost(), 7*columnMemoryUsage+6*indexMemoryUsage)
+	require.Equal(t, lru.TotalCost(), 7*columnMemoryUsage+6*indexMemoryUsage)
 	require.Equal(t, lru.Cost(), 6*indexMemoryUsage)
 	mockTableAppendIndex(t1)
 	lru.FreshMemUsage()
-	require.Equal(t, lru.totalCost(), 7*columnMemoryUsage+7*indexMemoryUsage)
+	require.Equal(t, lru.TotalCost(), 7*columnMemoryUsage+7*indexMemoryUsage)
 	require.Equal(t, lru.Cost(), 7*indexMemoryUsage)
 }
 
@@ -195,15 +195,15 @@ func TestLRUFreshTableMemUsage(t *testing.T) {
 	lru.Put(int64(1), t1)
 	lru.Put(int64(2), t2)
 	lru.Put(int64(3), t3)
-	require.Equal(t, lru.totalCost(), 6*columnMemoryUsage+6*indexMemoryUsage)
+	require.Equal(t, lru.TotalCost(), 6*columnMemoryUsage+6*indexMemoryUsage)
 	require.Equal(t, lru.Cost(), 6*columnMemoryUsage)
 	mockTableAppendColumn(t1)
 	lru.FreshTableCost(int64(1))
-	require.Equal(t, lru.totalCost(), 7*columnMemoryUsage+6*indexMemoryUsage)
+	require.Equal(t, lru.TotalCost(), 7*columnMemoryUsage+6*indexMemoryUsage)
 	require.Equal(t, lru.Cost(), 6*indexMemoryUsage)
 	mockTableAppendIndex(t1)
 	lru.FreshTableCost(int64(1))
-	require.Equal(t, lru.totalCost(), 7*columnMemoryUsage+7*indexMemoryUsage)
+	require.Equal(t, lru.TotalCost(), 7*columnMemoryUsage+7*indexMemoryUsage)
 	require.Equal(t, lru.Cost(), 7*indexMemoryUsage)
 }
 
@@ -214,7 +214,7 @@ func TestLRUPutTooBig(t *testing.T) {
 	lru.Put(int64(1), mockTable)
 	_, ok := lru.Get(int64(1))
 	require.True(t, ok)
-	require.Equal(t, lru.totalCost(), indexMemoryUsage)
+	require.Equal(t, lru.TotalCost(), indexMemoryUsage)
 	require.Equal(t, lru.Cost(), int64(0))
 	require.Equal(t, mockTable.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
 }
