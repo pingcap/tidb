@@ -749,6 +749,7 @@ var tokenMap = map[string]int{
 	"TRIM":                     trim,
 	"TRUE":                     trueKwd,
 	"TRUNCATE":                 truncate,
+	"TRUE_CARD_COST":           trueCardCost,
 	"TYPE":                     tp,
 	"UNBOUNDED":                unbounded,
 	"UNCOMMITTED":              uncommitted,

@@ -707,6 +707,7 @@ import (
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
 	verboseType           "VERBOSE"
+	trueCardCost          "TRUE_CARD_COST"
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
@@ -4694,6 +4695,22 @@ ExplainStmt:
 			Analyze: true,
 		}
 	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType ExplainableStmt
+	{
+		$$ = &ast.ExplainStmt{
+			Stmt:    $6,
+			Format:  $5,
+			Analyze: true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit ExplainableStmt
+	{
+		$$ = &ast.ExplainStmt{
+			Stmt:    $6,
+			Format:  $5,
+			Analyze: true,
+		}
+	}
 
 ExplainFormatType:
 	"TRADITIONAL"
@@ -4702,6 +4719,7 @@ ExplainFormatType:
 |	"DOT"
 |	"BRIEF"
 |	"VERBOSE"
+|	"TRUE_CARD_COST"
 
 /*******************************************************************
  * Backup / restore / import statements
@@ -6234,6 +6252,7 @@ NotKeywordToken:
 |	"LEARNER"
 |	"LEARNERS"
 |	"VERBOSE"
+|	"TRUE_CARD_COST"
 |	"VOTER"
 |	"VOTERS"
 |	"CONSTRAINTS"
