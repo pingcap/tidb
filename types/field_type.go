@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
-	utilMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -221,18 +221,18 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		SetBinChsClnFlag(tp)
 	case int:
 		tp.SetType(mysql.TypeLonglong)
-		tp.SetFlen(utilMath.StrLenOfInt64Fast(int64(x)))
+		tp.SetFlen(mathutil.StrLenOfInt64Fast(int64(x)))
 		tp.SetDecimal(0)
 		SetBinChsClnFlag(tp)
 	case int64:
 		tp.SetType(mysql.TypeLonglong)
-		tp.SetFlen(utilMath.StrLenOfInt64Fast(x))
+		tp.SetFlen(mathutil.StrLenOfInt64Fast(x))
 		tp.SetDecimal(0)
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.SetType(mysql.TypeLonglong)
 		tp.AddFlag(mysql.UnsignedFlag)
-		tp.SetFlen(utilMath.StrLenOfUint64Fast(x))
+		tp.SetFlen(mathutil.StrLenOfUint64Fast(x))
 		tp.SetDecimal(0)
 		SetBinChsClnFlag(tp)
 	case string:
