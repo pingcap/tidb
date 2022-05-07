@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"sync/atomic"
 
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"golang.org/x/exp/slices"
 )
 
 // TestKit is a utility to run sql test.
@@ -96,9 +96,7 @@ func (res *Result) Rows() [][]interface{} {
 
 // Sort sorts and return the result.
 func (res *Result) Sort() *Result {
-	sort.Slice(res.rows, func(i, j int) bool {
-		a := res.rows[i]
-		b := res.rows[j]
+	slices.SortFunc(res.rows, func(a, b []string) bool {
 		for i := range a {
 			if a[i] < b[i] {
 				return true

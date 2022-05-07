@@ -22,7 +22,6 @@ package testleak
 
 import (
 	"runtime"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -91,7 +90,7 @@ func interestingGoroutines() (gs []string) {
 		}
 		gs = append(gs, stack)
 	}
-	sort.Strings(gs)
+	slices.Sort(gs)
 	return
 }
 

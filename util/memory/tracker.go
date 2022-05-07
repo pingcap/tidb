@@ -17,10 +17,11 @@ package memory
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"golang.org/x/exp/slices"
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -391,7 +392,7 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	for label := range t.mu.children {
 		labels = append(labels, label)
 	}
-	sort.Ints(labels)
+	slices.Sort(labels)
 	for _, label := range labels {
 		children := t.mu.children[label]
 		for _, child := range children {
