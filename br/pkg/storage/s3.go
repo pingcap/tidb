@@ -287,9 +287,12 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	}
 
 	c := s3.New(ses)
+	// s3manager.GetBucketRegionWithClient will set credential anonymous.
+	// so we need reassign credential to pass authentication.
+	confCred := ses.Config.Credentials
 	setCredOpt := func(req *request.Request) {
-		if cred != nil {
-			req.Config.Credentials = cred
+		if confCred != nil {
+			req.Config.Credentials = confCred
 		}
 	}
 	region, err := s3manager.GetBucketRegionWithClient(context.TODO(), c, qs.Bucket, setCredOpt)
