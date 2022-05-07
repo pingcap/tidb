@@ -596,7 +596,7 @@ func filterRestoreFiles(
 		}
 		dbs = append(dbs, db)
 		for _, table := range db.Tables {
-			if table.Info != nil && !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
+			if table.Info == nil || !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
 			files = append(files, table.Files...)
