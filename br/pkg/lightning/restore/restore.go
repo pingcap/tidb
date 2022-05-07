@@ -61,6 +61,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -725,9 +726,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 
 	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
 	// override by manually set vars
-	for k, v := range rc.cfg.TiDB.Vars {
-		sysVars[k] = v
-	}
+	maps.Copy(sysVars, rc.cfg.TiDB.Vars)
 	rc.sysVars = sysVars
 
 	return nil
