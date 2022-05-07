@@ -15,6 +15,7 @@
 package collate
 
 import (
+	"sort"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -254,8 +254,8 @@ func GetSupportedCollations() []*charset.Collation {
 				newSupportedCollations = append(newSupportedCollations, coll)
 			}
 		}
-		slices.SortFunc(newSupportedCollations, func(i, j *charset.Collation) bool {
-			return i.Name < j.Name
+		sort.Slice(newSupportedCollations, func(i int, j int) bool {
+			return newSupportedCollations[i].Name < newSupportedCollations[j].Name
 		})
 		return newSupportedCollations
 	}
