@@ -48,8 +48,6 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/rawkv"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -77,6 +75,8 @@ var (
 		StreamStatus:   {},
 		StreamTruncate: {},
 	}
+
+	rawKVBatchCount = 10
 )
 
 var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error{
@@ -422,6 +422,10 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 		BackupStream backupStream `json:"backup-stream"`
 	}
 
+	httpPrefix := "http://"
+	if s.mgr.GetTLSConfig() != nil {
+		httpPrefix = "https://"
+	}
 	supportBackupStream := true
 	hasTiKV := false
 	for _, store := range allStores {
@@ -433,7 +437,7 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 		// so check every store's config
 		addr := fmt.Sprintf("%s/config", store.GetStatusAddress())
 		if !strings.HasPrefix(addr, "http") {
-			addr = "http://" + addr
+			addr = httpPrefix + addr
 		}
 		err = utils.WithRetry(ctx, func() error {
 			resp, e := s.httpCli.Get(addr)
@@ -910,7 +914,7 @@ func RunStreamRestore(
 		}
 		if cfg.StartTS < logStartTS {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
-				"it has gap between full backup ts:%d(%s) and log backup ts:%d(%s)"+
+				"it has gap between full backup ts:%d(%s) and log backup ts:%d(%s). "+
 					"you can \"restore full\" and \"restore point\" separately",
 				cfg.StartTS, oracle.GetTimeFromTS(cfg.StartTS),
 				logStartTS, oracle.GetTimeFromTS(logStartTS))
@@ -1007,15 +1011,10 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rawkvClient, err := newRawkvClient(ctx, cfg.PD, cfg.TLS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer rawkvClient.Close()
 
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
-		return client.RestoreMetaKVFiles(ctx, rawkvClient, ddlFiles, schemasReplace, p.Inc)
+		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
@@ -1088,6 +1087,12 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig) (
 	client.SetConcurrency(uint(cfg.Concurrency))
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
 	client.InitClients(u, false)
+
+	rawKVClient, err := newRawBatchClient(ctx, cfg.PD, cfg.TLS)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	client.SetRawKVClient(rawKVClient)
 
 	err = client.LoadRestoreStores(ctx)
 	if err != nil {
@@ -1218,6 +1223,7 @@ func initFullBackupTables(
 		metaFileName = metautil.MetaFile
 	}
 
+	log.Info("read schemas", zap.String("backupmeta", metaFileName))
 	metaData, err := s.ReadFile(ctx, metaFileName)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1329,13 +1335,20 @@ func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *s
 	}
 }
 
-func newRawkvClient(ctx context.Context, pdAddrs []string, tlsConfig TLSConfig) (*rawkv.Client, error) {
+func newRawBatchClient(
+	ctx context.Context,
+	pdAddrs []string,
+	tlsConfig TLSConfig,
+) (*restore.RawKVBatchClient, error) {
 	security := config.Security{
 		ClusterSSLCA:   tlsConfig.CA,
 		ClusterSSLCert: tlsConfig.Cert,
 		ClusterSSLKey:  tlsConfig.Key,
 	}
-	return rawkv.NewClient(ctx, pdAddrs, security,
-		pd.WithCustomTimeoutOption(10*time.Second),
-		pd.WithMaxErrorRetry(3))
+	rawkvClient, err := restore.NewRawkvClient(ctx, pdAddrs, security)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return restore.NewRawKVBatchClient(rawkvClient, rawKVBatchCount), nil
 }

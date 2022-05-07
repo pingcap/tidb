@@ -168,7 +168,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	updateCh.reset()
 
 	es2 := GetRandomStorage(t)
-	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, &cipher)
+	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter2, m.Storage, nil, math.MaxUint64, 2, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.Equal(t, int64(2), updateCh.get())

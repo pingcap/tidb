@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -76,6 +75,7 @@ type Client struct {
 	pdClient      pd.Client
 	toolClient    SplitClient
 	fileImporter  FileImporter
+	rawKVClient   *RawKVBatchClient
 	workerPool    *utils.WorkerPool
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
@@ -279,6 +279,10 @@ func (rc *Client) Close() {
 	if rc.db != nil {
 		rc.db.Close()
 	}
+	if rc.rawKVClient != nil {
+		rc.rawKVClient.Close()
+	}
+
 	log.Info("Restore client closed")
 }
 
@@ -304,6 +308,10 @@ func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool
 	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rateLimit)
+}
+
+func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
+	rc.rawKVClient = c
 }
 
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
@@ -1765,7 +1773,6 @@ func (rc *Client) InitSchemasReplaceForDDL(
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
 func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
-	rawkvClient *rawkv.Client,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
 	progressInc func(),
@@ -1781,7 +1788,7 @@ func (rc *Client) RestoreMetaKVFiles(
 			continue
 		}
 
-		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
+		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1790,7 +1797,7 @@ func (rc *Client) RestoreMetaKVFiles(
 
 	// Restore files in write CF.
 	for _, f := range filesInWriteCF {
-		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
+		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1807,7 +1814,6 @@ func (rc *Client) RestoreMetaKVFiles(
 // RestoreMetaKVFiles tries to restore a file about meta kv-event from stream-backup.
 func (rc *Client) RestoreMetaKVFile(
 	ctx context.Context,
-	rawKVClient *rawkv.Client,
 	file *backuppb.DataFileInfo,
 	sr *stream.SchemasReplace,
 ) error {
@@ -1815,11 +1821,11 @@ func (rc *Client) RestoreMetaKVFile(
 		zap.String("cf", file.Cf), zap.Int64(("kv-count"), file.NumberOfEntries),
 		zap.Uint64("min-ts", file.MinTs), zap.Uint64("max-ts", file.MaxTs))
 
+	rc.rawKVClient.SetColumnFamily(file.GetCf())
 	buff, err := rc.storage.ReadFile(ctx, file.Path)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
 		return errors.Annotatef(berrors.ErrInvalidMetaFile,
 			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
@@ -1861,14 +1867,12 @@ func (rc *Client) RestoreMetaKVFile(
 		log.Debug("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
 			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
 
-		// to do...
-		// use BatchPut instead of put
-		rawKVClient.SetColumnFamily(file.Cf)
-		if err := rawKVClient.Put(ctx, newEntry.Key, newEntry.Value); err != nil {
+		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	return nil
+
+	return rc.rawKVClient.PutRest(ctx)
 }
 
 func transferBoolToValue(enable bool) string {

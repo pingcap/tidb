@@ -98,7 +98,7 @@ func NewSchemasReplace(
 	}
 }
 
-// TidyOldSchemas produces schemas infomation.
+// TidyOldSchemas produces schemas information.
 func (sr *SchemasReplace) TidyOldSchemas() *backup.Schemas {
 	schemas := backup.NewBackupSchemas()
 	// note:
