@@ -16,6 +16,7 @@ package handle
 
 import (
 	"container/list"
+	"math"
 	"sync"
 
 	"github.com/pingcap/tidb/statistics"
@@ -46,6 +47,9 @@ type innerItemLruCache struct {
 }
 
 func newInnerLruCache(c int64) *innerItemLruCache {
+	if c < 1 {
+		c = math.MaxInt64
+	}
 	return &innerItemLruCache{
 		capacity: c,
 		cache:    list.New(),
@@ -377,6 +381,9 @@ func (c *innerItemLruCache) copy() *innerItemLruCache {
 }
 
 func (c *innerItemLruCache) setCapacity(capacity int64) {
+	if capacity < 1 {
+		capacity = math.MaxInt64
+	}
 	c.capacity = capacity
 	c.evictIfNeeded()
 }

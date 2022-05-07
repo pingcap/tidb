@@ -17,7 +17,6 @@ package handle
 import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"math"
 )
 
 // statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
@@ -40,9 +39,6 @@ type statsCacheInner interface {
 
 func newStatsCache() statsCache {
 	capacity := variable.StatsCacheMemQuota.Load()
-	if capacity < 1 {
-		capacity = math.MaxInt64
-	}
 	return statsCache{
 		statsCacheInner: newStatsLruCache(capacity),
 	}
