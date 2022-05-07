@@ -2679,7 +2679,7 @@ func recordMemToGC(memTracker *memory.Tracker, toGC int64) {
 
 // tryGC is called when operator has much to GC but needs to trigger
 // By default, go GC trigger is configured by GOGC=100,
-// which means, GC will be triggered when memory usage excceeds double of usage after last GC.
+// which means, GC will be triggered when memory usage exceeds double of usage after last GC.
 // It's inefficient in some cases like half memory is used by long-living cache.
 func tryGC(force bool) {
 	gcTrigger := variable.GCManualTrigger.Load()
