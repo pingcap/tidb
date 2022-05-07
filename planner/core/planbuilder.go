@@ -2520,7 +2520,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 }
 
 // CMSketchSizeLimit indicates the size limit of CMSketch.
-var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
+var CMSketchSizeLimit = kv.TxnEntrySizeLimit.Load() / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    1024,

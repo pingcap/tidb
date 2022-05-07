@@ -614,11 +614,6 @@ func setGlobalVars() {
 	}
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
-	if cfg.Performance.TxnEntrySizeLimit > 120*1024*1024 {
-		log.Fatal("cannot set txn entry size limit larger than 120M")
-	}
-	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
-
 	priority := mysql.Str2Priority(cfg.Instance.ForcePriority)
 	variable.ForcePriority = int32(priority)
 

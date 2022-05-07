@@ -638,6 +638,8 @@ const (
 // TiDB vars that have only global scope
 
 const (
+	// TiDBTxnEntrySizeLimit is the size limit of a single row of data in TiDB
+	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
 	// TiDBTxnTotalSizeLimit is the size limit of a single transaction
 	TiDBTxnTotalSizeLimit = "tidb_txn_total_size_limit"
 	// TiDBGCEnable turns garbage collection on or OFF
@@ -844,6 +846,7 @@ const (
 	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
 	DefTiDBQueryLogMaxLen                        = 4096
 	DefTiDBTxnTotalSizeLimit                     = 100 * 1024 * 1024
+	DefTiDBTxnEntrySizeLimit                     = 6 * 1024 * 1024
 )
 
 // Process global variables.
@@ -881,4 +884,5 @@ var (
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	TxnTotalSizeLimit              uint64 = DefTiDBTxnTotalSizeLimit
+	TxnEntrySizeLimit              uint64 = DefTiDBTxnEntrySizeLimit
 )

@@ -42,8 +42,6 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
-	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
-	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
@@ -585,7 +583,6 @@ type Performance struct {
 	PseudoEstimateRatio   float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease         string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntrySizeLimit     uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
 	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
@@ -812,7 +809,6 @@ var defaultConf = Config{
 		PseudoEstimateRatio:   0.8,
 		ForcePriority:         "NO_PRIORITY",
 		BindInfoLease:         "3s",
-		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
 		DistinctAggPushDown:   false,
 		ProjectionPushDown:    false,
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
@@ -927,6 +923,7 @@ var deprecatedConfig = map[string]struct{}{
 	"mem-quota-query":                    {},
 	"query-log-max-len":                  {},
 	"txn-total-size-limit":               {},
+	"txn-entry-size-limit":               {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

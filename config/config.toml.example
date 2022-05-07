@@ -259,11 +259,11 @@ distinct-agg-push-down = false
 # NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
 # this value should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
 # If binlog is disabled or binlog is enabled without Kafka, this value should be less than 1099511627776(1T).
-txn-total-size-limit = 104857600
+tidb_txn_total_size_limit = 104857600
 
 # The limitation of the size in byte for each entry in one transaction.
 # NOTE: Increasing this limit may cause performance problems.
-txn-entry-size-limit = 6291456
+tidb_txn_entry_size_limit = 6291456
 
 # The max number of running concurrency two phase committer request for an SQL.
 committer-concurrency = 128

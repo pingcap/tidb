@@ -992,5 +992,30 @@ func TestTiDBTxnTotalSizeLimit(t *testing.T) {
 	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
 	// expected to set to min value
 	require.Equal(t, fmt.Sprintf("%d", expected), val)
-	require.Error(t, err)
+	require.NoError(t, err)
+}
+func TestTiDBTxnEntrySizeLimit(t *testing.T) {
+	sv := GetSysVar(TiDBTxnEntrySizeLimit)
+	vars := NewSessionVars()
+
+	newVal := 10485760
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, "10485760", val)
+	require.NoError(t, err)
+
+	// Max Value out of range
+	newVal = 125829121
+	expected := 125829120
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, fmt.Sprintf("%d", expected), val)
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 1024
+	expected = 10485760
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, fmt.Sprintf("%d", expected), val)
+	require.NoError(t, err)
 }

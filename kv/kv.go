@@ -23,7 +23,6 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/trxevents"
@@ -47,11 +46,9 @@ const UnCommitIndexKVFlag byte = '1'
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
-	TxnEntrySizeLimit uint64 = config.DefTxnEntrySizeLimit
+	TxnEntrySizeLimit = atomic.NewUint64(6 * 1024 * 1024) //DefTiDBTxnEntrySizeLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
-	//TxnTotalSizeLimit uint64 =  //DefTiDBTxnTotalSizeLimit
-
-	TxnTotalSizeLimit = atomic.NewUint64(100 * 1024 * 1024)
+	TxnTotalSizeLimit = atomic.NewUint64(100 * 1024 * 1024) //DefTiDBTxnTotalSizeLimit
 )
 
 // Getter is the interface for the Get method.
