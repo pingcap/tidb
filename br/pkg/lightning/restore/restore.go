@@ -2028,13 +2028,9 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 }
 
 type chunkRestore struct {
-	parser         mydump.Parser
-	index          int
-	chunk          *checkpoints.ChunkCheckpoint
-	allocMaxRowID  int64 // upper bound
-	allocRowIDBase int64 // lower bound
-
-	originalMaxRowID int64
+	parser mydump.Parser
+	index  int
+	chunk  *checkpoints.ChunkCheckpoint
 }
 
 func newChunkRestore(
@@ -2091,12 +2087,9 @@ func newChunkRestore(
 	}
 
 	return &chunkRestore{
-		parser:           parser,
-		index:            index,
-		chunk:            chunk,
-		allocMaxRowID:    chunk.Chunk.RowIDMax,
-		allocRowIDBase:   chunk.Chunk.PrevRowIDMax,
-		originalMaxRowID: chunk.Chunk.RowIDMax,
+		parser: parser,
+		index:  index,
+		chunk:  chunk,
 	}, nil
 }
 

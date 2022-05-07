@@ -542,29 +542,3 @@ func (kvs *KvPairs) Clear() Rows {
 	kvs.pairs = kvs.pairs[:0]
 	return kvs
 }
-
-func (kvs *KvPairs) GetRowIDs() []int64 {
-	res := make([]int64, len(kvs.pairs))
-	for _, kv := range kvs.pairs {
-		res = append(res, kv.RowID)
-	}
-	return res
-}
-
-func (kvs *KvPairs) Slice(idx int) *KvPairs {
-	if idx >= len(kvs.pairs) {
-		return nil
-	}
-	res := &KvPairs{
-		pairs: kvs.pairs[idx:],
-	}
-	kvs.pairs = kvs.pairs[:idx]
-	return res
-}
-
-func (kvs *KvPairs) SetRowID(idx int, newRowID int64) {
-	if idx >= len(kvs.pairs) {
-		return
-	}
-	kvs.pairs[idx].RowID = newRowID
-}

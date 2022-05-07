@@ -272,7 +272,7 @@ func makeSourceFileRegion(
 	if !isCsvFile {
 		divisor += 2
 	}
-	sizePerRow, err := sampleAndGetAvgRowSize(&fi, cfg, ioWorkers, store)
+	sizePerRow, err := SampleAndGetAvgRowSize(&fi, cfg, ioWorkers, store)
 	if err == nil {
 		divisor = sizePerRow
 	}
@@ -307,7 +307,7 @@ func makeSourceFileRegion(
 	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.FileSize)}, nil
 }
 
-func sampleAndGetAvgRowSize(
+func SampleAndGetAvgRowSize(
 	fileInfo *FileInfo,
 	cfg *config.Config,
 	ioWorkers *worker.Pool,
@@ -429,6 +429,9 @@ func SplitLargeFile(
 	}
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
+		if curRowsCnt == 0 && endOffset != startOffset {
+			curRowsCnt = 1
+		}
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFile.FileMeta.FileSize {
 			r, err := store.Open(ctx, dataFile.FileMeta.Path)
