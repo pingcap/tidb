@@ -753,7 +753,6 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 	if err != nil {
 		return "", isNull, err
 	}
-	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
 	sessionVars.SetUserVar(varName, stringutil.Copy(res), datum.Collation())
 	sessionVars.UsersLock.Unlock()
