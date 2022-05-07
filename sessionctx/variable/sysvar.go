@@ -678,7 +678,7 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBStatsCacheMemQuota, Value: strconv.Itoa(DefTiDBStatsCacheMemQuota),
-		MinValue: 0, MaxValue: math.MaxInt64, Type: TypeInt,
+		MinValue: 0, MaxValue: 1024 * 1024 * 1024 * 1024, Type: TypeInt,
 		GetGlobal: func(vars *SessionVars) (string, error) {
 			return strconv.Itoa(int(StatsCacheMemQuota.Load())), nil
 		}, SetGlobal: func(vars *SessionVars, s string) error {

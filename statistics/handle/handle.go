@@ -298,6 +298,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
+		oldCache.FreshTableCost(tbl.PhysicalID)
 	}
 	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
 	return nil
