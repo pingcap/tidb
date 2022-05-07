@@ -102,8 +102,8 @@ var (
 	GlobalMemoryUsageTracker *memory.Tracker
 	// GlobalDiskUsageTracker is the ancestor of all the Executors' disk tracker
 	GlobalDiskUsageTracker *disk.Tracker
-	// AnalyzeMemoryTracker is the ancestor of all the Analyze jobs' memory tracker and child of global Tracker
-	AnalyzeMemoryTracker *memory.Tracker
+	// GlobalAnalyzeMemoryTracker is the ancestor of all the Analyze jobs' memory tracker and child of global Tracker
+	GlobalAnalyzeMemoryTracker *memory.Tracker
 )
 
 var (
@@ -153,13 +153,13 @@ func init() {
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
 	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
-	AnalyzeMemoryTracker = memory.NewTracker(memory.LabelForAnalyzeSharedMemory, -1)
-	AnalyzeMemoryTracker.SetActionOnExceed(action)
+	GlobalAnalyzeMemoryTracker = memory.NewTracker(memory.LabelForAnalyzeSharedMemory, -1)
+	GlobalAnalyzeMemoryTracker.SetActionOnExceed(action)
 	// register quota funcs
-	variable.SetMemQuotaAnalyze = AnalyzeMemoryTracker.SetBytesLimit
-	variable.GetMemQuotaAnalyze = AnalyzeMemoryTracker.GetBytesLimit
+	variable.SetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.SetBytesLimit
+	variable.GetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.GetBytesLimit
 	// TODO: do not attach now to avoid impact to global
-	//AnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+	//GlobalAnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -1784,7 +1784,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
-		sc.MemTracker.AttachTo(AnalyzeMemoryTracker)
+		sc.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 		sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
