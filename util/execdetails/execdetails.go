@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // ExecDetails contains execution detail information.
@@ -374,7 +374,7 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	} else {
 		n := len(procTimes)
-		slices.Sort(procTimes)
+		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
 		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
 			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
@@ -948,7 +948,7 @@ func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 		tpMap[tpStr] = struct{}{}
 		tpArray = append(tpArray, tpStr)
 	}
-	slices.Sort(tpArray)
+	sort.Strings(tpArray)
 	return fmt.Sprintf("%v", tpArray)
 }
 
