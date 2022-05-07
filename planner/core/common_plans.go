@@ -303,6 +303,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		// schema version like prepared plan cache key
 		prepared.CachedPlan = nil
 		preparedObj.Executor = nil
+		preparedObj.ColumnInfos = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -771,9 +772,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 					return errors.New("failed to rebuild range: the length of the range has changed")
 				}
 				for i := range x.IndexValues {
-					for j := range ranges.Ranges[i].LowVal {
-						x.IndexValues[i][j] = ranges.Ranges[i].LowVal[j]
-					}
+					copy(x.IndexValues[i], ranges.Ranges[i].LowVal)
 				}
 			} else {
 				var pkCol *expression.Column
