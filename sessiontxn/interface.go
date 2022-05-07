@@ -87,7 +87,11 @@ type TxnManager interface {
 	OnStmtStart(ctx context.Context) error
 }
 
-// NewTxn starts a new optimistic and active txn
+// NewTxn starts a new optimistic and active txn, it can be used for the below scenes:
+// 1. Commit the current transaction and do some work in a new transaction for some specific operations, for example: DDL
+// 2. Some background job need to do something in a transaction.
+// In other scenes like 'BEGIN', 'START TRANSACTION' or prepare transaction in a new statement,
+// you should use `TxnManager`.`EnterNewTxn` and pass the relevant to it.
 func NewTxn(ctx context.Context, sctx sessionctx.Context) error {
 	return GetTxnManager(sctx).EnterNewTxn(ctx, &EnterNewTxnRequest{
 		Type:    EnterNewTxnDefault,
@@ -95,7 +99,8 @@ func NewTxn(ctx context.Context, sctx sessionctx.Context) error {
 	})
 }
 
-// NewTxnInStmt us used when we should commit the old txn and create a new one for some statement like ddl operations.
+// NewTxnInStmt is like `NewTxn` but it will call `OnStmtStart` after it.
+// It should be used when a statement already started.
 func NewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
 	if err := NewTxn(ctx, sctx); err != nil {
 		return err
