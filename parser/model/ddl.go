@@ -514,7 +514,7 @@ func (job *Job) NotStarted() bool {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey:
+	case ActionAddIndex, ActionAddPrimaryKey, ActionModifyTableCharsetAndCollate:
 		return true
 	case ActionModifyColumn:
 		if len(job.CtxVars) > 0 {

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -654,6 +655,13 @@ func onSetDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 	return updateColumnDefaultValue(d, t, job, newCol, &newCol.Name)
 }
 
+func needCheckColumnData(oldCol, newCol *model.ColumnInfo) bool {
+	if oldCol.GetCharset() != newCol.GetCharset() {
+		return oldCol.GetCharset() == charset.CharsetLatin1
+	}
+	return true
+}
+
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.GetFlag())
@@ -1041,7 +1049,7 @@ func (w *worker) doModifyColumnTypeWithData(
 
 func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
-	reorgInfo, err := getReorgInfo(w.JobContext, d, t, job, tbl, BuildElements(changingCol, changingIdxs))
+	reorgInfo, err := getReorgInfo(w.JobContext, d, t, job, tbl, BuildElements([]*model.ColumnInfo{changingCol}, changingIdxs))
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -1219,18 +1227,25 @@ func locateOffsetToMove(currentOffset int, pos *ast.ColumnPosition, tblInfo *mod
 }
 
 // BuildElements is exported for testing.
-func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
+func BuildElements(changingCol []*model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
 	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
-	elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
+	for _, col := range changingCol {
+		elements = append(elements, &meta.Element{ID: col.ID, TypeKey: meta.ColumnElementKey})
+	}
 	for _, idx := range changingIdxs {
 		elements = append(elements, &meta.Element{ID: idx.ID, TypeKey: meta.IndexElementKey})
 	}
 	return elements
 }
 
-func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colInfo []*model.ColumnInfo, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to update table row", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writePhysicalTableRecord(t, typeUpdateColumnWorker, nil, oldColInfo, colInfo, reorgInfo)
+	return w.writePhysicalTableRecord(t, typeUpdateColumnWorker, nil, oldColInfo, colInfo, reorgInfo, false)
+}
+
+func (w *worker) checkPhysicalTableRow(t table.PhysicalTable, oldColInfo, colInfo []*model.ColumnInfo, reorgInfo *reorgInfo) error {
+	logutil.BgLogger().Info("[ddl] start to check table row", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
+	return w.writePhysicalTableRecord(t, typeUpdateColumnWorker, nil, oldColInfo, colInfo, reorgInfo, true)
 }
 
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
@@ -1251,9 +1266,10 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 			}
 		}
 	})
+
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
+		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), []*model.ColumnInfo{oldCol}, []*model.ColumnInfo{col}, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1315,8 +1331,8 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 
 type updateColumnWorker struct {
 	*backfillWorker
-	oldColInfo    *model.ColumnInfo
-	newColInfo    *model.ColumnInfo
+	oldColInfo    []*model.ColumnInfo
+	newColInfo    []*model.ColumnInfo
 	metricCounter prometheus.Counter
 
 	// The following attributes are used to reduce memory allocation.
@@ -1325,11 +1341,12 @@ type updateColumnWorker struct {
 
 	rowMap map[int64]types.Datum
 
+	checkOnly bool
 	// For SQL Mode and warnings.
 	sqlMode mysql.SQLMode
 }
 
-func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column, sqlMode mysql.SQLMode) *updateColumnWorker {
+func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol []*model.ColumnInfo, decodeColMap map[int64]decoder.Column, sqlMode mysql.SQLMode, checkOnly bool) *updateColumnWorker {
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
@@ -1339,6 +1356,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 		sqlMode:        sqlMode,
+		checkOnly:      checkOnly,
 	}
 }
 
@@ -1347,9 +1365,9 @@ func (w *updateColumnWorker) AddMetricInfo(cnt float64) {
 }
 
 type rowRecord struct {
-	key     []byte        // It's used to lock a record. Record it to reduce the encoding time.
-	vals    []byte        // It's the record.
-	warning *terror.Error // It's used to record the cast warning of a record.
+	key     []byte          // It's used to lock a record. Record it to reduce the encoding time.
+	vals    []byte          // It's the record.
+	warning []*terror.Error // It's used to record the cast warning of a record.
 }
 
 // getNextKey gets next handle of entry that we are going to process.
@@ -1410,47 +1428,48 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		return errors.Trace(dbterror.ErrCantDecodeRecord.GenWithStackByArgs("column", err))
 	}
 
-	if _, ok := w.rowMap[w.newColInfo.ID]; ok {
-		// The column is already added by update or insert statement, skip it.
-		w.cleanRowMap()
-		return nil
-	}
-
-	var recordWarning *terror.Error
-	// Since every updateColumnWorker handle their own work individually, we can cache warning in statement context when casting datum.
-	oldWarn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
-	if oldWarn == nil {
-		oldWarn = []stmtctx.SQLWarn{}
-	} else {
-		oldWarn = oldWarn[:0]
-	}
-	w.sessCtx.GetSessionVars().StmtCtx.SetWarnings(oldWarn)
-	val := w.rowMap[w.oldColInfo.ID]
-	col := w.newColInfo
-	if val.Kind() == types.KindNull && col.FieldType.GetType() == mysql.TypeTimestamp && mysql.HasNotNullFlag(col.GetFlag()) {
-		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx, col.GetType(), col.GetDecimal()); err == nil {
-			// convert null value to timestamp should be substituted with current timestamp if NOT_NULL flag is set.
-			w.rowMap[w.oldColInfo.ID] = v
+	var recordWarnings []*terror.Error
+	for i := 0; i < len(w.newColInfo); i++ {
+		if _, ok := w.rowMap[w.newColInfo[i].ID]; ok {
+			// The column is already added by update or insert statement, skip it.
+			w.cleanRowMap()
+			return nil
 		}
-	}
-	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
-	if err != nil {
-		return w.reformatErrors(err)
-	}
-	if w.sessCtx.GetSessionVars().StmtCtx.GetWarnings() != nil && len(w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()) != 0 {
-		warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
-		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
-	}
-
-	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
-		if val.(bool) {
-			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
-				failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
+		// Since every updateColumnWorker handle their own work individually, we can cache warning in statement context when casting datum.
+		oldWarn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+		if oldWarn == nil {
+			oldWarn = []stmtctx.SQLWarn{}
+		} else {
+			oldWarn = oldWarn[:0]
+		}
+		w.sessCtx.GetSessionVars().StmtCtx.SetWarnings(oldWarn)
+		val := w.rowMap[w.oldColInfo[i].ID]
+		col := w.newColInfo[i]
+		if val.Kind() == types.KindNull && col.FieldType.GetType() == mysql.TypeTimestamp && mysql.HasNotNullFlag(col.GetFlag()) {
+			if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx, col.GetType(), col.GetDecimal()); err == nil {
+				// convert null value to timestamp should be substituted with current timestamp if NOT_NULL flag is set.
+				w.rowMap[w.oldColInfo[i].ID] = v
 			}
 		}
-	})
+		newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo[i].ID], w.newColInfo[i], false, false)
+		if err != nil {
+			return w.reformatErrors(w.oldColInfo[i], err)
+		}
+		if w.sessCtx.GetSessionVars().StmtCtx.GetWarnings() != nil && len(w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()) != 0 {
+			warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+			recordWarnings = append(recordWarnings, errors.Cause(w.reformatErrors(w.oldColInfo[i], warn[0].Err)).(*terror.Error))
+		}
 
-	w.rowMap[w.newColInfo.ID] = newColVal
+		failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
+			if val.(bool) {
+				if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
+					failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
+				}
+			}
+		})
+		w.rowMap[w.newColInfo[i].ID] = newColVal
+	}
+
 	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.sessCtx, w.rowMap)
 	if err != nil {
 		return errors.Trace(err)
@@ -1468,22 +1487,22 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		return errors.Trace(err)
 	}
 
-	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal, warning: recordWarning})
+	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal, warning: recordWarnings})
 	w.cleanRowMap()
 	return nil
 }
 
 // reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
-func (w *updateColumnWorker) reformatErrors(err error) error {
+func (w *updateColumnWorker) reformatErrors(oldColInfo *model.ColumnInfo, err error) error {
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
 	if types.ErrTruncated.Equal(err) || types.ErrDataTooLong.Equal(err) {
-		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
-		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
+		dStr := datumToStringNoErr(w.rowMap[oldColInfo.ID])
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", oldColInfo.Name, dStr)
 	}
 
 	if types.ErrWarnDataOutOfRange.Equal(err) {
-		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
-		err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s', the value is '%s'", w.oldColInfo.Name, dStr)
+		dStr := datumToStringNoErr(w.rowMap[oldColInfo.ID])
+		err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s', the value is '%s'", oldColInfo.Name, dStr)
 	}
 	return err
 }
@@ -1524,17 +1543,21 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		for _, rowRecord := range rowRecords {
 			taskCtx.scanCount++
 
-			err = txn.Set(rowRecord.key, rowRecord.vals)
-			if err != nil {
-				return errors.Trace(err)
+			if !w.checkOnly {
+				err = txn.Set(rowRecord.key, rowRecord.vals)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				taskCtx.addedCount++
 			}
-			taskCtx.addedCount++
-			if rowRecord.warning != nil {
-				if _, ok := warningsCountMap[rowRecord.warning.ID()]; ok {
-					warningsCountMap[rowRecord.warning.ID()]++
-				} else {
-					warningsCountMap[rowRecord.warning.ID()] = 1
-					warningsMap[rowRecord.warning.ID()] = rowRecord.warning
+			if len(rowRecord.warning) != 0 {
+				for _, warn := range rowRecord.warning {
+					if _, ok := warningsCountMap[warn.ID()]; ok {
+						warningsCountMap[warn.ID()]++
+					} else {
+						warningsCountMap[warn.ID()] = 1
+						warningsMap[warn.ID()] = warn
+					}
 				}
 			}
 		}
@@ -1554,6 +1577,44 @@ func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model
 	for _, idx := range changingIdxs {
 		idx.State = schemaState
 	}
+}
+
+func (w *worker) doCheckColumns(d *ddlCtx, t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	oldCols, newCols []*model.ColumnInfo) (done bool, _ error) {
+	tbl, err := getTable(d.store, dbInfo.ID, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return false, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfo(w.JobContext, d, t, job, tbl, BuildElements(newCols, nil))
+	if err != nil || reorgInfo.first {
+		// If we run reorg firstly, we should update the job snapshot version
+		// and then run the reorg next time.
+		return false, errors.Trace(err)
+	}
+	err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+		return w.checkPhysicalTableRow(tbl.(table.PhysicalTable), oldCols, newCols, reorgInfo)
+	})
+	if err != nil {
+		if dbterror.ErrWaitReorgTimeout.Equal(err) {
+			// If timeout, we should return, check for the owner and re-wait job done.
+			return false, nil
+		}
+		if kv.IsTxnRetryableError(err) {
+			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+			w.reorgCtx.cleanNotifyReorgCancel()
+			return false, errors.Trace(err)
+		}
+		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+			logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+				zap.String("job", job.String()), zap.Error(err1))
+		}
+		job.State = model.JobStateCancelled
+		w.reorgCtx.cleanNotifyReorgCancel()
+		return false, errors.Trace(err)
+	}
+	w.reorgCtx.cleanNotifyReorgCancel()
+	return true, nil
 }
 
 // doModifyColumn updates the column information and reorders all columns. It does not support modifying column data.
@@ -1585,6 +1646,15 @@ func (w *worker) doModifyColumn(
 		// The column should get into prevent null status first.
 		if noPreventNullFlag {
 			return updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+		}
+	}
+
+	if needCheckColumnData(oldCol, newCol) {
+		newCol.ID = allocateColumnID(tblInfo)
+		done, err := w.doCheckColumns(d, t, job, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, []*model.ColumnInfo{newCol})
+		newCol.ID = oldCol.ID
+		if !done || err != nil {
+			return ver, err
 		}
 	}
 

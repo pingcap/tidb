@@ -14,6 +14,8 @@
 package charset
 
 import (
+	"bytes"
+	"github.com/pingcap/failpoint"
 	"golang.org/x/text/encoding"
 )
 
@@ -33,4 +35,11 @@ type encodingLatin1 struct {
 // Name implements Encoding interface.
 func (e *encodingLatin1) Name() string {
 	return CharsetLatin1
+}
+
+func (e *encodingLatin1) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
+	failpoint.Inject("latin1EnableInvalidCharacter", func() {
+		failpoint.Return(src, nil)
+	})
+	return e.encodingUTF8.Transform(dest, src, op)
 }

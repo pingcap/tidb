@@ -1015,7 +1015,7 @@ func onModifyTableComment(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 	return ver, nil
 }
 
-func onModifyTableCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onModifyTableCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var toCharset, toCollate string
 	var needsOverwriteCols bool
 	if err := job.DecodeArgs(&toCharset, &toCollate, &needsOverwriteCols); err != nil {
@@ -1040,11 +1040,26 @@ func onModifyTableCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo.Charset = toCharset
-	tblInfo.Collate = toCollate
-
 	if needsOverwriteCols {
+		oldCols := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
+		newCols := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
 		// update column charset.
+		for _, col := range tblInfo.Columns {
+			newCol := col.Clone()
+			newCol.SetCharset(toCharset)
+			newCol.SetCollate(toCollate)
+			newCol.ID = allocateColumnID(tblInfo)
+			if field_types.HasCharset(&col.FieldType) && needCheckColumnData(col, newCol) {
+				oldCols = append(oldCols, col)
+				newCols = append(newCols, newCol)
+			}
+		}
+		if len(newCols) != 0 {
+			done, err := w.doCheckColumns(d, t, job, dbInfo, tblInfo, oldCols, newCols)
+			if !done || err != nil {
+				return ver, err
+			}
+		}
 		for _, col := range tblInfo.Columns {
 			if field_types.HasCharset(&col.FieldType) {
 				col.SetCharset(toCharset)
@@ -1055,6 +1070,9 @@ func onModifyTableCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 		}
 	}
+
+	tblInfo.Charset = toCharset
+	tblInfo.Collate = toCollate
 
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
