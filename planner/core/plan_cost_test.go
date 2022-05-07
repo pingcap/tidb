@@ -18,7 +18,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
@@ -223,6 +226,168 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 
 	for _, q := range queries {
 		checkCost(t, tk, q, "")
+	}
+}
+
+func TestNewCostInterfaceTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int)`)
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	queries := []string{
+		"select * from t",
+		"select * from t where a < 200",
+		"select * from t where a = 200",
+		"select * from t where a in (1, 2, 3, 100, 200, 300, 1000)",
+		"select a from t",
+		"select a from t where a < 200",
+		"select * from t where a+200 < 1000",
+		"select * from t where mod(a, 200) < 100",
+		"select b from t where b+200 < 1000",
+		"select b from t where mod(a, 200) < 100",
+		"select * from t where b+200 < 1000",
+		"select * from t where c+200 < 1000",
+		"select * from t where mod(b+c, 200) < 100",
+		"select a, b, d from t",
+		"select a, b, d from t where a < 200",
+		"select a, b, d from t where a = 200",
+		"select a, b, d from t where a in (1, 2, 3, 100, 200, 300, 1000)",
+		"select a from t where a = 200",
+		"select a from t where a in (1, 2, 3, 100, 200, 300, 1000)",
+		"select b from t",
+		"select b from t where b < 200",
+		"select b from t where b = 200",
+		"select b from t where b in (1, 2, 3, 100, 200, 300, 1000)",
+		"select c, d from t",
+		"select c, d from t where c < 200",
+		"select c, d from t where c = 200",
+		"select c, d from t where c in (1, 2, 3, 100, 200, 300, 1000)",
+		"select c, d from t where c = 200 and d < 200",
+		"select d from t",
+		"select d from t where c < 200",
+		"select d from t where c = 200",
+		"select d from t where c in (1, 2, 3, 100, 200, 300, 1000)",
+		"select d from t where c = 200 and d < 200",
+		"select * from t where b < 200",
+		"select * from t where b = 200",
+		"select * from t where b in (1, 2, 3, 100, 200, 300, 1000)",
+		"select a, b from t",
+		"select a, b from t where c < 200",
+		"select a, b from t where c = 200",
+		"select a, b from t where c in (1, 2, 3, 100, 200, 300, 1000)",
+		"select a, b from t where c = 200 and d < 200",
+		"select * from t where c < 200",
+		"select * from t where c = 200",
+		"select * from t where c in (1, 2, 3, 100, 200, 300, 1000)",
+		"select * from t where c = 200 and d < 200",
+		"select * from t where b<100 or c<100",
+		"select * from t where b<100 or c=100 and d<100",
+		"select * from t where b<100 or c=100 and d<100 and a<100",
+		"select count(*) from t where a < 200",
+		"select max(a) from t where a < 200",
+		"select avg(a) from t",
+		"select sum(a) from t where a < 200",
+		"select * from t where a < 200 limit 10",
+		"select * from t where a = 200  limit 10",
+		"select a, b, d from t where a < 200 limit 10",
+		"select a, b, d from t where a = 200 limit 10",
+		"select a from t where a < 200 limit 10",
+		"select a from t where a = 200 limit 10",
+		"select b from t where b < 200 limit 10",
+		"select b from t where b = 200 limit 10",
+		"select c, d from t where c < 200 limit 10",
+		"select c, d from t where c = 200 limit 10",
+		"select c, d from t where c = 200 and d < 200 limit 10",
+		"select d from t where c < 200 limit 10",
+		"select d from t where c = 200 limit 10",
+		"select d from t where c = 200 and d < 200 limit 10",
+		"select * from t where b < 200 limit 10",
+		"select * from t where b = 200 limit 10",
+		"select a, b from t where c < 200 limit 10",
+		"select a, b from t where c = 200 limit 10",
+		"select a, b from t where c = 200 and d < 200 limit 10",
+		"select * from t where c < 200 limit 10",
+		"select * from t where c = 200 limit 10",
+		"select * from t where c = 200 and d < 200 limit 10",
+		"select * from t where a < 200 order by a",
+		"select * from t where a = 200  order by a",
+		"select a, b, d from t where a < 200 order by a",
+		"select a, b, d from t where a = 200 order by a",
+		"select a from t where a < 200 order by a",
+		"select a from t where a = 200 order by a",
+		"select b from t where b < 200 order by b",
+		"select b from t where b = 200 order by b",
+		"select c, d from t where c < 200 order by c",
+		"select c, d from t where c = 200 order by c",
+		"select c, d from t where c = 200 and d < 200 order by c, d",
+		"select d from t where c < 200 order by c",
+		"select d from t where c = 200 order by c",
+		"select d from t where c = 200 and d < 200 order by c, d",
+		"select * from t where b < 200 order by b",
+		"select * from t where b = 200 order by b",
+		"select a, b from t where c < 200 order by c",
+		"select a, b from t where c = 200 order by c",
+		"select a, b from t where c = 200 and d < 200 order by c, d",
+		"select * from t where c < 200 order by c",
+		"select * from t where c = 200 order by c",
+		"select * from t where c = 200 and d < 200 order by c, d",
+		"select * from t where a < 200 order by a limit 10",
+		"select * from t where a = 200  order by a limit 10",
+		"select a, b, d from t where a < 200 order by a limit 10",
+		"select a, b, d from t where a = 200 order by a limit 10",
+		"select a from t where a < 200 order by a limit 10",
+		"select a from t where a = 200 order by a limit 10",
+		"select b from t where b < 200 order by b limit 10",
+		"select b from t where b = 200 order by b limit 10",
+		"select c, d from t where c < 200 order by c limit 10",
+		"select c, d from t where c = 200 order by c limit 10",
+		"select c, d from t where c = 200 and d < 200 order by c, d limit 10",
+		"select d from t where c < 200 order by c limit 10",
+		"select d from t where c = 200 order by c limit 10",
+		"select d from t where c = 200 and d < 200 order by c, d limit 10",
+		"select * from t where b < 200 order by b limit 10",
+		"select * from t where b = 200 order by b limit 10",
+		"select a, b from t where c < 200 order by c limit 10",
+		"select a, b from t where c = 200 order by c limit 10",
+		"select a, b from t where c = 200 and d < 200 order by c, d limit 10",
+		"select * from t where c < 200 order by c limit 10",
+		"select * from t where c = 200 order by c limit 10",
+		"select * from t where c = 200 and d < 200 order by c, d limit 10",
+		"select * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select * from t t1, t t2 where t1.a<t2.a+2 and t1.b>1000",
+		"select * from t t1, t t2 where t1.a=t2.a and t1.b>1000",
+		"select * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
+		"select * from t t1 where t1.b in (select sum(t2.b) from t t2 where t1.a < t2.a)",
+		"select * from t where a = 1",
+		"select * from t where a in (1, 2, 3, 4, 5)",
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	for _, allowMPP := range []bool{false, true} {
+		if allowMPP {
+			tk.MustExec(`set @@session.tidb_allow_mpp=1`)
+		} else {
+			tk.MustExec(`set @@session.tidb_allow_mpp=0`)
+		}
+
+		for _, q := range queries {
+			checkCost(t, tk, q, fmt.Sprintf("allowMPP=%v", allowMPP))
+		}
 	}
 }
 
