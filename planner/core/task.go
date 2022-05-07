@@ -15,6 +15,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -1976,6 +1977,8 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
 		cst /= 1000000000
 	}
+	p.SetCost(cst)
+
 	rt := &rootTask{
 		p:   p,
 		cst: cst,
