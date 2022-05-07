@@ -380,6 +380,7 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 	}
 	tk.Session().GetSessionVars().DEBUG = true
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+
 	for mppMode := 0; mppMode < 3; mppMode++ {
 		switch mppMode {
 		case 0: // not allow MPP
