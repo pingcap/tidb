@@ -273,7 +273,7 @@ func makeSourceFileRegion(
 		divisor += 2
 	}
 	sizePerRow, err := SampleAndGetAvgRowSize(&fi, cfg, ioWorkers, store)
-	if err == nil {
+	if err == nil && sizePerRow != 0 {
 		divisor = sizePerRow
 	}
 	// If a csv file is overlarge, we need to split it into multiple regions.
@@ -347,7 +347,11 @@ func SampleAndGetAvgRowSize(
 		totalBytes += parser.LastRow().Length
 		totalRows++
 	}
-	return int64(totalBytes) / int64(totalRows), nil
+	if totalRows > 0 {
+		return int64(totalBytes) / int64(totalRows), nil
+	} else {
+		return 0, nil
+	}
 }
 
 // because parquet files can't seek efficiently, there is no benefit in split.

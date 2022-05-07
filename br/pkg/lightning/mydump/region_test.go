@@ -438,6 +438,7 @@ func TestSampleAndGetAvgRowSize(t *testing.T) {
 			err := os.WriteFile(filePath, content, 0o644)
 			require.Nil(t, err)
 			dataFileInfo, err := os.Stat(filePath)
+			require.Nil(t, err)
 			fileSize := dataFileInfo.Size()
 
 			cfg := newConfigWithSourceDir(dir)
