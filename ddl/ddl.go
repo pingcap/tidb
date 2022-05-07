@@ -1089,9 +1089,7 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
+
 	errs := make([]error, len(ids))
 	for _, row := range rows {
 		jobBinary := row.GetBytes(0)

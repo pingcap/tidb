@@ -182,12 +182,15 @@ func TestTable(t *testing.T) {
 	require.NoError(t, err)
 	doDDLJobErr(t, dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d, store)
 
+	ctx = testkit.NewTestKit(t, store).Session()
+	require.NoError(t, ctx.NewTxn(context.Background()))
 	count := 2000
 	tbl := testGetTable(t, domain, tblInfo.ID)
 	for i := 1; i <= count; i++ {
 		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
+	require.NoError(t, ctx.CommitTxn(context.Background()))
 
 	jobID := testDropTable(testkit.NewTestKit(t, store), t, dbInfo.Name.L, tblInfo.Name.L, domain)
 	testCheckJobDone(t, store, jobID, false)
