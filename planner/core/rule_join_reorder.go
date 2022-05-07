@@ -18,12 +18,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/tracing"
+	"golang.org/x/exp/slices"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
@@ -218,7 +218,7 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 		for join := range tracer.cost {
 			joins = append(joins, join)
 		}
-		sort.Strings(joins)
+		slices.Sort(joins)
 		for i, join := range joins {
 			if i > 0 {
 				buffer.WriteString(",")

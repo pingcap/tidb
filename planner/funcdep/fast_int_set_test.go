@@ -19,12 +19,12 @@ import (
 	"math/rand"
 	"reflect"
 	"runtime"
-	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -105,7 +105,7 @@ func (is IntSet) SortedArray() []int {
 	for k := range is {
 		arr = append(arr, k)
 	}
-	sort.Slice(arr, func(i, j int) bool { return arr[i] < arr[j] })
+	slices.Sort(arr)
 	return arr
 }
 

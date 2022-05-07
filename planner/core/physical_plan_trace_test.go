@@ -16,7 +16,6 @@ package core_test
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"testing"
 
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
@@ -114,7 +114,7 @@ func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string) 
 			pl = append(pl, physicalPlanKey)
 		}
 	}
-	sort.Strings(ll)
-	sort.Strings(pl)
+	slices.Sort(ll)
+	slices.Sort(pl)
 	return ll, pl
 }

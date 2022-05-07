@@ -17,13 +17,13 @@ package core
 import (
 	"context"
 	"fmt"
-	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableColumnID, comment string) string {
@@ -77,7 +77,7 @@ func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp LogicalPla
 		col := getColumnName(t, is, tblColID, comment)
 		cols = append(cols, col)
 	}
-	sort.Strings(cols)
+	slices.Sort(cols)
 	require.Equal(t, expected, cols, comment)
 }
 
