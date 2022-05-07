@@ -587,7 +587,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // GetHistoryDDLCount the count of done ddl jobs.
 func (d *ddl) GetHistoryDDLCount() (count uint64, err error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		rs, err := d.sessForAddDDL.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "select count(1) from mysql.tidb_history_job")
+		rs, err := d.sessForAddDDL.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "select count(1) from mysql.tidb_ddl_history")
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

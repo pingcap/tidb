@@ -442,7 +442,7 @@ func GetHistoryJobFromStore(sess sessionctx.Context, store kv.Storage, id int64)
 // GetHistoryJob return all history ddl from.
 func GetHistoryJob(sess sessionctx.Context, t *meta.Meta, id int64) (*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		jobs, err := getJobsBySQL(sess, "tidb_history_job", fmt.Sprintf("job_id = %d", id))
+		jobs, err := getJobsBySQL(sess, "tidb_ddl_history", fmt.Sprintf("job_id = %d", id))
 		if err != nil || len(jobs) == 0 {
 			return nil, errors.Trace(err)
 		}
@@ -598,7 +598,7 @@ func (w *worker) AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bo
 		if err != nil {
 			return err
 		}
-		_, err = w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("insert into mysql.tidb_history_job(job_id, job_meta, job_seq) values (%d, 0x%x, %d)", job.ID, b, job.SeqNum))
+		_, err = w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_history(job_id, job_meta, job_seq) values (%d, 0x%x, %d)", job.ID, b, job.SeqNum))
 		return errors.Trace(err)
 	}
 

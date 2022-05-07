@@ -511,7 +511,7 @@ func getJobsBySQL(sess sessionctx.Context, tbl, condition string) ([]*model.Job,
 // GetAllHistoryDDLJobs get all the done ddl jobs.
 func GetAllHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta) ([]*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		return getJobsBySQL(sess, "tidb_history_job", "1")
+		return getJobsBySQL(sess, "tidb_ddl_history", "1")
 	}
 
 	return m.GetAllHistoryDDLJobs()

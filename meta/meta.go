@@ -15,7 +15,6 @@
 package meta
 
 import (
-	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/structure"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -135,27 +133,6 @@ func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 		StartTS:    txn.StartTS(),
 		jobListKey: listKey,
 	}
-}
-
-// InitMetaTable is to create tidb_ddl_job and tidb_ddl_reorg
-func InitMetaTable(store kv.Storage) error {
-	return kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := NewMeta(txn)
-		exists, err := t.CheckDDLTableExists()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if exists {
-			return nil
-		}
-		id, err := t.CreateMySQLSchema()
-		if err != nil {
-			return err
-		}
-		err = t.CreateDDLJobTable(id)
-
-		return err
-	})
 }
 
 // NewSnapshotMeta creates a Meta with snapshot.
@@ -401,6 +378,11 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 
+// WriteDDLTables creates a table with tableInfo in database.
+func (m *Meta) WriteDDLTables() error {
+	return m.txn.Set(mInitDDLTable, []byte("some value"))
+}
+
 // CreateMySQLSchema create mysql schema
 func (m *Meta) CreateMySQLSchema() (int64, error) {
 	dbs, err := m.ListDatabases()
@@ -432,266 +414,6 @@ func (m *Meta) CreateMySQLSchema() (int64, error) {
 	}
 
 	return db.ID, m.txn.HSet(mDBs, m.dbKey(db.ID), data)
-}
-
-// CreateDDLJobTable creates a table with tableInfo in database.
-func (m *Meta) CreateDDLJobTable(dbid int64) error {
-	v, err := m.txn.Get(mInitDDLTable)
-	if err == nil && v != nil {
-		return nil
-	}
-	id, err := m.GenGlobalID()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	col := &model.ColumnInfo{
-		ID:      1,
-		Name:    model.NewCIStr("job_id"),
-		Offset:  0,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	col2 := &model.ColumnInfo{
-		ID:      2,
-		Name:    model.NewCIStr("reorg"),
-		Offset:  1,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	col3 := &model.ColumnInfo{
-		ID:      3,
-		Name:    model.NewCIStr("schema_id"),
-		Offset:  2,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	col4 := &model.ColumnInfo{
-		ID:      4,
-		Name:    model.NewCIStr("table_id"),
-		Offset:  3,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	col5 := &model.ColumnInfo{
-		ID:      5,
-		Name:    model.NewCIStr("job_meta"),
-		Offset:  4,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	col6 := &model.ColumnInfo{
-		ID:      6,
-		Name:    model.NewCIStr("processing"),
-		Offset:  5,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	col7 := &model.ColumnInfo{
-		ID:      7,
-		Name:    model.NewCIStr("is_drop_schema"),
-		Offset:  6,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	idx := &model.IndexInfo{
-		ID:      1,
-		Name:    model.NewCIStr("PRIMARY"),
-		Table:   model.NewCIStr("tidb_ddl_job"),
-		State:   model.StatePublic,
-		Tp:      model.IndexTypeBtree,
-		Unique:  true,
-		Primary: true,
-	}
-	idx.Columns = append(idx.Columns, &model.IndexColumn{Name: model.NewCIStr("job_id"), Length: types.UnspecifiedLength})
-	col.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	col.SetFlag(col.GetFlag() | mysql.NotNullFlag | mysql.PriKeyFlag)
-	col2.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	col3.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	col4.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	col5.FieldType = *types.NewFieldType(mysql.TypeBlob)
-	col6.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	col7.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	tableInfo := model.TableInfo{
-		ID:         id,
-		Name:       model.NewCIStr("tidb_ddl_job"),
-		Charset:    mysql.UTF8MB4Charset,
-		Collate:    mysql.UTF8MB4DefaultCollation,
-		PKIsHandle: true,
-		State:      model.StatePublic,
-	}
-	//tableInfo.Indices = append(tableInfo.Indices, idx)
-	tableInfo.Columns = append(tableInfo.Columns, col, col2, col3, col4, col5, col6, col7)
-
-	data, err := json.Marshal(tableInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = m.txn.HSet(m.dbKey(dbid), m.tableKey(tableInfo.ID), data)
-	if err != nil {
-		return err
-	}
-
-	reorgCol := &model.ColumnInfo{
-		ID:      1,
-		Name:    model.NewCIStr("job_id"),
-		Offset:  0,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	reorgCol2 := &model.ColumnInfo{
-		ID:      2,
-		Name:    model.NewCIStr("ele_id"),
-		Offset:  1,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	reorgCol3 := &model.ColumnInfo{
-		ID:      3,
-		Name:    model.NewCIStr("curr_ele_id"),
-		Offset:  2,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	reorgCol4 := &model.ColumnInfo{
-		ID:      4,
-		Name:    model.NewCIStr("curr_ele_type"),
-		Offset:  3,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	reorgCol5 := &model.ColumnInfo{
-		ID:      5,
-		Name:    model.NewCIStr("start_key"),
-		Offset:  4,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	reorgCol6 := &model.ColumnInfo{
-		ID:      6,
-		Name:    model.NewCIStr("end_key"),
-		Offset:  5,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	reorgCol7 := &model.ColumnInfo{
-		ID:      7,
-		Name:    model.NewCIStr("physical_id"),
-		Offset:  6,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	reorgCol.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	reorgCol.SetFlag(reorgCol.GetFlag() | mysql.NotNullFlag)
-	reorgCol2.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	reorgCol3.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	reorgCol4.FieldType = *types.NewFieldType(mysql.TypeBlob)
-	reorgCol5.FieldType = *types.NewFieldType(mysql.TypeBlob)
-	reorgCol6.FieldType = *types.NewFieldType(mysql.TypeBlob)
-	reorgCol7.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	reorgIdx := &model.IndexInfo{
-		ID:    1,
-		Name:  model.NewCIStr("idx_job_id"),
-		Table: model.NewCIStr("tidb_ddl_reorg"),
-		State: model.StatePublic,
-		Tp:    model.IndexTypeBtree,
-		Columns: []*model.IndexColumn{
-			{Name: model.NewCIStr("job_id"), Offset: 0, Length: types.UnspecifiedLength},
-		},
-	}
-	id, err = m.GenGlobalID()
-	if err != nil {
-		return err
-	}
-	reorgTableInfo := model.TableInfo{
-		ID:      id,
-		Name:    model.NewCIStr("tidb_ddl_reorg"),
-		Charset: mysql.UTF8MB4Charset,
-		Collate: mysql.UTF8MB4DefaultCollation,
-		State:   model.StatePublic,
-	}
-	reorgTableInfo.Indices = append(reorgTableInfo.Indices, reorgIdx)
-	reorgTableInfo.Columns = append(reorgTableInfo.Columns, reorgCol, reorgCol2, reorgCol3, reorgCol4, reorgCol5, reorgCol6, reorgCol7)
-
-	data, err = json.Marshal(reorgTableInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = m.txn.HSet(m.dbKey(dbid), m.tableKey(reorgTableInfo.ID), data)
-	if err != nil {
-		return err
-	}
-
-	historyTblCol1 := &model.ColumnInfo{
-		ID:      1,
-		Name:    model.NewCIStr("job_id"),
-		Offset:  0,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	historyTblCol2 := &model.ColumnInfo{
-		ID:      2,
-		Name:    model.NewCIStr("job_meta"),
-		Offset:  1,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	historyTblCol3 := &model.ColumnInfo{
-		ID:      3,
-		Name:    model.NewCIStr("job_seq"),
-		Offset:  2,
-		State:   model.StatePublic,
-		Version: 1,
-	}
-	historyIdx := &model.IndexInfo{
-		ID:      1,
-		Name:    model.NewCIStr("PRIMARY"),
-		Table:   model.NewCIStr("tidb_history_job"),
-		State:   model.StatePublic,
-		Tp:      model.IndexTypeBtree,
-		Unique:  true,
-		Primary: true,
-	}
-	historyIdx2 := &model.IndexInfo{
-		ID:      2,
-		Name:    model.NewCIStr("job_seq_idx"),
-		Table:   model.NewCIStr("tidb_history_job"),
-		State:   model.StatePublic,
-		Tp:      model.IndexTypeBtree,
-		Unique:  true,
-		Primary: false,
-	}
-	historyIdx.Columns = append(idx.Columns, &model.IndexColumn{Name: model.NewCIStr("job_id"), Length: types.UnspecifiedLength})
-	historyIdx2.Columns = append(historyIdx2.Columns, &model.IndexColumn{Name: model.NewCIStr("job_seq"), Length: types.UnspecifiedLength})
-	historyTblCol1.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	historyTblCol1.SetFlag(historyTblCol1.GetFlag() | mysql.NotNullFlag | mysql.PriKeyFlag)
-	historyTblCol2.FieldType = *types.NewFieldType(mysql.TypeBlob)
-	historyTblCol3.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	historyTblCol3.SetFlag(historyTblCol3.GetFlag() | mysql.NotNullFlag | mysql.UniqueFlag)
-
-	historyTbl, err := m.GenGlobalID()
-	if err != nil {
-		return err
-	}
-	historyTblInfo := model.TableInfo{
-		ID:         historyTbl,
-		Name:       model.NewCIStr("tidb_history_job"),
-		Charset:    mysql.UTF8MB4Charset,
-		Collate:    mysql.UTF8MB4DefaultCollation,
-		PKIsHandle: true,
-		State:      model.StatePublic,
-	}
-	historyTblInfo.Indices = append(tableInfo.Indices, historyIdx2)
-	historyTblInfo.Columns = append(historyTblInfo.Columns, historyTblCol1, historyTblCol2, historyTblCol3)
-	data, err = json.Marshal(historyTblInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = m.txn.HSet(m.dbKey(dbid), m.tableKey(historyTblInfo.ID), data)
-	if err != nil {
-		return err
-	}
-
-	return m.txn.Set(mInitDDLTable, []byte("some value"))
 }
 
 // CheckDDLTableExists check if the tables related to concurrent DDL exists.
