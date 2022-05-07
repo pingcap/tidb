@@ -104,7 +104,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
 	for _, task := range e.tasks {
-		prepareV2AnalyzeJob(task.colExec, -1)
+		prepareV2AnalyzeJob(task.colExec, -1, false)
 		AddNewAnalyzeJob(e.ctx, task.job)
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
@@ -438,7 +438,7 @@ func analyzeColumnsPushdownWithRetry(e *AnalyzeColumnsExec) *statistics.AnalyzeR
 		return analyzeResult
 	}
 	*e.analyzePB.ColReq.SampleRate = newSampleRate
-	prepareV2AnalyzeJob(e, newSampleRate)
+	prepareV2AnalyzeJob(e, newSampleRate, true)
 	AddNewAnalyzeJob(e.ctx, e.job)
 	StartAnalyzeJob(e.ctx, e.job)
 	return analyzeColumnsPushdown(e)
@@ -2524,19 +2524,21 @@ func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyz
 	}
 }
 
-func prepareV2AnalyzeJob(e *AnalyzeColumnsExec, sampleRate float64) {
+func prepareV2AnalyzeJob(e *AnalyzeColumnsExec, sampleRate float64, retry bool) {
 	if e != nil {
-		e.job.JobInfo = describeV2AnalyzeJobInfo(e.ctx.GetSessionVars().InRestrictedSQL, e.V2Options.ColumnList, e.V2Options.RawOpts, sampleRate)
+		e.job.JobInfo = describeV2AnalyzeJobInfo(e.ctx.GetSessionVars().InRestrictedSQL, retry, e.V2Options.ColumnList, e.V2Options.RawOpts, sampleRate)
 	}
 }
 
-func describeV2AnalyzeJobInfo(autoAnalyze bool, cols []*model.ColumnInfo, opts map[ast.AnalyzeOptionType]uint64, sampleRate float64) string {
+func describeV2AnalyzeJobInfo(autoAnalyze bool, retry bool, cols []*model.ColumnInfo, opts map[ast.AnalyzeOptionType]uint64, sampleRate float64) string {
 	var b strings.Builder
-	if autoAnalyze {
-		b.WriteString("auto analyze table")
-	} else {
-		b.WriteString("analyze table")
+	if retry {
+		b.WriteString("retry ")
 	}
+	if autoAnalyze {
+		b.WriteString("auto ")
+	}
+	b.WriteString("analyze table")
 	if cols != nil && len(cols) > 0 {
 		if cols[len(cols)-1].ID == model.ExtraHandleID {
 			cols = cols[:len(cols)-1]
