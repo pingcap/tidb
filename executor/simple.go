@@ -660,43 +660,17 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 		return err
 	}
 
-	memBuffer := txn.GetMemBuffer()
-	cp := memBuffer.Checkpoint()
-	name := strings.ToLower(s.Name)
-	e.deleteSavepoint(name)
-	txnCtx.Savepoints = append(txnCtx.Savepoints, variable.SavepointRecord{Name: name, Cp: cp})
+	cp := txn.GetMemBuffer().Checkpoint()
+	txnCtx.AddSavepoint(s.Name, cp)
 	return nil
 }
 
 func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error {
-	name := strings.ToLower(s.Name)
-	deleted := e.deleteSavepoint(name)
+	deleted := e.ctx.GetSessionVars().TxnCtx.DeleteSavepoint(s.Name)
 	if !deleted {
 		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
 	}
 	return nil
-}
-
-// deleteSavepoint deletes the savepoint, return false indicate the savepoint name doesn't exists.
-func (e *SimpleExec) deleteSavepoint(savepoint string) bool {
-	sessVars := e.ctx.GetSessionVars()
-	txnCtx := sessVars.TxnCtx
-	idx := -1
-	for i, sp := range txnCtx.Savepoints {
-		if sp.Name == savepoint {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		return false
-	}
-	length := len(txnCtx.Savepoints)
-	for i := idx; i < length-1; i++ {
-		txnCtx.Savepoints[i] = txnCtx.Savepoints[i+1]
-	}
-	txnCtx.Savepoints = txnCtx.Savepoints[:length-1]
-	return true
 }
 
 func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {
@@ -802,15 +776,12 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 		if !txn.Valid() {
 			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 		}
-		savepointName := strings.ToLower(s.SavepointName)
-		for idx, sp := range sessVars.TxnCtx.Savepoints {
-			if savepointName == sp.Name {
-				txn.RollbackToSavepoint(sp.Cp)
-				sessVars.TxnCtx.Savepoints = sessVars.TxnCtx.Savepoints[:idx+1]
-				return nil
-			}
+		savepoint := sessVars.TxnCtx.RollbackToSavepoint(s.SavepointName)
+		if savepoint == nil {
+			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 		}
-		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
+		txn.RollbackToSavepoint(savepoint.Cp)
+		return nil
 	}
 
 	sessVars.SetInTxn(false)

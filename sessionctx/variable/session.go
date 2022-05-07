@@ -136,6 +136,8 @@ type SavepointRecord struct {
 	Name string
 	// cp is the checkpoint of memory buffer that related to the savepoint
 	Cp *kv.MemCheckpoint
+	// TableDeltaMap is the savepoint of TransactionContext.TableDeltaMap
+	TableDeltaMap map[int64]TableDelta
 }
 
 // TransactionContext is used to store variables that has transaction scope.
@@ -327,6 +329,57 @@ func (tc *TransactionContext) SetStmtFutureForRC(future oracle.Future) {
 // GetStmtFutureForRC gets the stmtFuture.
 func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
 	return tc.stmtFuture
+}
+
+// AddSavepoint adds a new savepoint.
+func (tc *TransactionContext) AddSavepoint(name string, cp *kv.MemCheckpoint) {
+	name = strings.ToLower(name)
+	tc.DeleteSavepoint(name)
+
+	tableDeltaMap := make(map[int64]TableDelta, len(tc.TableDeltaMap))
+	for k, v := range tc.TableDeltaMap {
+		tableDeltaMap[k] = v.Clone()
+	}
+
+	tc.Savepoints = append(tc.Savepoints, SavepointRecord{
+		Name:          name,
+		Cp:            cp,
+		TableDeltaMap: tableDeltaMap,
+	})
+}
+
+// DeleteSavepoint deletes the savepoint, return false indicate the savepoint name doesn't exists.
+func (tc *TransactionContext) DeleteSavepoint(name string) bool {
+	name = strings.ToLower(name)
+	idx := -1
+	for i, sp := range tc.Savepoints {
+		if sp.Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+	length := len(tc.Savepoints)
+	for i := idx; i < length-1; i++ {
+		tc.Savepoints[i] = tc.Savepoints[i+1]
+	}
+	tc.Savepoints = tc.Savepoints[:length-1]
+	return true
+}
+
+// RollbackToSavepoint rollbacks to the specify savepoint by name.
+func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord {
+	name = strings.ToLower(name)
+	for idx := range tc.Savepoints {
+		if name == tc.Savepoints[idx].Name {
+			tc.TableDeltaMap = tc.Savepoints[idx].TableDeltaMap
+			tc.Savepoints = tc.Savepoints[:idx+1]
+			return &tc.Savepoints[idx]
+		}
+	}
+	return nil
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -1703,6 +1756,21 @@ type TableDelta struct {
 	ColSize  map[int64]int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
 	TableID  int64
+}
+
+// Clone returns a cloned TableDelta.
+func (td TableDelta) Clone() TableDelta {
+	colSize := make(map[int64]int64, len(td.ColSize))
+	for k, v := range td.ColSize {
+		colSize[k] = v
+	}
+	return TableDelta{
+		Delta:    td.Delta,
+		Count:    td.Count,
+		ColSize:  colSize,
+		InitTime: td.InitTime,
+		TableID:  td.TableID,
+	}
 }
 
 // ConcurrencyUnset means the value the of the concurrency related variable is unset.
