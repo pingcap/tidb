@@ -725,7 +725,7 @@ func (h *BindHandle) removeBindRecord(hash string, meta *BindRecord) {
 
 func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bindRecordUpdate {
 	newMap := make(map[string]*bindRecordUpdate, len(oldMap))
-	maps.Copy(oldMap, newMap)
+	maps.Copy(newMap, oldMap)
 	return newMap
 }
 

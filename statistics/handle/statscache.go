@@ -16,6 +16,7 @@ package handle
 
 import (
 	"github.com/pingcap/tidb/statistics"
+	"golang.org/x/exp/maps"
 )
 
 // statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
@@ -217,8 +218,6 @@ func (m *mapCache) Copy() statsCacheInner {
 		tables:   make(map[int64]cacheItem, m.Len()),
 		memUsage: m.memUsage,
 	}
-	for k, v := range m.tables {
-		newM.tables[k] = v
-	}
+	maps.Copy(newM.tables, m.tables)
 	return newM
 }
