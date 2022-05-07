@@ -413,10 +413,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 				failpoint.Return(ver, errors.New("recoverTableMockError"))
 			}
 		})
-		ver, err = updateSchemaVersion(d, t, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
 	case model.StateWriteOnly:
