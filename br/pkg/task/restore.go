@@ -587,21 +587,16 @@ func filterRestoreFiles(
 	cfg *RestoreConfig,
 ) (files []*backuppb.File, tables []*metautil.Table, dbs []*utils.Database) {
 	for _, db := range client.GetDatabases() {
-		createdDatabase := false
 		dbName := db.Info.Name.O
 		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
 			dbName = name
 		}
+		if !cfg.TableFilter.MatchSchema(dbName) {
+			continue
+		}
+		dbs = append(dbs, db)
 		for _, table := range db.Tables {
-			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
-				continue
-			}
-			if !createdDatabase {
-				dbs = append(dbs, db)
-				createdDatabase = true
-			}
-			if table.Info == nil {
-				// we may back up empty database.
+			if table.Info != nil && !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
 			files = append(files, table.Files...)
