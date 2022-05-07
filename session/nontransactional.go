@@ -298,12 +298,10 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 		err = errors.New("injected split delete error")
 	})
 	if err != nil {
-		errStr := fmt.Sprintf("Non-transactional delete SQL failed, sql: %s, error: %s, jobID: %d, jobSize: %d. ",
-			deleteSQLInLog, err.Error(), job.jobID, job.jobSize)
-		logutil.Logger(ctx).Error(errStr)
+		logutil.Logger(ctx).Error("Non-transactional delete SQL failed", zap.String("job", deleteSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
 		job.err = err
 	} else {
-		logutil.Logger(ctx).Debug("Non-transactional delete SQL finished successfully", zap.Int("jobID", job.jobID),
+		logutil.Logger(ctx).Info("Non-transactional delete SQL finished successfully", zap.Int("jobID", job.jobID),
 			zap.Int("jobSize", job.jobSize), zap.String("deleteSQL", deleteSQLInLog))
 	}
 	if rs != nil {
