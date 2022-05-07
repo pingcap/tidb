@@ -2570,6 +2570,7 @@ func newGCMemMap() *gcMemMap {
 func recordMemToGC(memTracker *memory.Tracker, toGC int64) {
 	gcTrigger := variable.GCManualTrigger.Load()
 	if gcTrigger <= 0 {
+		memTracker.Consume(-toGC)
 		return
 	}
 	memMapToGC.Lock()

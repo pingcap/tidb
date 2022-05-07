@@ -846,7 +846,7 @@ const (
 	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
 	DefTiDBQueryLogMaxLen                        = 4096
 	DefTiDBMemQuotaAnalyze                       = -1
-	DefTiDBGCManualTrigger                       = 524288000 // 500MB
+	DefTiDBGCManualTrigger                       = 0
 )
 
 // Process global variables.
