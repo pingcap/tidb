@@ -267,7 +267,7 @@ func TestRecoverTableMeetError(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@GLOBAL.tidb_ddl_error_count_limit=10")
+	tk.MustExec("set @@GLOBAL.tidb_ddl_error_count_limit=3")
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover")
@@ -287,9 +287,9 @@ func TestRecoverTableMeetError(t *testing.T) {
 	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3"))
 	tk.MustExec("drop table t_recover")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/recoverTableMockError", `return(true)`))
-	tk.MustContainErrMsg("recover table t_recover", "recoverTableMockError")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/recoverTableMockError"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(1)`))
+	tk.MustContainErrMsg("recover table t_recover", "mock update version and tableInfo error")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"))
 	tk.MustContainErrMsg("select * from t_recover", "Table 'test_recover.t_recover' doesn't exist")
 }
 

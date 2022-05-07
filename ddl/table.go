@@ -408,11 +408,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
-		failpoint.Inject("recoverTableMockError", func(val failpoint.Value) {
-			if val.(bool) {
-				failpoint.Return(ver, errors.New("recoverTableMockError"))
-			}
-		})
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
 	case model.StateWriteOnly:
@@ -471,11 +466,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 
 		job.CtxVars = []interface{}{tids}
-		failpoint.Inject("recoverTableMockError", func(val failpoint.Value) {
-			if val.(bool) {
-				failpoint.Return(ver, errors.New("recoverTableMockError"))
-			}
-		})
 		ver, err = updateVersionAndTableInfo(d, t, job, tableInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
