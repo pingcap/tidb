@@ -104,6 +104,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
 	for _, task := range e.tasks {
+		prepareV2AnalyzeJob(task.colExec, -1)
 		AddNewAnalyzeJob(e.ctx, task.job)
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
@@ -138,23 +139,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The meaning of key in map is the structure that used to store the tableID and indexID.
 	// The meaning of value in map is some additional information needed to build global-level stats.
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
-	finishJobWithLogFn := func(ctx context.Context, job *statistics.AnalyzeJob, analyzeErr error) {
-		FinishAnalyzeJob(e.ctx, job, analyzeErr)
-		if job != nil {
-			var state string
-			if analyzeErr != nil {
-				state = statistics.AnalyzeFailed
-			} else {
-				state = statistics.AnalyzeFinished
-			}
-			logutil.Logger(ctx).Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
-				zap.String("partition", job.PartitionName),
-				zap.String("job info", job.JobInfo),
-				zap.Time("start time", job.StartTime),
-				zap.Time("end time", job.EndTime),
-				zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
-		}
-	}
 	for panicCnt < concurrency {
 		results, ok := <-resultsCh
 		if !ok {
@@ -167,7 +151,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			} else {
 				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
 			}
-			finishJobWithLogFn(ctx, results.Job, err)
+			finishJobWithLog(e.ctx, results.Job, err)
 			continue
 		}
 		if results.TableID.IsPartitionTable() && needGlobalStats {
@@ -195,9 +179,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable() && needGlobalStats); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
-			finishJobWithLogFn(ctx, results.Job, err)
+			finishJobWithLog(e.ctx, results.Job, err)
 		} else {
-			finishJobWithLogFn(ctx, results.Job, nil)
+			finishJobWithLog(e.ctx, results.Job, nil)
 			// Dump stats to historical storage.
 			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
 				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
@@ -255,6 +239,24 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 	}
 	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema), handle.WithTableStatsByQuery())
+}
+
+func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
+	FinishAnalyzeJob(sctx, job, analyzeErr)
+	if job != nil {
+		var state string
+		if analyzeErr != nil {
+			state = statistics.AnalyzeFailed
+		} else {
+			state = statistics.AnalyzeFinished
+		}
+		logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+			zap.String("partition", job.PartitionName),
+			zap.String("job info", job.JobInfo),
+			zap.Time("start time", job.StartTime),
+			zap.Time("end time", job.EndTime),
+			zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
+	}
 }
 
 func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
@@ -395,7 +397,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		StartAnalyzeJob(e.ctx, task.job)
 		switch task.taskType {
 		case colTask:
-			resultsCh <- analyzeColumnsPushdown(task.colExec)
+			resultsCh <- analyzeColumnsPushdownWithRetry(task.colExec)
 		case idxTask:
 			resultsCh <- analyzeIndexPushdown(task.idxExec)
 		case fastTask:
@@ -406,6 +408,40 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			resultsCh <- analyzeIndexIncremental(task.idxIncrementalExec)
 		}
 	}
+}
+
+func analyzeColumnsPushdownWithRetry(e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
+	analyzeResult := analyzeColumnsPushdown(e)
+	// do not retry if succeed / not oom error / not auto-analyze / samplerate not set
+	if analyzeResult.Err == nil || analyzeResult.Err != errAnalyzeOOM ||
+		!e.ctx.GetSessionVars().InRestrictedSQL ||
+		e.analyzePB.ColReq == nil || *e.analyzePB.ColReq.SampleRate <= 0 {
+		return analyzeResult
+	}
+	finishJobWithLog(e.ctx, analyzeResult.Job, analyzeResult.Err)
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	if statsHandle == nil {
+		return analyzeResult
+	}
+	var statsTbl *statistics.Table
+	tid := e.tableID.GetStatisticsID()
+	if tid == e.tableInfo.ID {
+		statsTbl = statsHandle.GetTableStats(e.tableInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
+	}
+	if statsTbl == nil || statsTbl.Count <= 0 {
+		return analyzeResult
+	}
+	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.Count))
+	if newSampleRate >= *e.analyzePB.ColReq.SampleRate {
+		return analyzeResult
+	}
+	*e.analyzePB.ColReq.SampleRate = newSampleRate
+	prepareV2AnalyzeJob(e, newSampleRate)
+	AddNewAnalyzeJob(e.ctx, e.job)
+	StartAnalyzeJob(e.ctx, e.job)
+	return analyzeColumnsPushdown(e)
 }
 
 func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults {
@@ -2486,6 +2522,63 @@ func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyz
 		}
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
 	}
+}
+
+func prepareV2AnalyzeJob(e *AnalyzeColumnsExec, sampleRate float64) {
+	if e != nil {
+		e.job.JobInfo = describeV2AnalyzeJobInfo(e.ctx.GetSessionVars().InRestrictedSQL, e.V2Options.ColumnList, e.V2Options.RawOpts, sampleRate)
+	}
+}
+
+func describeV2AnalyzeJobInfo(autoAnalyze bool, cols []*model.ColumnInfo, opts map[ast.AnalyzeOptionType]uint64, sampleRate float64) string {
+	var b strings.Builder
+	if autoAnalyze {
+		b.WriteString("auto analyze table")
+	} else {
+		b.WriteString("analyze table")
+	}
+	if cols != nil && len(cols) > 0 {
+		if cols[len(cols)-1].ID == model.ExtraHandleID {
+			cols = cols[:len(cols)-1]
+		}
+		b.WriteString(" columns ")
+		for i, col := range cols {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(col.Name.O)
+		}
+	} else {
+		b.WriteString(" all columns")
+	}
+	var needComma bool
+	b.WriteString(" with ")
+	printOption := func(optType ast.AnalyzeOptionType) {
+		if val, ok := opts[optType]; ok {
+			if needComma {
+				b.WriteString(", ")
+			} else {
+				needComma = true
+			}
+			b.WriteString(fmt.Sprintf("%v %s", val, strings.ToLower(ast.AnalyzeOptionString[optType])))
+		}
+	}
+	printOption(ast.AnalyzeOptNumBuckets)
+	printOption(ast.AnalyzeOptNumTopN)
+	if opts[ast.AnalyzeOptNumSamples] != 0 {
+		printOption(ast.AnalyzeOptNumSamples)
+	} else {
+		if needComma {
+			b.WriteString(", ")
+		} else {
+			needComma = true
+		}
+		if sampleRate <= 0 {
+			sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
+		}
+		b.WriteString(fmt.Sprintf("%v samplerate", sampleRate))
+	}
+	return b.String()
 }
 
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup

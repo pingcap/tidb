@@ -2347,52 +2347,6 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func describeV2AnalyzeJobInfo(task plannercore.AnalyzeColumnsTask, autoAnalyze string, opts map[ast.AnalyzeOptionType]uint64, sampleRate float64) string {
-	var b strings.Builder
-	b.WriteString(autoAnalyze)
-	b.WriteString("analyze table")
-	cols := task.ColsInfo
-	if cols[len(cols)-1].ID == model.ExtraHandleID {
-		cols = cols[:len(cols)-1]
-	}
-	if len(cols) < len(task.TblInfo.Columns) {
-		b.WriteString(" columns ")
-		for i, col := range cols {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(col.Name.O)
-		}
-	} else {
-		b.WriteString(" all columns")
-	}
-	var needComma bool
-	b.WriteString(" with ")
-	printOption := func(optType ast.AnalyzeOptionType) {
-		if val, ok := opts[optType]; ok {
-			if needComma {
-				b.WriteString(", ")
-			} else {
-				needComma = true
-			}
-			b.WriteString(fmt.Sprintf("%v %s", val, strings.ToLower(ast.AnalyzeOptionString[optType])))
-		}
-	}
-	printOption(ast.AnalyzeOptNumBuckets)
-	printOption(ast.AnalyzeOptNumTopN)
-	if opts[ast.AnalyzeOptNumSamples] != 0 {
-		printOption(ast.AnalyzeOptNumSamples)
-	} else {
-		if needComma {
-			b.WriteString(", ")
-		} else {
-			needComma = true
-		}
-		b.WriteString(fmt.Sprintf("%v samplerate", sampleRate))
-	}
-	return b.String()
-}
-
 func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
@@ -2461,7 +2415,6 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		DBName:        task.DBName,
 		TableName:     task.TableName,
 		PartitionName: task.PartitionName,
-		JobInfo:       describeV2AnalyzeJobInfo(task, autoAnalyze, opts, *sampleRate),
 	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
