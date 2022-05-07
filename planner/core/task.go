@@ -1972,12 +1972,10 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	// net seek cost, unlike copTask, a mppTask may have multiple underlying TableScan, so use a recursive function to accumulate this
 	cst += accumulateNetSeekCost4MPP(sender)
 	cst /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
-	p.cost = cst
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
 		cst /= 1000000000
 	}
-	p.SetCost(cst)
-
+	p.cost = cst
 	rt := &rootTask{
 		p:   p,
 		cst: cst,
