@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
@@ -121,7 +122,7 @@ func TestInferType(t *testing.T) {
 		stmt, err := par.ParseOneStmt(sql, "", "")
 		require.NoError(t, err, comment)
 
-		err = se.NewTxn(context.Background())
+		err = sessiontxn.NewTxn(context.Background(), se)
 		require.NoError(t, err)
 
 		ret := &plannercore.PreprocessorReturn{}
