@@ -147,7 +147,7 @@ func TestBootstrapWithError(t *testing.T) {
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
 		if variable.AllowConcurrencyDDL.Load() {
-			err := meta.InitMetaTable(store)
+			err := InitMetaTable(store)
 			require.NoError(t, err)
 		}
 		dom, err := domap.Get(store)
