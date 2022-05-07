@@ -178,6 +178,7 @@ type MemBuffer interface {
 	Checkpoint() *MemCheckpoint
 }
 
+// MemCheckpoint is a memory db checkpoint.
 type MemCheckpoint = tikv.MemCheckpoint
 
 // LockCtx contains information for LockKeys method.

@@ -643,6 +643,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	return nil
 }
 
+// ErrSavepointNotSupportedWithBinlog export for testing.
 var ErrSavepointNotSupportedWithBinlog = errors.New("SAVEPOINT is not supported when binlog is enabled")
 
 func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {

@@ -376,6 +376,7 @@ func (txn *LazyTxn) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
+// RollbackToSavepoint overrides the Transaction interface.
 func (txn *LazyTxn) RollbackToSavepoint(cp *kv.MemCheckpoint) {
 	txn.flushStmtBuf()
 	txn.Transaction.RollbackToSavepoint(cp)
