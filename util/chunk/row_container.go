@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 type rowContainerRecord struct {
@@ -471,9 +471,9 @@ func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 }
 
 // keyColumnsLess is the less function for key columns.
-func (c *SortedRowContainer) keyColumnsLess(i, j RowPtr) bool {
-	rowI := c.m.records.inMemory.GetRow(i)
-	rowJ := c.m.records.inMemory.GetRow(j)
+func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
+	rowI := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[i])
+	rowJ := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[j])
 	return c.lessRow(rowI, rowJ)
 }
 
@@ -495,7 +495,7 @@ func (c *SortedRowContainer) Sort() {
 			c.ptrM.rowPtrs = append(c.ptrM.rowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
-	slices.SortFunc(c.ptrM.rowPtrs, c.keyColumnsLess)
+	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {
