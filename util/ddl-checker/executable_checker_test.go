@@ -76,7 +76,10 @@ func TestExecute(t *testing.T) {
 	tk.MustExec("use test;")
 	for e := testData.Front(); e != nil; e = e.Next() {
 		data := e.Value.(parseTestData)
-		_, err := tk.Exec(data.sql)
+		res, err := tk.Exec(data.sql)
 		require.Equal(t, data.executeSucceeded, err == nil)
+		if res != nil {
+			res.Close()
+		}
 	}
 }

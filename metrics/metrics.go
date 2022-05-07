@@ -160,9 +160,11 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TopSQLIgnoredCounter)
 	prometheus.MustRegister(TopSQLReportDurationHistogram)
 	prometheus.MustRegister(TopSQLReportDataHistogram)
-	prometheus.MustRegister(PDApiExecutionHistogram)
+	prometheus.MustRegister(PDAPIExecutionHistogram)
+	prometheus.MustRegister(PDAPIRequestCounter)
 	prometheus.MustRegister(CPUProfileCounter)
 	prometheus.MustRegister(ReadFromTableCacheCounter)
+	prometheus.MustRegister(LoadTableCacheDurationHistogram)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

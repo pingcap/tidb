@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -269,7 +270,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("get newCollationEnable for check during restore", zap.String("newCollationEnable", newCollationEnable))
+	log.Info("get new_collations_enabled_on_first_bootstrap config from system table",
+		zap.String(tidbNewCollationEnabled, newCollationEnable))
 
 	client, err := backup.NewBackupClient(ctx, mgr)
 	if err != nil {
@@ -479,7 +481,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
-	schemasConcurrency := uint(utils.MinInt(backup.DefaultSchemaConcurrency, schemas.Len()))
+	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
 
 	err = schemas.BackupSchemas(
 		ctx, metawriter, mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)

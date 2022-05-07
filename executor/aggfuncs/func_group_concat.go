@@ -223,7 +223,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 
 	collators := make([]collate.Collator, 0, len(e.args))
 	for _, arg := range e.args {
-		collators = append(collators, collate.GetCollator(arg.GetType().Collate))
+		collators = append(collators, collate.GetCollator(arg.GetType().GetCollate()))
 	}
 
 	for _, row := range rowsInGroup {
@@ -415,7 +415,7 @@ func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int6
 	ctors := make([]collate.Collator, 0, len(e.byItems))
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
-		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().Collate))
+		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().GetCollate()))
 	}
 	p := &partialResult4GroupConcatOrder{
 		topN: &topNRows{
@@ -520,7 +520,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 	ctors := make([]collate.Collator, 0, len(e.byItems))
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
-		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().Collate))
+		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().GetCollate()))
 	}
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	p := &partialResult4GroupConcatOrderDistinct{
@@ -552,7 +552,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 
 	collators := make([]collate.Collator, 0, len(e.args))
 	for _, arg := range e.args {
-		collators = append(collators, collate.GetCollator(arg.GetType().Collate))
+		collators = append(collators, collate.GetCollator(arg.GetType().GetCollate()))
 	}
 
 	for _, row := range rowsInGroup {
