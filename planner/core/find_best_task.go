@@ -486,7 +486,6 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCoun
 		}
 		// Next, get the bestTask with enforced prop
 		prop.SortItems = []property.SortItem{}
-		prop.MPPPartitionTp = property.AnyType
 	}
 	defer func() {
 		if err != nil {
