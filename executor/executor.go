@@ -27,7 +27,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -61,12 +60,14 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -298,6 +299,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	}
 	if trace.IsEnabled() {
 		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
+	}
+	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CAS(false, true) {
+		registerSQLAndPlanInExecForTopSQL(sessVars)
 	}
 	err := e.Next(ctx, req)
 
@@ -1263,7 +1267,7 @@ func init() {
 			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
 
-		e := &executorBuilder{is: is, ctx: sctx}
+		e := newExecutorBuilder(sctx, is, nil, oracle.GlobalTxnScope)
 		exec := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -1798,7 +1802,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
+			sc.IsSQLRegistered.Store(true)
+			topsql.AttachAndRegisterSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
 			if s.LockInfo == nil {
@@ -1911,7 +1916,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc.SkipUTF8Check = vars.SkipUTF8Check
 	sc.SkipASCIICheck = vars.SkipASCIICheck
-	sc.SkipUTF8MB4Check = !globalConfig.CheckMb4ValueInUTF8.Load()
+	sc.SkipUTF8MB4Check = !globalConfig.Instance.CheckMb4ValueInUTF8.Load()
 	vars.PreparedParams = vars.PreparedParams[:0]
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
@@ -1927,7 +1932,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
-	if globalConfig.EnableCollectExecutionInfo {
+	if globalConfig.Instance.EnableCollectExecutionInfo {
 		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
 		// because ExplainFor need to display the last statement information.
 		reuseObj := vars.StmtCtx.RuntimeStatsColl
@@ -1948,6 +1953,18 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
 	return
+}
+
+// registerSQLAndPlanInExecForTopSQL register the sql and plan information if it doesn't register before execution.
+// This uses to catch the running SQL when Top SQL is enabled in execution.
+func registerSQLAndPlanInExecForTopSQL(sessVars *variable.SessionVars) {
+	stmtCtx := sessVars.StmtCtx
+	normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
+	topsql.RegisterSQL(normalizedSQL, sqlDigest, sessVars.InRestrictedSQL)
+	normalizedPlan, planDigest := stmtCtx.GetPlanDigest()
+	if len(normalizedPlan) > 0 {
+		topsql.RegisterPlan(normalizedPlan, planDigest)
+	}
 }
 
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.
@@ -1982,7 +1999,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 				return err
 			}
 			// Handle the bad null error.
-			if (mysql.HasNotNullFlag(columns[idx].Flag) || mysql.HasPreventNullInsertFlag(columns[idx].Flag)) && castDatum.IsNull() {
+			if (mysql.HasNotNullFlag(columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(columns[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(columns[idx])
 			}
 			virCols.AppendDatum(i, &castDatum)
@@ -1993,7 +2010,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 }
 
 func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot == nil || !topsqlstate.TopSQLEnabled() {
+	if snapshot == nil {
 		return
 	}
 	snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())

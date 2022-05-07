@@ -279,11 +279,47 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
-		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+		if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask); err != nil {
+			return nil, 0, err
+		} else if curIsBetter {
 			bestTask = curTask
 		}
 	}
 	return bestTask, cntPlan, nil
+}
+
+// compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
+func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
+	if ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
+		curCost, err := getTaskPlanCost(curTask)
+		if err != nil {
+			return false, err
+		}
+		bestCost, err := getTaskPlanCost(bestTask)
+		if err != nil {
+			return false, err
+		}
+		return curCost < bestCost || (bestTask.invalid() && !curTask.invalid()), nil
+	}
+	return curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()), nil
+}
+
+func getTaskPlanCost(t task) (float64, error) {
+	if t.invalid() {
+		return math.MaxFloat64, nil
+	}
+	var taskType property.TaskType
+	switch t.(type) {
+	case *rootTask:
+		taskType = property.RootTaskType
+	case *copTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
+		taskType = property.CopSingleReadTaskType
+	case *mppTask:
+		taskType = property.MppTaskType
+	default:
+		return 0, errors.New("unknown task type")
+	}
+	return t.plan().GetPlanCost(taskType)
 }
 
 type physicalOptimizeOp struct {
@@ -416,7 +452,9 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
-	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+	if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask); err != nil {
+		return nil, 0, err
+	} else if curIsBetter {
 		bestTask = curTask
 	}
 
@@ -650,7 +688,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			var unsignedIntHandle bool
 			if c.path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
 				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
-					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
+					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 				}
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
@@ -995,7 +1033,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		tblColHists:       ds.TblColHists,
 	}
 	cop.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -1214,7 +1252,7 @@ func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client,
 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
 	for i, indexCol := range indexCols {
-		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
+		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen()
 		if indexCol != nil && col.EqualByExprAndID(nil, indexCol) && isFullLen {
 			return true
 		}
@@ -1224,7 +1262,7 @@ func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, id
 
 func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
 	for _, col := range columns {
-		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 			continue
 		}
 		if col.ID == model.ExtraHandleID {
@@ -1237,7 +1275,7 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		}
 		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
 			col.GetType().EvalType() == types.ETString &&
-			!mysql.HasBinaryFlag(col.GetType().Flag)
+			!mysql.HasBinaryFlag(col.GetType().GetFlag())
 		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
 			return false
 		}
@@ -1295,7 +1333,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
 	cop.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -1410,7 +1448,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	setHandle := len(indexCols) > len(is.Index.Columns)
 	if !setHandle {
 		for i, col := range is.Columns {
-			if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+			if (mysql.HasPriKeyFlag(col.GetFlag()) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
 				indexCols = append(indexCols, is.dataSourceSchema.Columns[i])
 				setHandle = true
 				break
@@ -1812,7 +1850,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			partTp: property.AnyType,
 		}
 		ts.PartitionInfo = PartitionInfo{
-			PruningConds:   ds.allConds,
+			PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 			PartitionNames: ds.partitionNames,
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.names,
@@ -1828,7 +1866,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		cst:               cost,
 	}
 	copTask.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -1924,9 +1962,10 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	var cost float64
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
-		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.Flag)
+		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
 		pointGetPlan.PartitionInfo = partitionInfo
-		cost = pointGetPlan.GetCost(ds.TblCols)
+		pointGetPlan.accessCols = ds.TblCols
+		cost = pointGetPlan.GetCost()
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -1944,10 +1983,11 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
 		if candidate.path.IsSingleScan {
-			cost = pointGetPlan.GetCost(candidate.path.IdxCols)
+			pointGetPlan.accessCols = candidate.path.IdxCols
 		} else {
-			cost = pointGetPlan.GetCost(ds.TblCols)
+			pointGetPlan.accessCols = ds.TblCols
 		}
+		cost = pointGetPlan.GetCost()
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -1961,7 +2001,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 
 	rTsk.cst = cost
-	pointGetPlan.SetCost(cost)
+	rTsk.p.SetCost(cost)
 	return rTsk
 }
 
@@ -1995,7 +2035,8 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
-		cost = batchPointGetPlan.GetCost(ds.TblCols)
+		batchPointGetPlan.accessCols = ds.TblCols
+		cost = batchPointGetPlan.GetCost()
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -2019,10 +2060,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
 		if candidate.path.IsSingleScan {
-			cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
+			batchPointGetPlan.accessCols = candidate.path.IdxCols
 		} else {
-			cost = batchPointGetPlan.GetCost(ds.TblCols)
+			batchPointGetPlan.accessCols = ds.TblCols
 		}
+		cost = batchPointGetPlan.GetCost()
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -2036,7 +2078,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	}
 
 	rTsk.cst = cost
-	batchPointGetPlan.SetCost(cost)
+	rTsk.p.SetCost(cost)
 	return rTsk
 }
 
@@ -2244,4 +2286,13 @@ func appendCandidate(lp LogicalPlan, task task, prop *property.PhysicalProperty,
 		return
 	}
 	opt.appendCandidate(lp, task.plan(), prop)
+}
+
+// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
+// 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
+func pushDownNot(ctx sessionctx.Context, conds []expression.Expression) []expression.Expression {
+	for i, cond := range conds {
+		conds[i] = expression.PushDownNot(ctx, cond)
+	}
+	return conds
 }

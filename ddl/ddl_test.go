@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -29,11 +30,15 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+const testLease = 5 * time.Millisecond
 
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
@@ -108,10 +113,6 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
 }
 
-func checkHistoryJob(t *testing.T, job *model.Job) {
-	require.Equal(t, job.State, model.JobStateSynced)
-}
-
 func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -133,99 +134,6 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 	if args.db != nil && len(args.tblIDs) == 0 {
 		return
 	}
-}
-
-func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{unique, model.NewCIStr(indexName),
-			[]*ast.IndexPartSpecification{{
-				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
-				Length: types.UnspecifiedLength}}},
-	}
-}
-
-func testCreatePrimaryKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
-	job := buildCreateIdxJob(dbInfo, tblInfo, true, "primary", colName)
-	job.Type = model.ActionAddPrimaryKey
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func testCreateIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
-	job := buildCreateIdxJob(dbInfo, tblInfo, unique, indexName, colName)
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func testAddColumn(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddColumn,
-		Args:       args,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func testAddColumns(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddColumns,
-		Args:       args,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
-	tp := model.ActionDropIndex
-	if indexName == "primary" {
-		tp = model.ActionDropPrimaryKey
-	}
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       tp,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{model.NewCIStr(indexName)},
-	}
-}
-
-func testDropIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
-	job := buildDropIdxJob(dbInfo, tblInfo, indexName)
-
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
 }
 
 func TestGetIntervalFromPolicy(t *testing.T) {
@@ -499,12 +407,280 @@ func TestNotifyDDLJob(t *testing.T) {
 	d1.asyncNotifyWorker(job)
 	job.Type = model.ActionCreateTable
 	d1.asyncNotifyWorker(job)
-	testCheckOwner(t, d1, false)
+	require.False(t, d1.OwnerManager().IsOwner())
 	select {
 	case <-d1.workers[addIdxWorker].ddlJobCh:
 		require.FailNow(t, "should not get the add index job notification")
 	case <-d1.workers[generalWorker].ddlJobCh:
 		require.FailNow(t, "should not get the general job notification")
 	default:
+	}
+}
+
+func testSchemaInfo(d *ddl, name string) (*model.DBInfo, error) {
+	dbInfo := &model.DBInfo{
+		Name: model.NewCIStr(name),
+	}
+	genIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		return nil, err
+	}
+	dbInfo.ID = genIDs[0]
+	return dbInfo, nil
+}
+
+func testCreateSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.DoDDLJob(ctx, job))
+
+	v := getSchemaVer(t, ctx)
+	dbInfo.State = model.StatePublic
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
+	dbInfo.State = model.StateNone
+	return job
+}
+
+func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
+	return &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+}
+
+func testDropSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
+	job := buildDropSchemaJob(dbInfo)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+	ver := getSchemaVer(t, ctx)
+	return job, ver
+}
+
+func isDDLJobDone(test *testing.T, t *meta.Meta) bool {
+	job, err := t.GetDDLJobByIdx(0)
+	require.NoError(test, err)
+	if job == nil {
+		return true
+	}
+
+	time.Sleep(testLease)
+	return false
+}
+
+func testCheckSchemaState(test *testing.T, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
+	isDropped := true
+
+	for {
+		err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			info, err := t.GetDatabase(dbInfo.ID)
+			require.NoError(test, err)
+
+			if state == model.StateNone {
+				isDropped = isDDLJobDone(test, t)
+				if !isDropped {
+					return nil
+				}
+				require.Nil(test, info)
+				return nil
+			}
+
+			require.Equal(test, info.Name, dbInfo.Name)
+			require.Equal(test, info.State, state)
+			return nil
+		})
+		require.NoError(test, err)
+
+		if isDropped {
+			break
+		}
+	}
+}
+
+type testCtxKeyType int
+
+func (k testCtxKeyType) String() string {
+	return "test_ctx_key"
+}
+
+const testCtxKey testCtxKeyType = 0
+
+func TestReorg(t *testing.T) {
+	tests := []struct {
+		isCommonHandle bool
+		handle         kv.Handle
+		startKey       kv.Handle
+		endKey         kv.Handle
+	}{
+		{
+			false,
+			kv.IntHandle(100),
+			kv.IntHandle(1),
+			kv.IntHandle(0),
+		},
+		{
+			true,
+			testutil.MustNewCommonHandle(t, "a", 100, "string"),
+			testutil.MustNewCommonHandle(t, 100, "string"),
+			testutil.MustNewCommonHandle(t, 101, "string"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("isCommandHandle(%v)", test.isCommonHandle), func(t *testing.T) {
+			store := createMockStore(t)
+			defer func() {
+				require.NoError(t, store.Close())
+			}()
+
+			d, err := testNewDDLAndStart(
+				context.Background(),
+				WithStore(store),
+				WithLease(testLease),
+			)
+			require.NoError(t, err)
+			defer func() {
+				err := d.Stop()
+				require.NoError(t, err)
+			}()
+
+			time.Sleep(testLease)
+
+			ctx := testNewContext(d)
+
+			ctx.SetValue(testCtxKey, 1)
+			require.Equal(t, ctx.Value(testCtxKey), 1)
+			ctx.ClearValue(testCtxKey)
+
+			err = ctx.NewTxn(context.Background())
+			require.NoError(t, err)
+			txn, err := ctx.Txn(true)
+			require.NoError(t, err)
+			err = txn.Set([]byte("a"), []byte("b"))
+			require.NoError(t, err)
+			err = txn.Rollback()
+			require.NoError(t, err)
+
+			err = ctx.NewTxn(context.Background())
+			require.NoError(t, err)
+			txn, err = ctx.Txn(true)
+			require.NoError(t, err)
+			err = txn.Set([]byte("a"), []byte("b"))
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+
+			rowCount := int64(10)
+			handle := test.handle
+			f := func() error {
+				d.generalWorker().reorgCtx.setRowCount(rowCount)
+				d.generalWorker().reorgCtx.setNextKey(handle.Encoded())
+				time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
+				return nil
+			}
+			job := &model.Job{
+				ID:          1,
+				SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
+			}
+			err = ctx.NewTxn(context.Background())
+			require.NoError(t, err)
+			txn, err = ctx.Txn(true)
+			require.NoError(t, err)
+			m := meta.NewMeta(txn)
+			e := &meta.Element{ID: 333, TypeKey: meta.IndexElementKey}
+			rInfo := &reorgInfo{
+				Job:         job,
+				currElement: e,
+			}
+			mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: test.isCommonHandle, CommonHandleVersion: 1})
+			err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
+			require.Error(t, err)
+
+			// The longest to wait for 5 seconds to make sure the function of f is returned.
+			for i := 0; i < 1000; i++ {
+				time.Sleep(5 * time.Millisecond)
+				err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
+				if err == nil {
+					require.Equal(t, job.RowCount, rowCount)
+					require.Equal(t, d.generalWorker().reorgCtx.rowCount, int64(0))
+
+					// Test whether reorgInfo's Handle is update.
+					err = txn.Commit(context.Background())
+					require.NoError(t, err)
+					err = ctx.NewTxn(context.Background())
+					require.NoError(t, err)
+
+					m = meta.NewMeta(txn)
+					info, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, nil)
+					require.NoError(t, err1)
+					require.Equal(t, info.StartKey, kv.Key(handle.Encoded()))
+					require.Equal(t, info.currElement, e)
+					_, doneHandle, _ := d.generalWorker().reorgCtx.getRowCountAndKey()
+					require.Nil(t, doneHandle)
+					break
+				}
+			}
+			require.NoError(t, err)
+
+			job = &model.Job{
+				ID:          2,
+				SchemaID:    1,
+				Type:        model.ActionCreateSchema,
+				Args:        []interface{}{model.NewCIStr("test")},
+				SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
+			}
+
+			element := &meta.Element{ID: 123, TypeKey: meta.ColumnElementKey}
+			info := &reorgInfo{
+				Job:             job,
+				d:               d.ddlCtx,
+				currElement:     element,
+				StartKey:        test.startKey.Encoded(),
+				EndKey:          test.endKey.Encoded(),
+				PhysicalTableID: 456,
+			}
+			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+				m := meta.NewMeta(txn)
+				var err1 error
+				_, err1 = getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
+				require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err1))
+				require.Equal(t, job.SnapshotVer, uint64(0))
+				return nil
+			})
+			require.NoError(t, err)
+			job.SnapshotVer = uint64(1)
+			err = info.UpdateReorgMeta(info.StartKey)
+			require.NoError(t, err)
+			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+				m := meta.NewMeta(txn)
+				info1, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
+				require.NoError(t, err1)
+				require.Equal(t, info1.currElement, info.currElement)
+				require.Equal(t, info1.StartKey, info.StartKey)
+				require.Equal(t, info1.EndKey, info.EndKey)
+				require.Equal(t, info1.PhysicalTableID, info.PhysicalTableID)
+				return nil
+			})
+			require.NoError(t, err)
+
+			err = d.Stop()
+			require.NoError(t, err)
+			err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, func() error {
+				time.Sleep(4 * testLease)
+				return nil
+			})
+			require.Error(t, err)
+			txn, err = ctx.Txn(true)
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+		})
 	}
 }

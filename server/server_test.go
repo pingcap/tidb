@@ -2057,9 +2057,10 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 				errCode:           1068, // multiple pkeys
 			},
 			{
-				stmt:            "gibberish",
-				incrementErrors: true,
-				errCode:         1064, // parse error
+				stmt:              "gibberish",
+				incrementWarnings: true,
+				incrementErrors:   true,
+				errCode:           1064, // parse error
 			},
 		}
 

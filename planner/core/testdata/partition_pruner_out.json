@@ -1646,7 +1646,7 @@
         ],
         "IndexPlan": [
           "Sort 199.80 root  test_partition_1.t1.a",
-          "└─IndexJoin 199.80 root  inner join, inner:IndexReader, outer key:test_partition_1.t2.b, inner key:test_partition_1.t1.a, equal cond:eq(test_partition_1.t2.b, test_partition_1.t1.a)",
+          "└─IndexHashJoin 199.80 root  inner join, inner:IndexReader, outer key:test_partition_1.t2.b, inner key:test_partition_1.t1.a, equal cond:eq(test_partition_1.t2.b, test_partition_1.t1.a)",
           "  ├─HashAgg(Build) 159.84 root  group by:test_partition_1.t2.b, funcs:firstrow(test_partition_1.t2.b)->test_partition_1.t2.b",
           "  │ └─IndexReader 159.84 root partition:p0 index:HashAgg",
           "  │   └─HashAgg 159.84 cop[tikv]  group by:test_partition_1.t2.b, ",
@@ -1676,7 +1676,7 @@
         ],
         "IndexPlan": [
           "Sort 199.80 root  test_partition_1.t1.a",
-          "└─IndexJoin 199.80 root  inner join, inner:IndexReader, outer key:test_partition_1.t1.b, inner key:test_partition_1.t1.a, equal cond:eq(test_partition_1.t1.b, test_partition_1.t1.a)",
+          "└─IndexHashJoin 199.80 root  inner join, inner:IndexReader, outer key:test_partition_1.t1.b, inner key:test_partition_1.t1.a, equal cond:eq(test_partition_1.t1.b, test_partition_1.t1.a)",
           "  ├─HashAgg(Build) 159.84 root  group by:test_partition_1.t1.b, funcs:firstrow(test_partition_1.t1.b)->test_partition_1.t1.b",
           "  │ └─IndexReader 159.84 root partition:p0 index:HashAgg",
           "  │   └─HashAgg 159.84 cop[tikv]  group by:test_partition_1.t1.b, ",

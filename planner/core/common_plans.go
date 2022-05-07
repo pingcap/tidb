@@ -33,10 +33,12 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -282,10 +284,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	e.IsStaleness = isStaleness
 
 	failpoint.Inject("assertStaleReadForOptimizePreparedPlan", func() {
-		if isStaleness != sctx.GetSessionVars().StmtCtx.IsStaleness {
-			panic(fmt.Sprintf("%v != %v", isStaleness, sctx.GetSessionVars().StmtCtx.IsStaleness))
-		}
-
+		staleread.AssertStmtStaleness(sctx, isStaleness)
 		if isStaleness {
 			is2, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
 			if err != nil {
@@ -304,6 +303,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		// schema version like prepared plan cache key
 		prepared.CachedPlan = nil
 		preparedObj.Executor = nil
+		preparedObj.ColumnInfos = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -772,9 +772,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 					return errors.New("failed to rebuild range: the length of the range has changed")
 				}
 				for i := range x.IndexValues {
-					for j := range ranges.Ranges[i].LowVal {
-						x.IndexValues[i][j] = ranges.Ranges[i].LowVal[j]
-					}
+					copy(x.IndexValues[i], ranges.Ranges[i].LowVal)
 				}
 			} else {
 				var pkCol *expression.Column
@@ -867,7 +865,7 @@ func convertConstant2Datum(sc *stmtctx.StatementContext, con *expression.Constan
 		return nil, err
 	}
 	// The converted result must be same as original datum.
-	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.Collate))
+	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.GetCollate()))
 	if err != nil || cmp != 0 {
 		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
 	}
@@ -884,10 +882,10 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 				pkCols = append(pkCols, pkCol)
 				// We need to consider the prefix index.
 				// For example: when we have 'a varchar(50), index idx(a(10))'
-				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.Flen = 10'.
+				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.flen = 10'.
 				// In 'hasPrefix' function from 'util/ranger/ranger.go' file,
 				// we use 'columnLength == types.UnspecifiedLength' to check whether we have prefix index.
-				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.Flen {
+				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.GetFlen() {
 					pkColsLen = append(pkColsLen, types.UnspecifiedLength)
 				} else {
 					pkColsLen = append(pkColsLen, colInfo.Length)
@@ -1537,7 +1535,12 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
-		estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
+		if p.SCtx().GetSessionVars().EnableNewCostInterface {
+			planCost, _ := pp.GetPlanCost(property.RootTaskType)
+			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
+		} else {
+			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
+		}
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {

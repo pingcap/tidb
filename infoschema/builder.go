@@ -667,8 +667,8 @@ func ConvertCharsetCollateToLowerCaseIfNeed(tbInfo *model.TableInfo) {
 	tbInfo.Charset = strings.ToLower(tbInfo.Charset)
 	tbInfo.Collate = strings.ToLower(tbInfo.Collate)
 	for _, col := range tbInfo.Columns {
-		col.Charset = strings.ToLower(col.Charset)
-		col.Collate = strings.ToLower(col.Collate)
+		col.SetCharset(strings.ToLower(col.GetCharset()))
+		col.SetCollate(strings.ToLower(col.GetCollate()))
 	}
 }
 
@@ -682,9 +682,9 @@ func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
 		tbInfo.Collate = charset.CollationUTF8MB4
 	}
 	for _, col := range tbInfo.Columns {
-		if col.Version < model.ColumnInfoVersion2 && col.Charset == charset.CharsetUTF8 {
-			col.Charset = charset.CharsetUTF8MB4
-			col.Collate = charset.CollationUTF8MB4
+		if col.Version < model.ColumnInfoVersion2 && col.GetCharset() == charset.CharsetUTF8 {
+			col.SetCharset(charset.CharsetUTF8MB4)
+			col.SetCollate(charset.CollationUTF8MB4)
 		}
 	}
 }

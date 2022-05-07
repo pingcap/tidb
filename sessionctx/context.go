@@ -71,7 +71,9 @@ type Context interface {
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
 
-	// Deprecated: Use TxnManager.GetTxnInfoSchema to get the current schema in session
+	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
+	// If you want to get the infoschema of the current transaction in SQL layer, use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	// If you want to get the latest infoschema use domain.GetDomain(ctx).GetInfoSchema()
 	GetInfoSchema() InfoschemaMetaVersion
 
 	GetSessionVars() *variable.SessionVars
@@ -148,6 +150,12 @@ type Context interface {
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context
 	ShowProcess() *util.ProcessInfo
+	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
+	GetAdvisoryLock(string, int64) error
+	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
+	ReleaseAdvisoryLock(string) bool
+	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
+	ReleaseAllAdvisoryLocks() int
 }
 
 type basicCtxType int

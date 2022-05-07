@@ -145,7 +145,7 @@ func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
 			}
 		}
 		return errors.Trace(err)
-	}, newLockTablesBackoffer(tctx, blockList))
+	}, newLockTablesBackoffer(tctx, blockList, c.conf))
 }
 
 // TearDown implements ConsistencyController.TearDown
