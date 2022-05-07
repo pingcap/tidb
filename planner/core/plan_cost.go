@@ -241,7 +241,40 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType) (float64, 
 		// consider concurrency
 		p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	case kv.TiFlash:
-		return 0, errors.New("not implemented")
+		var concurrency, rowSize, seekCost float64
+		_, isMPP := p.tablePlan.(*PhysicalExchangeSender)
+		if isMPP {
+			// mpp protocol
+			concurrency = p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+			rowSize = collectRowSizeFromMPPPlan(p.tablePlan)
+			seekCost = accumulateNetSeekCost4MPP(p.tablePlan)
+			childCost, err := p.tablePlan.GetPlanCost(property.MppTaskType)
+			if err != nil {
+				return 0, err
+			}
+			p.planCost = childCost
+		} else {
+			// cop protocol
+			concurrency = float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+			rowSize = getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+			seekCost = estimateNetSeekCost(p.tablePlan)
+			childCost, err := p.tablePlan.GetPlanCost(property.CopSingleReadTaskType)
+			if err != nil {
+				return 0, err
+			}
+			p.planCost = childCost
+		}
+
+		// net I/O cost
+		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor
+		// net seek cost
+		p.planCost += seekCost
+		// consider concurrency
+		p.planCost /= concurrency
+		// consider tidb_enforce_mpp
+		if isMPP && p.ctx.GetSessionVars().IsMPPEnforced() {
+			p.planCost /= 1000000000
+		}
 	}
 	p.planCostInit = true
 	return p.planCost, nil
@@ -829,7 +862,7 @@ func (p *PhysicalHashAgg) GetPlanCost(taskType property.TaskType) (float64, erro
 	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
 		p.planCost += p.GetCost(p.children[0].StatsCount(), false, false)
 	case property.MppTaskType:
-		return 0, errors.New("not implemented")
+		p.planCost += p.GetCost(p.children[0].StatsCount(), false, true)
 	default:
 		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
@@ -994,7 +1027,19 @@ func (p *PhysicalUnionAll) GetPlanCost(taskType property.TaskType) (float64, err
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType) (float64, error) {
-	return 0, errors.New("not implemented")
+	if p.planCostInit {
+		return p.planCost, nil
+	}
+	childCost, err := p.children[0].GetPlanCost(taskType)
+	if err != nil {
+		return 0, err
+	}
+	p.planCost = childCost
+	// accumulate net cost
+	// TODO: this formula is wrong since it doesn't consider tableRowSize, fix it later
+	p.planCost += p.children[0].StatsCount() * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	p.planCostInit = true
+	return p.planCost, nil
 }
 
 // estimateNetSeekCost calculates the net seek cost for the plan.
