@@ -593,15 +593,15 @@ func filterRestoreFiles(
 			dbName = name
 		}
 		for _, table := range db.Tables {
+			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
+				continue
+			}
 			if !createdDatabase {
 				dbs = append(dbs, db)
 				createdDatabase = true
 			}
 			if table.Info == nil {
 				// we may back up empty database.
-				continue
-			}
-			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
 			files = append(files, table.Files...)
