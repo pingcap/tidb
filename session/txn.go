@@ -377,9 +377,9 @@ func (txn *LazyTxn) Rollback() error {
 }
 
 // RollbackToSavepoint overrides the Transaction interface.
-func (txn *LazyTxn) RollbackToSavepoint(cp *kv.MemCheckpoint) {
+func (txn *LazyTxn) RollbackToSavepoint(savepoint interface{}) {
 	txn.flushStmtBuf()
-	txn.Transaction.RollbackToSavepoint(cp)
+	txn.Transaction.RollbackToSavepoint(savepoint)
 	txn.cleanup()
 }
 

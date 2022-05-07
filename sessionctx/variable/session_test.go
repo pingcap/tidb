@@ -324,7 +324,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		},
 	}
 
-	tc.AddSavepoint("S1", &kv.MemCheckpoint{})
+	tc.AddSavepoint("S1", nil)
 	require.Equal(t, 1, len(tc.Savepoints))
 	require.Equal(t, 1, len(tc.Savepoints[0].TableDeltaMap))
 	require.Equal(t, "s1", tc.Savepoints[0].Name)
@@ -342,7 +342,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		TableID:  9,
 	}
 
-	tc.AddSavepoint("S2", &kv.MemCheckpoint{})
+	tc.AddSavepoint("S2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
 	require.Equal(t, 1, len(tc.Savepoints[0].TableDeltaMap))
 	require.Equal(t, 1, len(tc.Savepoints[0].TableDeltaMap[1].ColSize))
@@ -358,7 +358,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		TableID:  13,
 	}
 
-	tc.AddSavepoint("s2", &kv.MemCheckpoint{})
+	tc.AddSavepoint("s2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
 	require.Equal(t, 3, len(tc.Savepoints[1].TableDeltaMap))
 	require.Equal(t, "s2", tc.Savepoints[1].Name)

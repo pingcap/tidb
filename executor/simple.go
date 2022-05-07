@@ -661,8 +661,8 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 		return err
 	}
 
-	cp := txn.GetMemBuffer().Checkpoint()
-	txnCtx.AddSavepoint(s.Name, cp)
+	savepoint := txn.GetSavepoint()
+	txnCtx.AddSavepoint(s.Name, savepoint)
 	return nil
 }
 
@@ -777,11 +777,11 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 		if !txn.Valid() {
 			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 		}
-		savepoint := sessVars.TxnCtx.RollbackToSavepoint(s.SavepointName)
-		if savepoint == nil {
+		savepointRecord := sessVars.TxnCtx.RollbackToSavepoint(s.SavepointName)
+		if savepointRecord == nil {
 			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 		}
-		txn.RollbackToSavepoint(savepoint.Cp)
+		txn.RollbackToSavepoint(savepointRecord.Savepoint)
 		return nil
 	}
 

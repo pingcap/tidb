@@ -145,7 +145,11 @@ func (t *mockTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
 	// TODO nothing
 }
 
-func (t *mockTxn) RollbackToSavepoint(_ *MemCheckpoint) {
+func (t *mockTxn) GetSavepoint() interface{} {
+	return nil
+}
+
+func (t *mockTxn) RollbackToSavepoint(_ interface{}) {
 	// TODO nothing
 }
 

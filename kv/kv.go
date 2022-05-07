@@ -174,12 +174,7 @@ type MemBuffer interface {
 
 	// Size returns sum of keys and values length.
 	Size() int
-
-	Checkpoint() *MemCheckpoint
 }
-
-// MemCheckpoint is a memory db checkpoint.
-type MemCheckpoint = tikv.MemCheckpoint
 
 // LockCtx contains information for LockKeys method.
 type LockCtx = tikvstore.LockCtx
@@ -241,7 +236,10 @@ type Transaction interface {
 	// clear allowed flag
 	ClearDiskFullOpt()
 
-	RollbackToSavepoint(*MemCheckpoint)
+	// GetSavepoint gets the savepoint of the current transaction.
+	GetSavepoint() interface{}
+	// RollbackToSavepoint uses to rollback the transaction to the specified savepoint.
+	RollbackToSavepoint(interface{})
 }
 
 // AssertionProto is an interface defined for the assertion protocol.

@@ -134,8 +134,8 @@ func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 type SavepointRecord struct {
 	// name is the name of the savepoint
 	Name string
-	// cp is the checkpoint of memory buffer that related to the savepoint
-	Cp *kv.MemCheckpoint
+	// Savepoint is the transaction savepoint.
+	Savepoint interface{}
 	// TableDeltaMap is the savepoint of TransactionContext.TableDeltaMap
 	TableDeltaMap map[int64]TableDelta
 }
@@ -185,7 +185,7 @@ type TransactionContext struct {
 	TxnScope string
 
 	// Savepoints contains all definitions of the savepoint of a transaction at runtime, the order of the SavepointRecord is the same with the SAVEPOINT statements.
-	// It is used for a lookup when running ‘ROLLBACK TO' statement.
+	// It is used for a lookup when running `ROLLBACK TO` statement.
 	Savepoints []SavepointRecord
 
 	// TableDeltaMap lock to prevent potential data race
@@ -332,7 +332,7 @@ func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
 }
 
 // AddSavepoint adds a new savepoint.
-func (tc *TransactionContext) AddSavepoint(name string, cp *kv.MemCheckpoint) {
+func (tc *TransactionContext) AddSavepoint(name string, savepoint interface{}) {
 	name = strings.ToLower(name)
 	tc.DeleteSavepoint(name)
 
@@ -343,7 +343,7 @@ func (tc *TransactionContext) AddSavepoint(name string, cp *kv.MemCheckpoint) {
 
 	tc.Savepoints = append(tc.Savepoints, SavepointRecord{
 		Name:          name,
-		Cp:            cp,
+		Savepoint:     savepoint,
 		TableDeltaMap: tableDeltaMap,
 	})
 }
