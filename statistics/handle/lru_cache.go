@@ -69,6 +69,13 @@ type lruMapElement struct {
 	tblMemUsage *statistics.TableMemoryUsage
 }
 
+func (l *lruMapElement) copy() *lruMapElement {
+	return &lruMapElement{
+		tbl:         l.tbl,
+		tblMemUsage: l.tblMemUsage,
+	}
+}
+
 // GetByQuery implements statsCacheInner
 func (s *statsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
 	s.Lock()
@@ -252,7 +259,7 @@ func (s *statsInnerCache) Copy() statsCacheInner {
 	newCache := newStatsLruCache(s.lru.capacity)
 	newCache.lru = s.lru.copy()
 	for tblID, element := range s.elements {
-		newCache.elements[tblID] = element
+		newCache.elements[tblID] = element.copy()
 	}
 	newCache.lru.onEvict = newCache.onEvict
 	return newCache
