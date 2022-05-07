@@ -112,7 +112,7 @@ func (m *ownerManager) Cancel() {
 	m.wg.Wait()
 }
 
-// RequireOwner implements Manager.Cancel interface.
+// RequireOwner implements Manager.RequireOwner interface.
 func (m *ownerManager) RequireOwner(ctx context.Context) error {
 	return nil
 }
