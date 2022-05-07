@@ -464,7 +464,7 @@ END:
 }
 
 func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
-	// If prop.enforced is true, the prop.cols need to be set nil for p.findBestTask.
+	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for p.findBestTask.
 	// Before function return, reset it for enforcing task prop.
 	oldProp := prop.CloneEssentialFields()
 	if prop.CanAddEnforcer {
@@ -811,7 +811,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		return
 	}
 	var cnt int64
-	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
+	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldProp := prop.CloneEssentialFields()
 	if prop.CanAddEnforcer {
