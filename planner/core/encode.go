@@ -33,6 +33,10 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	if len(flat.Main) == 0 {
 		return ""
 	}
+	// We won't collect the plan when it's in "EXPLAIN FOR" statement and the plan is from EXECUTE statement. (Please
+	// read comments of InExecute for details)
+	// Because we are unable to get some necessary information when the execution of the plan is finished and some
+	// states in the session such as PreparedParams are cleaned.
 	if flat.InExecute {
 		return ""
 	}
@@ -220,10 +224,7 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	hasher := sha256.New()
 	var buf bytes.Buffer
 	selectPlan := flat.Main.GetSelectPlan()
-	if len(selectPlan) == 0 {
-		return "", parser.NewDigest(nil)
-	}
-	if !selectPlan[0].IsPhysicalPlan {
+	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return "", parser.NewDigest(nil)
 	}
 	for _, op := range selectPlan {

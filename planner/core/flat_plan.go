@@ -28,7 +28,16 @@ type FlatPhysicalPlan struct {
 	Main FlatPlanTree
 	CTEs []FlatPlanTree
 
-	// InExecute means if the plan tree contains Execute. It's useful for some special case.
+	// InExecute means if the plan tree contains Execute operator.
+	//
+	// Be careful when trying to use this, InExecute is true doesn't mean we are handling an EXECUTE statement.
+	// When collecting information from the plan in an EXECUTE statement, usually we directly use the plan
+	// in Execute.Plan, not Execute itself, so InExecute will be false.
+	//
+	// When will InExecute be true? When you're using "EXPLAIN FOR CONNECTION" to get the last plan of
+	// a connection (yes, usually we will record Explain.TargetPlan for an EXPLAIN statement) and that plan
+	// is from an EXECUTE statement, we will collect from Execute itself, not directly from Execute.Plan,
+	// then InExecute will be true.
 	InExecute bool
 
 	ctesToFlatten []*PhysicalCTE
