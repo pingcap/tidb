@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -35,7 +36,7 @@ import (
 // After add column finished, check the records in the table.
 func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal interface{}, updatedVal interface{}) {
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := sessiontxn.NewTxn(goctx.Background(), ctx)
 	require.NoError(t, err)
 
 	tbl := s.getTable(t, "test_column")
@@ -85,7 +86,7 @@ func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal interfac
 
 func (s *ddlSuite) checkDropColumn(t *testing.T, rowID int64, alterColumn *table.Column, updateDefault interface{}) {
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := sessiontxn.NewTxn(goctx.Background(), ctx)
 	require.NoError(t, err)
 
 	tbl := s.getTable(t, "test_column")
