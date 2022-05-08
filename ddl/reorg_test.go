@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -68,7 +69,7 @@ func TestReorgOwner(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx = testkit.NewTestKit(t, store).Session()
-	err = ctx.NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	num := 10
 	for i := 0; i < num; i++ {

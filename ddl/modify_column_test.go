@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/admin"
@@ -117,7 +118,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		for i, e := range gotElements {
 			require.Equal(t, expectedElements[i], e)
 		}
-		require.NoError(t, ctx.NewTxn(context.Background()))
+		require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)

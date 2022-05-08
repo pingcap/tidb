@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ func TestDDLStatsInfo(t *testing.T) {
 	require.NoError(t, err)
 	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
 	ctx := testkit.NewTestKit(t, store).Session()
-	err = ctx.NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 
 	m := testGetTable(t, domain, tblInfo.ID)

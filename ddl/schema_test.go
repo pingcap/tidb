@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -223,7 +224,7 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(t, store, tJob1.ID, true)
 	tbl1 := testGetTable(t, domain, tblInfo1.ID)
-	err = tk.Session().NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), tk.Session())
 	require.NoError(t, err)
 	for i := 1; i <= 100; i++ {
 		_, err := tbl1.AddRecord(tk.Session(), types.MakeDatums(i, i, i))
@@ -237,7 +238,7 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(t, store, tJob2.ID, true)
 	tbl2 := testGetTable(t, domain, tblInfo2.ID)
-	err = tk2.Session().NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), tk2.Session())
 	require.NoError(t, err)
 	for i := 1; i <= 1034; i++ {
 		_, err := tbl2.AddRecord(tk2.Session(), types.MakeDatums(i, i, i))

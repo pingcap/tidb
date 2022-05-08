@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/admin"
@@ -131,7 +132,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 	}
 
-	if err = e.ctx.NewTxn(ctx); err != nil {
+	if err = sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		return err
 	}
 
