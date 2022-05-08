@@ -2163,6 +2163,35 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 	}
 }
 
+func TestIssue34228(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustExec(`DROP TABLE IF EXISTS Issue34228`)
+	tk.MustExec(`CREATE TABLE Issue34228 (id bigint NOT NULL, dt datetime NOT NULL) PARTITION BY RANGE COLUMNS(dt) (PARTITION p202201 VALUES LESS THAN ("2022-02-01"), PARTITION p202202 VALUES LESS THAN ("2022-03-01"))`)
+	tk.MustExec(`INSERT INTO Issue34228 VALUES (1, '2022-02-01 00:00:02'), (2, '2022-02-01 00:00:02')`)
+	tk.MustExec(`SET @@global.tidb_analyze_version = 1`)
+	tk.MustExec(`SET @@session.tidb_partition_prune_mode = 'static'`)
+	tk.MustExec(`ANALYZE TABLE Issue34228`)
+	tk.MustExec(`SET @@session.tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustExec(`ANALYZE TABLE Issue34228`)
+	tk.MustQuery(`SELECT * FROM Issue34228`).Sort().Check(testkit.Rows("1 2022-02-01 00:00:02", "2 2022-02-01 00:00:02"))
+	// Needs a second run to hit the issue
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`USE test`)
+	tk2.MustExec(`DROP TABLE IF EXISTS Issue34228`)
+	tk2.MustExec(`CREATE TABLE Issue34228 (id bigint NOT NULL, dt datetime NOT NULL) PARTITION BY RANGE COLUMNS(dt) (PARTITION p202201 VALUES LESS THAN ("2022-02-01"), PARTITION p202202 VALUES LESS THAN ("2022-03-01"))`)
+	tk2.MustExec(`INSERT INTO Issue34228 VALUES (1, '2022-02-01 00:00:02'), (2, '2022-02-01 00:00:02')`)
+	tk2.MustExec(`SET @@global.tidb_analyze_version = 1`)
+	tk2.MustExec(`SET @@session.tidb_partition_prune_mode = 'static'`)
+	tk2.MustExec(`ANALYZE TABLE Issue34228`)
+	tk2.MustExec(`SET @@session.tidb_partition_prune_mode = 'dynamic'`)
+	tk2.MustExec(`ANALYZE TABLE Issue34228`)
+	tk2.MustQuery(`SELECT * FROM Issue34228`).Sort().Check(testkit.Rows("1 2022-02-01 00:00:02", "2 2022-02-01 00:00:02"))
+}
+
 func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
 		func(choice model.ColumnChoice) {
