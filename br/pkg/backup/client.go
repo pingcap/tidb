@@ -635,19 +635,6 @@ func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool
 	var err error
 
 	for {
-		// pd retry with Exponential Backoff, BoPDRPC configure = (base = 500, cap=3000, EqualJitter))
-		if err != nil {
-			if errors.Cause(err) == context.Canceled {
-				return nil, errors.Trace(err)
-			}
-
-			err := bo.Backoff(tikv.BoPDRPC(), err)
-			if err != nil {
-				log.Error("can not find leader", logutil.Key("key", key))
-				return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find leader")
-			}
-		}
-
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		failpoint.Inject("get-region-error", func(val failpoint.Value) {
 			if val.(bool) {
@@ -657,6 +644,17 @@ func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool
 		})
 		if err != nil || region == nil || region.Leader == nil {
 			log.Warn("can not find region by key, retry it...", zap.Error(err), zap.Reflect("region", region), logutil.Key("key", key))
+
+			if errors.Cause(err) == context.Canceled {
+				return nil, errors.Trace(err)
+			}
+
+			// pd retry with Exponential Backoff, BoPDRPC configure = (base = 500, cap=3000, EqualJitter))
+			err := bo.Backoff(tikv.BoPDRPC(), err)
+			if err != nil {
+				log.Error("can not find leader", logutil.Key("key", key))
+				return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find leader")
+			}
 			continue
 		}
 
