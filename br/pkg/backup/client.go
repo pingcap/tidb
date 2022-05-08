@@ -632,7 +632,6 @@ func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool
 	}
 
 	bo := tikv.NewBackoffer(ctx, backupFindRegionLeaderBackoff)
-	var err error
 
 	for {
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
