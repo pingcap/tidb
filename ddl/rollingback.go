@@ -396,7 +396,7 @@ func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	// To simplify the rollback logic, cannot be canceled after job start to run.
-	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isRollbackable.
 	if dbInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
 		return dbterror.ErrCancelledDDLJob
