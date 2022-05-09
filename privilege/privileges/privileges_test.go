@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
@@ -1929,42 +1930,48 @@ func TestRenameUser(t *testing.T) {
 	rootTk.MustExec("CREATE USER 'ru1'@'localhost'")
 	rootTk.MustExec("CREATE USER ru3")
 	rootTk.MustExec("CREATE USER ru6@localhost")
-	tk1 := testkit.NewTestKit(t, store)
-	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "ru1", Hostname: "localhost"}, nil, nil))
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "ru1", Hostname: "localhost"}, nil, nil))
 
 	// Check privileges (need CREATE USER)
-	err := tk1.ExecToErr("RENAME USER ru3 TO ru4")
+	err := tk.ExecToErr("RENAME USER ru3 TO ru4")
 	require.Error(t, err)
 	require.Regexp(t, "Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation$", err.Error())
 	rootTk.MustExec("GRANT UPDATE ON mysql.user TO 'ru1'@'localhost'")
-	err = tk1.ExecToErr("RENAME USER ru3 TO ru4")
+	err = tk.ExecToErr("RENAME USER ru3 TO ru4")
 	require.Error(t, err)
 	require.Regexp(t, "Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation$", err.Error())
 	rootTk.MustExec("GRANT CREATE USER ON *.* TO 'ru1'@'localhost'")
-	tk1.MustExec("RENAME USER ru3 TO ru4")
+	tk.MustExec("RENAME USER ru3 TO ru4")
 
 	// Test a few single rename (both Username and Hostname)
-	tk1.MustExec("RENAME USER 'ru4'@'%' TO 'ru3'@'localhost'")
-	tk1.MustExec("RENAME USER 'ru3'@'localhost' TO 'ru3'@'%'")
+	tk.MustExec("RENAME USER 'ru4'@'%' TO 'ru3'@'localhost'")
+	tk.MustExec("RENAME USER 'ru3'@'localhost' TO 'ru3'@'%'")
 	// Including negative tests, i.e. non-existing from user and existing to user
 	err = rootTk.ExecToErr("RENAME USER ru3 TO ru1@localhost")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru3@%")
-	err = tk1.ExecToErr("RENAME USER ru4 TO ru5@localhost")
+	err = tk.ExecToErr("RENAME USER ru4 TO ru5@localhost")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru4@%")
-	err = tk1.ExecToErr("RENAME USER ru3 TO ru3")
+	err = tk.ExecToErr("RENAME USER ru3 TO ru3")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru3@%")
-	err = tk1.ExecToErr("RENAME USER ru3 TO ru5@localhost, ru4 TO ru7")
+	err = tk.ExecToErr("RENAME USER ru3 TO ru5@localhost, ru4 TO ru7")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru4@%")
-	err = tk1.ExecToErr("RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost")
+	err = tk.ExecToErr("RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru6@localhost")
 
 	// Test multi rename, this is a full swap of ru3 and ru6, i.e. need to read its previous state in the same transaction.
-	tk1.MustExec("RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
+	tk.MustExec("RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
+
+	// Test rename to a too long name
+	err = tk.ExecToErr("RENAME USER 'ru6@localhost' TO '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost'")
+	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
+	err = tk.ExecToErr("RENAME USER 'ru6@localhost' TO 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X'")
+	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
 
 	// Cleanup
 	rootTk.MustExec("DROP USER ru6@localhost")
@@ -1997,14 +2004,14 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_time_series_count'`).Check(testkit.Rows())
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows())
 
-	_, err := tk.Exec("SET tidb_force_priority = 'NO_PRIORITY'")
+	_, err := tk.Exec("SET @@global.tidb_force_priority = 'NO_PRIORITY'")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SET GLOBAL tidb_enable_telemetry = OFF")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SET GLOBAL tidb_top_sql_max_time_series_count = 100")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 
-	_, err = tk.Exec("SELECT @@session.tidb_force_priority")
+	_, err = tk.Exec("SELECT @@global.tidb_force_priority")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SELECT @@global.tidb_enable_telemetry")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
@@ -2022,11 +2029,17 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry ON"))
 
 	// should not actually make any change.
-	tk.MustExec("SET tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustExec("SET @@global.tidb_force_priority = 'NO_PRIORITY'")
 	tk.MustExec("SET GLOBAL tidb_enable_telemetry = ON")
 
-	tk.MustQuery(`SELECT @@session.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
+	tk.MustQuery(`SELECT @@global.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
 	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
+
+	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(variable.DefHostname))
+	sem.Disable()
+	if hostname, err := os.Hostname(); err == nil {
+		tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(hostname))
+	}
 }
 
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer
@@ -2873,6 +2886,22 @@ func TestSkipGrantTable(t *testing.T) {
 	tk.MustExec(`GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'test2'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test2'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test2'@'%';`)
+}
+
+// https://github.com/pingcap/tidb/issues/32891
+func TestIncorrectUsageDBGrant(t *testing.T) {
+	store, clean := createStoreAndPrepareDB(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER ucorrect1, ucorrect2;`)
+	tk.MustExec(`CREATE TABLE test.trigger_table (a int)`)
+	tk.MustExec(`GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON test.* TO ucorrect1;`)
+	tk.MustExec(`GRANT TRIGGER ON test.trigger_table TO ucorrect2;`)
+	tk.MustExec(`DROP TABLE test.trigger_table`)
+
+	err := tk.ExecToErr(`GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON test.* TO uincorrect;`)
+	require.EqualError(t, err, "[executor:1410]You are not allowed to create a user with GRANT")
 }
 
 func TestIssue29823(t *testing.T) {

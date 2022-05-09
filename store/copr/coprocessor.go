@@ -25,7 +25,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/trxevents"
@@ -133,7 +133,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		it.sendRate = util.NewRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
-	if sessionMemTracker != nil {
+	if sessionMemTracker != nil && enabledRateLimitAction {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
 
@@ -1313,6 +1313,7 @@ func (e *rateLimitAction) close() {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.exceeded = false
+	e.SetFinished()
 }
 
 func (e *rateLimitAction) setEnabled(enabled bool) {

@@ -77,6 +77,10 @@ type Storage interface {
 	Done() bool
 	SetDone()
 
+	// Store error message, so we can return directly.
+	Error() error
+	SetError(err error)
+
 	// Readers use iter information to determine
 	// whether they need to read data from the beginning.
 	SetIter(iter int)
@@ -94,9 +98,9 @@ type StorageRC struct {
 	tp      []*types.FieldType
 	chkSize int
 
-	begCh chan struct{}
-	done  bool
-	iter  int
+	done bool
+	iter int
+	err  error
 
 	rc *chunk.RowContainer
 }
@@ -111,7 +115,6 @@ func (s *StorageRC) OpenAndRef() (err error) {
 	if !s.valid() {
 		s.rc = chunk.NewRowContainer(s.tp, s.chkSize)
 		s.refCnt = 1
-		s.begCh = make(chan struct{})
 		s.iter = 0
 	} else {
 		s.refCnt += 1
@@ -158,8 +161,8 @@ func (s *StorageRC) Reopen() (err error) {
 		return err
 	}
 	s.iter = 0
-	s.begCh = make(chan struct{})
 	s.done = false
+	s.err = nil
 	// Create a new RowContainer.
 	// Because some meta infos in old RowContainer are not resetted.
 	// Such as memTracker/actionSpill etc. So we just use a new one.
@@ -224,6 +227,16 @@ func (s *StorageRC) SetDone() {
 	s.done = true
 }
 
+// Error impls Storage Error interface.
+func (s *StorageRC) Error() error {
+	return s.err
+}
+
+// SetError impls Storage SetError interface.
+func (s *StorageRC) SetError(err error) {
+	s.err = err
+}
+
 // SetIter impls Storage SetIter interface.
 func (s *StorageRC) SetIter(iter int) {
 	s.iter = iter
@@ -256,8 +269,8 @@ func (s *StorageRC) ActionSpillForTest() *chunk.SpillDiskAction {
 
 func (s *StorageRC) resetAll() error {
 	s.refCnt = -1
-	s.begCh = nil
 	s.done = false
+	s.err = nil
 	s.iter = 0
 	if err := s.rc.Reset(); err != nil {
 		return err

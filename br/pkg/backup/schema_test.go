@@ -13,7 +13,6 @@ import (
 	"github.com/golang/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -21,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,7 +100,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	_, backupSchemas, _, err := backup.BuildBackupRangeAndSchema(
 		m.Storage, testFilter, math.MaxUint64, false)
 	require.NoError(t, err)
-	require.Nil(t, backupSchemas)
+	require.NotNil(t, backupSchemas)
 
 	// Database is not exist.
 	fooFilter, err := filter.Parse([]string{"foo.t1"})
@@ -117,7 +117,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	_, backupSchemas, _, err = backup.BuildBackupRangeAndSchema(
 		m.Storage, noFilter, math.MaxUint64, false)
 	require.NoError(t, err)
-	require.Nil(t, backupSchemas)
+	require.NotNil(t, backupSchemas)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")

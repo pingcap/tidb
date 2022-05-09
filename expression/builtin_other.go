@@ -100,7 +100,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	for i := 1; i < len(args); i++ {
 		DisableParseJSONFlag4Expr(args[i])
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
 		inInt := builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: bf}}
@@ -163,7 +163,7 @@ func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) 
 	for _, arg := range args {
 		if constant, ok := arg.(*Constant); ok {
 			switch {
-			case columnType.Tp == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
+			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
 					if MaybeOverOptimized4PlanCache(ctx, args) {
 						ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
@@ -174,7 +174,7 @@ func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) 
 		}
 		validatedArgs = append(validatedArgs, arg)
 	}
-	err := c.baseFunctionClass.verifyArgs(args)
+	err := c.baseFunctionClass.verifyArgs(validatedArgs)
 	return validatedArgs, err
 }
 
@@ -207,7 +207,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 				b.hasNull = true
 				continue
 			}
-			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().Flag)
+			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().GetFlag())
 		} else {
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
@@ -230,7 +230,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 
 	args := b.args[1:]
 	if len(b.hashSet) != 0 {
@@ -258,7 +258,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 			hasNull = true
 			continue
 		}
-		isUnsigned := mysql.HasUnsignedFlag(arg.GetType().Flag)
+		isUnsigned := mysql.HasUnsignedFlag(arg.GetType().GetFlag())
 		if isUnsigned0 && isUnsigned {
 			if evaledArg == arg0 {
 				return 1, false, nil
@@ -732,7 +732,7 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = args[1].GetType().Flen
+	bf.tp.SetFlen(args[1].GetType().GetFlen())
 	switch argTp {
 	case types.ETString:
 		sig = &builtinSetStringVarSig{bf}
@@ -776,7 +776,6 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 	if err != nil {
 		return "", isNull, err
 	}
-	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
 	sessionVars.SetUserVar(varName, stringutil.Copy(res), datum.Collation())
 	sessionVars.UsersLock.Unlock()
@@ -918,7 +917,7 @@ func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types
 	if err != nil {
 		return nil, err
 	}
-	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
+	if builtinRetTp := f.getRetTp(); builtinRetTp.GetType() != mysql.TypeUnspecified || retType.GetType() == mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
 	return &ScalarFunction{
@@ -946,10 +945,10 @@ func (c *getStringVarFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
-	if len(c.tp.Charset) > 0 {
-		bf.tp.Charset = c.tp.Charset
-		bf.tp.Collate = c.tp.Collate
+	bf.tp.SetFlen(c.tp.GetFlen())
+	if len(c.tp.GetCharset()) > 0 {
+		bf.tp.SetCharset(c.tp.GetCharset())
+		bf.tp.SetCollate(c.tp.GetCollate())
 	}
 	sig = &builtinGetStringVarSig{bf}
 	return sig, nil
@@ -1003,8 +1002,8 @@ func (c *getIntVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
-	bf.tp.Flag = c.tp.Flag
+	bf.tp.SetFlen(c.tp.GetFlen())
+	bf.tp.SetFlag(c.tp.GetFlag())
 	sig = &builtinGetIntVarSig{bf}
 	return sig, nil
 }
@@ -1046,7 +1045,7 @@ func (c *getRealVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
+	bf.tp.SetFlen(c.tp.GetFlen())
 	sig = &builtinGetRealVarSig{bf}
 	return sig, nil
 }
@@ -1088,7 +1087,7 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
+	bf.tp.SetFlen(c.tp.GetFlen())
 	sig = &builtinGetDecimalVarSig{bf}
 	return sig, nil
 }
@@ -1130,8 +1129,8 @@ func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	if c.tp.Tp == mysql.TypeDatetime {
-		fsp := c.tp.Flen - mysql.MaxDatetimeWidthNoFsp
+	if c.tp.GetType() == mysql.TypeDatetime {
+		fsp := c.tp.GetFlen() - mysql.MaxDatetimeWidthNoFsp
 		if fsp > 0 {
 			fsp--
 		}
@@ -1267,7 +1266,7 @@ func (b *builtinValuesRealSig) evalReal(_ chunk.Row) (float64, bool, error) {
 		if row.IsNull(b.offset) {
 			return 0, true, nil
 		}
-		if b.getRetTp().Tp == mysql.TypeFloat {
+		if b.getRetTp().GetType() == mysql.TypeFloat {
 			return float64(row.GetFloat32(b.offset)), false, nil
 		}
 		return row.GetFloat64(b.offset), false, nil
@@ -1391,7 +1390,7 @@ func (b *builtinValuesDurationSig) evalDuration(_ chunk.Row) (types.Duration, bo
 		if row.IsNull(b.offset) {
 			return types.Duration{}, true, nil
 		}
-		duration := row.GetDuration(b.offset, b.getRetTp().Decimal)
+		duration := row.GetDuration(b.offset, b.getRetTp().GetDecimal())
 		return duration, false, nil
 	}
 	return types.Duration{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
@@ -1437,7 +1436,7 @@ func (c *bitCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 2
+	bf.tp.SetFlen(2)
 	sig := &builtinBitCountSig{bf}
 	return sig, nil
 }
@@ -1480,7 +1479,7 @@ func (c *getParamFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = mysql.MaxFieldVarCharLength
+	bf.tp.SetFlen(mysql.MaxFieldVarCharLength)
 	sig := &builtinGetParamStringSig{bf}
 	return sig, nil
 }

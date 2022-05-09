@@ -58,7 +58,7 @@ partition p2 values less than (10))`)
 	tk.MustQuery("select c from pt").Sort().Check(testkit.Rows("0", "2", "4", "6", "7", "9", "<nil>"))
 	tk.MustQuery("select c from pt where c > 10").Check(testkit.Rows())
 	tk.MustQuery("select c from pt where c > 8").Check(testkit.Rows("9"))
-	tk.MustQuery("select c from pt where c < 2 or c >= 9").Check(testkit.Rows("0", "9"))
+	tk.MustQuery("select c from pt where c < 2 or c >= 9").Sort().Check(testkit.Rows("0", "9"))
 
 	// Index lookup
 	tk.MustQuery("select /*+ use_index(pt, i_id) */ * from pt").Sort().Check(testkit.Rows("0 0", "2 2", "4 4", "6 6", "7 7", "9 9", "<nil> <nil>"))
@@ -2845,7 +2845,7 @@ partition p1 values less than (7),
 partition p2 values less than (10))`)
 	tk.MustExec("alter table p add unique idx(id)")
 	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
-	tk.MustQuery("select * from p use index (idx)").Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
+	tk.MustQuery("select * from p use index (idx)").Sort().Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
 }
 
 func TestIssue20028(t *testing.T) {
@@ -3524,13 +3524,12 @@ func TestPartitionTableExplain(t *testing.T) {
 		"    └─IndexReader 1.00 root  index:IndexFullScan",
 		"      └─IndexFullScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t partition (p1),t2 where t2.a = 1 and t2.b = t.b`).Check(testkit.Rows(
-		"IndexJoin 1.00 root  inner join, inner:IndexReader, outer key:testpartitiontableexplain.t2.b, inner key:testpartitiontableexplain.t.b, equal cond:eq(testpartitiontableexplain.t2.b, testpartitiontableexplain.t.b)",
+		"HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)]",
 		"├─TableReader(Build) 1.00 root  data:Selection",
 		"│ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
 		"│   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
-		"└─IndexReader(Probe) 1.00 root  index:Selection",
-		"  └─Selection 1.00 cop[tikv]  not(isnull(testpartitiontableexplain.t.b))",
-		"    └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range: decided by [eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)], keep order:false"))
+		"└─IndexReader(Probe) 1.00 root  index:IndexFullScan",
+		"  └─IndexFullScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b and t.a = 1`).Check(testkit.Rows(
 		"HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)]",
 		"├─TableReader(Build) 1.00 root  data:Selection",

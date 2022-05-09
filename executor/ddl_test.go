@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -152,8 +153,8 @@ func TestCreateTable(t *testing.T) {
 	tk.MustExec("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
 	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].Collate)
+	require.Equal(t, "utf8", tt.Cols()[0].GetCharset())
+	require.Equal(t, "utf8_general_ci", tt.Cols()[0].GetCollate())
 	require.Equal(t, "utf8mb4", tt.Meta().Charset)
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
@@ -161,8 +162,8 @@ func TestCreateTable(t *testing.T) {
 	tk.MustExec("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
 	require.NoError(t, err)
-	require.Equal(t, "utf8", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8_general_ci", tt.Cols()[0].Collate)
+	require.Equal(t, "utf8", tt.Cols()[0].GetCharset())
+	require.Equal(t, "utf8_general_ci", tt.Cols()[0].GetCollate())
 	require.Equal(t, "utf8mb4", tt.Meta().Charset)
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
@@ -306,6 +307,15 @@ func TestCreateView(t *testing.T) {
 	// Refer https://github.com/pingcap/tidb/issues/25876
 	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
 	require.Truef(t, terror.ErrorEqual(err, executor.ErrViewInvalid), "err %s", err)
+
+	// Refer https://github.com/pingcap/tidb/issues/32682
+	tk.MustExec("drop view if exists v1,v2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1(a INT, b INT);")
+	err = tk.ExecToErr("CREATE DEFINER=1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost VIEW v1 AS SELECT a FROM t1;")
+	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
+	err = tk.ExecToErr("CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X VIEW v2 AS SELECT b FROM t1;")
+	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
 }
 
 func TestViewRecursion(t *testing.T) {
@@ -675,8 +685,8 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	require.NoError(t, err)
 	tt, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
-	require.Equal(t, "utf8mb4", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Cols()[0].Collate)
+	require.Equal(t, "utf8mb4", tt.Cols()[0].GetCharset())
+	require.Equal(t, "utf8mb4_bin", tt.Cols()[0].GetCollate())
 	require.Equal(t, "utf8mb4", tt.Meta().Charset)
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
@@ -686,8 +696,8 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	require.NoError(t, err)
 	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
-	require.Equal(t, "utf8mb4", tt.Cols()[0].Charset)
-	require.Equal(t, "utf8mb4_bin", tt.Cols()[0].Collate)
+	require.Equal(t, "utf8mb4", tt.Cols()[0].GetCharset())
+	require.Equal(t, "utf8mb4_bin", tt.Cols()[0].GetCollate())
 	require.Equal(t, "utf8mb4", tt.Meta().Charset)
 	require.Equal(t, "utf8mb4_bin", tt.Meta().Collate)
 
@@ -782,8 +792,8 @@ func TestColumnCharsetAndCollate(t *testing.T) {
 
 			tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
 			require.NoError(t, err)
-			require.Equalf(t, tt.exptCharset, tb.Meta().Columns[0].Charset, sql)
-			require.Equalf(t, tt.exptCollate, tb.Meta().Columns[0].Collate, sql)
+			require.Equalf(t, tt.exptCharset, tb.Meta().Columns[0].GetCharset(), sql)
+			require.Equalf(t, tt.exptCollate, tb.Meta().Columns[0].GetCollate(), sql)
 		} else {
 			_, err := tk.Exec(sql)
 			require.Errorf(t, err, sql)
@@ -852,7 +862,7 @@ func TestShardRowIDBits(t *testing.T) {
 	assertCountAndShard := func(tt table.Table, expectCount int) {
 		var hasShardedID bool
 		var count int
-		require.NoError(t, tk.Session().NewTxn(context.Background()))
+		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 		err = tables.IterRecords(tt, tk.Session(), nil, func(h kv.Handle, rec []types.Datum, cols []*table.Column) (more bool, err error) {
 			require.GreaterOrEqual(t, h.IntValue(), int64(0))
 			first8bits := h.IntValue() >> 56

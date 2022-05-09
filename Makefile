@@ -28,7 +28,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev
+dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
@@ -145,9 +145,11 @@ gotest_unstable_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@$(CLEAN_UT_BINARY)
 
 race: failpoint-enable
-	@export log_level=debug; \
-	$(GOTEST) -timeout 25m -race $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export TZ='Asia/Shanghai'; \
+	tools/bin/ut --race --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test" --except unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
 
 leak: failpoint-enable
 	@export log_level=debug; \

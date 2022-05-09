@@ -102,6 +102,7 @@ func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerCheck
 			if err := checkTiFlashVersion(s); err != nil {
 				return errors.Trace(err)
 			}
+			continue
 		}
 
 		tikvVersionString := removeVAndHash(s.Version)
@@ -119,7 +120,7 @@ func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerCheck
 // CheckVersionForBackup checks the version for backup and
 func CheckVersionForBackup(backupVersion *semver.Version) VerChecker {
 	return func(store *metapb.Store, ver *semver.Version) error {
-		if backupVersion.Major > ver.Major {
+		if backupVersion.Major > ver.Major && backupVersion.Major-ver.Major > 1 {
 			return errors.Annotatef(berrors.ErrVersionMismatch,
 				"backup with cluster version %s cannot be restored at cluster of version %s: major version mismatches",
 				backupVersion, ver)

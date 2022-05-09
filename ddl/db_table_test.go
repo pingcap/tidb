@@ -34,113 +34,15 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
-
-// TestCancelDropTable tests cancel ddl job which type is drop table.
-func TestCancelDropTableAndSchema(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	testCases := []struct {
-		needAddTableOrDB bool
-		action           model.ActionType
-		jobState         model.JobState
-		JobSchemaState   model.SchemaState
-		cancelSucc       bool
-	}{
-		// Check drop table.
-		// model.JobStateNone means the jobs is canceled before the first run.
-		{true, model.ActionDropTable, model.JobStateNone, model.StateNone, true},
-		{false, model.ActionDropTable, model.JobStateRunning, model.StateWriteOnly, false},
-		{true, model.ActionDropTable, model.JobStateRunning, model.StateDeleteOnly, false},
-
-		// Check drop database.
-		{true, model.ActionDropSchema, model.JobStateNone, model.StateNone, true},
-		{false, model.ActionDropSchema, model.JobStateRunning, model.StateWriteOnly, false},
-		{true, model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, false},
-	}
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: dom}
-	var jobID int64
-	testCase := &testCases[0]
-	tk.MustExec("create database if not exists test_drop_db")
-	dbInfo, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test_drop_db"))
-	require.True(t, ok)
-
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState && job.SchemaID == dbInfo.ID {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	dom.DDL().SetHook(hook)
-	var err error
-	sql := ""
-	for i := range testCases {
-		testCase = &testCases[i]
-		if testCase.needAddTableOrDB {
-			tk.MustExec("create database if not exists test_drop_db")
-			tk.MustExec("use test_drop_db")
-			tk.MustExec("create table if not exists t(c1 int, c2 int)")
-		}
-
-		dbInfo, ok = dom.InfoSchema().SchemaByName(model.NewCIStr("test_drop_db"))
-		require.True(t, ok)
-
-		if testCase.action == model.ActionDropTable {
-			sql = "drop table t;"
-		} else if testCase.action == model.ActionDropSchema {
-			sql = "drop database test_drop_db;"
-		}
-
-		_, err = tk.Exec(sql)
-		if testCase.cancelSucc {
-			require.Nil(t, checkErr)
-			require.Error(t, err)
-			require.Equal(t, "[ddl:8214]Cancelled DDL job", err.Error())
-			tk.MustExec("insert into t values (?, ?)", i, i)
-		} else {
-			require.NoError(t, err)
-			require.NotNil(t, checkErr)
-			require.Equal(t, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error(), checkErr.Error())
-			_, err = tk.Exec("insert into t values (?, ?)", i, i)
-			require.Error(t, err)
-		}
-	}
-}
 
 func TestTableForeignKey(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -308,7 +210,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExecT(store, "alter table t1 add column c int not null after a", done)
+	go backgroundExec(store, "alter table t1 add column c int not null after a", done)
 	err := <-done
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
@@ -316,7 +218,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	tk.MustExec("delete from t1")
 
 	// test transaction on drop column.
-	go backgroundExecT(store, "alter table t1 drop column c", done)
+	go backgroundExec(store, "alter table t1 drop column c", done)
 	err = <-done
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
@@ -412,107 +314,6 @@ func TestCreateTableWithEnumCol(t *testing.T) {
 	tk.MustQuery("select * from t_enum").Check(testkit.Rows("c"))
 }
 
-// TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
-func TestCancelAddTableAndDropTablePartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database if not exists test_partition_table")
-	tk.MustExec("use test_partition_table")
-	tk.MustExec("drop table if exists t_part")
-	tk.MustExec(`create table t_part (a int key)
-		partition by range(a) (
-		partition p0 values less than (10),
-		partition p1 values less than (20)
-	);`)
-	defer tk.MustExec("drop table t_part;")
-	base := 10
-	for i := 0; i < base; i++ {
-		tk.MustExec("insert into t_part values (?)", i)
-	}
-
-	testCases := []struct {
-		action         model.ActionType
-		jobState       model.JobState
-		JobSchemaState model.SchemaState
-		cancelSucc     bool
-	}{
-		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone, true},
-		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
-		// Add table partition now can be cancelled in ReplicaOnly state.
-		{model.ActionAddTablePartition, model.JobStateRunning, model.StateReplicaOnly, true},
-	}
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: dom}
-	testCase := &testCases[0]
-	var jobID int64
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-	originalHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(hook)
-
-	var err error
-	sql := ""
-	for i := range testCases {
-		testCase = &testCases[i]
-		if testCase.action == model.ActionAddTablePartition {
-			sql = `alter table t_part add partition (
-				partition p2 values less than (30)
-				);`
-		} else if testCase.action == model.ActionDropTablePartition {
-			sql = "alter table t_part drop partition p1;"
-		}
-		_, err = tk.Exec(sql)
-		if testCase.cancelSucc {
-			require.Nil(t, checkErr)
-			require.Error(t, err)
-			require.Equal(t, "[ddl:8214]Cancelled DDL job", err.Error())
-			tk.MustExec("insert into t_part values (?)", i+base)
-
-			ctx := tk.Session()
-			is := domain.GetDomain(ctx).InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test_partition_table"), model.NewCIStr("t_part"))
-			require.NoError(t, err)
-			partitionInfo := tbl.Meta().GetPartitionInfo()
-			require.NotNil(t, partitionInfo)
-			require.Len(t, partitionInfo.AddingDefinitions, 0)
-		} else {
-			require.NoError(t, err)
-			require.NoError(t, checkErr)
-			require.Equal(t, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error(), checkErr.Error())
-			tk.MustExec("insert into t_part values (?)", i)
-
-		}
-	}
-	dom.DDL().SetHook(originalHook)
-}
-
 func TestAlterTableWithValidation(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -556,6 +357,7 @@ func TestBatchCreateTable(t *testing.T) {
 	})
 
 	// correct name
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err := d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), infos, ddl.OnExistError)
 	require.NoError(t, err)
 
@@ -570,6 +372,7 @@ func TestBatchCreateTable(t *testing.T) {
 
 	// duplicated name
 	infos[1].Name = model.NewCIStr("tables_1")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), infos, ddl.OnExistError)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableExists))
 
@@ -597,6 +400,7 @@ func TestBatchCreateTable(t *testing.T) {
 		newinfo.View = &model.ViewInfo{Cols: viewCols, Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge, SelectStmt: stmtBuffer.String(), CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
 	}
 
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.OnExistError)
 	require.NoError(t, err)
@@ -1049,7 +853,7 @@ func TestAddColumn2(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExecT(store, "alter table t1 add column c int not null", done)
+	go backgroundExec(store, "alter table t1 add column c int not null", done)
 	err := <-done
 	require.NoError(t, err)
 
@@ -1059,7 +863,7 @@ func TestAddColumn2(t *testing.T) {
 	// mock for outdated tidb update record.
 	require.NotNil(t, writeOnlyTable)
 	ctx := context.Background()
-	err = tk.Session().NewTxn(ctx)
+	err = sessiontxn.NewTxn(ctx, tk.Session())
 	require.NoError(t, err)
 	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Session(), kv.IntHandle(1), writeOnlyTable.WritableCols())
 	require.NoError(t, err)
@@ -1091,7 +895,7 @@ func TestAddColumn2(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 
-	go backgroundExecT(store, "alter table t2 add column b int not null default 3", done)
+	go backgroundExec(store, "alter table t2 add column b int not null default 3", done)
 	err = <-done
 	require.NoError(t, err)
 	re.Check(testkit.Rows("1 2"))

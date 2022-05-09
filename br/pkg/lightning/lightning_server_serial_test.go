@@ -317,7 +317,7 @@ func TestHTTPAPIOutsideServerMode(t *testing.T) {
 	err := cfg.LoadFromGlobal(s.lightning.globalCfg)
 	require.NoError(t, err)
 	go func() {
-		errCh <- s.lightning.RunOnce(s.lightning.ctx, cfg, nil)
+		errCh <- s.lightning.RunOnceWithOptions(s.lightning.ctx, cfg)
 	}()
 	time.Sleep(600 * time.Millisecond)
 

@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -22,12 +23,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
@@ -116,7 +118,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	v := preprocessor{
 		ctx:                ctx,
 		tableAliasInJoin:   make([]map[string]interface{}, 0),
-		withName:           make(map[string]interface{}),
+		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
 	}
 	for _, optFn := range preprocessOpt {
@@ -176,6 +178,12 @@ type PreprocessExecuteISUpdate struct {
 	Node                    ast.Node
 }
 
+// preprocessWith is used to record info from WITH statements like CTE name.
+type preprocessWith struct {
+	cteCanUsed      []string
+	cteBeforeOffset []int
+}
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
@@ -187,7 +195,7 @@ type preprocessor struct {
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
-	withName         map[string]interface{}
+	preprocessWith   *preprocessWith
 
 	staleReadProcessor staleread.Processor
 
@@ -317,9 +325,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
-	case *ast.WithClause:
-		for _, cte := range node.CTEs {
-			p.withName[cte.Name.L] = struct{}{}
+	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+		with := p.preprocessWith
+		beforeOffset := len(with.cteCanUsed)
+		with.cteBeforeOffset = append(with.cteBeforeOffset, beforeOffset)
+		if cteNode, exist := node.(*ast.CommonTableExpression); exist && cteNode.IsRecursive {
+			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
 		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
@@ -564,6 +575,19 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if x.Kind == ast.BRIEKindRestore {
 			p.flag &= ^inCreateOrDropTable
 		}
+	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+		with := p.preprocessWith
+		lenWithCteBeforeOffset := len(with.cteBeforeOffset)
+		if lenWithCteBeforeOffset < 1 {
+			p.err = ErrInternal.GenWithStack("len(cteBeforeOffset) is less than one.Maybe it was deleted in somewhere.Should match in Enter and Leave")
+			break
+		}
+		beforeOffset := with.cteBeforeOffset[lenWithCteBeforeOffset-1]
+		with.cteBeforeOffset = with.cteBeforeOffset[:lenWithCteBeforeOffset-1]
+		with.cteCanUsed = with.cteCanUsed[:beforeOffset]
+		if cteNode, exist := x.(*ast.CommonTableExpression); exist {
+			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+		}
 	}
 
 	return in, p.err == nil
@@ -669,7 +693,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		if autoIncrementMustBeKey && !isKey {
 			p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 		}
-		switch col.Tp.Tp {
+		switch col.Tp.GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
 		default:
@@ -871,6 +895,14 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 			p.err = dbterror.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
 		}
+	}
+	if len(stmt.Definer.Username) > auth.UserNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Username, "user name", auth.UserNameMaxLength)
+		return
+	}
+	if len(stmt.Definer.Hostname) > auth.HostNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Hostname, "host name", auth.HostNameMaxLength)
+		return
 	}
 }
 
@@ -1253,81 +1285,81 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	if tp == nil {
 		return nil
 	}
-	if tp.Flen > math.MaxUint32 {
+	if tp.GetFlen() > math.MaxUint32 {
 		return types.ErrTooBigDisplayWidth.GenWithStack("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
 	}
 
-	switch tp.Tp {
+	switch tp.GetType() {
 	case mysql.TypeString:
-		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
+		if tp.GetFlen() != types.UnspecifiedLength && tp.GetFlen() > mysql.MaxFieldCharLength {
 			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
 		}
 	case mysql.TypeVarchar:
-		if len(tp.Charset) == 0 {
+		if len(tp.GetCharset()) == 0 {
 			// It's not easy to get the schema charset and table charset here.
 			// The charset is determined by the order ColumnDefaultCharset --> TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
 			// return nil, to make the check in the ddl.CreateTable.
 			return nil
 		}
-		err := ddl.IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, tp.Charset)
+		err := ddl.IsTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
 		if err != nil {
 			return err
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		// For FLOAT, the SQL standard permits an optional specification of the precision.
 		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
-		if tp.Decimal == -1 {
-			switch tp.Tp {
+		if tp.GetDecimal() == -1 {
+			switch tp.GetType() {
 			case mysql.TypeDouble:
-				// For Double type Flen and Decimal check is moved to parser component
+				// For Double type flen and decimal check is moved to parser component
 			default:
-				if tp.Flen > mysql.MaxDoublePrecisionLength {
+				if tp.GetFlen() > mysql.MaxDoublePrecisionLength {
 					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
 				}
 			}
 		} else {
-			if tp.Decimal > mysql.MaxFloatingTypeScale {
-				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+			if tp.GetDecimal() > mysql.MaxFloatingTypeScale {
+				return types.ErrTooBigScale.GenWithStackByArgs(tp.GetDecimal(), colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
 			}
-			if tp.Flen > mysql.MaxFloatingTypeWidth || tp.Flen == 0 {
+			if tp.GetFlen() > mysql.MaxFloatingTypeWidth || tp.GetFlen() == 0 {
 				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 			}
-			if tp.Flen < tp.Decimal {
+			if tp.GetFlen() < tp.GetDecimal() {
 				return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 			}
 		}
 	case mysql.TypeSet:
-		if len(tp.Elems) > mysql.MaxTypeSetMembers {
+		if len(tp.GetElems()) > mysql.MaxTypeSetMembers {
 			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colDef.Name.Name.O)
 		}
 		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
-		for _, str := range colDef.Tp.Elems {
+		for _, str := range colDef.Tp.GetElems() {
 			if strings.Contains(str, ",") {
-				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.Tp), str)
+				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.GetType()), str)
 			}
 		}
 	case mysql.TypeNewDecimal:
-		if tp.Decimal > mysql.MaxDecimalScale {
-			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
+		if tp.GetDecimal() > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenWithStackByArgs(tp.GetDecimal(), colDef.Name.Name.O, mysql.MaxDecimalScale)
 		}
 
-		if tp.Flen > mysql.MaxDecimalWidth {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		if tp.GetFlen() > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetFlen(), colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
 
-		if tp.Flen < tp.Decimal {
+		if tp.GetFlen() < tp.GetDecimal() {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 		}
 		// If decimal and flen all equals 0, just set flen to default value.
-		if tp.Decimal == 0 && tp.Flen == 0 {
+		if tp.GetDecimal() == 0 && tp.GetFlen() == 0 {
 			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
-			tp.Flen = defaultFlen
+			tp.SetFlen(defaultFlen)
 		}
 	case mysql.TypeBit:
-		if tp.Flen <= 0 {
+		if tp.GetFlen() <= 0 {
 			return types.ErrInvalidFieldSize.GenWithStackByArgs(colDef.Name.Name.O)
 		}
-		if tp.Flen > mysql.MaxBitDisplayWidth {
+		if tp.GetFlen() > mysql.MaxBitDisplayWidth {
 			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
 		}
 	default:
@@ -1353,7 +1385,7 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 	for i := len(colDef.Options) - 1; i >= 0; i-- {
 		columnOpt := colDef.Options[i]
 		if columnOpt.Tp == ast.ColumnOptionDefaultValue {
-			if !(tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeDatetime) && isDefaultValNowSymFunc(columnOpt.Expr) {
+			if !(tp.GetType() == mysql.TypeTimestamp || tp.GetType() == mysql.TypeDatetime) && isDefaultValNowSymFunc(columnOpt.Expr) {
 				return true
 			}
 			break
@@ -1422,8 +1454,11 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		if _, ok := p.withName[tn.Name.L]; ok {
-			return
+
+		for _, cte := range p.preprocessWith.cteCanUsed {
+			if cte == tn.Name.L {
+				return
+			}
 		}
 
 		currentDB := p.ctx.GetSessionVars().CurrentDB
@@ -1431,6 +1466,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			p.err = errors.Trace(ErrNoDB)
 			return
 		}
+
 		tn.Schema = model.NewCIStr(currentDB)
 	}
 
@@ -1453,9 +1489,13 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	p.handleAsOfAndReadTS(tn)
-	if p.err != nil {
-		return
+	if p.stmtTp == TypeSelect {
+		if p.err = p.staleReadProcessor.OnSelectTable(tn); p.err != nil {
+			return
+		}
+		if p.err = p.updateStateFromStaleReadProcessor(); p.err != nil {
+			return
+		}
 	}
 
 	table, err := p.tableByName(tn)
@@ -1536,22 +1576,10 @@ func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
 		return
 	}
 
-	if prepared.SnapshotTSEvaluator != nil {
-		snapshotTS, err := prepared.SnapshotTSEvaluator(p.ctx)
-		if err != nil {
-			p.err = err
+	if p.err = p.staleReadProcessor.OnExecutePreparedStmt(prepared.SnapshotTSEvaluator); p.err == nil {
+		if p.err = p.updateStateFromStaleReadProcessor(); p.err != nil {
 			return
 		}
-
-		is, err := domain.GetDomain(p.ctx).GetSnapshotInfoSchema(snapshotTS)
-		if err != nil {
-			p.err = err
-			return
-		}
-
-		p.LastSnapshotTS = snapshotTS
-		p.initedLastSnapshotTS = true
-		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
 	}
 }
 
@@ -1588,7 +1616,7 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 
 func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	if node.Tp.EvalType() == types.ETDecimal {
-		if node.Tp.Flen >= node.Tp.Decimal && node.Tp.Flen <= mysql.MaxDecimalWidth && node.Tp.Decimal <= mysql.MaxDecimalScale {
+		if node.Tp.GetFlen() >= node.Tp.GetDecimal() && node.Tp.GetFlen() <= mysql.MaxDecimalWidth && node.Tp.GetDecimal() <= mysql.MaxDecimalScale {
 			// valid
 			return
 		}
@@ -1599,47 +1627,49 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			p.err = err
 			return
 		}
-		if node.Tp.Flen < node.Tp.Decimal {
+		if node.Tp.GetFlen() < node.Tp.GetDecimal() {
 			p.err = types.ErrMBiggerThanD.GenWithStackByArgs(buf.String())
 			return
 		}
-		if node.Tp.Flen > mysql.MaxDecimalWidth {
-			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.Flen, buf.String(), mysql.MaxDecimalWidth)
+		if node.Tp.GetFlen() > mysql.MaxDecimalWidth {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.GetFlen(), buf.String(), mysql.MaxDecimalWidth)
 			return
 		}
-		if node.Tp.Decimal > mysql.MaxDecimalScale {
-			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.Decimal, buf.String(), mysql.MaxDecimalScale)
+		if node.Tp.GetDecimal() > mysql.MaxDecimalScale {
+			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.GetDecimal(), buf.String(), mysql.MaxDecimalScale)
 			return
 		}
 	}
 }
 
-// handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
-func (p *preprocessor) handleAsOfAndReadTS(tn *ast.TableName) {
-	if p.stmtTp != TypeSelect {
-		return
-	}
-	defer func() {
-		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
-		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
-		// in stmtCtx
-		if p.flag&inPrepare == 0 && p.IsStaleness {
-			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
-		}
-	}()
-
-	if p.err = p.staleReadProcessor.OnSelectTable(tn); p.err != nil {
-		return
-	}
-
+func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 	if p.initedLastSnapshotTS {
-		return
+		return nil
 	}
 
 	if p.IsStaleness = p.staleReadProcessor.IsStaleness(); p.IsStaleness {
 		p.LastSnapshotTS = p.staleReadProcessor.GetStalenessReadTS()
 		p.SnapshotTSEvaluator = p.staleReadProcessor.GetStalenessTSEvaluatorForPrepare()
 		p.InfoSchema = p.staleReadProcessor.GetStalenessInfoSchema()
+		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
+		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
+		// in stmtCtx
+		if p.flag&initTxnContextProvider != 0 {
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			if !p.ctx.GetSessionVars().InTxn() {
+				txnManager := sessiontxn.GetTxnManager(p.ctx)
+				newTxnRequest := &sessiontxn.EnterNewTxnRequest{
+					Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
+					Provider: staleread.NewStalenessTxnContextProvider(p.ctx, p.LastSnapshotTS, p.InfoSchema),
+				}
+				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
+					return err
+				}
+				if err := txnManager.OnStmtStart(context.TODO()); err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	// It is a little hacking for the below codes. `ReadReplicaScope` is used both by stale read's closest read and local txn.
@@ -1654,6 +1684,7 @@ func (p *preprocessor) handleAsOfAndReadTS(tn *ast.TableName) {
 	}
 
 	p.initedLastSnapshotTS = true
+	return nil
 }
 
 // ensureInfoSchema get the infoschema from the preprocessor.
@@ -1681,16 +1712,18 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 		return
 	}
 
-	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
-		InfoSchema: p.ensureInfoSchema(),
-	})
+	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
+		// When the current provider is `legacy.SimpleTxnContextProvider` it should to keep the logic equals to the old implement.
+		// After refactoring, the `legacy.SimpleTxnContextProvider` will be removed, and this code will be removed too.
+		provider.InfoSchema = p.ensureInfoSchema()
+	}
 }
 
 func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	sessVars := p.ctx.GetSessionVars()
-	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.Tp == mysql.TypeVarchar {
-		colDef.Tp.Tp = mysql.TypeBlob
-		if colDef.Tp.Charset == charset.CharsetBin {
+	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.GetType() == mysql.TypeVarchar {
+		colDef.Tp.SetType(mysql.TypeBlob)
+		if colDef.Tp.GetCharset() == charset.CharsetBin {
 			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
 		} else {
 			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))

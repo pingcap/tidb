@@ -118,9 +118,29 @@ func TestDDLStatementsBackFill(t *testing.T) {
 	}
 }
 
-func TestSchema(t *testing.T) {
-	_, clean := testkit.CreateMockStore(t)
+func TestDDLOnCachedTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{"drop table t", "[ddl:8242]'Drop Table' is unsupported on cache tables."},
+		{"create index t_id on t (id)", "[ddl:8242]'Create Index' is unsupported on cache tables."},
+		{"alter table t drop index c", "[ddl:8242]'Alter Table' is unsupported on cache tables."},
+		{"alter table t add column (d int)", "[ddl:8242]'Alter Table' is unsupported on cache tables."},
+		{"truncate table t", "[ddl:8242]'Truncate Table' is unsupported on cache tables."},
+		{"rename table t to t1", "[ddl:8242]'Rename Table' is unsupported on cache tables."},
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (id int, c int, index(c));")
+	tk.MustExec("alter table t cache;")
 
-	ddl.ExportTestSchema(t)
+	for _, tt := range tests {
+		tk.MustGetErrMsg(tt.sql, tt.result)
+	}
+
+	tk.MustExec("alter table t nocache;")
+	tk.MustExec("drop table if exists t;")
 }

@@ -202,7 +202,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 	req := backuppb.BackupRequest{
 		ClusterId:        client.GetClusterID(),
 		StartKey:         backupRange.StartKey,
-		EndKey:           backupRange.StartKey,
+		EndKey:           backupRange.EndKey,
 		StartVersion:     0,
 		EndVersion:       0,
 		RateLimit:        cfg.RateLimit,
