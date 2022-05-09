@@ -1021,6 +1021,8 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		copTask.addCost(pushedDownTopN.GetCost(inputCount, false))
 	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDown(kv.TiFlash) {
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
+		mppTask.addCost(pushedDownTopN.GetCost(mppTask.p.StatsCount(), false))
+		pushedDownTopN.SetCost(mppTask.cst)
 		mppTask.p = pushedDownTopN
 	}
 	rootTask := t.convertToRootTask(p.ctx)
@@ -1758,13 +1760,12 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			return newMpp
 		}
 		attachPlan2Task(finalAgg, newMpp)
-		if proj != nil {
-			attachPlan2Task(proj, newMpp)
-		}
 		// TODO: how to set 2-phase cost?
 		newMpp.addCost(p.GetCost(inputRows, false, true))
 		finalAgg.SetCost(newMpp.cost())
 		if proj != nil {
+			attachPlan2Task(proj, newMpp)
+			newMpp.addCost(proj.GetCost(newMpp.count()))
 			proj.SetCost(newMpp.cost())
 		}
 		return newMpp
@@ -1862,7 +1863,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(p, t)
 		}
 	} else if _, ok := t.(*mppTask); ok {
-		return p.attach2TaskForMpp(tasks...)
+		return final.attach2TaskForMpp(tasks...)
 	} else {
 		attachPlan2Task(p, t)
 	}
@@ -1972,10 +1973,10 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	// net seek cost, unlike copTask, a mppTask may have multiple underlying TableScan, so use a recursive function to accumulate this
 	cst += accumulateNetSeekCost4MPP(sender)
 	cst /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
-	p.cost = cst
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
 		cst /= 1000000000
 	}
+	p.cost = cst
 	rt := &rootTask{
 		p:   p,
 		cst: cst,
