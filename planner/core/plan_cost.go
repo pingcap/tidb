@@ -144,7 +144,7 @@ func (p *PhysicalIndexLookUpReader) GetCost(costFlag uint64) (cost float64) {
 	// Also, we need to sort the retrieved rows if index lookup reader is expected to return
 	// ordered results. Note that row count of these two sorts can be different, if there are
 	// operators above table scan.
-	tableRows := tablePlan.statsInfo().RowCount
+	tableRows := getStatsCount(tablePlan, costFlag)
 	selectivity := tableRows / indexRows
 	batchSize = math.Min(indexLookupSize*selectivity, tableRows)
 	if p.keepOrder && batchSize > 2 {
@@ -180,19 +180,19 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 		return 0, err
 	}
 	p.planCost -= tblCost
-	p.planCost += p.indexPlan.StatsCount() * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
+	p.planCost += getStatsCount(p.indexPlan, costFlag) * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
 
 	// index-side net I/O cost: rows * row-size * net-factor
 	netFactor := getTableNetFactor(p.tablePlan)
 	rowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	p.planCost += p.indexPlan.StatsCount() * rowSize * netFactor
+	p.planCost += getStatsCount(p.indexPlan, costFlag) * rowSize * netFactor
 
 	// index-side net seek cost
 	p.planCost += estimateNetSeekCost(p.indexPlan)
 
 	// table-side net I/O cost: rows * row-size * net-factor
 	tblRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-	p.planCost += p.tablePlan.StatsCount() * tblRowSize * netFactor
+	p.planCost += getStatsCount(p.tablePlan, costFlag) * tblRowSize * netFactor
 
 	// table-side seek cost
 	p.planCost += estimateNetSeekCost(p.tablePlan)
@@ -651,16 +651,18 @@ func (p *PhysicalApply) GetPlanCost(taskType property.TaskType, costFlag uint64)
 }
 
 // GetCost computes cost of merge join operator itself.
-func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
+func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64 {
 	outerCnt := lCnt
 	innerKeys := p.RightJoinKeys
 	innerSchema := p.children[1].Schema()
 	innerStats := p.children[1].statsInfo()
+	innerCnt := getStatsCount(p.children[1], costFlag)
 	if p.JoinType == RightOuterJoin {
 		outerCnt = rCnt
 		innerKeys = p.LeftJoinKeys
 		innerSchema = p.children[0].Schema()
 		innerStats = p.children[0].statsInfo()
+		innerCnt = getStatsCount(p.children[0], costFlag)
 	}
 	helper := &fullJoinRowCountHelper{
 		cartesian:     false,
@@ -692,7 +694,7 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	// For merge join, only one group of rows with same join key(not null) are cached,
 	// we compute average memory cost using estimated group size.
 	NDV := getColsNDV(innerKeys, innerSchema, innerStats)
-	memoryCost := (innerStats.RowCount / NDV) * sessVars.MemoryFactor
+	memoryCost := (innerCnt / NDV) * sessVars.MemoryFactor
 	return cpuCost + memoryCost
 }
 
@@ -836,7 +838,7 @@ func (p *PhysicalStreamAgg) GetPlanCost(taskType property.TaskType, costFlag uin
 		return 0, err
 	}
 	p.planCost = childCost
-	p.planCost += p.GetCost(p.children[0].StatsCount(), taskType == property.RootTaskType, costFlag)
+	p.planCost += p.GetCost(getStatsCount(p.children[0], costFlag), taskType == property.RootTaskType, costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -876,13 +878,14 @@ func (p *PhysicalHashAgg) GetPlanCost(taskType property.TaskType, costFlag uint6
 		return 0, err
 	}
 	p.planCost = childCost
+	statsCnt := getStatsCount(p.children[0], costFlag)
 	switch taskType {
 	case property.RootTaskType:
-		p.planCost += p.GetCost(p.children[0].StatsCount(), true, false, costFlag)
+		p.planCost += p.GetCost(statsCnt, true, false, costFlag)
 	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
-		p.planCost += p.GetCost(p.children[0].StatsCount(), false, false, costFlag)
+		p.planCost += p.GetCost(statsCnt, false, false, costFlag)
 	case property.MppTaskType:
-		p.planCost += p.GetCost(p.children[0].StatsCount(), false, true, costFlag)
+		p.planCost += p.GetCost(statsCnt, false, true, costFlag)
 	default:
 		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
