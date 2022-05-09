@@ -340,7 +340,6 @@ func (tc *TransactionContext) AddSavepoint(name string, savepoint interface{}) {
 	for k, v := range tc.TableDeltaMap {
 		tableDeltaMap[k] = v.Clone()
 	}
-
 	tc.Savepoints = append(tc.Savepoints, SavepointRecord{
 		Name:          name,
 		Savepoint:     savepoint,

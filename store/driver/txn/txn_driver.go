@@ -84,8 +84,12 @@ func (txn *tikvTxn) GetSavepoint() interface{} {
 }
 
 func (txn *tikvTxn) RollbackToSavepoint(savepoint interface{}) {
+	checkpoint, ok := savepoint.(*tikv.MemCheckpoint)
+	if !ok {
+		return
+	}
 	buf := txn.KVTxn.GetMemBuffer()
-	buf.RevertToCheckpoint(savepoint.(*tikv.MemCheckpoint))
+	buf.RevertToCheckpoint(checkpoint)
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.
