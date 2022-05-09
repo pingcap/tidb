@@ -377,7 +377,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
 		if n, ok := val.(int); ok && staleread.IsStmtStaleness(a.Ctx) {
 			txnManager := sessiontxn.GetTxnManager(a.Ctx)
-			ts, err := txnManager.GetReadTS()
+			ts, err := txnManager.GetStmtReadTS()
 			if err != nil {
 				panic(err)
 			}
