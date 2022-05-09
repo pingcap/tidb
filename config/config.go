@@ -247,6 +247,12 @@ type Config struct {
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
+
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// EnableBatchDML, unused since bootstrap v90
+	EnableBatchDML bool `toml:"enable-batch-dml" json:"enable-batch-dml"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -739,6 +745,7 @@ var defaultConf = Config{
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
+	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
 	IndexLimit:                   64,
