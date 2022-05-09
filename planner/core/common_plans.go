@@ -1712,10 +1712,6 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		if strings.ToLower(e.Format) == types.ExplainFormatVerbose {
 			row = append(row, estCost)
 		}
-		statsColl := e.RuntimeStatsColl
-		if statsColl == nil {
-			statsColl = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
