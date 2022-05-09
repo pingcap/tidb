@@ -84,25 +84,30 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	//
 	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
 
+	// Split table and index at one request.
+	splitKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions)+len(tbInfo.Indices))
 	// Split table region.
 	shardingBits := shardingBits(tbInfo)
 	step := int64(1 << (shardingBits - tbInfo.PreSplitRegions))
 	max := int64(1 << shardingBits)
-	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))
-	splitTableKeys = append(splitTableKeys, tablecodec.GenTablePrefix(physicalID))
+	splitKeys = append(splitKeys, tablecodec.GenTablePrefix(physicalID))
 	for p := step; p < max; p += step {
 		recordID := p << (64 - shardingBits - 1)
 		recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
-		splitTableKeys = append(splitTableKeys, key)
+		splitKeys = append(splitKeys, key)
+	}
+	// Split index region.
+	for _, idx := range tbInfo.Indices {
+		indexPrefix := tablecodec.EncodeTableIndexPrefix(tbInfo.ID, idx.ID)
+		splitKeys = append(splitKeys, indexPrefix)
 	}
 	var err error
-	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter, &tbInfo.ID)
+	regionIDs, err := store.SplitRegions(ctx, splitKeys, scatter, &tbInfo.ID)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] pre split some table regions failed",
+		logutil.BgLogger().Warn("[ddl] pre split some table or index regions failed",
 			zap.Stringer("table", tbInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
-	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter)...)
 	return regionIDs
 }
 
@@ -117,20 +122,6 @@ func splitRecordRegion(ctx context.Context, store kv.SplittableStore, tableID in
 		return regionIDs[0]
 	}
 	return 0
-}
-
-func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatter bool) []uint64 {
-	splitKeys := make([][]byte, 0, len(tblInfo.Indices))
-	for _, idx := range tblInfo.Indices {
-		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
-		splitKeys = append(splitKeys, indexPrefix)
-	}
-	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, &tblInfo.ID)
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl] pre split some table index regions failed",
-			zap.Stringer("table", tblInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
-	}
-	return regionIDs
 }
 
 func waitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regionIDs ...uint64) {
