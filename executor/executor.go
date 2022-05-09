@@ -153,7 +153,7 @@ func init() {
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
 	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
-	GlobalAnalyzeMemoryTracker = memory.NewTracker(memory.LabelForAnalyzeSharedMemory, -1)
+	GlobalAnalyzeMemoryTracker = memory.NewTracker(memory.LabelForGlobalAnalyzeMemory, -1)
 	GlobalAnalyzeMemoryTracker.SetActionOnExceed(action)
 	// register quota funcs
 	variable.SetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.SetBytesLimit
@@ -175,7 +175,7 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 		msg = globalPanicStorageExceed
 	case memory.LabelForGlobalMemory:
 		msg = globalPanicMemoryExceed
-	case memory.LabelForAnalyzeSharedMemory:
+	case memory.LabelForGlobalAnalyzeMemory:
 		msg = globalPanicAnalyzeMemoryExceed
 	default:
 		msg = "Out of Unknown Resource Quota!"

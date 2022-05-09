@@ -602,11 +602,11 @@ const (
 	LabelForNonTransactionalDML = -23
 	// LabelForAnalyzeMemory represents the label of the memory of each analyze job
 	LabelForAnalyzeMemory int = -23
-	// LabelForAnalyzeSharedMemory represents the label of the global memory of all analyze jobs
-	LabelForAnalyzeSharedMemory int = -24
+	// LabelForGlobalAnalyzeMemory represents the label of the global memory of all analyze jobs
+	LabelForGlobalAnalyzeMemory int = -24
 )
 
 // MetricsTypes is used to get label for metrics
 var MetricsTypes = map[int]string{
-	LabelForAnalyzeSharedMemory: "analyze",
+	LabelForGlobalAnalyzeMemory: "analyze",
 }
