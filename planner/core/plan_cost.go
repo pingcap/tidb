@@ -651,18 +651,18 @@ func (p *PhysicalApply) GetPlanCost(taskType property.TaskType, costFlag uint64)
 }
 
 // GetCost computes cost of merge join operator itself.
-func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64 {
+func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	outerCnt := lCnt
+	innerCnt := rCnt
 	innerKeys := p.RightJoinKeys
 	innerSchema := p.children[1].Schema()
 	innerStats := p.children[1].statsInfo()
-	innerCnt := getStatsCount(p.children[1], costFlag)
 	if p.JoinType == RightOuterJoin {
 		outerCnt = rCnt
+		innerCnt = lCnt
 		innerKeys = p.LeftJoinKeys
 		innerSchema = p.children[0].Schema()
 		innerStats = p.children[0].statsInfo()
-		innerCnt = getStatsCount(p.children[0], costFlag)
 	}
 	helper := &fullJoinRowCountHelper{
 		cartesian:     false,
