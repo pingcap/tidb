@@ -294,8 +294,8 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	rs, err := se.ExecuteStmt(ctx, options.stmt.DeleteStmt)
 
 	// collect errors
-	failpoint.Inject("splitDeleteError", func(_ failpoint.Value) {
-		err = errors.New("injected split delete error")
+	failpoint.Inject("batchDeleteError", func(_ failpoint.Value) {
+		err = errors.New("injected batch delete error")
 	})
 	if err != nil {
 		logutil.Logger(ctx).Error("Non-transactional delete SQL failed", zap.String("job", deleteSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
