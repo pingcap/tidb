@@ -782,11 +782,9 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		defer wg.Wait()
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
-			releaseMemory(colExec.memTracker, colExec.memTracker.BytesConsumed())
-			tryGCIfNeeded(true)
+			colExec.memTracker.Consume(-colExec.memTracker.BytesConsumed())
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
-		tryGCIfNeeded(true)
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
 		colGroupResult := &statistics.AnalyzeResult{
 			Hist:    hists[cLen:],
@@ -1060,7 +1058,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	mergeWorkerPanicCnt := 0
 	for mergeWorkerPanicCnt < statsConcurrency {
-		tryGCIfNeeded(false)
 		mergeResult, ok := <-mergeResultCh
 		if !ok {
 			break
@@ -1075,7 +1072,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		oldRootCollectorSize := rootCollectorSize
 		rootRowCollector.MergeCollector(mergeResult.collector)
 		rootCollectorSize = rootRowCollector.Base().MemSize
-		releaseMemory(e.memTracker, oldRootCollectorSize+mergeResult.collector.Base().MemSize-rootCollectorSize)
+		e.memTracker.Consume(rootCollectorSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 	}
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -1175,7 +1172,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	close(buildTaskChan)
 	panicCnt := 0
 	for panicCnt < statsConcurrency {
-		tryGCIfNeeded(false)
 		err1, ok := <-buildResultChan
 		if !ok {
 			break
@@ -1199,7 +1195,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			return 0, nil, nil, nil, nil, err
 		}
 	}
-	releaseMemory(e.memTracker, rootCollectorSize)
+	e.memTracker.Consume(-rootCollectorSize)
 	return
 }
 
@@ -1427,7 +1423,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 		retCollector.MergeCollector(subCollector)
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
-		releaseMemory(e.memTracker, dataSize+colRespSize+tmpMemSize+oldRetCollectorSize+subCollectorSize-newRetCollectorSize)
+		e.memTracker.Consume(newRetCollectorSize - dataSize - colRespSize - tmpMemSize - oldRetCollectorSize - subCollectorSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -1573,7 +1569,7 @@ workLoop:
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
-			releaseMemory(e.memTracker, totalMemInc)
+			e.memTracker.Consume(-totalMemInc)
 		case <-exitCh:
 			return
 		}
@@ -2645,53 +2641,4 @@ func (w *notifyErrorWaitGroupWrapper) Run(exec func()) {
 		}()
 		exec()
 	}(old)
-}
-
-var memMapToRelease = newReleasedMemMap()
-
-type releasedMemMap struct {
-	sync.RWMutex
-	total  int64
-	memMap map[*memory.Tracker]int64
-}
-
-func newReleasedMemMap() *releasedMemMap {
-	released := &releasedMemMap{total: 0}
-	released.memMap = make(map[*memory.Tracker]int64)
-	return released
-}
-
-func releaseMemory(memTracker *memory.Tracker, toRelease int64) {
-	gcTrigger := variable.GCManualTrigger.Load()
-	if gcTrigger <= 0 {
-		memTracker.Consume(-toRelease)
-		return
-	}
-	memMapToRelease.Lock()
-	defer memMapToRelease.Unlock()
-	memMapToRelease.total += toRelease
-	if memVal, exists := memMapToRelease.memMap[memTracker]; exists {
-		memMapToRelease.memMap[memTracker] = memVal + toRelease
-	} else {
-		memMapToRelease.memMap[memTracker] = toRelease
-	}
-}
-
-// tryGCIfNeeded is to trigger GC manually when GCManualTrigger is ON.
-// It's now mainly used test analyze memory tracker, since GO GC's late trigger.
-func tryGCIfNeeded(force bool) {
-	gcTrigger := variable.GCManualTrigger.Load()
-	if gcTrigger <= 0 {
-		return
-	}
-	memMapToRelease.Lock()
-	defer memMapToRelease.Unlock()
-	if force || memMapToRelease.total > gcTrigger {
-		runtime.GC()
-		for tracker, memVal := range memMapToRelease.memMap {
-			tracker.Consume(-memVal)
-		}
-		memMapToRelease.memMap = make(map[*memory.Tracker]int64)
-		memMapToRelease.total = 0
-	}
 }

@@ -692,15 +692,6 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBGCManualTrigger, Value: strconv.Itoa(DefTiDBGCManualTrigger), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64,
-		GetGlobal: func(s *SessionVars) (string, error) {
-			return strconv.FormatInt(GCManualTrigger.Load(), 10), nil
-		},
-		SetGlobal: func(s *SessionVars, val string) error {
-			GCManualTrigger.Store(TidbOptInt64(val, DefTiDBGCManualTrigger))
-			return nil
-		},
-	},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
