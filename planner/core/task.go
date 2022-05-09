@@ -1661,7 +1661,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
-				cop.addCost(partialAgg.(*PhysicalStreamAgg).GetCost(inputRows, false))
+				cop.addCost(partialAgg.(*PhysicalStreamAgg).GetCost(inputRows, false, 0))
 				partialAgg.SetCost(cop.cost())
 			}
 			t = cop.convertToRootTask(p.ctx)
@@ -1674,7 +1674,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	} else {
 		attachPlan2Task(p, t)
 	}
-	t.addCost(final.GetCost(inputRows, true))
+	t.addCost(final.GetCost(inputRows, true, 0))
 	t.plan().SetCost(t.cost())
 	return t
 }
@@ -1706,7 +1706,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *mppTask) task {
 	if proj != nil {
 		attachPlan2Task(proj, mpp)
 	}
-	mpp.addCost(p.GetCost(inputRows, false, true))
+	mpp.addCost(p.GetCost(inputRows, false, true, 0))
 	p.cost = mpp.cost()
 	return mpp
 }
@@ -1727,7 +1727,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if proj != nil {
 			attachPlan2Task(proj, mpp)
 		}
-		mpp.addCost(p.GetCost(inputRows, false, true))
+		mpp.addCost(p.GetCost(inputRows, false, true, 0))
 		p.cost = mpp.cost()
 		return mpp
 	case Mpp2Phase:
@@ -1761,7 +1761,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		attachPlan2Task(finalAgg, newMpp)
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows, false, true))
+		newMpp.addCost(p.GetCost(inputRows, false, true, 0))
 		finalAgg.SetCost(newMpp.cost())
 		if proj != nil {
 			attachPlan2Task(proj, newMpp)
@@ -1774,14 +1774,14 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
-		mpp.addCost(p.GetCost(inputRows, false, true))
+		mpp.addCost(p.GetCost(inputRows, false, true, 0))
 		if partialAgg != nil {
 			partialAgg.SetCost(mpp.cost())
 		}
 		t = mpp.convertToRootTask(p.ctx)
 		inputRows = t.count()
 		attachPlan2Task(finalAgg, t)
-		t.addCost(p.GetCost(inputRows, true, false))
+		t.addCost(p.GetCost(inputRows, true, false, 0))
 		finalAgg.SetCost(t.cost())
 		return t
 	case MppScalar:

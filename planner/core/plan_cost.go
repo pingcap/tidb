@@ -278,7 +278,7 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag u
 		}
 
 		// net I/O cost
-		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor
+		p.planCost += getStatsCount(p.tablePlan, costFlag) * rowSize * netFactor
 		// net seek cost
 		p.planCost += seekCost
 		// consider concurrency
@@ -307,7 +307,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType, costF
 		p.planCost += childCost // child's cost
 		tblStats := getTblStats(tblScan)
 		rowSize := tblStats.GetAvgRowSize(p.ctx, tblScan.Schema().Columns, false, false)
-		p.planCost += tblScan.StatsCount() * rowSize * netFactor // net I/O cost
+		p.planCost += getStatsCount(tblScan, costFlag) * rowSize * netFactor // net I/O cost
 	}
 	for _, partialScan := range p.partialPlans {
 		childCost, err := partialScan.GetPlanCost(property.CopSingleReadTaskType, costFlag)
@@ -326,7 +326,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType, costF
 		p.planCost += childCost // child's cost
 		tblStats := getTblStats(partialScan)
 		rowSize := tblStats.GetAvgRowSize(p.ctx, partialScan.Schema().Columns, isIdxScan, false)
-		p.planCost += partialScan.StatsCount() * rowSize * netFactor // net I/O cost
+		p.planCost += getStatsCount(partialScan, costFlag) * rowSize * netFactor // net I/O cost
 	}
 
 	// TODO: accumulate table-side seek cost
@@ -348,7 +348,7 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	if p.Desc {
 		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 	}
-	p.planCost = p.StatsCount() * p.getScanRowSize() * scanFactor
+	p.planCost = getStatsCount(p, costFlag) * p.getScanRowSize() * scanFactor
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -363,7 +363,7 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	if p.Desc {
 		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 	}
-	p.planCost = p.StatsCount() * p.getScanRowSize() * scanFactor
+	p.planCost = getStatsCount(p, costFlag) * p.getScanRowSize() * scanFactor
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -431,7 +431,9 @@ func (p *PhysicalIndexJoin) GetPlanCost(taskType property.TaskType, costFlag uin
 	if err != nil {
 		return 0, err
 	}
-	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost)
+	outerCnt := getStatsCount(outerChild, costFlag)
+	innerCnt := getStatsCount(innerChild, costFlag)
+	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -510,7 +512,9 @@ func (p *PhysicalIndexHashJoin) GetPlanCost(taskType property.TaskType, costFlag
 	if err != nil {
 		return 0, err
 	}
-	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost)
+	outerCnt := getStatsCount(outerChild, costFlag)
+	innerCnt := getStatsCount(innerChild, costFlag)
+	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -591,7 +595,9 @@ func (p *PhysicalIndexMergeJoin) GetPlanCost(taskType property.TaskType, costFla
 	if err != nil {
 		return 0, err
 	}
-	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost)
+	outerCnt := getStatsCount(outerChild, costFlag)
+	innerCnt := getStatsCount(innerChild, costFlag)
+	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -637,7 +643,9 @@ func (p *PhysicalApply) GetPlanCost(taskType property.TaskType, costFlag uint64)
 	if err != nil {
 		return 0, err
 	}
-	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost)
+	outerCnt := getStatsCount(outerChild, costFlag)
+	innerCnt := getStatsCount(innerChild, costFlag)
+	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -701,7 +709,7 @@ func (p *PhysicalMergeJoin) GetPlanCost(taskType property.TaskType, costFlag uin
 		}
 		p.planCost += childCost
 	}
-	p.planCost += p.GetCost(p.children[0].StatsCount(), p.children[1].StatsCount())
+	p.planCost += p.GetCost(getStatsCount(p.children[0], costFlag), getStatsCount(p.children[1], costFlag))
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -798,13 +806,13 @@ func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, costFlag uint
 		}
 		p.planCost += childCost
 	}
-	p.planCost += p.GetCost(p.children[0].StatsCount(), p.children[1].StatsCount())
+	p.planCost += p.GetCost(getStatsCount(p.children[0], costFlag), getStatsCount(p.children[1], costFlag))
 	p.planCostInit = true
 	return p.planCost, nil
 }
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
-func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool) float64 {
+func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool, costFlag uint64) float64 {
 	aggFuncFactor := p.getAggFuncCostFactor(false)
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
@@ -813,7 +821,7 @@ func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	} else {
 		cpuCost = inputRows * sessVars.CopCPUFactor * aggFuncFactor
 	}
-	rowsPerGroup := inputRows / p.statsInfo().RowCount
+	rowsPerGroup := inputRows / getStatsCount(p, costFlag)
 	memoryCost := rowsPerGroup * distinctFactor * sessVars.MemoryFactor * float64(p.numDistinctFunc())
 	return cpuCost + memoryCost
 }
@@ -828,14 +836,14 @@ func (p *PhysicalStreamAgg) GetPlanCost(taskType property.TaskType, costFlag uin
 		return 0, err
 	}
 	p.planCost = childCost
-	p.planCost += p.GetCost(p.children[0].StatsCount(), taskType == property.RootTaskType)
+	p.planCost += p.GetCost(p.children[0].StatsCount(), taskType == property.RootTaskType, costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
 
 // GetCost computes the cost of hash aggregation considering CPU/memory.
-func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool, isMPP bool) float64 {
-	cardinality := p.statsInfo().RowCount
+func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFlag uint64) float64 {
+	cardinality := getStatsCount(p, costFlag)
 	numDistinctFunc := p.numDistinctFunc()
 	aggFuncFactor := p.getAggFuncCostFactor(isMPP)
 	var cpuCost float64
@@ -870,11 +878,11 @@ func (p *PhysicalHashAgg) GetPlanCost(taskType property.TaskType, costFlag uint6
 	p.planCost = childCost
 	switch taskType {
 	case property.RootTaskType:
-		p.planCost += p.GetCost(p.children[0].StatsCount(), true, false)
+		p.planCost += p.GetCost(p.children[0].StatsCount(), true, false, costFlag)
 	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
-		p.planCost += p.GetCost(p.children[0].StatsCount(), false, false)
+		p.planCost += p.GetCost(p.children[0].StatsCount(), false, false, costFlag)
 	case property.MppTaskType:
-		p.planCost += p.GetCost(p.children[0].StatsCount(), false, true)
+		p.planCost += p.GetCost(p.children[0].StatsCount(), false, true, costFlag)
 	default:
 		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
@@ -914,7 +922,7 @@ func (p *PhysicalSort) GetPlanCost(taskType property.TaskType, costFlag uint64) 
 		return 0, err
 	}
 	p.planCost = childCost
-	p.planCost += p.GetCost(p.children[0].StatsCount(), p.Schema())
+	p.planCost += p.GetCost(getStatsCount(p.children[0], costFlag), p.Schema())
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -952,7 +960,7 @@ func (p *PhysicalTopN) GetPlanCost(taskType property.TaskType, costFlag uint64) 
 		return 0, err
 	}
 	p.planCost = childCost
-	p.planCost += p.GetCost(p.children[0].StatsCount(), taskType == property.RootTaskType)
+	p.planCost += p.GetCost(getStatsCount(p.children[0], costFlag), taskType == property.RootTaskType)
 	p.planCostInit = true
 	return p.planCost, nil
 }
