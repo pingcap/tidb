@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	error2 "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -1959,7 +1960,7 @@ func TestCheckIndex(t *testing.T) {
 	// table     data (handle, data): (1, 10), (2, 20)
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
-	require.NoError(t, ctx.NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	_, err = tb.AddRecord(ctx, recordVal1)
 	require.NoError(t, err)
 	_, err = tb.AddRecord(ctx, recordVal2)
@@ -3154,7 +3155,7 @@ func TestIssue19148(t *testing.T) {
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	require.Zero(t, tblInfo.Meta().Columns[0].Flag)
+	require.Zero(t, tblInfo.Meta().Columns[0].GetFlag())
 }
 
 func TestIssue19667(t *testing.T) {
@@ -3467,7 +3468,6 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalShuffle{},
 		&plannercore.PhysicalUnionAll{},
 	}
-	executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, math.MaxUint64, false, "global")
 
 	opsNeedsCoveredMask := uint64(1<<len(opsNeedsCovered) - 1)
 	opsAlreadyCoveredMask := uint64(0)
@@ -3497,8 +3497,13 @@ func TestUnreasonablyClose(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tc)
 		stmt, err := p.ParseOneStmt(tc, "", "")
 		require.NoError(t, err, comment)
-		err = tk.Session().NewTxn(context.Background())
+		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err, comment)
+
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO())
+		require.NoError(t, err, comment)
+
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
 
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NotNil(t, p)
@@ -5938,4 +5943,40 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	tk.MustMatchErrMsg("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)", "Out Of Memory Quota!.*")
 	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
 	tk.MustQuery("select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )'").Check(testkit.Rows("Update"))
+}
+
+func TestIsFastPlan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, a int)")
+
+	cases := []struct {
+		sql        string
+		isFastPlan bool
+	}{
+		{"select a from t where id=1", true},
+		{"select a+id from t where id=1", true},
+		{"select 1", true},
+		{"select @@autocommit", true},
+		{"set @@autocommit=1", true},
+		{"set @a=1", true},
+		{"select * from t where a=1", false},
+		{"select * from t", false},
+	}
+
+	for _, ca := range cases {
+		if strings.HasPrefix(ca.sql, "select") {
+			tk.MustQuery(ca.sql)
+		} else {
+			tk.MustExec(ca.sql)
+		}
+		info := tk.Session().ShowProcess()
+		require.NotNil(t, info)
+		p, ok := info.Plan.(plannercore.Plan)
+		require.True(t, ok)
+		ok = executor.IsFastPlan(p)
+		require.Equal(t, ca.isFastPlan, ok)
+	}
 }

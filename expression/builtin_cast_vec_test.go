@@ -209,7 +209,7 @@ func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	baseCast := newBaseBuiltinCastFunc(baseFunc, true)
 	baseCast.tp = types.NewFieldType(mysql.TypeNewDecimal)
 	// set the `UnsignedFlag` bit
-	baseCast.tp.Flag |= mysql.UnsignedFlag
+	baseCast.tp.AddFlag(mysql.UnsignedFlag)
 	cast := &builtinCastStringAsDecimalSig{baseCast}
 
 	inputs := []*chunk.Chunk{
