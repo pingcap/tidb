@@ -101,7 +101,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
 		// This would cause panic. So we apply a little trick here to avoid decoding it by explicitly changing the collation to 'CollationBin'.
 		tp = tp.Clone()
-		tp.Collate = charset.CollationBin
+		tp.SetCollate(charset.CollationBin)
 	}
 	return &Histogram{
 		ID:                id,
@@ -157,7 +157,7 @@ func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	if histCount > 0 {
 		notNullRatio = 1.0 - float64(c.NullCount)/histCount
 	}
-	switch c.Histogram.Tp.Tp {
+	switch c.Histogram.Tp.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return 8 * notNullRatio
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
@@ -237,7 +237,7 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64, n
 	hg.Buckets[l-1].Repeat = repeat
 }
 
-// DecodeTo decodes the histogram bucket values into `Tp`.
+// DecodeTo decodes the histogram bucket values into `tp`.
 func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
 	oldIter := chunk.NewIterator4Chunk(hg.Bounds)
 	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, oldIter.Len())
@@ -252,7 +252,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 	return nil
 }
 
-// ConvertTo converts the histogram bucket values into `Tp`.
+// ConvertTo converts the histogram bucket values into `tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	hist.Correlation = hg.Correlation
@@ -787,7 +787,7 @@ func (hg *Histogram) popFirstBucket() {
 
 // IsIndexHist checks whether current histogram is one for index.
 func (hg *Histogram) IsIndexHist() bool {
-	return hg.Tp.Tp == mysql.TypeBlob
+	return hg.Tp.GetType() == mysql.TypeBlob
 }
 
 // MergeHistograms merges two histograms.
@@ -907,7 +907,7 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 	// If this is an unsigned column, we need to make sure values are not negative.
 	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
 	// Maybe it's better to do this transformation in the ranger like the normal negative value.
-	if mysql.HasUnsignedFlag(hg.Tp.Flag) {
+	if mysql.HasUnsignedFlag(hg.Tp.GetFlag()) {
 		if l < 0 {
 			l = 0
 		}
@@ -1091,17 +1091,28 @@ func (c *Column) GetIncreaseFactor(realtimeRowCount int64) float64 {
 	return float64(realtimeRowCount) / columnCount
 }
 
-// MemoryUsage returns the total memory usage of Histogram and CMSketch in Column.
+// MemoryUsage returns the total memory usage of Histogram, CMSketch, FMSketch in Column.
 // We ignore the size of other metadata in Column
-func (c *Column) MemoryUsage() (sum int64) {
-	sum = c.Histogram.MemoryUsage()
+func (c *Column) MemoryUsage() CacheItemMemoryUsage {
+	var sum int64
+	columnMemUsage := &ColumnMemUsage{
+		ColumnID: c.Info.ID,
+	}
+	histogramMemUsage := c.Histogram.MemoryUsage()
+	columnMemUsage.HistogramMemUsage = histogramMemUsage
+	sum = histogramMemUsage
 	if c.CMSketch != nil {
-		sum += c.CMSketch.MemoryUsage()
+		cmSketchMemUsage := c.CMSketch.MemoryUsage()
+		columnMemUsage.CMSketchMemUsage = cmSketchMemUsage
+		sum += cmSketchMemUsage
 	}
 	if c.FMSketch != nil {
-		sum += c.FMSketch.MemoryUsage()
+		fmSketchMemUsage := c.FMSketch.MemoryUsage()
+		columnMemUsage.FMSketchMemUsage = fmSketchMemUsage
+		sum += fmSketchMemUsage
 	}
-	return
+	columnMemUsage.TotalMemUsage = sum
+	return columnMemUsage
 }
 
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
@@ -1308,6 +1319,17 @@ type Index struct {
 	LastAnalyzePos types.Datum
 }
 
+// ItemID implements TableCacheItem
+func (idx *Index) ItemID() int64 {
+	return idx.Info.ID
+}
+
+// DropEvicted implements TableCacheItem
+// DropEvicted drops evicted structures
+func (idx *Index) DropEvicted() {
+	idx.CMSketch = nil
+}
+
 func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
@@ -1327,12 +1349,21 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
 // We ignore the size of other metadata in Index.
-func (idx *Index) MemoryUsage() (sum int64) {
-	sum = idx.Histogram.MemoryUsage()
-	if idx.CMSketch != nil {
-		sum += idx.CMSketch.MemoryUsage()
+func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
+	var sum int64
+	indexMemUsage := &IndexMemUsage{
+		IndexID: idx.Info.ID,
 	}
-	return
+	histMemUsage := idx.Histogram.MemoryUsage()
+	indexMemUsage.HistogramMemUsage = histMemUsage
+	sum = histMemUsage
+	if idx.CMSketch != nil {
+		cmSketchMemUsage := idx.CMSketch.MemoryUsage()
+		indexMemUsage.CMSketchMemUsage = cmSketchMemUsage
+		sum += cmSketchMemUsage
+	}
+	indexMemUsage.TotalMemUsage = sum
+	return indexMemUsage
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
@@ -2086,9 +2117,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			d.SetBytes(meta.Encoded)
 		} else {
 			var err error
-			if types.IsTypeTime(hists[0].Tp.Tp) {
+			if types.IsTypeTime(hists[0].Tp.GetType()) {
 				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
-				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.Tp, sc.TimeZone)
+				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
 			} else {
 				_, d, err = codec.DecodeOne(meta.Encoded)
 			}

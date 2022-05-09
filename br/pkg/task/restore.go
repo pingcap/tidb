@@ -247,6 +247,10 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 		}
 		schemasMap[utils.EncloseName(dbName)] = struct{}{}
 		for _, table := range db.Tables {
+			if table.Info == nil {
+				// we may back up empty database.
+				continue
+			}
 			tablesMap[utils.EncloseDBAndTable(dbName, table.Info.Name.O)] = struct{}{}
 		}
 	}
@@ -276,11 +280,12 @@ func CheckNewCollationEnable(
 	if backupNewCollationEnable == "" {
 		if CheckRequirements {
 			return errors.Annotatef(berrors.ErrUnknown,
-				"NewCollactionEnable not found in backupmeta. "+
-					"if you ensure the NewCollactionEnable config of backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip")
+				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
+					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
+					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
+					"use --check-requirements=false to skip this check")
 		} else {
-			log.Warn("no NewCollactionEnable in backup")
+			log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
 			return nil
 		}
 	}
@@ -297,7 +302,7 @@ func CheckNewCollationEnable(
 
 	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
 		return errors.Annotatef(berrors.ErrUnknown,
-			"newCollationEnable not match, upstream:%v, downstream: %v",
+			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
 			backupNewCollationEnable, newCollationEnable)
 	}
 	return nil
@@ -582,18 +587,17 @@ func filterRestoreFiles(
 	cfg *RestoreConfig,
 ) (files []*backuppb.File, tables []*metautil.Table, dbs []*utils.Database) {
 	for _, db := range client.GetDatabases() {
-		createdDatabase := false
 		dbName := db.Info.Name.O
 		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
 			dbName = name
 		}
+		if !cfg.TableFilter.MatchSchema(dbName) {
+			continue
+		}
+		dbs = append(dbs, db)
 		for _, table := range db.Tables {
-			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
+			if table.Info == nil || !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
-			}
-			if !createdDatabase {
-				dbs = append(dbs, db)
-				createdDatabase = true
 			}
 			files = append(files, table.Files...)
 			tables = append(tables, table)

@@ -17,6 +17,7 @@ package restore
 import (
 	"context"
 	"database/sql"
+	"math"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
@@ -404,9 +406,15 @@ func TestAlterAutoInc(t *testing.T) {
 		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_INCREMENT=12345\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
+		ExpectExec("\\QALTER TABLE `db`.`table` FORCE AUTO_INCREMENT=9223372036854775807\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
 		ExpectClose()
 
 	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
+	require.NoError(t, err)
+
+	err = AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1)
 	require.NoError(t, err)
 }
 
@@ -419,9 +427,19 @@ func TestAlterAutoRandom(t *testing.T) {
 		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_RANDOM_BASE=12345\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
+		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_RANDOM_BASE=288230376151711743\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
+	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345, 288230376151711743)
+	require.NoError(t, err)
+
+	// insert 288230376151711743 and try rebase to 288230376151711744
+	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 288230376151711744, 288230376151711743)
+	require.NoError(t, err)
+
+	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1, 288230376151711743)
 	require.NoError(t, err)
 }
 
@@ -494,18 +512,18 @@ func TestObtainNewCollationEnabled(t *testing.T) {
 	defer clean()
 	ctx := context.Background()
 
+	// cannot retry on this err
+	permErr := &mysql.MySQLError{Number: errno.ErrAccessDenied}
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
-		WillReturnError(errors.New("mock permission deny"))
-	s.mockDB.
-		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
-		WillReturnError(errors.New("mock permission deny"))
-	s.mockDB.
-		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
-		WillReturnError(errors.New("mock permission deny"))
+		WillReturnError(permErr)
 	_, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
-	require.Equal(t, "obtain new collation enabled failed: mock permission deny", err.Error())
+	require.Equal(t, permErr, errors.Cause(err))
 
+	// this error can retry
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(&mysql.MySQLError{Number: errno.ErrTiKVServerBusy})
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).RowError(0, sql.ErrNoRows))

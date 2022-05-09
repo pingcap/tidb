@@ -30,15 +30,16 @@ import (
 func TestSlowQueryWithoutSlowLog(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.Log.SlowQueryFile = "tidb-slow-not-exist.log"
-	newCfg.Log.SlowThreshold = math.MaxUint64
+	newCfg.Instance.SlowThreshold = math.MaxUint64
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		config.StoreGlobalConfig(originCfg)
 	}()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", newCfg.Log.SlowQueryFile))
 	tk.MustQuery("select query from information_schema.slow_query").Check(testkit.Rows())
 	tk.MustQuery("select query from information_schema.slow_query where time > '2020-09-15 12:16:39' and time < now()").Check(testkit.Rows())
 }

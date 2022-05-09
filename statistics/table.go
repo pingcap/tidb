@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
@@ -112,21 +112,107 @@ type HistColl struct {
 	Pseudo         bool
 }
 
+// TableMemoryUsage records tbl memory usage
+type TableMemoryUsage struct {
+	TableID         int64
+	TotalMemUsage   int64
+	ColumnsMemUsage map[int64]CacheItemMemoryUsage
+	IndicesMemUsage map[int64]CacheItemMemoryUsage
+}
+
+// TotalIdxTrackingMemUsage returns total indices' tracking memory usage
+func (t *TableMemoryUsage) TotalIdxTrackingMemUsage() (sum int64) {
+	for _, idx := range t.IndicesMemUsage {
+		sum += idx.TrackingMemUsage()
+	}
+	return sum
+}
+
+// TableCacheItem indicates the unit item stored in statsCache, eg: Column/Index
+type TableCacheItem interface {
+	ItemID() int64
+	DropEvicted()
+	MemoryUsage() CacheItemMemoryUsage
+}
+
+// CacheItemMemoryUsage indicates the memory usage of TableCacheItem
+type CacheItemMemoryUsage interface {
+	ItemID() int64
+	TotalMemoryUsage() int64
+	TrackingMemUsage() int64
+}
+
+// ColumnMemUsage records column memory usage
+type ColumnMemUsage struct {
+	ColumnID          int64
+	HistogramMemUsage int64
+	CMSketchMemUsage  int64
+	FMSketchMemUsage  int64
+	TotalMemUsage     int64
+}
+
+// TotalMemoryUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) TotalMemoryUsage() int64 {
+	return c.TotalMemUsage
+}
+
+// ItemID implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) ItemID() int64 {
+	return c.ColumnID
+}
+
+// TrackingMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) TrackingMemUsage() int64 {
+	return c.CMSketchMemUsage
+}
+
+// IndexMemUsage records index memory usage
+type IndexMemUsage struct {
+	IndexID           int64
+	HistogramMemUsage int64
+	CMSketchMemUsage  int64
+	TotalMemUsage     int64
+}
+
+// TotalMemoryUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) TotalMemoryUsage() int64 {
+	return c.TotalMemUsage
+}
+
+// ItemID implements CacheItemMemoryUsage
+func (c *IndexMemUsage) ItemID() int64 {
+	return c.IndexID
+}
+
+// TrackingMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) TrackingMemUsage() int64 {
+	return c.CMSketchMemUsage
+}
+
 // MemoryUsage returns the total memory usage of this Table.
 // it will only calc the size of Columns and Indices stats data of table.
 // We ignore the size of other metadata in Table
-func (t *Table) MemoryUsage() (sum int64) {
+func (t *Table) MemoryUsage() *TableMemoryUsage {
+	tMemUsage := &TableMemoryUsage{
+		TableID:         t.PhysicalID,
+		ColumnsMemUsage: make(map[int64]CacheItemMemoryUsage),
+		IndicesMemUsage: make(map[int64]CacheItemMemoryUsage),
+	}
 	for _, col := range t.Columns {
 		if col != nil {
-			sum += col.MemoryUsage()
+			colMemUsage := col.MemoryUsage()
+			tMemUsage.ColumnsMemUsage[colMemUsage.ItemID()] = colMemUsage
+			tMemUsage.TotalMemUsage += colMemUsage.TotalMemoryUsage()
 		}
 	}
 	for _, index := range t.Indices {
 		if index != nil {
-			sum += index.MemoryUsage()
+			idxMemUsage := index.MemoryUsage()
+			tMemUsage.IndicesMemUsage[idxMemUsage.ItemID()] = idxMemUsage
+			tMemUsage.TotalMemUsage += idxMemUsage.TotalMemoryUsage()
 		}
 	}
-	return
+	return tMemUsage
 }
 
 // Copy copies the current table.
@@ -637,7 +723,7 @@ func (coll *HistColl) getEqualCondSelectivity(sctx sessionctx.Context, idx *Inde
 				break
 			}
 			if col, ok := coll.Columns[colID]; ok {
-				ndv = mathutil.MaxInt64(ndv, col.Histogram.NDV)
+				ndv = mathutil.Max(ndv, col.Histogram.NDV)
 			}
 		}
 		return outOfRangeEQSelectivity(ndv, coll.Count, int64(idx.TotalRowCount())), nil
@@ -770,7 +856,7 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 			t.Columns[col.ID] = &Column{
 				PhysicalID: fakePhysicalID,
 				Info:       col,
-				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
 			}
 		}

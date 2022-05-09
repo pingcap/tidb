@@ -19,9 +19,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
@@ -129,8 +127,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		cfg.TaskID = 123
 		cfg.TiDB.Port = 4000
 		cfg.TiDB.PdAddr = "127.0.0.1:2379"
-		cfg.TikvImporter.Backend = config.BackendImporter
-		cfg.TikvImporter.Addr = "127.0.0.1:8287"
+		cfg.TikvImporter.Backend = config.BackendTiDB
 		cfg.TikvImporter.SortedKVDir = "/tmp/sorted-kv"
 
 		return cfg
@@ -142,9 +139,6 @@ func TestVerifyCheckpoint(t *testing.T) {
 	adjustFuncs := map[string]func(cfg *config.Config){
 		"tikv-importer.backend": func(cfg *config.Config) {
 			cfg.TikvImporter.Backend = config.BackendLocal
-		},
-		"tikv-importer.addr": func(cfg *config.Config) {
-			cfg.TikvImporter.Addr = "128.0.0.1:8287"
 		},
 		"mydumper.data-source-dir": func(cfg *config.Config) {
 			cfg.Mydumper.SourceDir = "/tmp/test"
@@ -170,6 +164,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		cfg := newCfg()
 		fn(cfg)
 		err := verifyCheckpoint(cfg, taskCp)
+		require.Error(t, err)
 		if conf == "version" {
 			build.ReleaseVersion = actualReleaseVersion
 			require.Regexp(t, "lightning version is 'some newer version', but checkpoint was created at '"+actualReleaseVersion+"'.*", err.Error())
@@ -187,85 +182,6 @@ func TestVerifyCheckpoint(t *testing.T) {
 		fn(cfg)
 		err := cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
 		require.NoError(t, err)
-	}
-}
-
-func TestDiskQuotaLock(t *testing.T) {
-	lock := newDiskQuotaLock()
-
-	lock.Lock()
-	require.False(t, lock.TryRLock())
-	lock.Unlock()
-	require.True(t, lock.TryRLock())
-	require.True(t, lock.TryRLock())
-
-	rLocked := 2
-	lockHeld := make(chan struct{})
-	go func() {
-		lock.Lock()
-		lockHeld <- struct{}{}
-	}()
-	for lock.TryRLock() {
-		rLocked++
-		time.Sleep(time.Millisecond)
-	}
-	select {
-	case <-lockHeld:
-		t.Fatal("write lock is held before all read locks are released")
-	case <-time.NewTimer(10 * time.Millisecond).C:
-	}
-	for ; rLocked > 0; rLocked-- {
-		lock.RUnlock()
-	}
-	<-lockHeld
-	lock.Unlock()
-
-	done := make(chan struct{})
-	count := int32(0)
-	reader := func() {
-		for i := 0; i < 1000; i++ {
-			if lock.TryRLock() {
-				n := atomic.AddInt32(&count, 1)
-				if n < 1 || n >= 10000 {
-					lock.RUnlock()
-					panic(fmt.Sprintf("unexpected count(%d)", n))
-				}
-				for i := 0; i < 100; i++ {
-				}
-				atomic.AddInt32(&count, -1)
-				lock.RUnlock()
-			}
-			time.Sleep(time.Microsecond)
-		}
-		done <- struct{}{}
-	}
-	writer := func() {
-		for i := 0; i < 1000; i++ {
-			lock.Lock()
-			n := atomic.AddInt32(&count, 10000)
-			if n != 10000 {
-				lock.RUnlock()
-				panic(fmt.Sprintf("unexpected count(%d)", n))
-			}
-			for i := 0; i < 100; i++ {
-			}
-			atomic.AddInt32(&count, -10000)
-			lock.Unlock()
-			time.Sleep(time.Microsecond)
-		}
-		done <- struct{}{}
-	}
-	for i := 0; i < 5; i++ {
-		go reader()
-	}
-	for i := 0; i < 2; i++ {
-		go writer()
-	}
-	for i := 0; i < 5; i++ {
-		go reader()
-	}
-	for i := 0; i < 12; i++ {
-		<-done
 	}
 }
 
