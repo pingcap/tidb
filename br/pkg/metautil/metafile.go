@@ -291,13 +291,17 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 		tableMap := make(map[int64]*Table, MaxBatchSize)
 		err := receiveBatch(ctx, errCh, ch, MaxBatchSize, func(item interface{}) error {
 			s := item.(*backuppb.Schema)
-			tableInfo := &model.TableInfo{}
-			if err := json.Unmarshal(s.Table, tableInfo); err != nil {
-				return errors.Trace(err)
-			}
 			dbInfo := &model.DBInfo{}
 			if err := json.Unmarshal(s.Db, dbInfo); err != nil {
 				return errors.Trace(err)
+			}
+
+			var tableInfo *model.TableInfo
+			if s.Table != nil {
+				tableInfo = &model.TableInfo{}
+				if err := json.Unmarshal(s.Table, tableInfo); err != nil {
+					return errors.Trace(err)
+				}
 			}
 			var stats *handle.JSONTable
 			if s.Stats != nil {
@@ -306,6 +310,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 					return errors.Trace(err)
 				}
 			}
+
 			table := &Table{
 				DB:              dbInfo,
 				Info:            tableInfo,
@@ -315,18 +320,23 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				TiFlashReplicas: int(s.TiflashReplicas),
 				Stats:           stats,
 			}
-			if files, ok := fileMap[tableInfo.ID]; ok {
-				table.Files = append(table.Files, files...)
-			}
-			if tableInfo.Partition != nil {
-				// Partition table can have many table IDs (partition IDs).
-				for _, p := range tableInfo.Partition.Definitions {
-					if files, ok := fileMap[p.ID]; ok {
-						table.Files = append(table.Files, files...)
+			if tableInfo != nil {
+				if files, ok := fileMap[tableInfo.ID]; ok {
+					table.Files = append(table.Files, files...)
+				}
+				if tableInfo.Partition != nil {
+					// Partition table can have many table IDs (partition IDs).
+					for _, p := range tableInfo.Partition.Definitions {
+						if files, ok := fileMap[p.ID]; ok {
+							table.Files = append(table.Files, files...)
+						}
 					}
 				}
+				tableMap[tableInfo.ID] = table
+			} else {
+				// empty database
+				tableMap[0] = table
 			}
-			tableMap[tableInfo.ID] = table
 			return nil
 		})
 		if err != nil {

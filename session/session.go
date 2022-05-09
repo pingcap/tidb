@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -1093,7 +1094,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 			_, digest := s.sessionVars.StmtCtx.SQLDigest()
 			s.txn.onStmtStart(digest.String())
-			_, err = st.Exec(ctx)
+			if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx); err == nil {
+				_, err = st.Exec(ctx)
+			}
 			s.txn.onStmtEnd()
 			if err != nil {
 				s.StmtRollback()
@@ -1891,6 +1894,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
+	if err := sessiontxn.GetTxnManager(s).OnStmtStart(ctx); err != nil {
+		return nil, err
+	}
+
 	failpoint.Inject("mockStmtSlow", func(val failpoint.Value) {
 		if strings.Contains(stmtNode.Text(), "/* sleep */") {
 			v, _ := val.(int)
@@ -2155,6 +2162,11 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err = s.PrepareTxnCtx(ctx); err != nil {
 		return
 	}
+
+	if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx); err != nil {
+		return
+	}
+
 	s.PrepareTSFuture(ctx)
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
@@ -2346,31 +2358,26 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 
+	txnManager := sessiontxn.GetTxnManager(s)
 	if staleReadProcessor.IsStaleness() {
 		snapshotTS = staleReadProcessor.GetStalenessReadTS()
 		is = staleReadProcessor.GetStalenessInfoSchema()
 		replicaReadScope = config.GetTxnScopeFromConfig()
+		err = txnManager.EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+			Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
+			Provider: staleread.NewStalenessTxnContextProvider(s, snapshotTS, is),
+		})
+
+		if err != nil {
+			return nil, err
+		}
 	} else if preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
 
-	var txnCtxProvider sessiontxn.TxnContextProvider
 	staleness := snapshotTS > 0
-	if staleness {
-		txnCtxProvider = staleread.NewStalenessTxnContextProvider(is, snapshotTS)
-	} else {
-		txnCtxProvider = &sessiontxn.SimpleTxnContextProvider{
-			InfoSchema: is,
-		}
-	}
-
-	txnManager := sessiontxn.GetTxnManager(s)
-	if err = txnManager.SetContextProvider(txnCtxProvider); err != nil {
-		return nil, err
-	}
-
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt, staleness)
 	if err != nil {
@@ -2378,6 +2385,14 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
+
+	if err = txnManager.OnStmtStart(ctx); err != nil {
+		return nil, err
+	}
+
+	if p, isOK := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); isOK {
+		p.InfoSchema = is
+	}
 
 	if ok {
 		return s.cachedPlanExec(ctx, txnManager.GetTxnInfoSchema(), stmtID, preparedStmt, replicaReadScope, args)
@@ -2502,7 +2517,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
 	s.txn.changeInvalidToValid(txn)
-	is := domain.GetDomain(s).InfoSchema()
+	is := temptable.AttachLocalTemporaryTableInfoSchema(s, domain.GetDomain(s).InfoSchema())
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:  is,
 		CreateTime:  time.Now(),
@@ -2559,7 +2574,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		TxnScope:    txnScope,
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
-	return sessiontxn.GetTxnManager(s).SetContextProvider(staleread.NewStalenessTxnContextProvider(is, txn.StartTS()))
+	return nil
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
@@ -3125,24 +3140,18 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 		return nil
 	}
 
-	is := s.GetInfoSchema()
-	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		InfoSchema: is,
-		CreateTime: time.Now(),
-		ShardStep:  int(s.sessionVars.ShardAllocateStep),
-		TxnScope:   s.GetSessionVars().CheckAndGetTxnScope(),
-	}
+	txnMode := ast.Optimistic
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying ||
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
-			s.sessionVars.TxnCtx.IsPessimistic = true
+			txnMode = ast.Pessimistic
 		}
 	}
 
-	txnCtxProvider := &sessiontxn.SimpleTxnContextProvider{
-		InfoSchema: is.(infoschema.InfoSchema),
-	}
-	return sessiontxn.GetTxnManager(s).SetContextProvider(txnCtxProvider)
+	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+		Type:    sessiontxn.EnterNewTxnBeforeStmt,
+		TxnMode: txnMode,
+	})
 }
 
 // PrepareTSFuture uses to try to get ts future.
@@ -3189,7 +3198,7 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 
 	s.updateStatsDeltaToCollector()
 
-	return s.NewTxn(ctx)
+	return sessiontxn.NewTxn(ctx, s)
 }
 
 // InitTxnWithStartTS create a transaction with startTS.
