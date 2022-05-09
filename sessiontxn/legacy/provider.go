@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -155,7 +154,7 @@ func (p *SimpleTxnContextProvider) handleAfterLockError(lockErr error) (sessiont
 	txnCtx := sessVars.TxnCtx
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok {
 		if !deadlock.IsRetryable {
-			return sessiontxn.StmtActionError, executor.ErrDeadlock
+			return sessiontxn.StmtActionError, lockErr
 		}
 		logutil.Logger(p.Ctx).Info("single statement deadlock, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
@@ -182,14 +181,14 @@ func (p *SimpleTxnContextProvider) handleAfterLockError(lockErr error) (sessiont
 		//         key1 lock not get and async rollback key1 is raised)
 		//         select for update key1 again(this time lock succ(maybe lock released by others))
 		//         the async rollback operation rollbacked the lock just acquired
-		tsErr := executor.UpdateForUpdateTS(p.Sctx, 0)
+		tsErr := UpdateForUpdateTS(p.Sctx, 0)
 		if tsErr != nil {
 			logutil.Logger(p.Ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 		}
 		return sessiontxn.StmtActionError, lockErr
 	}
 
-	if err := executor.UpdateForUpdateTS(p.Sctx, 0); err != nil {
+	if err := UpdateForUpdateTS(p.Sctx, 0); err != nil {
 		return sessiontxn.StmtActionError, err
 	}
 
@@ -223,3 +222,6 @@ func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
 	p.isTxnActive = true
 	return txn, nil
 }
+
+// UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtains a new TS from PD.
+var UpdateForUpdateTS func(seCtx sessionctx.Context, newForUpdateTS uint64) error

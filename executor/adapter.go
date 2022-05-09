@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -758,10 +759,16 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
-func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error) (Executor, error) {
+func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error) (_ Executor, err error) {
 	if lockErr == nil {
 		return nil, nil
 	}
+
+	defer func() {
+		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
+			err = ErrDeadlock
+		}
+	}()
 
 	action, err := sessiontxn.GetTxnManager(a.Ctx).OnStmtError(sessiontxn.StmtErrAfterLock, lockErr)
 	if err != nil {
