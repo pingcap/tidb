@@ -15,12 +15,14 @@
 package stmtstats
 
 import (
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
 
@@ -61,41 +63,43 @@ func Test_aggregator_register_collect(t *testing.T) {
 	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
 		total.Merge(data)
 	}))
-	a.aggregate()
+	a.aggregate(true)
 	assert.NotEmpty(t, total)
 	assert.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 }
 
 func Test_aggregator_run_close(t *testing.T) {
-	wg := sync.WaitGroup{}
 	a := newAggregator()
 	assert.True(t, a.closed())
-	wg.Add(1)
-	go func() {
-		a.run()
-		wg.Done()
-	}()
+	a.start()
 	time.Sleep(100 * time.Millisecond)
 	assert.False(t, a.closed())
 	a.close()
-	wg.Wait()
 	assert.True(t, a.closed())
+
+	// randomly start and close
+	for i := 0; i < 100; i++ {
+		if rand.Intn(2) == 0 {
+			a.start()
+		} else {
+			a.close()
+		}
+	}
+	a.close()
 }
 
-func Test_aggregator_disable_aggregate(t *testing.T) {
+func TestAggregatorDisableAggregate(t *testing.T) {
+	var mu sync.Mutex
 	total := StatementStatsMap{}
 	a := newAggregator()
 	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
+		mu.Lock()
 		total.Merge(data)
+		mu.Unlock()
 	}))
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		a.run()
-		wg.Done()
-	}()
+	a.start()
 
 	stats := &StatementStats{
 		data: StatementStatsMap{
@@ -106,14 +110,17 @@ func Test_aggregator_disable_aggregate(t *testing.T) {
 	state.DisableTopSQL()
 	a.register(stats)
 	time.Sleep(1500 * time.Millisecond)
-	assert.Empty(t, total)
+	mu.Lock()
+	require.Empty(t, total)
+	mu.Unlock()
 	state.EnableTopSQL()
 	time.Sleep(1500 * time.Millisecond)
-	assert.Len(t, total, 1)
+	mu.Lock()
+	require.Len(t, total, 1)
+	mu.Unlock()
 	state.DisableTopSQL()
 
 	a.close()
-	wg.Wait()
 }
 
 type mockCollector struct {

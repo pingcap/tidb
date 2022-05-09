@@ -15,8 +15,12 @@ package auth
 
 import (
 	"fmt"
-
 	"github.com/pingcap/tidb/parser/format"
+)
+
+const (
+	UserNameMaxLength = 32
+	HostNameMaxLength = 255
 )
 
 // UserIdentity represents username and hostname.

@@ -80,12 +80,13 @@ func TestBufferIsolation(t *testing.T) {
 
 	b1 := bytesBuf.AllocBytes(16)
 	b2 := bytesBuf.AllocBytes(16)
-	require.Equal(t, len(b1), cap(b1))
-	require.Equal(t, len(b2), cap(b2))
+	require.Len(t, b1, cap(b1))
+	require.Len(t, b2, cap(b2))
 
 	_, err := rand.Read(b2)
 	require.NoError(t, err)
 	b3 := append([]byte(nil), b2...)
 	b1 = append(b1, 0, 1, 2, 3)
 	require.Equal(t, b3, b2)
+	require.NotEqual(t, b2, b1)
 }

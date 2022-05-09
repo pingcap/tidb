@@ -24,7 +24,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -116,6 +116,11 @@ type IndexMergeReaderExecutor struct {
 	isCorColInPartialFilters []bool
 	isCorColInTableFilter    bool
 	isCorColInPartialAccess  []bool
+}
+
+// Table implements the dataSourceExecutor interface.
+func (e *IndexMergeReaderExecutor) Table() table.Table {
+	return e.table
 }
 
 // Open implements the Executor Open interface
@@ -296,9 +301,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				}
 
 				var builder distsql.RequestBuilder
-				if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-					builder.SetIsolationLevel(kv.RC)
-				}
 				builder.SetDAGRequest(e.dagPBs[workID]).
 					SetStartTS(e.startTS).
 					SetDesc(e.descs[workID]).

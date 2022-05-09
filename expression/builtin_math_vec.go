@@ -20,12 +20,10 @@ import (
 	"math"
 	"strconv"
 
-	utilMath "github.com/pingcap/tidb/util/math"
-
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
@@ -392,7 +390,7 @@ func (b *builtinRoundDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Co
 		if result.IsNull(i) {
 			continue
 		}
-		if err := d64s[i].Round(buf, 0, types.ModeHalfEven); err != nil {
+		if err := d64s[i].Round(buf, 0, types.ModeHalfUp); err != nil {
 			return err
 		}
 		d64s[i] = *buf
@@ -738,9 +736,9 @@ func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(input *chunk.Chunk, result 
 	for i := 0; i < n; i++ {
 		// When the seed is null we need to use 0 as the seed.
 		// The behavior same as MySQL.
-		rng := utilMath.NewWithSeed(0)
+		rng := mathutil.NewWithSeed(0)
 		if !buf.IsNull(i) {
-			rng = utilMath.NewWithSeed(i64s[i])
+			rng = mathutil.NewWithSeed(i64s[i])
 		}
 		f64s[i] = rng.Gen()
 	}
@@ -767,7 +765,7 @@ func (b *builtinCeilIntToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chun
 
 	i64s := buf.Int64s()
 	d := result.Decimals()
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -803,7 +801,7 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
-	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()) {
 		return nil
 	}
 
@@ -847,7 +845,7 @@ func (b *builtinTruncateUintSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
-	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()) {
 		return nil
 	}
 
@@ -953,7 +951,7 @@ func (b *builtinTruncateDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 	result.MergeNulls(buf)
 	ds := result.Decimals()
 	i64s := buf.Int64s()
-	ft := b.getRetTp().Decimal
+	ft := b.getRetTp().GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -994,7 +992,7 @@ func (b *builtinRoundWithFracDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 			continue
 		}
 		// TODO: reuse d64[i] and remove the temporary variable tmp.
-		if err := d64s[i].Round(tmp, mathutil.Min(int(i64s[i]), b.tp.Decimal), types.ModeHalfEven); err != nil {
+		if err := d64s[i].Round(tmp, mathutil.Min(int(i64s[i]), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
 			return err
 		}
 		d64s[i] = *tmp
@@ -1022,7 +1020,7 @@ func (b *builtinFloorIntToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 
 	i64s := buf.Int64s()
 	d := result.Decimals()
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue

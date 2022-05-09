@@ -22,9 +22,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -116,6 +116,25 @@ func TestOOMAction(t *testing.T) {
 	require.True(t, action1.called)
 	require.True(t, action2.called) // SoftLimit fallback
 	require.True(t, action3.called) // HardLimit
+
+	// test fallback
+	action1 = &mockAction{}
+	action2 = &mockAction{}
+	action3 = &mockAction{}
+	action4 := &mockAction{}
+	action5 := &mockAction{}
+	tracker.SetActionOnExceed(action1)
+	tracker.FallbackOldAndSetNewAction(action2)
+	tracker.FallbackOldAndSetNewAction(action3)
+	tracker.FallbackOldAndSetNewAction(action4)
+	tracker.FallbackOldAndSetNewAction(action5)
+	require.Equal(t, action1, tracker.actionMuForHardLimit.actionOnExceed)
+	require.Equal(t, action2, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action2.SetFinished()
+	require.Equal(t, action3, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action3.SetFinished()
+	action4.SetFinished()
+	require.Equal(t, action5, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
 }
 
 type mockAction struct {
@@ -277,7 +296,7 @@ func TestMaxConsumed(t *testing.T) {
 		}
 		consumed += b
 		tracker.Consume(b)
-		maxConsumed = mathutil.MaxInt64(maxConsumed, consumed)
+		maxConsumed = mathutil.Max(maxConsumed, consumed)
 
 		require.Equal(t, consumed, r.BytesConsumed())
 		require.Equal(t, maxConsumed, r.MaxConsumed())

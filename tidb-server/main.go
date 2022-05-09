@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -52,6 +51,7 @@ import (
 	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/deadlockhistory"
@@ -67,6 +67,7 @@ import (
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
@@ -168,13 +169,14 @@ func main() {
 		flag.Usage()
 		os.Exit(0)
 	}
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
 	if *version {
+		setVersions()
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
 	registerStores()
 	registerMetrics()
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
@@ -451,10 +453,10 @@ func overrideConfig(cfg *config.Config) {
 		cfg.TokenLimit = uint(*tokenLimit)
 	}
 	if actualFlags[nmPluginLoad] {
-		cfg.Plugin.Load = *pluginLoad
+		cfg.Instance.PluginLoad = *pluginLoad
 	}
 	if actualFlags[nmPluginDir] {
-		cfg.Plugin.Dir = *pluginDir
+		cfg.Instance.PluginDir = *pluginDir
 	}
 	if actualFlags[nmRequireSecureTransport] {
 		cfg.Security.RequireSecureTransport = *requireTLS
@@ -530,8 +532,57 @@ func overrideConfig(cfg *config.Config) {
 	}
 }
 
+func setVersions() {
+	cfg := config.GetGlobalConfig()
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+	}
+	if len(cfg.TiDBEdition) > 0 {
+		versioninfo.TiDBEdition = cfg.TiDBEdition
+	}
+	if len(cfg.TiDBReleaseVersion) > 0 {
+		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
+	}
+}
+
 func setGlobalVars() {
 	cfg := config.GetGlobalConfig()
+
+	// config.DeprecatedOptions records the config options that should be moved to [instance] section.
+	for _, deprecatedOption := range config.DeprecatedOptions {
+		for oldName := range deprecatedOption.NameMappings {
+			switch deprecatedOption.SectionName {
+			case "":
+				switch oldName {
+				case "check-mb4-value-in-utf8":
+					cfg.Instance.CheckMb4ValueInUTF8.Store(cfg.CheckMb4ValueInUTF8.Load())
+				case "enable-collect-execution-info":
+					cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
+				case "plugin.load":
+					cfg.Instance.PluginLoad = cfg.Plugin.Load
+				case "plugin.dir":
+					cfg.Instance.PluginDir = cfg.Plugin.Dir
+				}
+			case "log":
+				switch oldName {
+				case "enable-slow-log":
+					cfg.Instance.EnableSlowLog.Store(cfg.Log.EnableSlowLog.Load())
+				case "slow-threshold":
+					cfg.Instance.SlowThreshold = cfg.Log.SlowThreshold
+				case "record-plan-in-slow-log":
+					cfg.Instance.RecordPlanInSlowLog = cfg.Log.RecordPlanInSlowLog
+				}
+			case "performance":
+				switch oldName {
+				case "force-priority":
+					cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
+				case "memory-usage-alarm-ratio":
+					cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
+				}
+			default:
+			}
+		}
+	}
 
 	// Disable automaxprocs log
 	nopLog := func(string, ...interface{}) {}
@@ -569,18 +620,33 @@ func setGlobalVars() {
 	}
 	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
 
-	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
+	priority := mysql.Str2Priority(cfg.Instance.ForcePriority)
 	variable.ForcePriority = int32(priority)
+
+	variable.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
+	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
+	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
+	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 
 	if len(cfg.ServerVersion) > 0 {
 		mysql.ServerVersion = cfg.ServerVersion
 		variable.SetSysVar(variable.Version, cfg.ServerVersion)
 	}
 
+	if len(cfg.TiDBEdition) > 0 {
+		versioninfo.TiDBEdition = cfg.TiDBEdition
+		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 5.7 compatible")
+	}
+	if len(cfg.VersionComment) > 0 {
+		variable.SetSysVar(variable.VersionComment, cfg.VersionComment)
+	}
+	if len(cfg.TiDBReleaseVersion) > 0 {
+		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
+	}
+
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
-	variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
-	variable.SetSysVar(variable.LowerCaseTableNames, strconv.Itoa(cfg.LowerCaseTableNames))
+	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
 	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(cfg.Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
 	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
@@ -589,8 +655,8 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
-	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
-	if hostname, err := os.Hostname(); err != nil {
+	variable.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
+	if hostname, err := os.Hostname(); err == nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
 	variable.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))

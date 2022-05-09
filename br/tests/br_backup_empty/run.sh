@@ -18,16 +18,16 @@ set -eu
 DB="$TEST_NAME"
 
 # backup empty.
-echo "backup start..."
-run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/empty_db"
+echo "backup empty cluster start..."
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/empty_cluster"
 if [ $? -ne 0 ]; then
     echo "TEST: [$TEST_NAME] failed on backup empty cluster!"
     exit 1
 fi
 
 # restore empty.
-echo "restore start..."
-run_br restore full -s "local://$TEST_DIR/empty_db" --pd $PD_ADDR --ratelimit 1024
+echo "restore empty cluster start..."
+run_br restore full -s "local://$TEST_DIR/empty_cluster" --pd $PD_ADDR --ratelimit 1024
 if [ $? -ne 0 ]; then
     echo "TEST: [$TEST_NAME] failed on restore empty cluster!"
     exit 1
@@ -35,17 +35,34 @@ fi
 
 # backup and restore empty tables.
 run_sql "CREATE DATABASE $DB;"
+echo "backup empty db start..."
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/empty_db"
+if [ $? -ne 0 ]; then
+    echo "TEST: [$TEST_NAME] failed on backup empty cluster!"
+    exit 1
+fi
+
+run_sql "DROP DATABASE $DB"
+
+# restore empty.
+echo "restore empty db start..."
+run_br restore full -s "local://$TEST_DIR/empty_db" --pd $PD_ADDR --ratelimit 1024
+if [ $? -ne 0 ]; then
+    echo "TEST: [$TEST_NAME] failed on restore empty cluster!"
+    exit 1
+fi
+
 run_sql "CREATE TABLE $DB.usertable1 ( \
   YCSB_KEY varchar(64) NOT NULL, \
   FIELD0 varchar(1) DEFAULT NULL, \
   PRIMARY KEY (YCSB_KEY) \
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 
-echo "backup start..."
+echo "backup empty table start..."
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/empty_table"
 
 run_sql "DROP DATABASE $DB;"
-echo "restore start..."
+echo "restore empty table start..."
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/empty_table"
 
 # insert one row to make sure table is restored.

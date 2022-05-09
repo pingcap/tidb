@@ -176,6 +176,12 @@ func (h *Handle) DDLEventCh() chan *util.Event {
 // insertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
 // new columns and indices which belong to this table.
 func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(physicalID, statsVer)
+		}
+	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.Background()
@@ -195,6 +201,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id) values(%?, %?)", startTS, physicalID); err != nil {
 		return err
 	}
+	statsVer = startTS
 	for _, col := range info.Columns {
 		if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 0, %?, 0, %?)", physicalID, col.ID, startTS); err != nil {
 			return err
@@ -211,6 +218,12 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 // insertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
 // This operation also updates version.
 func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(physicalID, statsVer)
+		}
+	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -233,6 +246,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	if err != nil {
 		return
 	}
+	statsVer = startTS
 	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
 	if h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.

@@ -156,14 +156,14 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 	var tracker *memory.Tracker
 	var err error
 	tracker = rc.GetMemTracker()
-	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
+	tracker.SetBytesLimit(chk.MemoryUsage() + int64(8*chk.NumRows()) + 1)
 	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
 	require.False(t, rc.AlreadySpilledSafeForTest())
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
 	require.NoError(t, err)
 	require.False(t, rc.AlreadySpilledSafeForTest())
-	require.Equal(t, chk.MemoryUsage(), rc.GetMemTracker().BytesConsumed())
+	require.Equal(t, chk.MemoryUsage()+int64(8*chk.NumRows()), rc.GetMemTracker().BytesConsumed())
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)
@@ -226,9 +226,9 @@ func TestSpillActionDeadLock(t *testing.T) {
 	// Goroutine 2: ------------------> SpillDiskAction -> new Goroutine to spill -> ------------------
 	// new Goroutine created by 2: ---> rc.SpillToDisk (Lock)
 	// In golang, RLock will be blocked after try to get Lock. So it will cause deadlock.
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock", "return(true)"))
 	defer func() {
-		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock"))
 	}()
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}

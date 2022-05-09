@@ -224,6 +224,19 @@ func (s *gcsStorage) Create(ctx context.Context, name string) (ExternalFileWrite
 	return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
 }
 
+// Rename file name from oldFileName to newFileName.
+func (s *gcsStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	data, err := s.ReadFile(ctx, oldFileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.WriteFile(ctx, newFileName, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return s.DeleteFile(ctx, oldFileName)
+}
+
 func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*gcsStorage, error) {
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {

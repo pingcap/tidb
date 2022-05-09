@@ -54,9 +54,6 @@ type AccessPath struct {
 
 	IsDNFCond bool
 
-	// IsTiFlashGlobalRead indicates whether this path is a remote read path for tiflash
-	IsTiFlashGlobalRead bool
-
 	// IsIntHandlePath indicates whether this path is table path.
 	IsIntHandlePath    bool
 	IsCommonHandlePath bool
@@ -64,6 +61,9 @@ type AccessPath struct {
 	Forced bool
 	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
 	IsSingleScan bool
+
+	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
+	IsUkShardIndexPath bool
 }
 
 // IsTablePath returns true if it's IntHandlePath or CommonHandlePath.
@@ -117,7 +117,7 @@ func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expressio
 	}
 	_, collation := f.CharsetAndCollation()
 	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.Collate) {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
 			return false
 		}
 		if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
@@ -132,7 +132,7 @@ func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expressio
 		}
 	}
 	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.Collate) {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
 			return false
 		}
 		if _, ok := f.GetArgs()[0].(*expression.Constant); ok {

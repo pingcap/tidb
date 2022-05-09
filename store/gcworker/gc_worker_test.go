@@ -1655,6 +1655,16 @@ func TestGCPlacementRules(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"))
 	}()
 
+	gcPlacementRuleCache := make(map[int64]interface{})
+	deletePlacementRuleCounter := 0
+	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/store/gcworker/gcDeletePlacementRuleCounter", "return", func() error {
+		deletePlacementRuleCounter++
+		return nil
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/gcDeletePlacementRuleCounter"))
+	}()
+
 	bundleID := "TiDB_DDL_10"
 	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{
 		PrimaryRegion: "r1",
@@ -1672,14 +1682,22 @@ func TestGCPlacementRules(t *testing.T) {
 
 	// do gc
 	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
-	err = s.gcWorker.doGCPlacementRules(dr)
+	err = s.gcWorker.doGCPlacementRules(1, dr, gcPlacementRuleCache)
 	require.NoError(t, err)
+	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
+	require.Equal(t, 1, deletePlacementRuleCounter)
 
 	// check bundle deleted after gc
 	got, err = infosync.GetRuleBundle(context.Background(), bundleID)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.True(t, got.IsEmpty())
+
+	// gc the same table id repeatedly
+	err = s.gcWorker.doGCPlacementRules(1, dr, gcPlacementRuleCache)
+	require.NoError(t, err)
+	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
+	require.Equal(t, 1, deletePlacementRuleCounter)
 }
 
 func TestGCLabelRules(t *testing.T) {

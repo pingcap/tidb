@@ -29,12 +29,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
-	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
-	"go.etcd.io/etcd/mvcc/mvccpb"
+	"go.etcd.io/etcd/api/v3/mvccpb"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -200,7 +199,7 @@ func (m *ownerManager) CampaignOwner() error {
 func (m *ownerManager) ResignOwner(ctx context.Context) error {
 	elec := (*concurrency.Election)(atomic.LoadPointer(&m.elec))
 	if elec == nil {
-		return errors.Errorf("This node is not a ddl owner, can't be resigned.")
+		return errors.Errorf("This node is not a ddl owner, can't be resigned")
 	}
 
 	childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
@@ -229,8 +228,7 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 	defer func() {
 		cancel()
 		if r := recover(); r != nil {
-			buf := util.GetStack()
-			logutil.BgLogger().Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.String("buffer", string(buf)))
+			logutil.BgLogger().Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.Stack("buffer"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
 		}
 		m.wg.Done()
