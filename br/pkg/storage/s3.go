@@ -287,8 +287,8 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	}
 
 	c := s3.New(ses)
-	// s3manager.GetBucketRegionWithClient will set credential anonymous.
-	// so we need reassign credential to pass authentication.
+	// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+	// we need reassign credential to be compatible with minio authentication.
 	confCred := ses.Config.Credentials
 	setCredOpt := func(req *request.Request) {
 		if confCred != nil {
