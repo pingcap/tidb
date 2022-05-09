@@ -171,15 +171,7 @@ func ToPBFieldTypeWithCheck(ft *types.FieldType, storeType kv.StoreType) (*tipb.
 	if storeType == kv.TiFlash && !ft.IsDecimalValid() {
 		return nil, errors.New(ft.String() + " can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(ft.GetFlen()) + "','" + strconv.Itoa(ft.GetDecimal()) + "').")
 	}
-	return &tipb.FieldType{
-		Tp:      int32(ft.GetType()),
-		Flag:    uint32(ft.GetFlag()),
-		Flen:    int32(ft.GetFlen()),
-		Decimal: int32(ft.GetDecimal()),
-		Charset: ft.GetCharset(),
-		Collate: collate.CollationToProto(ft.GetCollate()),
-		Elems:   ft.GetElems(),
-	}, nil
+	return ToPBFieldType(ft), nil
 }
 
 // FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
