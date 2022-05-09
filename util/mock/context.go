@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -108,13 +107,9 @@ func (c *Context) ShowProcess() *util.ProcessInfo {
 	return &util.ProcessInfo{}
 }
 
-type mockDDLOwnerChecker struct{}
-
-func (c *mockDDLOwnerChecker) IsOwner() bool { return true }
-
-// DDLOwnerChecker returns owner.DDLOwnerChecker.
-func (c *Context) DDLOwnerChecker() owner.DDLOwnerChecker {
-	return &mockDDLOwnerChecker{}
+// IsDDLOwner checks whether this session is DDL owner.
+func (c *Context) IsDDLOwner() bool {
+	return true
 }
 
 // SetValue implements sessionctx.Context SetValue interface.

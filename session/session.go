@@ -219,8 +219,8 @@ type session struct {
 	sessionManager util.SessionManager
 
 	statsCollector *handle.SessionStatsCollector
-	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
-	ddlOwnerChecker owner.DDLOwnerChecker
+	// ddlOwnerManager is used in `select tidb_is_ddl_owner()` statement;
+	ddlOwnerManager owner.Manager
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables map[int64]model.TableLockTpInfo
 
@@ -306,9 +306,9 @@ func (s *session) ReleaseAllTableLocks() {
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 }
 
-// DDLOwnerChecker returns s.ddlOwnerChecker.
-func (s *session) DDLOwnerChecker() owner.DDLOwnerChecker {
-	return s.ddlOwnerChecker
+// IsDDLOwner checks whether this session is DDL owner.
+func (s *session) IsDDLOwner() bool {
+	return s.ddlOwnerManager.IsOwner()
 }
 
 func (s *session) cleanRetryInfo() {
@@ -2987,7 +2987,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s := &session{
 		store:           store,
 		sessionVars:     variable.NewSessionVars(),
-		ddlOwnerChecker: dom.DDL().OwnerManager(),
+		ddlOwnerManager: dom.DDL().OwnerManager(),
 		client:          store.GetClient(),
 		mppClient:       store.GetMPPClient(),
 		stmtStats:       stmtstats.CreateStatementStats(),
