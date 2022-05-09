@@ -147,20 +147,20 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 
     ```go
     type HistoryHotRegion struct {
-    UpdateTime    int64   `json:"update_time"`
-    RegionID      uint64  `json:"region_id"`
-    PeerID        uint64  `json:"peer_id"`
-    StoreID       uint64  `json:"store_id"`
-    IsLeader      bool    `json:"is_leader"`
-    IsLearner     bool    `json:"is_learner"`
-    HotRegionType string  `json:"hot_region_type"`
-    HotDegree     int64   `json:"hot_degree"`
-    FlowBytes     float64 `json:"flow_bytes"`
-    KeyRate       float64 `json:"key_rate"`
-    QueryRate     float64 `json:"query_rate"`
-    StartKey      string  `json:"start_key"`
-    EndKey        string  `json:"end_key"`
-    EncryptionMeta *encryptionpb.EncryptionMeta `json:"encryption_meta,omitempty"`
+      UpdateTime    int64   `json:"update_time"`
+      RegionID      uint64  `json:"region_id"`
+      PeerID        uint64  `json:"peer_id"`
+      StoreID       uint64  `json:"store_id"`
+      IsLeader      bool    `json:"is_leader"`
+      IsLearner     bool    `json:"is_learner"`
+      HotRegionType string  `json:"hot_region_type"`
+      HotDegree     int64   `json:"hot_degree"`
+      FlowBytes     float64 `json:"flow_bytes"`
+      KeyRate       float64 `json:"key_rate"`
+      QueryRate     float64 `json:"query_rate"`
+      StartKey      string  `json:"start_key"`
+      EndKey        string  `json:"end_key"`
+      EncryptionMeta *encryptionpb.EncryptionMeta `json:"encryption_meta,omitempty"`
     }
     ```
 
