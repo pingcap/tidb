@@ -100,6 +100,12 @@ run_curl https://$PD_ADDR/pd/api/v1/config/schedule | grep '"disable": false'
 # to check whether we pause config succeed is
 # setting a paused config again and expect to get the failed.
 run_pd_ctl -u https://$PD_ADDR config set max-merge-region-size 0 | grep -q "need to clean up TTL first for schedule.max-merge-region-size"
+run_pd_ctl -u https://$PD_ADDR config set max-merge-region-keys 0 | grep -q "need to clean up TTL first for schedule.max-merge-region-keys"
+run_pd_ctl -u https://$PD_ADDR config set max-pending-peer-count 0 | grep -q "need to clean up TTL first for schedule.max-pending-peer-count"
+run_pd_ctl -u https://$PD_ADDR config set enable-location-replacement false | grep -q "need to clean up TTL first for schedule.enable-location-replacement"
+run_pd_ctl -u https://$PD_ADDR config set leader-schedule-limit 0 | grep -q "need to clean up TTL first for schedule.leader-schedule-limit"
+run_pd_ctl -u https://$PD_ADDR config set region-schedule-limit 0 | grep -q "need to clean up TTL first for schedule.region-schedule-limit"
+run_pd_ctl -u https://$PD_ADDR config set max-snapshot-count 0 | grep -q "need to clean up TTL first for schedule.max-snapshot-count"
 
 backup_fail=0
 # generate 1.sst to make another backup failed.
