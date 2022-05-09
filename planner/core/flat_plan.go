@@ -28,7 +28,7 @@ type FlatPhysicalPlan struct {
 	Main FlatPlanTree
 	CTEs []FlatPlanTree
 
-	// InExecute means if the plan tree contains Execute operator.
+	// InExecute means if the original plan tree contains Execute operator.
 	//
 	// Be careful when trying to use this, InExecute is true doesn't mean we are handling an EXECUTE statement.
 	// When collecting information from the plan in an EXECUTE statement, usually we directly use the plan
@@ -41,7 +41,7 @@ type FlatPhysicalPlan struct {
 	InExecute bool
 
 	ctesToFlatten []*PhysicalCTE
-	// We'll need the session to get the runtime stats.
+	// We'll need the stmtCtx to get the runtime stats when building the FlatPhysicalPlan.
 	stmtCtx *stmtctx.StatementContext
 }
 
@@ -52,7 +52,9 @@ type FlatPhysicalPlan struct {
 type FlatPlanTree []*FlatOperator
 
 // GetSelectPlan skips Insert, Delete and Update at the beginning of the FlatPlanTree.
-// Note: it returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
+// Note:
+//     It returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
+//     Since you get a part of the original slice, you may need to adjust the FlatOperator.Depth when using it.
 func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
 	if len(e) == 0 {
 		return nil
@@ -155,7 +157,10 @@ func FlattenPhysicalPlan(p Plan, stmtCtx *stmtctx.StatementContext) *FlatPhysica
 	res.Main = res.flattenRecursively(p, initInfo, nil)
 
 	flattenedCTEPlan := make(map[int]struct{}, len(res.ctesToFlatten))
-	for _, cte := range res.ctesToFlatten {
+
+	// Note that ctesToFlatten may be modified in the loop, so we manually loop over ctesToFlatten instead of using for...range.
+	for i := 0; i < len(res.ctesToFlatten); i++ {
+		cte := res.ctesToFlatten[i]
 		cteDef := (*CTEDefinition)(cte)
 		if _, ok := flattenedCTEPlan[cteDef.CTE.IDForStorage]; ok {
 			continue
@@ -224,12 +229,12 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		target = append(target, flat)
 	}
 
-	childInfo := &operatorCtx{
+	childCtx := &operatorCtx{
 		depth:  info.depth + 1,
 		indent: texttree.Indent4Child(info.indent, info.isLastChild),
 	}
 	// For physical operators, we just enumerate their children and collect their information.
-	// Note that some physical operators are special, and they are handled below.
+	// Note that some physical operators are special, and they are handled below this part.
 	if physPlan, ok := p.(PhysicalPlan); ok {
 		driverSideInfo := make([]DriverSide, len(physPlan.Children()))
 
@@ -265,11 +270,11 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		}
 
 		for i := range physPlan.Children() {
-			childInfo.isRoot = info.isRoot
-			childInfo.storeType = info.storeType
-			childInfo.driverSide = driverSideInfo[i]
-			childInfo.isLastChild = i == len(physPlan.Children())-1
-			target = f.flattenRecursively(physPlan.Children()[i], childInfo, target)
+			childCtx.isRoot = info.isRoot
+			childCtx.storeType = info.storeType
+			childCtx.driverSide = driverSideInfo[i]
+			childCtx.isLastChild = i == len(physPlan.Children())-1
+			target = f.flattenRecursively(physPlan.Children()[i], childCtx, target)
 		}
 	}
 
@@ -277,77 +282,77 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	// For PhysicalCTE, we need to add the plan tree into flatTree.ctesToFlatten.
 	switch plan := p.(type) {
 	case *PhysicalTableReader:
-		childInfo.isRoot = false
-		childInfo.storeType = plan.StoreType
-		childInfo.reqType = plan.ReadReqType
-		childInfo.driverSide = Empty
-		childInfo.isLastChild = true
-		target = f.flattenRecursively(plan.tablePlan, childInfo, target)
+		childCtx.isRoot = false
+		childCtx.storeType = plan.StoreType
+		childCtx.reqType = plan.ReadReqType
+		childCtx.driverSide = Empty
+		childCtx.isLastChild = true
+		target = f.flattenRecursively(plan.tablePlan, childCtx, target)
 	case *PhysicalIndexReader:
-		childInfo.isRoot = false
-		childInfo.reqType = Cop
-		childInfo.storeType = kv.TiKV
-		childInfo.driverSide = Empty
-		childInfo.isLastChild = true
-		target = f.flattenRecursively(plan.indexPlan, childInfo, target)
+		childCtx.isRoot = false
+		childCtx.reqType = Cop
+		childCtx.storeType = kv.TiKV
+		childCtx.driverSide = Empty
+		childCtx.isLastChild = true
+		target = f.flattenRecursively(plan.indexPlan, childCtx, target)
 	case *PhysicalIndexLookUpReader:
-		childInfo.isRoot = false
-		childInfo.reqType = Cop
-		childInfo.storeType = kv.TiKV
-		childInfo.driverSide = BuildSide
-		childInfo.isLastChild = false
-		target = f.flattenRecursively(plan.indexPlan, childInfo, target)
-		childInfo.driverSide = ProbeSide
-		childInfo.isLastChild = true
-		target = f.flattenRecursively(plan.tablePlan, childInfo, target)
+		childCtx.isRoot = false
+		childCtx.reqType = Cop
+		childCtx.storeType = kv.TiKV
+		childCtx.driverSide = BuildSide
+		childCtx.isLastChild = false
+		target = f.flattenRecursively(plan.indexPlan, childCtx, target)
+		childCtx.driverSide = ProbeSide
+		childCtx.isLastChild = true
+		target = f.flattenRecursively(plan.tablePlan, childCtx, target)
 	case *PhysicalIndexMergeReader:
-		childInfo.isRoot = false
-		childInfo.reqType = Cop
-		childInfo.storeType = kv.TiKV
+		childCtx.isRoot = false
+		childCtx.reqType = Cop
+		childCtx.storeType = kv.TiKV
 		for _, pchild := range plan.partialPlans {
-			childInfo.driverSide = BuildSide
-			childInfo.isLastChild = false
-			target = f.flattenRecursively(pchild, childInfo, target)
+			childCtx.driverSide = BuildSide
+			childCtx.isLastChild = false
+			target = f.flattenRecursively(pchild, childCtx, target)
 		}
-		childInfo.driverSide = ProbeSide
-		childInfo.isLastChild = true
-		target = f.flattenRecursively(plan.tablePlan, childInfo, target)
+		childCtx.driverSide = ProbeSide
+		childCtx.isLastChild = true
+		target = f.flattenRecursively(plan.tablePlan, childCtx, target)
 	case *PhysicalShuffleReceiverStub:
-		childInfo.isRoot = true
-		childInfo.driverSide = Empty
-		childInfo.isLastChild = true
-		target = f.flattenRecursively(plan.DataSource, childInfo, target)
+		childCtx.isRoot = true
+		childCtx.driverSide = Empty
+		childCtx.isLastChild = true
+		target = f.flattenRecursively(plan.DataSource, childCtx, target)
 	case *PhysicalCTE:
 		f.ctesToFlatten = append(f.ctesToFlatten, plan)
 	case *Insert:
 		if plan.SelectPlan != nil {
-			childInfo.isRoot = true
-			childInfo.driverSide = Empty
-			childInfo.isLastChild = true
-			target = f.flattenRecursively(plan.SelectPlan, childInfo, target)
+			childCtx.isRoot = true
+			childCtx.driverSide = Empty
+			childCtx.isLastChild = true
+			target = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 		}
 	case *Update:
 		if plan.SelectPlan != nil {
-			childInfo.isRoot = true
-			childInfo.driverSide = Empty
-			childInfo.isLastChild = true
-			target = f.flattenRecursively(plan.SelectPlan, childInfo, target)
+			childCtx.isRoot = true
+			childCtx.driverSide = Empty
+			childCtx.isLastChild = true
+			target = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 		}
 	case *Delete:
 		if plan.SelectPlan != nil {
-			childInfo.isRoot = true
-			childInfo.driverSide = Empty
-			childInfo.isLastChild = true
-			target = f.flattenRecursively(plan.SelectPlan, childInfo, target)
+			childCtx.isRoot = true
+			childCtx.driverSide = Empty
+			childCtx.isLastChild = true
+			target = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 		}
 	case *Execute:
 		f.InExecute = true
 		if plan.Plan != nil {
-			childInfo.isRoot = true
-			childInfo.indent = info.indent
-			childInfo.driverSide = Empty
-			childInfo.isLastChild = true
-			target = f.flattenRecursively(plan.Plan, childInfo, target)
+			childCtx.isRoot = true
+			childCtx.indent = info.indent
+			childCtx.driverSide = Empty
+			childCtx.isLastChild = true
+			target = f.flattenRecursively(plan.Plan, childCtx, target)
 		}
 	case *Explain:
 		// Explain is ignored in flattenSingle(). We start to explain its TargetPlan from a new operatorCtx.

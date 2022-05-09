@@ -1369,32 +1369,29 @@ func visualDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPla
 }
 
 func visualOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *tipb.VisualOperator {
-	s := make([]*tipb.VisualOperator, len(ops))
+	s := make([]tipb.VisualOperator, len(ops))
 	for i, op := range ops {
-		singleVisData := visualOpFromFlatOp(explainCtx, op)
-		s[i] = singleVisData
+		visualOpFromFlatOp(explainCtx, op, &s[i])
 		for j := i - 1; j >= 0; j-- {
 			if ops[j].Depth == op.Depth-1 {
-				s[j].Children = append(s[j].Children, singleVisData)
+				s[j].Children = append(s[j].Children, &s[i])
 				break
 			}
 		}
 	}
-	return s[0]
+	return &s[0]
 }
 
-func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator) *tipb.VisualOperator {
-	res := &tipb.VisualOperator{
-		Name:    op.Origin.ExplainID().String(),
-		Cost:    op.EstCost,
-		EstRows: op.EstRows,
-		ActRows: uint64(op.ActRows),
-		RunAt:   op.StoreType.Name(),
-	}
+func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *tipb.VisualOperator) {
+	out.Name = op.Origin.ExplainID().String()
+	out.Cost = op.EstCost
+	out.EstRows = op.EstRows
+	out.ActRows = uint64(op.ActRows)
+	out.RunAt = op.StoreType.Name()
 	// Get TimeUs
 	if op.RootStats != nil {
 		if basicStats := op.RootStats.MergeBasicStats(); basicStats != nil {
-			res.TimeUs = float64(time.Duration(basicStats.GetTime()).Microseconds())
+			out.TimeUs = float64(time.Duration(basicStats.GetTime()).Microseconds())
 		}
 	} else if op.CopStats != nil {
 		var totalTime time.Duration
@@ -1402,7 +1399,7 @@ func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator) *tipb.V
 			for i := range times {
 				totalTime += times[i]
 			}
-			res.TimeUs = float64(totalTime.Microseconds())
+			out.TimeUs = float64(totalTime.Microseconds())
 		}
 	}
 	// Get AccessXXX
@@ -1413,10 +1410,10 @@ func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator) *tipb.V
 		if p.TableAsName != nil && p.TableAsName.O != "" {
 			tblName = p.TableAsName.O
 		}
-		res.AccessTable = tblName
+		out.AccessTable = tblName
 		if p.isPartition {
 			if pi := p.Table.GetPartitionInfo(); pi != nil {
-				res.AccessPartition = pi.GetNameByID(p.physicalTableID)
+				out.AccessPartition = pi.GetNameByID(p.physicalTableID)
 			}
 		}
 	case *PhysicalIndexScan:
@@ -1425,32 +1422,32 @@ func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator) *tipb.V
 		if p.TableAsName != nil && p.TableAsName.O != "" {
 			tblName = p.TableAsName.O
 		}
-		res.AccessTable = tblName
+		out.AccessTable = tblName
 		if p.isPartition {
 			if pi := p.Table.GetPartitionInfo(); pi != nil {
-				res.AccessPartition = pi.GetNameByID(p.physicalTableID)
+				out.AccessPartition = pi.GetNameByID(p.physicalTableID)
 			}
 		}
 		if len(p.Index.Columns) > 0 {
-			res.AccessIndex = p.Index.Name.O
+			out.AccessIndex = p.Index.Name.O
 		}
 	case *PhysicalMemTable:
 		// Similar to (*PhysicalMemTable).AccessObject()
-		res.AccessTable = p.Table.Name.O
+		out.AccessTable = p.Table.Name.O
 	case *PointGetPlan:
 		// Similar to (*PointGetPlan).AccessObject()
-		res.AccessTable = p.TblInfo.Name.O
+		out.AccessTable = p.TblInfo.Name.O
 		if p.PartitionInfo != nil {
-			res.AccessPartition = p.PartitionInfo.Name.O
+			out.AccessPartition = p.PartitionInfo.Name.O
 		}
 		if p.IndexInfo != nil {
-			res.AccessIndex = p.IndexInfo.Name.O
+			out.AccessIndex = p.IndexInfo.Name.O
 		}
 	case *BatchPointGetPlan:
 		// Similar to (*BatchPointGetPlan).AccessObject()
-		res.AccessTable = p.TblInfo.Name.O
+		out.AccessTable = p.TblInfo.Name.O
 		if p.IndexInfo != nil {
-			res.AccessIndex = p.IndexInfo.Name.O
+			out.AccessIndex = p.IndexInfo.Name.O
 		}
 	case *PhysicalTableReader:
 		// Similar to (*PhysicalTableReader).accessObject()
@@ -1459,12 +1456,12 @@ func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator) *tipb.V
 		}
 		if len(p.PartitionInfos) == 0 {
 			ts := p.TablePlans[0].(*PhysicalTableScan)
-			res.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
+			out.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
 			break
 		}
 		if len(p.PartitionInfos) == 1 {
 			tsAndPartInfo := p.PartitionInfos[0]
-			res.AccessPartition, _ = getDynamicAccessPartition(explainCtx, tsAndPartInfo.tableScan.Table, &tsAndPartInfo.partitionInfo)
+			out.AccessPartition, _ = getDynamicAccessPartition(explainCtx, tsAndPartInfo.tableScan.Table, &tsAndPartInfo.partitionInfo)
 			break
 		}
 		containsPartitionTable := false
@@ -1495,22 +1492,21 @@ func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator) *tipb.V
 				buffer.WriteString(partition)
 			}
 			buffer.WriteString(" of " + tblName)
-			res.AccessPartition = buffer.String()
+			out.AccessPartition = buffer.String()
 		}
 	case *PhysicalIndexReader:
 		// Similar to (*PhysicalIndexReader).accessObject()
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
-		res.AccessPartition, _ = getDynamicAccessPartition(explainCtx, is.Table, &p.PartitionInfo)
+		out.AccessPartition, _ = getDynamicAccessPartition(explainCtx, is.Table, &p.PartitionInfo)
 	case *PhysicalIndexLookUpReader:
 		// Similar to (*PhysicalIndexLookUpReader).accessObject()
 		ts := p.TablePlans[0].(*PhysicalTableScan)
-		res.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
+		out.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
 	case *PhysicalIndexMergeReader:
 		// Similar to (*PhysicalIndexMergeReader).accessObject()
 		ts := p.TablePlans[0].(*PhysicalTableScan)
-		res.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
+		out.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
 	}
-	return res
 }
 
 func (e *Explain) explainPlanInRowFormatCTE() (err error) {
@@ -1645,6 +1641,10 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 }
 
 func getRuntimeInfoFromExplainedOp(op *FlatOperator) (analyzeInfo, memoryInfo, diskInfo string) {
+	if op.RootStats == nil && op.CopStats == nil {
+		// be consistent with getRuntimeInfo()
+		return "", "", ""
+	}
 	if op.RootStats != nil {
 		analyzeInfo = op.RootStats.String()
 	}

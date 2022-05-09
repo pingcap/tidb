@@ -29,14 +29,13 @@ import (
 
 // EncodeFlatPlan encodes a FlatPhysicalPlan with compression.
 func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
-	var buf bytes.Buffer
 	if len(flat.Main) == 0 {
 		return ""
 	}
-	// We won't collect the plan when it's in "EXPLAIN FOR" statement and the plan is from EXECUTE statement. (Please
-	// read comments of InExecute for details)
-	// Because we are unable to get some necessary information when the execution of the plan is finished and some
-	// states in the session such as PreparedParams are cleaned.
+	// We won't collect the plan when we're in "EXPLAIN FOR" statement and the plan is from EXECUTE statement (please
+	// read comments of InExecute for details about the meaning of InExecute) because we are unable to get some
+	// necessary information when the execution of the plan is finished and some states in the session such as
+	// PreparedParams are cleaned.
 	if flat.InExecute {
 		return ""
 	}
@@ -44,9 +43,25 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return ""
 	}
+	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+		for _, op := range selectPlan {
+			op.EstRows = float64(val.(int))
+		}
+	})
+	var buf bytes.Buffer
+	opCount := len(flat.Main)
+	for _, cte := range flat.CTEs {
+		opCount += len(cte)
+	}
+	// assume an operator costs around 80 bytes, preallocate space for them
+	buf.Grow(80 * opCount)
 	for _, op := range flat.Main {
 		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
 		analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoFromExplainedOp(op)
+		actRowsStr := ""
+		if op.ActRows > 0 || len(analyzeInfo) > 0 || len(memoryInfo) > 0 || len(diskInfo) > 0 {
+			actRowsStr = strconv.FormatInt(op.ActRows, 10)
+		}
 		plancodec.EncodePlanNode(
 			int(op.Depth),
 			op.Origin.ID(),
@@ -54,7 +69,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 			op.EstRows,
 			taskTypeInfo,
 			op.Origin.ExplainInfo(),
-			strconv.FormatInt(op.ActRows, 10),
+			actRowsStr,
 			analyzeInfo,
 			memoryInfo,
 			diskInfo,
@@ -75,6 +90,10 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 			}
 			taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
 			analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoFromExplainedOp(op)
+			actRowsStr := ""
+			if op.ActRows > 0 || len(analyzeInfo) > 0 || len(memoryInfo) > 0 || len(diskInfo) > 0 {
+				actRowsStr = strconv.FormatInt(op.ActRows, 10)
+			}
 			plancodec.EncodePlanNode(
 				int(op.Depth),
 				id,
@@ -82,7 +101,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 				op.EstRows,
 				taskTypeInfo,
 				op.Origin.ExplainInfo(),
-				strconv.FormatInt(op.ActRows, 10),
+				actRowsStr,
 				analyzeInfo,
 				memoryInfo,
 				diskInfo,
@@ -221,17 +240,20 @@ type planDigester struct {
 
 // NormalizeFlatPlan normalizes a FlatPhysicalPlan and generates plan digest.
 func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parser.Digest) {
-	hasher := sha256.New()
-	var buf bytes.Buffer
 	selectPlan := flat.Main.GetSelectPlan()
 	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return "", parser.NewDigest(nil)
 	}
+	hasher := sha256.New()
+	var buf bytes.Buffer
+	// assume an operator costs around 30 bytes, preallocate space for them
+	buf.Grow(30 * len(selectPlan))
+	depthOffset := len(flat.Main) - len(selectPlan)
 	for _, op := range selectPlan {
 		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
 		p := op.Origin.(PhysicalPlan)
 		plancodec.NormalizePlanNode(
-			int(op.Depth),
+			int(op.Depth-uint64(depthOffset)),
 			op.Origin.TP(),
 			taskTypeInfo,
 			p.ExplainNormalizedInfo(),
