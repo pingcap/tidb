@@ -89,10 +89,16 @@ run_curl "https://localhost:$PPROF_PORT/debug/pprof/trace?seconds=1" &>/dev/null
 echo "pprof started..."
 
 run_curl https://$PD_ADDR/pd/api/v1/config/schedule | grep '"disable": false'
-run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."enable-location-replacement"' | grep "false"
-run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-pending-peer-count"' | grep "2147483647"
-run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-size"' | grep -E "^0$"
-run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-keys"' | grep -E "^0$"
+
+# after apply the pause api. these configs won't change any more.
+# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."enable-location-replacement"' | grep "false"
+# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-pending-peer-count"' | grep "2147483647"
+# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-size"' | grep -E "^0$"
+# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-keys"' | grep -E "^0$"
+
+# another way to check whether we pause config succeed is
+# set a paused config again and expect to get the failed.
+run_pd_ctl -u https://$PD_ADDR config set max-merge-region-size 0 | grep -q "need to clean up TTL first for schedule.max-merge-region-size"
 
 backup_fail=0
 # generate 1.sst to make another backup failed.
