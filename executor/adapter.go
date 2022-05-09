@@ -1038,15 +1038,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		return
 	}
 	sql := FormatSQL(a.GetTextToLog())
-	_, digest := sessVars.StmtCtx.SQLDigest()
+	_, digest := stmtCtx.SQLDigest()
 
 	var indexNames string
-	if len(sessVars.StmtCtx.IndexNames) > 0 {
+	if len(stmtCtx.IndexNames) > 0 {
 		// remove duplicate index.
 		idxMap := make(map[string]struct{})
 		buf := bytes.NewBuffer(make([]byte, 0, 4))
 		buf.WriteByte('[')
-		for _, idx := range sessVars.StmtCtx.IndexNames {
+		for _, idx := range stmtCtx.IndexNames {
 			_, ok := idxMap[idx]
 			if ok {
 				continue
@@ -1071,11 +1071,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
-	execDetail := sessVars.StmtCtx.GetExecDetails()
-	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
+	execDetail := stmtCtx.GetExecDetails()
+	copTaskInfo := stmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfoFromFlatPlan(flat)
-	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
-	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
+	memMax := stmtCtx.MemTracker.MaxConsumed()
+	diskMax := stmtCtx.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(stmtCtx)
 
 	visualPlan := ""
@@ -1116,7 +1116,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ResultRows:        resultRows,
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
-		IsWriteCacheTable: sessVars.StmtCtx.WaitLockLeaseTime > 0,
+		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
 	}
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
@@ -1144,15 +1144,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			userString = sessVars.User.String()
 		}
 		var tableIDs string
-		if len(sessVars.StmtCtx.TableIDs) > 0 {
-			tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
+		if len(stmtCtx.TableIDs) > 0 {
+			tableIDs = strings.Replace(fmt.Sprintf("%v", stmtCtx.TableIDs), " ", ",", -1)
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
 			Digest:     digest.String(),
 			Start:      sessVars.StartTime,
 			Duration:   costTime,
-			Detail:     sessVars.StmtCtx.GetExecDetails(),
+			Detail:     stmtCtx.GetExecDetails(),
 			Succ:       succ,
 			ConnID:     sessVars.ConnectionID,
 			TxnTS:      txnTS,
