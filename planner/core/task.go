@@ -1810,7 +1810,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			proj.SetSchema(p.schema)
 		}
 		attachPlan2Task(proj, newMpp)
-		newMpp.addCost(p.GetCost(inputRows, false, true))
+		newMpp.addCost(p.GetCost(inputRows, false, true, 0))
 		finalAgg.SetCost(newMpp.cost())
 		proj.SetCost(newMpp.cost())
 		return newMpp
@@ -1846,7 +1846,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
-				cop.addCost(partialAgg.(*PhysicalHashAgg).GetCost(inputRows, false, false))
+				cop.addCost(partialAgg.(*PhysicalHashAgg).GetCost(inputRows, false, false, 0))
 			}
 			// In `newPartialAggregate`, we are using stats of final aggregation as stats
 			// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
@@ -1879,7 +1879,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// hash aggregation, it would cause under-estimation as the reason mentioned in comment above.
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
-	t.addCost(final.GetCost(inputRows, true, false))
+	t.addCost(final.GetCost(inputRows, true, false, 0))
 	t.plan().SetCost(t.cost())
 	return t
 }
