@@ -48,14 +48,6 @@ const (
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )
 
-func getPauseTimeout() time.Duration {
-	timeout := pauseTimeout
-	failpoint.Inject("PDPauseConfigSeconds", func(v failpoint.Value) {
-		timeout = time.Duration(v.(int)) * time.Second
-	})
-	return timeout
-}
-
 // pauseConfigGenerator generate a config value according to store count and current value.
 type pauseConfigGenerator func(int, interface{}) interface{}
 
@@ -387,7 +379,7 @@ func (p *PdController) getStoreInfoWith(
 
 func (p *PdController) doPauseSchedulers(ctx context.Context, schedulers []string, post pdHTTPRequest) ([]string, error) {
 	// pause this scheduler with 300 seconds
-	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(getPauseTimeout().Seconds())})
+	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(pauseTimeout.Seconds())})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -433,7 +425,7 @@ func (p *PdController) pauseSchedulersAndConfigWith(
 	}
 
 	go func() {
-		tick := time.NewTicker(getPauseTimeout() / 3)
+		tick := time.NewTicker(pauseTimeout / 3)
 		defer tick.Stop()
 
 		for {
@@ -579,7 +571,7 @@ func (p *PdController) doUpdatePDScheduleConfig(
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest) error {
 	// pause this scheduler with 300 seconds
-	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", configPrefix, getPauseTimeout().Seconds())
+	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", configPrefix, pauseTimeout.Seconds())
 	return p.doUpdatePDScheduleConfig(ctx, cfg, post, prefix)
 }
 
