@@ -99,46 +99,48 @@ func (desc *baseFuncDesc) GetTiPBExpr(tryWindowDesc bool) (tp tipb.ExprType) {
 }
 
 // AggFuncToPBExpr converts aggregate function to pb.
-func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
+func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFuncDesc, storeType kv.StoreType) (*tipb.Expr, error) {
 	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
 	tp := aggFunc.GetTiPBExpr(false)
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
-		return nil
+		return nil, errors.New("select request is not supported by client")
 	}
 
 	children := make([]*tipb.Expr, 0, len(aggFunc.Args))
 	for _, arg := range aggFunc.Args {
 		pbArg := pc.ExprToPB(arg)
 		if pbArg == nil {
-			return nil
+			return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
 		}
 		children = append(children, pbArg)
 	}
+	sc := sctx.GetSessionVars().StmtCtx
+	if storeType == kv.TiFlash && !aggFunc.RetTp.IsDecimalValid() {
+		return nil, errors.New("aggregation can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(aggFunc.RetTp.GetFlen()) + "','" + strconv.Itoa(aggFunc.RetTp.GetDecimal()) + "').")
+	}
+
 	if tp == tipb.ExprType_GroupConcat {
 		orderBy := make([]*tipb.ByItem, 0, len(aggFunc.OrderByItems))
-		sc := sctx.GetSessionVars().StmtCtx
 		for _, arg := range aggFunc.OrderByItems {
 			pbArg := expression.SortByItemToPB(sc, client, arg.Expr, arg.Desc)
 			if pbArg == nil {
-				return nil
+				return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
 			}
 			orderBy = append(orderBy, pbArg)
 		}
 		// encode GroupConcatMaxLen
 		GCMaxLen, err := variable.GetSessionOrGlobalSystemVar(sctx.GetSessionVars(), variable.GroupConcatMaxLen)
 		if err != nil {
-			sc.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
-			return nil
+			return nil, errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen)
 		}
 		maxLen, err := strconv.ParseUint(GCMaxLen, 10, 64)
 		// Should never happen
 		if err != nil {
-			sc.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: %s", err.Error()))
-			return nil
+			return nil, errors.Errorf("Error happened when buildGroupConcat: %s", err.Error())
 		}
-		return &tipb.Expr{Tp: tp, Val: codec.EncodeUint(nil, maxLen), Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, OrderBy: orderBy, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}
+		return &tipb.Expr{Tp: tp, Val: codec.EncodeUint(nil, maxLen), Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, OrderBy: orderBy, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}, nil
 	}
-	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}
+	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}, nil
 }
 
 // AggFunctionModeToPB converts aggregate function mode to PB.

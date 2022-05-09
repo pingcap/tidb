@@ -17,6 +17,7 @@ package aggregation
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"testing"
 
 	"github.com/pingcap/tidb/expression"
@@ -65,7 +66,7 @@ func TestAggFunc2Pb(t *testing.T) {
 			aggFunc, err := NewAggFuncDesc(ctx, funcName, args, hasDistinct)
 			require.NoError(t, err)
 			aggFunc.RetTp = funcTypes[i]
-			pbExpr := AggFuncToPBExpr(ctx, client, aggFunc)
+			pbExpr, _ := AggFuncToPBExpr(ctx, client, aggFunc, kv.UnSpecified)
 			js, err := json.Marshal(pbExpr)
 			require.NoError(t, err)
 			require.Equal(t, fmt.Sprintf(jsons[i], hasDistinct), string(js))

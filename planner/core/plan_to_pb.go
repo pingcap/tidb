@@ -47,7 +47,11 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
-		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(ctx, client, aggFunc))
+		agg, err := aggregation.AggFuncToPBExpr(ctx, client, aggFunc, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		aggExec.AggFunc = append(aggExec.AggFunc, agg)
 	}
 	executorID := ""
 	if storeType == kv.TiFlash {
@@ -73,7 +77,11 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
-		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(ctx, client, aggFunc))
+		agg, err := aggregation.AggFuncToPBExpr(ctx, client, aggFunc, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		aggExec.AggFunc = append(aggExec.AggFunc, agg)
 	}
 	executorID := ""
 	if storeType == kv.TiFlash {

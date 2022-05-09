@@ -1166,7 +1166,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 				break
 			}
 		}
-		pb := aggregation.AggFuncToPBExpr(sctx, client, aggFunc)
+		pb, _ := aggregation.AggFuncToPBExpr(sctx, client, aggFunc, storeType)
 		if pb == nil {
 			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
 			ret = false
