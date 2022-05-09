@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -580,44 +581,16 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 			MaxChunkSize: maxChunkSize,
 		}, nil
 	}
-	resultFields := []*ast.ResultField{
-		{
-			Column: &model.ColumnInfo{
-				FieldType: *types.NewFieldType(mysql.TypeString),
-			},
-			ColumnAsName: model.NewCIStr("job"),
-		},
-		{
-			Column: &model.ColumnInfo{
-				FieldType: *types.NewFieldType(mysql.TypeString),
-			},
-			ColumnAsName: model.NewCIStr("sql"),
-		},
-		{
-			Column: &model.ColumnInfo{
-				FieldType: *types.NewFieldType(mysql.TypeString),
-			},
-			ColumnAsName: model.NewCIStr("error"),
-		},
-	}
-
-	rows := make([][]interface{}, 0, len(failedJobs))
 	var sb strings.Builder
 	for _, job := range failedJobs {
-		row := make([]interface{}, 2)
-		row[0] = job.String(false)
-		row[1] = job.err.Error()
-		rows = append(rows, row)
 		sb.WriteString(fmt.Sprintf("%s, %s;\n", job.String(redactLog), job.err.Error()))
 	}
 
+	errStr := sb.String()
 	// log errors here in case the output is too long. There can be thousands of errors.
-	logutil.Logger(ctx).Warn("Non-transactional delete failed",
-		zap.Int("num_failed_jobs", len(failedJobs)), zap.String("failed_jobs", sb.String()))
+	logutil.Logger(ctx).Error("Non-transactional delete failed",
+		zap.Int("num_failed_jobs", len(failedJobs)), zap.String("failed_jobs", errStr))
 
-	return &sqlexec.SimpleRecordSet{
-		ResultFields: resultFields,
-		Rows:         rows,
-		MaxChunkSize: maxChunkSize,
-	}, nil
+	return nil, errors.New(fmt.Sprintf("%d jobs failed in the non-transactional statement: %s, ...(more in logs)",
+		len(failedJobs), errStr[:mathutil.Min(500, len(errStr)-1)]))
 }
