@@ -19,6 +19,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -64,7 +65,12 @@ func NewFieldType(tp byte) *FieldType {
 		decimal: UnspecifiedLength,
 	}
 }
-
+func (ft *FieldType) IsDecimalValid() bool {
+	if ft.tp == mysql.TypeNewDecimal && (ft.decimal < 0 || ft.decimal > mysql.MaxDecimalScale || ft.flen <= 0 || ft.flen > mysql.MaxDecimalWidth) {
+		return false
+	}
+	return true
+}
 func (ft *FieldType) GetType() byte {
 	return ft.tp
 }
@@ -118,11 +124,11 @@ func (ft *FieldType) DelFlag(flag uint) {
 }
 
 func (ft *FieldType) SetFlen(flen int) {
-	ft.flen = flen
+	ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
 }
 
 func (ft *FieldType) SetDecimal(decimal int) {
-	ft.decimal = decimal
+	ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
 }
 
 func (ft *FieldType) SetCharset(charset string) {

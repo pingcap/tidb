@@ -17,6 +17,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1287,6 +1288,13 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'."))
 			}
 			return false
+		case mysql.TypeNewDecimal:
+			if !expr.GetType().IsDecimalValid() {
+				if pc.sc.InExplainStmt {
+					pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "')."))
+				}
+				return false
+			}
 		}
 	}
 	switch x := expr.(type) {
