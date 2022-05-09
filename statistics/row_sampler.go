@@ -305,7 +305,7 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 		memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 		s.MemSize += deltaSize
 	}
-	memTracker.BufferedConsume(&bufferedMemSize, 0)
+	memTracker.Consume(bufferedMemSize)
 	s.MemSize += bufferedMemSize
 }
 

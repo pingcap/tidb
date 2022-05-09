@@ -1457,7 +1457,7 @@ workLoop:
 						Ordinal: j,
 					})
 				}
-				e.memTracker.BufferedConsume(&bufferedMemInc, 0)
+				e.memTracker.Consume(bufferedMemInc)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],

@@ -378,7 +378,7 @@ func (t *Tracker) Consume(bytes int64) {
 // BufferedConsume is used to buffer memory usage and do late consume
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
-	if *bufferedMemSize > int64(config.TrackMemWhenExceeds) || bytes == 0 {
+	if *bufferedMemSize > int64(config.TrackMemWhenExceeds) {
 		t.Consume(*bufferedMemSize)
 		*bufferedMemSize = int64(0)
 	}
