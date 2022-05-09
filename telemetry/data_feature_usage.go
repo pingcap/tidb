@@ -36,13 +36,14 @@ type featureUsage struct {
 	Txn *TxnUsage `json:"txn"`
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex         *ClusterIndexUsage    `json:"clusterIndex"`
-	NewClusterIndex      *NewClusterIndexUsage `json:"newClusterIndex"`
-	TemporaryTable       bool                  `json:"temporaryTable"`
-	CTE                  *m.CTEUsageCounter    `json:"cte"`
-	CachedTable          bool                  `json:"cachedTable"`
-	AutoCapture          bool                  `json:"autoCapture"`
-	PlacementPolicyUsage *placementPolicyUsage `json:"placementPolicy"`
+	ClusterIndex          *ClusterIndexUsage             `json:"clusterIndex"`
+	NewClusterIndex       *NewClusterIndexUsage          `json:"newClusterIndex"`
+	TemporaryTable        bool                           `json:"temporaryTable"`
+	CTE                   *m.CTEUsageCounter             `json:"cte"`
+	CachedTable           bool                           `json:"cachedTable"`
+	AutoCapture           bool                           `json:"autoCapture"`
+	PlacementPolicyUsage  *placementPolicyUsage          `json:"placementPolicy"`
+	NonTransactionalUsage *m.NonTransactionalStmtCounter `json:"nonTransactional"`
 }
 
 type placementPolicyUsage struct {
@@ -70,6 +71,9 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	usage.AutoCapture = getAutoCaptureUsageInfo(ctx)
 
 	collectFeatureUsageFromInfoschema(ctx, &usage)
+
+	usage.NonTransactionalUsage = getNonTransactionalUsage()
+
 	return &usage, nil
 }
 
@@ -192,6 +196,7 @@ type TxnUsage struct {
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
+var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -242,4 +247,14 @@ func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
 		return val == variable.On
 	}
 	return false
+}
+
+func getNonTransactionalUsage() *m.NonTransactionalStmtCounter {
+	curr := m.GetNonTransactionalStmtCounter()
+	diff := curr.Sub(initialNonTransactionalCounter)
+	return &diff
+}
+
+func postReportNonTransactionalCounter() {
+	initialNonTransactionalCounter = m.GetNonTransactionalStmtCounter()
 }
