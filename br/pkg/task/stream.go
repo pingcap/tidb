@@ -149,7 +149,7 @@ func DefineStreamPauseFlags(flags *pflag.FlagSet) {
 
 // DefineStreamCommonFlags define common flags for `stream task`
 func DefineStreamCommonFlags(flags *pflag.FlagSet) {
-	flags.String(flagStreamTaskName, "", "The task name for backup stream log.")
+	flags.String(flagStreamTaskName, "", "The task name for the backup log task.")
 }
 
 func DefineStreamStatusCommonFlags(flags *pflag.FlagSet) {
@@ -420,7 +420,7 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 		EnableStreaming bool `json:"enable"`
 	}
 	type config struct {
-		BackupStream backupStream `json:"backup-stream"`
+		BackupStream backupStream `json:"log-backup"`
 	}
 
 	httpPrefix := "http://"
@@ -542,8 +542,8 @@ func RunStreamStart(
 		return errors.Trace(err)
 	}
 	if !supportStream {
-		return errors.New("Unable to create stream task. " +
-			"please set TiKV config `backup-stream.enable` to true and restart TiKVs.")
+		return errors.New("Unable to create task about log-backup. " +
+			"please set TiKV config `log-backup.enable` to true and restart TiKVs.")
 	}
 
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {

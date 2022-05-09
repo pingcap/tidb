@@ -60,7 +60,7 @@ func NewStreamCommand() *cobra.Command {
 func newStreamStartCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "start",
-		Short: "start a stream task",
+		Short: "start a log backup task",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return streamCommand(command, task.StreamStart)
@@ -75,7 +75,7 @@ func newStreamStartCommand() *cobra.Command {
 func newStreamStopCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "stop",
-		Short: "stop a stream task",
+		Short: "stop a log backup task",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return streamCommand(command, task.StreamStop)
@@ -90,7 +90,7 @@ func newStreamStopCommand() *cobra.Command {
 func newStreamPauseCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "pause",
-		Short: "pause a stream task",
+		Short: "pause a log backup task",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return streamCommand(command, task.StreamPause)
@@ -105,7 +105,7 @@ func newStreamPauseCommand() *cobra.Command {
 func newStreamResumeCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "resume",
-		Short: "resume a stream task",
+		Short: "resume a log backup task",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return streamCommand(command, task.StreamResume)
@@ -119,7 +119,7 @@ func newStreamResumeCommand() *cobra.Command {
 func newStreamStatusCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "status",
-		Short: "get status of a stream task",
+		Short: "get status for the log backup task",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return streamCommand(command, task.StreamStatus)
@@ -133,7 +133,7 @@ func newStreamStatusCommand() *cobra.Command {
 func newStreamTruncateCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "truncate",
-		Short: "truncate the incremental data until sometime.",
+		Short: "truncate the incremental log until sometime.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return streamCommand(cmd, task.StreamTruncate)
