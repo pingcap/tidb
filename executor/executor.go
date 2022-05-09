@@ -491,22 +491,10 @@ type DDLJobRetriever struct {
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
-	var (
-		jobs []*model.Job
-		err  error
-	)
 	m := meta.NewMeta(txn)
-	if variable.AllowConcurrencyDDL.Load() {
-		sess.GetSessionVars().SetInTxn(true)
-		jobs, err = admin.GetConcurrencyDDLJobs(sess)
-		if err != nil {
-			return err
-		}
-	} else {
-		jobs, err = admin.GetDDLJobs(txn)
-		if err != nil {
-			return err
-		}
+	jobs, err := admin.GetAllDDLJobs(txn, sess)
+	if err != nil {
+		return err
 	}
 	e.historyJobIter, err = admin.GetLastHistoryDDLJobsIterator(sess, m)
 	if err != nil {
@@ -608,29 +596,12 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if variable.AllowConcurrencyDDL.Load() {
-		newSess, err := e.getSysSession()
-		if err != nil {
-			return err
-		}
-		jobs, err = admin.GetConcurrencyDDLJobs(newSess)
-		e.releaseSysSession(newSess)
-		if err != nil {
-			return err
-		}
-	} else {
-		jobs, err = admin.GetDDLJobs(txn)
-		if err != nil {
-			return err
-		}
-	}
-
-	newSess, err := e.getSysSession()
+	jobs, err = admin.GetAllDDLJobs(txn, e.ctx)
 	if err != nil {
 		return err
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(newSess, txn, admin.DefNumHistoryJobs)
-	e.releaseSysSession(newSess)
+
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx, txn, admin.DefNumHistoryJobs)
 	if err != nil {
 		return err
 	}

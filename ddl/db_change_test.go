@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -1275,30 +1275,18 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 		var qLen int
 		tk := testkit.NewTestKit(s.T(), s.store)
 		for {
-			if variable.AllowConcurrencyDDL.Load() {
-				sess := tk.Session().(sessionctx.Context)
-				jobs, err1 := admin.GetConcurrencyDDLJobs(sess)
-				s.Require().NoError(err1)
-				qLen = len(jobs)
-				if qLen == 2 {
-					break
-				}
-				time.Sleep(5 * time.Millisecond)
-			} else {
-				err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-					jobs, err1 := admin.GetDDLJobs(txn)
-					if err1 != nil {
-						return err1
-					}
-					qLen = len(jobs)
-					return nil
-				})
-				s.Require().NoError(err)
-				if qLen == 2 {
-					break
-				}
-				time.Sleep(5 * time.Millisecond)
+			sess := tk.Session()
+			err := sessiontxn.NewTxn(context.Background(), sess)
+			s.Require().NoError(err)
+			txn, err := sess.Txn(true)
+			s.Require().NoError(err)
+			jobs, err := admin.GetAllDDLJobs(txn, sess)
+			s.Require().NoError(err)
+			qLen = len(jobs)
+			if qLen == 2 {
+				break
 			}
+			time.Sleep(5 * time.Millisecond)
 		}
 		times++
 	}
@@ -1315,36 +1303,20 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
 		var qLen int
-		if variable.AllowConcurrencyDDL.Load() {
-			for {
-				sess := s.tk.Session().(sessionctx.Context)
-				jobs, err1 := admin.GetConcurrencyDDLJobs(sess)
-				s.Require().NoError(err1)
-				qLen = len(jobs)
-				if qLen == 1 {
-					close(ch)
-					break
-				}
-				time.Sleep(5 * time.Millisecond)
+		for {
+			sess := s.tk.Session().(sessionctx.Context)
+			err := sessiontxn.NewTxn(context.Background(), sess)
+			s.Require().NoError(err)
+			txn, err := sess.Txn(true)
+			s.Require().NoError(err)
+			jobs, err := admin.GetAllDDLJobs(txn, sess)
+			s.Require().NoError(err)
+			qLen = len(jobs)
+			if qLen == 2 {
+				close(ch)
+				break
 			}
-		} else {
-			for {
-				err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-					jobs, err3 := admin.GetDDLJobs(txn)
-					if err3 != nil {
-						return err3
-					}
-					qLen = len(jobs)
-					return nil
-				})
-				s.Require().NoError(err)
-				if qLen == 1 {
-					// Make sure sql2 is executed after the sql1.
-					close(ch)
-					break
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
+			time.Sleep(5 * time.Millisecond)
 		}
 	}()
 	return tk1, tk2, ch, originalCallback

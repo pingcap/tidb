@@ -267,6 +267,15 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	return jobs, nil
 }
 
+// GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
+func GetAllDDLJobs(txn kv.Transaction, sess sessionctx.Context) ([]*model.Job, error) {
+	if variable.AllowConcurrencyDDL.Load() {
+		return GetConcurrencyDDLJobs(sess)
+	}
+
+	return GetDDLJobs(txn)
+}
+
 type jobArray []*model.Job
 
 func (v jobArray) Len() int {
@@ -317,7 +326,7 @@ func IterHistoryDDLJobs(sess sessionctx.Context, txn kv.Transaction, finishFn fu
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
 // then iterates history DDL jobs until the `finishFn` return true or error.
 func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
-	jobs, err := GetDDLJobs(txn)
+	jobs, err := GetAllDDLJobs(txn, ctx)
 	if err != nil {
 		return err
 	}
@@ -327,21 +336,6 @@ func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]
 		return err
 	}
 	return IterHistoryDDLJobs(ctx, txn, finishFn)
-}
-
-// IterAllConcurrentDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
-// then iterates history DDL jobs until the `finishFn` return true or error.
-func IterAllConcurrentDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error), sess sessionctx.Context) error {
-	jobs, err := GetConcurrencyDDLJobs(sess)
-	if err != nil {
-		return err
-	}
-
-	finish, err := finishFn(jobs)
-	if err != nil || finish {
-		return err
-	}
-	return IterHistoryDDLJobs(sess, txn, finishFn)
 }
 
 // GetLastNHistoryDDLJobs get last n history ddl jobs.
