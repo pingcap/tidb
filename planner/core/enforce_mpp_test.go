@@ -75,10 +75,9 @@ func TestRowSizeInMPP(t *testing.T) {
 
 	tk.MustExec(`set @@tidb_opt_tiflash_concurrency_factor=1`)
 	tk.MustExec(`set @@tidb_allow_mpp=1`)
-	tk.MustExec(`set @@tidb_enforce_mpp=1`)
 	var costs [3]float64
 	for i, col := range []string{"a", "b", "c"} {
-		rs := tk.MustQuery(fmt.Sprintf(`explain format='verbose' select %v from t`, col)).Rows()
+		rs := tk.MustQuery(fmt.Sprintf(`explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ %v from t`, col)).Rows()
 		cost, err := strconv.ParseFloat(rs[0][2].(string), 64)
 		require.NoError(t, err)
 		costs[i] = cost

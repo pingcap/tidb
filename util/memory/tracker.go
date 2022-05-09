@@ -47,8 +47,7 @@ import (
 // The actions that could be triggered are: AggSpillDiskAction.
 //
 // If the hard limit is exceeded, we will trigger the action that immediately
-// reduces memory usage. The hard limit is set by the config item `mem-quota-query`
-// or the system variable `tidb_mem_query_quota`.
+// reduces memory usage. The hard limit is set by the system variable `tidb_mem_query_quota`.
 // The actions that could be triggered are: SpillDiskAction, SortAndSpillDiskAction, rateLimitAction,
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
@@ -564,4 +563,6 @@ const (
 	LabelForIndexJoinOuterWorker int = -21
 	// LabelForBindCache represents the label of the bind cache
 	LabelForBindCache int = -22
+	// LabelForNonTransactionalDML represents the label of the non-transactional DML
+	LabelForNonTransactionalDML = -23
 )

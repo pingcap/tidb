@@ -826,6 +826,8 @@ const (
 	ErrInvalidFieldSize                                      = 3013
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029
+	ErrUserLockWrongName                                     = 3057
+	ErrUserLockDeadlock                                      = 3058
 	ErrIncorrectType                                         = 3064
 	ErrFieldInOrderNotSelect                                 = 3065
 	ErrAggregateInOrderNotSelect                             = 3066

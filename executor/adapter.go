@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -48,11 +47,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -196,11 +197,6 @@ type TelemetryInfo struct {
 type ExecStmt struct {
 	// GoCtx stores parent go context.Context for a stmt.
 	GoCtx context.Context
-	// SnapshotTS stores the timestamp for stale read.
-	// It is not equivalent to session variables's snapshot ts, it only use to build the executor.
-	SnapshotTS uint64
-	// IsStaleness means whether this statement use stale read.
-	IsStaleness bool
 	// ReplicaReadScope indicates the scope the store selector scope the request visited
 	ReplicaReadScope string
 	// InfoSchema stores a reference to the schema information.
@@ -235,8 +231,14 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	ctx = a.setPlanLabelForTopSQL(ctx)
-	a.observeStmtBeginForTopSQL()
+	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
+		// stale read should not reach here
+		staleread.AssertStmtStaleness(a.Ctx, false)
+		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, is)
+	})
+
+	ctx = a.observeStmtBeginForTopSQL(ctx)
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -258,7 +260,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
+		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.ReplicaReadScope)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -266,11 +268,6 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		a.PsStmt.Executor = newExecutor
 	}
 	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
-
-	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
-		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
-		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, is)
-	})
 
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
@@ -304,7 +301,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
 
@@ -315,11 +312,10 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		}
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInRebuildPlan", true)
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, ret.InfoSchema)
+		staleread.AssertStmtStaleness(a.Ctx, ret.IsStaleness)
 	})
 
 	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
-	a.SnapshotTS = ret.LastSnapshotTS
-	a.IsStaleness = ret.IsStaleness
 	a.ReplicaReadScope = ret.ReadReplicaScope
 	if a.Ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && a.ReplicaReadScope == kv.GlobalReplicaScope {
 		logutil.BgLogger().Warn(fmt.Sprintf("tidb can't read closest replicas due to it haven't %s label", placement.DCLabelKey))
@@ -334,17 +330,26 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	return a.InfoSchema.SchemaMetaVersion(), nil
 }
 
-func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
-	if !topsqlstate.TopSQLEnabled() {
-		return ctx
+// IsFastPlan exports for testing.
+func IsFastPlan(p plannercore.Plan) bool {
+	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
+		p = proj.Children()[0]
 	}
-	vars := a.Ctx.GetSessionVars()
-	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
-	normalizedPlan, planDigest := getPlanDigest(vars.StmtCtx)
-	if len(normalizedPlan) == 0 {
-		return ctx
+	switch p.(type) {
+	case *plannercore.PointGetPlan:
+		return true
+	case *plannercore.PhysicalTableDual:
+		// Plan of following SQL is PhysicalTableDual:
+		// select 1;
+		// select @@autocommit;
+		return true
+	case *plannercore.Set:
+		// Plan of following SQL is Set:
+		// set @a=1;
+		// set @@autocommit=1;
+		return true
 	}
-	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, vars.InRestrictedSQL)
+	return false
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
@@ -371,8 +376,13 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}()
 
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
-		if n, ok := val.(int); ok && a.IsStaleness {
-			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
+		if n, ok := val.(int); ok && staleread.IsStmtStaleness(a.Ctx) {
+			txnManager := sessiontxn.GetTxnManager(a.Ctx)
+			ts, err := txnManager.GetStmtReadTS()
+			if err != nil {
+				panic(err)
+			}
+			startTS := oracle.ExtractPhysical(ts) / 1000
 			if n != int(startTS) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
@@ -406,8 +416,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return nil, err
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
-	ctx = a.setPlanLabelForTopSQL(ctx)
-	a.observeStmtBeginForTopSQL()
+	ctx = a.observeStmtBeginForTopSQL(ctx)
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -865,7 +874,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.ReplicaReadScope)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -922,9 +931,12 @@ func (a *ExecStmt) logAudit() {
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
 func FormatSQL(sql string) stringutil.StringerFunc {
 	return func() string {
-		cfg := config.GetGlobalConfig()
 		length := len(sql)
-		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
+		maxQueryLen := variable.QueryLogMaxLen.Load()
+		if maxQueryLen <= 0 {
+			return QueryReplacer.Replace(sql) // no limit
+		}
+		if int32(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
 		return QueryReplacer.Replace(sql)
@@ -1018,8 +1030,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
-	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	enable := cfg.Log.EnableSlowLog.Load()
+	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
+	enable := cfg.Instance.EnableSlowLog.Load()
 	// if the level is Debug, or trace is enabled, print slow logs anyway
 	force := level <= zapcore.DebugLevel || trace.IsEnabled()
 	if (!enable || costTime < threshold) && !force {
@@ -1201,7 +1213,7 @@ func FlattenPhysicalPlanForStmtCtx(stmtCtx *stmtctx.StatementContext) *plannerco
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
 func getPlanTree(stmtCtx *stmtctx.StatementContext) string {
 	cfg := config.GetGlobalConfig()
-	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
+	if atomic.LoadUint32(&cfg.Instance.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
 	planTree, _ := getEncodedPlan(stmtCtx, false)
@@ -1399,17 +1411,50 @@ func (a *ExecStmt) GetTextToLog() string {
 	return sql
 }
 
-func (a *ExecStmt) observeStmtBeginForTopSQL() {
+func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Context {
 	vars := a.Ctx.GetSessionVars()
-	if vars == nil {
-		return
+	sc := vars.StmtCtx
+	normalizedSQL, sqlDigest := sc.SQLDigest()
+	normalizedPlan, planDigest := getPlanDigest(sc)
+	var sqlDigestByte, planDigestByte []byte
+	if sqlDigest != nil {
+		sqlDigestByte = sqlDigest.Bytes()
 	}
-	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
-		sqlDigest, planDigest := a.getSQLPlanDigest()
-		stats.OnExecutionBegin(sqlDigest, planDigest)
+	if planDigest != nil {
+		planDigestByte = planDigest.Bytes()
+	}
+	stats := a.Ctx.GetStmtStats()
+	if !topsqlstate.TopSQLEnabled() {
+		// To reduce the performance impact on fast plan.
+		// Drop them does not cause notable accuracy issue in TopSQL.
+		if IsFastPlan(a.Plan) {
+			return ctx
+		}
+		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
+		if stats != nil {
+			stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
+			// This is a special logic prepared for TiKV's SQLExecCount.
+			sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
+		}
+		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+	}
+
+	if stats != nil {
+		stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
 		// This is a special logic prepared for TiKV's SQLExecCount.
-		vars.StmtCtx.KvExecCounter = stats.CreateKvExecCounter(sqlDigest, planDigest)
+		sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
 	}
+
+	isSQLRegistered := sc.IsSQLRegistered.Load()
+	if !isSQLRegistered {
+		topsql.RegisterSQL(normalizedSQL, sqlDigest, vars.InRestrictedSQL)
+	}
+	sc.IsSQLAndPlanRegistered.Store(true)
+	if len(normalizedPlan) == 0 {
+		return ctx
+	}
+	topsql.RegisterPlan(normalizedPlan, planDigest)
+	return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 }
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
