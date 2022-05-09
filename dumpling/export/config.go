@@ -648,7 +648,7 @@ func registerTLSConfig(conf *Config) error {
 		}
 		// NOTE for local test(use a self-signed or invalid certificate), we don't need to check CA file.
 		// see more here https://github.com/go-sql-driver/mysql#tls
-		if conf.Host == "127.0.0.1" {
+		if conf.Host == "127.0.0.1" || len(conf.Security.SSLCertBytes) == 0 || len(conf.Security.SSLKEYBytes) == 0 {
 			tlsConfig.InsecureSkipVerify = true
 		}
 		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)

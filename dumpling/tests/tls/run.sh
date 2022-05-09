@@ -27,3 +27,11 @@ run_dumpling --ca "$DUMPLING_TEST_DIR/ca.pem" --cert "$DUMPLING_TEST_DIR/dumplin
 file_should_exist "$DUMPLING_OUTPUT_DIR/tls-schema-create.sql"
 file_should_exist "$DUMPLING_OUTPUT_DIR/tls.t-schema.sql"
 file_should_exist "$DUMPLING_OUTPUT_DIR/tls.t.000000000.sql"
+
+# test only oue ssl-ca without clent key and cert
+rm -rf $DUMPLING_TEST_DIR
+run_dumpling --ca "$DUMPLING_TEST_DIR/ca.pem" --cert "$DUMPLING_TEST_DIR/dumpling.pem" --key "$DUMPLING_TEST_DIR/dumpling.key" --consistency none
+
+file_should_exist "$DUMPLING_OUTPUT_DIR/tls-schema-create.sql"
+file_should_exist "$DUMPLING_OUTPUT_DIR/tls.t-schema.sql"
+file_should_exist "$DUMPLING_OUTPUT_DIR/tls.t.000000000.sql"
