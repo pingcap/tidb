@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
@@ -97,9 +98,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	}
 
 	if dsn.Vars != nil {
-		for k, v := range dsn.Vars {
-			vars[k] = v
-		}
+		maps.Copy(vars, dsn.Vars)
 	}
 
 	for k, v := range vars {
