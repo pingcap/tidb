@@ -29,28 +29,39 @@ type WindowFuncDesc struct {
 
 // NewWindowFuncDesc creates a window function signature descriptor.
 func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (*WindowFuncDesc, error) {
-	switch strings.ToLower(name) {
-	case ast.WindowFuncNthValue:
-		val, isNull, ok := expression.GetUint64FromConstant(args[1])
-		// nth_value does not allow `0`, but allows `null`.
-		if !ok || (val == 0 && !isNull) {
-			return nil, nil
-		}
-	case ast.WindowFuncNtile:
-		val, isNull, ok := expression.GetUint64FromConstant(args[0])
-		// ntile does not allow `0`, but allows `null`.
-		if !ok || (val == 0 && !isNull) {
-			return nil, nil
-		}
-	case ast.WindowFuncLead, ast.WindowFuncLag:
-		if len(args) < 2 {
-			break
-		}
-		_, isNull, ok := expression.GetUint64FromConstant(args[1])
-		if !ok || isNull {
-			return nil, nil
+	// if we are in the prepare statement, skip the params check since it's not been initialized.
+	skipCheckArgs := false
+	for _, one := range args {
+		if c, ok := one.(*expression.Constant); ok && c.ParamMarker != nil {
+			skipCheckArgs = true
 		}
 	}
+
+	if !skipCheckArgs {
+		switch strings.ToLower(name) {
+		case ast.WindowFuncNthValue:
+			val, isNull, ok := expression.GetUint64FromConstant(args[1])
+			// nth_value does not allow `0`, but allows `null`.
+			if !ok || (val == 0 && !isNull) {
+				return nil, nil
+			}
+		case ast.WindowFuncNtile:
+			val, isNull, ok := expression.GetUint64FromConstant(args[0])
+			// ntile does not allow `0`, but allows `null`.
+			if !ok || (val == 0 && !isNull) {
+				return nil, nil
+			}
+		case ast.WindowFuncLead, ast.WindowFuncLag:
+			if len(args) < 2 {
+				break
+			}
+			_, isNull, ok := expression.GetUint64FromConstant(args[1])
+			if !ok || isNull {
+				return nil, nil
+			}
+		}
+	}
+
 	base, err := newBaseFuncDesc(ctx, name, args)
 	if err != nil {
 		return nil, err
