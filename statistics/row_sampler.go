@@ -269,7 +269,7 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	return collector
 }
 
-func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) (tmpMemSize int64) {
+func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) {
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
@@ -279,35 +279,33 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	s.TotalSizes = pbCollector.TotalSize
 	sampleNum := len(pbCollector.Samples)
 	s.Samples = make(WeightedRowSampleHeap, 0, sampleNum)
+	// consume mandatory memory at the begining, if exceeds, fast fail
 	if len(pbCollector.Samples) > 0 {
 		rowLen := len(pbCollector.Samples[0].Row)
 		// 24 is the size of datum array, 8 is the size of reference
-		emptySize := (int64(types.EmptyDatumSize)*int64(rowLen) + EmptyReservoirSampleItemSize + 8) * int64(sampleNum)
-		s.MemSize += emptySize
-		tmpMemSize += int64(sampleNum) * 24
-		memTracker.Consume(emptySize + tmpMemSize)
+		initMemSize := int64(sampleNum) * (int64(rowLen)*types.EmptyDatumSize + EmptyReservoirSampleItemSize + 8)
+		s.MemSize += initMemSize
+		memTracker.Consume(initMemSize)
 	}
 	bufferedMemSize := int64(0)
 	for _, pbSample := range pbCollector.Samples {
-		data := make([]types.Datum, 0, len(pbSample.Row))
+		rowLen := len(pbCollector.Samples[0].Row)
+		data := make([]types.Datum, 0, rowLen)
+		deltaSize := int64(0)
 		for _, col := range pbSample.Row {
 			b := make([]byte, len(col))
 			copy(b, col)
-			newDatum := types.NewBytesDatum(b)
-			data = append(data, newDatum)
-			bufferedMemSize += newDatum.MemUsage() - types.EmptyDatumSize
+			data = append(data, types.NewBytesDatum(b))
+			deltaSize += int64(cap(b))
 		}
 		// Directly copy the weight.
 		sampleItem := &ReservoirRowSampleItem{Columns: data, Weight: pbSample.Weight}
 		s.Samples = append(s.Samples, sampleItem)
-		bufferedMemSize += sampleItem.MemUsage() - EmptyReservoirSampleItemSize
-		if bufferedMemSize > int64(104857600) { // track when exceeds 100 MB
-			memTracker.Consume(bufferedMemSize)
-			s.MemSize += bufferedMemSize
-			bufferedMemSize = int64(0)
-		}
+		deltaSize += sampleItem.MemUsage() - EmptyReservoirSampleItemSize
+		memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+		s.MemSize += deltaSize
 	}
-	memTracker.Consume(bufferedMemSize)
+	memTracker.BufferedConsume(&bufferedMemSize, 0)
 	s.MemSize += bufferedMemSize
 	return
 }

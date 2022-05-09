@@ -1381,13 +1381,13 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 		colRespSize := int64(colResp.Size())
 		e.memTracker.Consume(colRespSize)
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-		tmpMemSize := subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
 		UpdateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
 		oldRetCollectorSize := retCollector.Base().MemSize
 		retCollector.MergeCollector(subCollector)
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
-		e.memTracker.Consume(newRetCollectorSize - dataSize - colRespSize - tmpMemSize - oldRetCollectorSize - subCollectorSize)
+		e.memTracker.Consume(newRetCollectorSize - dataSize - colRespSize - oldRetCollectorSize - subCollectorSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -1438,7 +1438,8 @@ workLoop:
 				}
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
-				initMemSize := int64(unsafe.Sizeof(sampleItems)) + 8*int64(sampleNum) + statistics.EmptySampleItemSize*int64(sampleNum)
+				// consume mandatory memory at the begining, if exceeds, fast fail
+				initMemSize := int64(unsafe.Sizeof(sampleItems)) + int64(sampleNum)*(8+statistics.EmptySampleItemSize)
 				e.memTracker.Consume(initMemSize)
 				totalMemInc += initMemSize
 				bufferedMemInc := int64(0)
@@ -1457,18 +1458,16 @@ workLoop:
 					val := row.Columns[task.slicePos]
 					if collator != nil {
 						val.SetBytes(collator.Key(val.GetString()))
-						bufferedMemInc += int64(cap(val.GetBytes()))
-						if bufferedMemInc > int64(config.TrackMemWhenExceeds) {
-							e.memTracker.Consume(bufferedMemInc)
-							totalMemInc += bufferedMemInc
-							bufferedMemInc = int64(0)
-						}
+						deltaSize := int64(cap(val.GetBytes()))
+						totalMemInc += deltaSize
+						e.memTracker.BufferedConsume(&bufferedMemInc, deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   val,
 						Ordinal: j,
 					})
 				}
+				e.memTracker.BufferedConsume(&bufferedMemInc, 0)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
@@ -1482,6 +1481,7 @@ workLoop:
 				idx := e.indexes[task.slicePos-colLen]
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
+				// consume mandatory memory at the begining, if exceeds, fast fail
 				// 8 is size of reference, 32 is the size of "b := make([]byte, 0, 8)"
 				initMemSize := int64(unsafe.Sizeof(sampleItems)) + (8+statistics.EmptySampleItemSize+32)*int64(sampleNum)
 				e.memTracker.Consume(initMemSize)

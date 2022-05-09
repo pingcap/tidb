@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 )
 
@@ -81,9 +82,10 @@ type actionMu struct {
 // softScale means the scale of the soft limit to the hard limit.
 const softScale = 0.8
 
+// bytesLimits holds limit config atomically.
 type bytesLimits struct {
-	bytesHardLimit int64 // bytesHardLimit <= 0 means no limit.
-	bytesSoftLimit int64
+	bytesHardLimit int64 // bytesHardLimit <= 0 means no limit, used for actionMuForHardLimit.
+	bytesSoftLimit int64 // bytesSoftLimit <= 0 means no limit, used for actionMuForSoftLimit.
 }
 
 // InitTracker initializes a memory tracker.
@@ -370,6 +372,15 @@ func (t *Tracker) Consume(bytes int64) {
 	}
 	if bytes > 0 && rootExceed != nil {
 		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
+	}
+}
+
+// BufferedConsume is used to buffer memory usage and do late consume
+func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
+	*bufferedMemSize += bytes
+	if *bufferedMemSize > int64(config.TrackMemWhenExceeds) || bytes == 0 {
+		t.Consume(*bufferedMemSize)
+		*bufferedMemSize = int64(0)
 	}
 }
 
