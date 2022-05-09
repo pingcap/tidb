@@ -40,7 +40,7 @@ type FieldType = ast.FieldType
 // with a type and other information about field type.
 func NewFieldType(tp byte) *FieldType {
 	charset1, collate1 := DefaultCharsetForType(tp)
-	return NewFieldTypeBuilderP().
+	return NewFieldTypeBuilder().
 		SetType(tp).
 		SetCharset(charset1).
 		SetCollate(collate1).
@@ -53,7 +53,7 @@ func NewFieldType(tp byte) *FieldType {
 // with a type and other information about field type.
 func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
 	coll, _ := charset.GetCollationByName(collation)
-	return NewFieldTypeBuilderP().SetType(tp).SetFlen(length).SetCharset(coll.CharsetName).SetCollate(collation).SetDecimal(UnspecifiedLength).BuildP()
+	return NewFieldTypeBuilder().SetType(tp).SetFlen(length).SetCharset(coll.CharsetName).SetCollate(collation).SetDecimal(UnspecifiedLength).BuildP()
 }
 
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`

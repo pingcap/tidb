@@ -597,7 +597,7 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
-		tp := NewFieldTypeBuilderP().SetType(mysql.TypeNewDecimal).SetFlen(tt.flen).SetDecimal(tt.frac).BuildP()
+		tp := NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(tt.flen).SetDecimal(tt.frac).BuildP()
 		dec := NewDecFromStringForTest(tt.dec)
 		newDec, err := ProduceDecWithSpecifiedTp(dec, tp, sc)
 		if tt.isOverflow {
