@@ -76,7 +76,8 @@ var (
 		StreamTruncate: {},
 	}
 
-	rawKVBatchCount = 10
+	// rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
+	rawKVBatchCount = 64
 )
 
 var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error{
