@@ -410,10 +410,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, false)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 	case model.StateWriteOnly:
 		// write only -> public
 		// do recover table.
@@ -449,9 +445,10 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		tblInfo.State = model.StatePublic
-		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoIncID, autoRandID)
+		tableInfo := tblInfo.Clone()
+		tableInfo.State = model.StatePublic
+		tableInfo.UpdateTS = t.StartTS
+		err = t.CreateTableAndSetAutoID(schemaID, tableInfo, autoIncID, autoRandID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -469,11 +466,13 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 
 		job.CtxVars = []interface{}{tids}
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(d, t, job, tableInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
+		tblInfo.State = model.StatePublic
+		tblInfo.UpdateTS = t.StartTS
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
