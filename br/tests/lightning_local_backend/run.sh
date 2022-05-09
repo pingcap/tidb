@@ -113,7 +113,7 @@ for ckpt in mysql file; do
   run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_local_backend_test'
   rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
   set +e
-  export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/LocalBackendSaveCheckpoint=return;github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfImportedChunk=return(1)"
+  export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/LocalBackendSaveCheckpoint=return;github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfImportedChunk=return"
   run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/$ckpt.toml"
   set -e
   run_lightning_ctl --check-local-storage \

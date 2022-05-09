@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -4574,7 +4575,7 @@ func (s *testSessionSuite) TestTemporaryTableInterceptor(c *C) {
 			return nil
 		},
 		func() error {
-			return tk.Se.NewTxn(context.Background())
+			return sessiontxn.NewTxn(context.Background(), tk.Se)
 		},
 		func() error {
 			return tk.Se.NewStaleTxnWithStartTS(context.Background(), 0)

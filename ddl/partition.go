@@ -22,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1459,9 +1459,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	newAutoIDs := meta.AutoIDGroup{
-		RowID:       mathutil.MaxInt64(ptAutoIDs.RowID, ntAutoIDs.RowID),
-		IncrementID: mathutil.MaxInt64(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
-		RandomID:    mathutil.MaxInt64(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+		RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+		RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}
 	err = t.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {

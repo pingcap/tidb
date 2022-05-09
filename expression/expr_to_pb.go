@@ -167,7 +167,7 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 
 // FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
 func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
-	ft1 := types.NewFieldTypeBuilderP().SetType(byte(ft.Tp)).SetFlag(uint(ft.Flag)).SetFlen(int(ft.Flen)).SetDecimal(int(ft.Decimal)).SetCharset(ft.Charset).SetCollate(collate.ProtoToCollation(ft.Collate)).BuildP()
+	ft1 := types.NewFieldTypeBuilder().SetType(byte(ft.Tp)).SetFlag(uint(ft.Flag)).SetFlen(int(ft.Flen)).SetDecimal(int(ft.Decimal)).SetCharset(ft.Charset).SetCollate(collate.ProtoToCollation(ft.Collate)).BuildP()
 	ft1.SetElems(ft.Elems)
 	return ft1
 }

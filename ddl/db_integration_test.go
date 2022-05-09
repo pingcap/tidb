@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
+	goctx "golang.org/x/net/context"
 )
 
 func TestNoZeroDateMode(t *testing.T) {
@@ -817,7 +819,7 @@ func TestChangingTableCharset(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := mockCtx.NewTxn(context.Background())
+		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -1065,7 +1067,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := mockCtx.NewTxn(context.Background())
+		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -1859,7 +1861,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := mockCtx.NewTxn(context.Background())
+		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -3429,7 +3431,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	// Check filter out data from removed local temp tables
 	tk.MustExec("create temporary table a_local_temp_table_7 (id int)")
 	ctx := tk.Session()
-	require.Nil(t, ctx.NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	_, err = ctx.Txn(true)
 	require.NoError(t, err)
 	sessionVars := tk.Session().GetSessionVars()

@@ -44,6 +44,7 @@ import (
 	tablefilter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // BindHandle is used to handle all global sql bind operations.
@@ -724,9 +725,7 @@ func (h *BindHandle) removeBindRecord(hash string, meta *BindRecord) {
 
 func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bindRecordUpdate {
 	newMap := make(map[string]*bindRecordUpdate, len(oldMap))
-	for k, v := range oldMap {
-		newMap[k] = v
-	}
+	maps.Copy(newMap, oldMap)
 	return newMap
 }
 
@@ -961,8 +960,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 			withIdx := strings.Index(bindSQL, "WITH")
 			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
 			restoreCtx.DefaultDB = defaultDB
-			err := n.With.Restore(restoreCtx)
-			if err != nil {
+			if err := n.With.Restore(restoreCtx); err != nil {
 				logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
 				return ""
 			}

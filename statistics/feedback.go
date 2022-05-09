@@ -22,7 +22,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -123,7 +123,7 @@ func (m *QueryFeedbackMap) append(k QueryFeedbackKey, qs []*QueryFeedback) bool 
 	if !ok || s == nil {
 		s = make([]*QueryFeedback, 0, 8)
 	}
-	l := mathutil.MinInt64(int64(len(qs)), remained)
+	l := mathutil.Min(int64(len(qs)), remained)
 	s = append(s, qs[:l]...)
 	m.Feedbacks[k] = s
 	m.Size = m.Size + int(l)

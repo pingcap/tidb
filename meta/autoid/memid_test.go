@@ -37,7 +37,7 @@ func TestInMemoryAlloc(t *testing.T) {
 	}()
 
 	columnInfo := &model.ColumnInfo{
-		FieldType: types.NewFieldTypeBuilderP().SetFlag(mysql.AutoIncrementFlag).Build(),
+		FieldType: types.NewFieldTypeBuilder().SetFlag(mysql.AutoIncrementFlag).Build(),
 	}
 	tblInfo := &model.TableInfo{
 		Columns: []*model.ColumnInfo{columnInfo},
