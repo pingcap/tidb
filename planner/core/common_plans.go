@@ -1504,14 +1504,14 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
-		if e.Format == types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose {
 			row = append(row, estCost)
 		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
-		if e.Format == types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose {
 			row = append(row, estCost)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)
