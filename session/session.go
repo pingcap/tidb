@@ -2837,9 +2837,9 @@ func InitMetaTable(store kv.Storage) error {
 		}
 		p := parser.New()
 		for _, s := range []string{
-			"create table tidb_ddl_job(job_id bigint not null, reorg int, schema_id bigint, table_id bigint, job_meta blob, processing bigint, is_drop_schema int, primary key(job_id))",
+			"create table tidb_ddl_job(job_id bigint not null, reorg int, schema_id bigint, table_id bigint, job_meta longblob, processing bigint, is_drop_schema int, primary key(job_id))",
 			"create table tidb_ddl_reorg(job_id bigint not null, ele_id bigint, curr_ele_id bigint, curr_ele_type blob, start_key blob, end_key blob, physical_id bigint)",
-			"create table tidb_ddl_history(job_id bigint not null, job_meta blob, job_seq bigint not null, primary key(job_id), unique index(job_seq))",
+			"create table tidb_ddl_history(job_id bigint not null, job_meta longblob, job_seq bigint not null, primary key(job_id), unique index(job_seq))",
 		} {
 			stmt, err := p.ParseOneStmt(s, "", "")
 			if err != nil {

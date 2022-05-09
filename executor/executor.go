@@ -596,6 +596,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	e.ctx.GetSessionVars().SetInTxn(true)
 	jobs, err = admin.GetAllDDLJobs(txn, e.ctx)
 	if err != nil {
 		return err
