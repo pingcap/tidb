@@ -1452,6 +1452,7 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 
 // SetUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
+	varName = strings.ToLower(varName)
 	if len(collation) > 0 {
 		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	} else {

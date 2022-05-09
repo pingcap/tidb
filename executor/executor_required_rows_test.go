@@ -757,7 +757,7 @@ func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression
 
 	expr = make([]expression.Expression, 1)
 	expr[0] = &expression.Column{
-		RetType: types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).SetFlen(mysql.MaxIntWidth).BuildP(),
+		RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlen(mysql.MaxIntWidth).BuildP(),
 		Index:   0,
 	}
 	return
@@ -870,7 +870,7 @@ func TestVecGroupCheckerDATARACE(t *testing.T) {
 	for _, mType := range mTypes {
 		exprs := make([]expression.Expression, 1)
 		exprs[0] = &expression.Column{
-			RetType: types.NewFieldTypeBuilderP().SetType(mType).BuildP(),
+			RetType: types.NewFieldTypeBuilder().SetType(mType).BuildP(),
 			Index:   0,
 		}
 		vgc := newVecGroupChecker(ctx, exprs)

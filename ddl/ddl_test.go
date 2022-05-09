@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -86,7 +87,7 @@ func testNewContext(d *ddl) sessionctx.Context {
 }
 
 func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn(context.Background())
+	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -559,7 +560,7 @@ func TestReorg(t *testing.T) {
 			require.Equal(t, ctx.Value(testCtxKey), 1)
 			ctx.ClearValue(testCtxKey)
 
-			err = ctx.NewTxn(context.Background())
+			err = sessiontxn.NewTxn(context.Background(), ctx)
 			require.NoError(t, err)
 			txn, err := ctx.Txn(true)
 			require.NoError(t, err)
@@ -568,7 +569,7 @@ func TestReorg(t *testing.T) {
 			err = txn.Rollback()
 			require.NoError(t, err)
 
-			err = ctx.NewTxn(context.Background())
+			err = sessiontxn.NewTxn(context.Background(), ctx)
 			require.NoError(t, err)
 			txn, err = ctx.Txn(true)
 			require.NoError(t, err)
@@ -589,7 +590,7 @@ func TestReorg(t *testing.T) {
 				ID:          1,
 				SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 			}
-			err = ctx.NewTxn(context.Background())
+			err = sessiontxn.NewTxn(context.Background(), ctx)
 			require.NoError(t, err)
 			txn, err = ctx.Txn(true)
 			require.NoError(t, err)
@@ -614,7 +615,7 @@ func TestReorg(t *testing.T) {
 					// Test whether reorgInfo's Handle is update.
 					err = txn.Commit(context.Background())
 					require.NoError(t, err)
-					err = ctx.NewTxn(context.Background())
+					err = sessiontxn.NewTxn(context.Background(), ctx)
 					require.NoError(t, err)
 
 					m = meta.NewMeta(txn)
