@@ -563,4 +563,6 @@ const (
 	LabelForIndexJoinOuterWorker int = -21
 	// LabelForBindCache represents the label of the bind cache
 	LabelForBindCache int = -22
+	// LabelForNonTransactionalDML represents the label of the non-transactional DML
+	LabelForNonTransactionalDML = -23
 )

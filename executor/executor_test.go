@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	error2 "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -1959,7 +1960,7 @@ func TestCheckIndex(t *testing.T) {
 	// table     data (handle, data): (1, 10), (2, 20)
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
-	require.NoError(t, ctx.NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	_, err = tb.AddRecord(ctx, recordVal1)
 	require.NoError(t, err)
 	_, err = tb.AddRecord(ctx, recordVal2)
@@ -3467,7 +3468,6 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalShuffle{},
 		&plannercore.PhysicalUnionAll{},
 	}
-	executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
 
 	opsNeedsCoveredMask := uint64(1<<len(opsNeedsCovered) - 1)
 	opsAlreadyCoveredMask := uint64(0)
@@ -3497,8 +3497,13 @@ func TestUnreasonablyClose(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tc)
 		stmt, err := p.ParseOneStmt(tc, "", "")
 		require.NoError(t, err, comment)
-		err = tk.Session().NewTxn(context.Background())
+		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err, comment)
+
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO())
+		require.NoError(t, err, comment)
+
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
 
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NotNil(t, p)
