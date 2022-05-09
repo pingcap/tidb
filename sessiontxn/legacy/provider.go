@@ -133,7 +133,7 @@ func (p *SimpleTxnContextProvider) OnStmtError(point sessiontxn.StmtErrorHandleP
 	case sessiontxn.StmtErrAfterLock:
 		return p.handleAfterLockError(err)
 	default:
-		return sessiontxn.StmtActionNoIdea, nil
+		return sessiontxn.NoIdea()
 	}
 }
 
@@ -141,20 +141,21 @@ func (p *SimpleTxnContextProvider) handleAfterQueryError(queryErr error) (sessio
 	if p.Sctx.GetSessionVars().IsRcCheckTsRetryable(queryErr) {
 		logutil.Logger(p.Ctx).Info("RC read with ts checking has failed, retry RC read",
 			zap.String("sql", p.Sctx.GetSessionVars().StmtCtx.OriginalSQL))
+		return sessiontxn.RetryReady()
 	}
-	return sessiontxn.StmtActionNoIdea, nil
+	return sessiontxn.NoIdea()
 }
 
 func (p *SimpleTxnContextProvider) handleAfterLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
 	sessVars := p.Sctx.GetSessionVars()
 	if sessVars.IsIsolation(ast.Serializable) {
-		return sessiontxn.StmtActionError, lockErr
+		return sessiontxn.ErrorAction(lockErr)
 	}
 
 	txnCtx := sessVars.TxnCtx
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok {
 		if !deadlock.IsRetryable {
-			return sessiontxn.StmtActionError, lockErr
+			return sessiontxn.ErrorAction(lockErr)
 		}
 		logutil.Logger(p.Ctx).Info("single statement deadlock, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
@@ -185,14 +186,14 @@ func (p *SimpleTxnContextProvider) handleAfterLockError(lockErr error) (sessiont
 		if tsErr != nil {
 			logutil.Logger(p.Ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 		}
-		return sessiontxn.StmtActionError, lockErr
+		return sessiontxn.ErrorAction(lockErr)
 	}
 
 	if err := UpdateForUpdateTS(p.Sctx, 0); err != nil {
-		return sessiontxn.StmtActionError, err
+		return sessiontxn.ErrorAction(lockErr)
 	}
 
-	return sessiontxn.StmtActionRetryReady, nil
+	return sessiontxn.RetryReady()
 }
 
 // OnStmtRetry is the hook that should be called when a statement retry

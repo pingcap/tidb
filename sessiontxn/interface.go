@@ -78,6 +78,18 @@ const (
 	StmtActionNoIdea
 )
 
+func ErrorAction(err error) (StmtErrorAction, error) {
+	return StmtActionError, err
+}
+
+func RetryReady() (StmtErrorAction, error) {
+	return StmtActionRetryReady, nil
+}
+
+func NoIdea() (StmtErrorAction, error) {
+	return StmtActionNoIdea, nil
+}
+
 // TxnContextProvider provides txn context
 type TxnContextProvider interface {
 	// GetTxnInfoSchema returns the information schema used by txn
