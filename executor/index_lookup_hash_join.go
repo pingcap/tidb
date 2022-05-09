@@ -483,6 +483,10 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 	}
 	h, resultCh := fnv.New64(), iw.resultCh
 	for {
+		// The previous task has been processed, so release the occupied memory
+		if task != nil {
+			task.memTracker.Detach()
+		}
 		select {
 		case <-ctx.Done():
 			return
