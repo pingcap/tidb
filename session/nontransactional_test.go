@@ -365,7 +365,7 @@ func TestNonTransactionalDeleteAlias(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
-	goodbatchStmts := []string{
+	goodBatchStmts := []string{
 		"batch on test.t1.a limit 5 delete t1.* from test.t as t1",
 		"batch on a limit 5 delete t1.* from test.t as t1",
 		"batch on _tidb_rowid limit 5 delete from test.t as t1",
@@ -374,7 +374,7 @@ func TestNonTransactionalDeleteAlias(t *testing.T) {
 		"batch limit 5 delete from test.t as t1", // auto assigns table name to be the alias
 	}
 
-	badbatchStmts := []string{
+	badBatchStmts := []string{
 		"batch on test.t.a limit 5 delete t1.* from test.t as t1",
 		"batch on t.a limit 5 delete t1.* from test.t as t1",
 		"batch on t._tidb_rowid limit 5 delete from test.t as t1",
@@ -384,7 +384,7 @@ func TestNonTransactionalDeleteAlias(t *testing.T) {
 	tk.MustExec("create table test.t(a int, b int, key(a))")
 	tk.MustExec("create table test.t2(a int, b int, key(a))")
 
-	for _, sql := range goodbatchStmts {
+	for _, sql := range goodBatchStmts {
 		for i := 0; i < 5; i++ {
 			tk.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", i, i*2))
 		}
@@ -395,7 +395,7 @@ func TestNonTransactionalDeleteAlias(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		tk.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", i, i*2))
 	}
-	for _, sql := range badbatchStmts {
+	for _, sql := range badBatchStmts {
 		err := tk.ExecToErr(sql)
 		require.Error(t, err)
 		tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("5"))
