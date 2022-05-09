@@ -533,6 +533,48 @@ func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {
 	require.Less(t, wait.Seconds(), time.Since(start).Seconds())
 }
 
+func TestSavepointInPessimisticAndOptimistic(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(id int key, a int)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	// Test for rollback savepoint in pessimistic txn.
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("insert into t values (1,1)")
+	tk1.MustExec("savepoint s1")
+	tk1.MustExec("insert into t values (2,2)")
+	tk1.MustExec("rollback to s1")
+
+	tk2.MustExec("begin optimistic")
+	tk2.MustExec("insert into t values (2,2)")
+	tk1.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	tk2.MustQuery("select * from t").Check(testkit.Rows("2 2"))
+	tk2.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+
+	// Test for rollback savepoint in optimistic txn.
+	tk1.MustExec("truncate table t")
+	tk1.MustExec("begin optimistic")
+	tk1.MustExec("insert into t values (1,1)")
+	tk1.MustExec("savepoint s1")
+	tk1.MustExec("insert into t values (2,2)")
+	tk1.MustExec("rollback to s1")
+
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (2,2)")
+	tk1.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	tk2.MustQuery("select * from t").Check(testkit.Rows("2 2"))
+	tk2.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+}
+
 func TestSavepointWithBinlog(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
