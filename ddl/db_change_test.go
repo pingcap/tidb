@@ -1273,9 +1273,8 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 			return
 		}
 		var qLen int
-		tk := testkit.NewTestKit(s.T(), s.store)
 		for {
-			sess := tk.Session()
+			sess := testkit.NewTestKit(s.T(), s.store).Session()
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			s.Require().NoError(err)
 			txn, err := sess.Txn(true)
@@ -1304,7 +1303,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 	go func() {
 		var qLen int
 		for {
-			sess := s.tk.Session().(sessionctx.Context)
+			sess := testkit.NewTestKit(s.T(), s.store).Session()
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			s.Require().NoError(err)
 			txn, err := sess.Txn(true)
@@ -1312,7 +1311,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 			jobs, err := admin.GetAllDDLJobs(txn, sess)
 			s.Require().NoError(err)
 			qLen = len(jobs)
-			if qLen == 2 {
+			if qLen == 1 {
 				close(ch)
 				break
 			}

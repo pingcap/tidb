@@ -72,7 +72,6 @@ func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	var err error
-	variable.AllowConcurrencyDDL.Store(false)
 	err = d.Start(nil)
 	return d, err
 }
