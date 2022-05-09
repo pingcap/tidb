@@ -96,6 +96,22 @@ func (m *txnManager) OnStmtStart(ctx context.Context) error {
 	return m.ctxProvider.OnStmtStart(ctx)
 }
 
+// OnStmtError is the hook that should be called when a new statement get an error
+func (m *txnManager) OnStmtError(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+	if m.ctxProvider == nil {
+		return sessiontxn.StmtActionNoIdea, nil
+	}
+	return m.ctxProvider.OnStmtError(point, err)
+}
+
+// OnStmtRetry is the hook that should be called when a statement retry
+func (m *txnManager) OnStmtRetry(ctx context.Context) error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	return m.ctxProvider.OnStmtRetry(ctx)
+}
+
 func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) sessiontxn.TxnContextProvider {
 	if r.Provider != nil {
 		return r.Provider

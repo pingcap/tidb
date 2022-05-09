@@ -89,3 +89,13 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
 	return nil
 }
+
+// OnStmtError is the hook that should be called when a new statement get an error
+func (p *StalenessTxnContextProvider) OnStmtError(_ sessiontxn.StmtErrorHandlePoint, _ error) (sessiontxn.StmtErrorAction, error) {
+	return sessiontxn.StmtActionNoIdea, nil
+}
+
+// OnStmtRetry is the hook that should be called when a statement retry
+func (p *StalenessTxnContextProvider) OnStmtRetry(_ context.Context) error {
+	return nil
+}
