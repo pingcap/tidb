@@ -25,9 +25,9 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
@@ -138,7 +138,7 @@ func setManagerSessionTTL() error {
 func (m *ownerManager) CampaignOwner() error {
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
 	logutil.BgLogger().Info("start campaign owner", zap.String("ownerInfo", logPrefix))
-	session, err := util.NewSession(m.ctx, logPrefix, m.etcdCli, util.NewSessionDefaultRetryCnt, ManagerSessionTTL)
+	session, err := util2.NewSession(m.ctx, logPrefix, m.etcdCli, util2.NewSessionDefaultRetryCnt, ManagerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -198,7 +198,7 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 		case <-etcdSession.Done():
 			logutil.Logger(logCtx).Info("etcd session is done, creates a new one")
 			leaseID := etcdSession.Lease()
-			etcdSession, err = util.NewSession(ctx, logPrefix, m.etcdCli, util.NewSessionRetryUnlimited, ManagerSessionTTL)
+			etcdSession, err = util2.NewSession(ctx, logPrefix, m.etcdCli, util2.NewSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
 				logutil.Logger(logCtx).Info("break campaign loop, NewSession failed", zap.Error(err))
 				m.revokeSession(logPrefix, leaseID)

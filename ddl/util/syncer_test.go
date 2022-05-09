@@ -161,7 +161,7 @@ func TestSyncerSimple(t *testing.T) {
 	NeededCleanTTL = int64(11)
 	ttlKey := "session_ttl_key"
 	ttlVal := "session_ttl_val"
-	session, err := NewSession(ctx, "", cli, NewSessionDefaultRetryCnt, ttl)
+	session, err := util.NewSession(ctx, "", cli, util.NewSessionDefaultRetryCnt, ttl)
 	require.NoError(t, err)
 	require.NoError(t, PutKVToEtcd(context.Background(), cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease())))
 

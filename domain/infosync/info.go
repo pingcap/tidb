@@ -195,14 +195,14 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) error {
-	err := is.newSessionAndStoreServerInfo(ctx, util.NewSessionDefaultRetryCnt)
+	err := is.newSessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 	if err != nil {
 		return err
 	}
 	if skipRegisterToDashboard {
 		return nil
 	}
-	return is.newTopologySessionAndStoreServerInfo(ctx, util.NewSessionDefaultRetryCnt)
+	return is.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 }
 
 // SetSessionManager set the session manager for InfoSyncer.
@@ -682,12 +682,12 @@ func (is *InfoSyncer) TopologyDone() <-chan struct{} {
 
 // Restart restart the info syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) Restart(ctx context.Context) error {
-	return is.newSessionAndStoreServerInfo(ctx, util.NewSessionDefaultRetryCnt)
+	return is.newSessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 }
 
 // RestartTopology restart the topology syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
-	return is.newTopologySessionAndStoreServerInfo(ctx, util.NewSessionDefaultRetryCnt)
+	return is.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 }
 
 // GetAllTiDBTopology gets all tidb topology
@@ -717,7 +717,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return nil
 	}
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", is.serverInfoPath)
-	session, err := util.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
+	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
 	if err != nil {
 		return err
 	}
@@ -736,7 +736,7 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 		return nil
 	}
 	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s:%d", TopologyInformationPath, is.info.IP, is.info.Port)
-	session, err := util.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
+	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
 	}
