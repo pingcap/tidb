@@ -846,7 +846,6 @@ const (
 	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
 	DefTiDBQueryLogMaxLen                        = 4096
 	DefTiDBMemQuotaAnalyze                       = -1
-	DefTiDBGCManualTrigger                       = 0
 )
 
 // Process global variables.
@@ -883,7 +882,6 @@ var (
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
-	GCManualTrigger                       = atomic.NewInt64(DefTiDBGCManualTrigger)
 )
 
 var (
