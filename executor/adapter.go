@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -54,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -377,7 +377,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
 		if n, ok := val.(int); ok && staleread.IsStmtStaleness(a.Ctx) {
 			txnManager := sessiontxn.GetTxnManager(a.Ctx)
-			ts, err := txnManager.GetReadTS()
+			ts, err := txnManager.GetStmtReadTS()
 			if err != nil {
 				panic(err)
 			}

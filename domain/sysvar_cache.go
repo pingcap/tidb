@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // The sysvar cache replaces the GlobalVariableCache.
@@ -67,9 +68,7 @@ func (do *Domain) GetSessionCache() (map[string]string, error) {
 	defer do.sysVarCache.RUnlock()
 	// Perform a deep copy since this will be assigned directly to the session
 	newMap := make(map[string]string, len(do.sysVarCache.session))
-	for k, v := range do.sysVarCache.session {
-		newMap[k] = v
-	}
+	maps.Copy(newMap, do.sysVarCache.session)
 	return newMap, nil
 }
 
