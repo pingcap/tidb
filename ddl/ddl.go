@@ -221,23 +221,57 @@ type ddl struct {
 	runningDDLMapMu sync.RWMutex
 }
 
+// waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
+type waitSchemaSyncedController struct {
+	mu  sync.RWMutex
+	job map[int64]struct{}
+}
+
+func newWaitSchemaSyncedController() waitSchemaSyncedController {
+	return waitSchemaSyncedController{
+		job: make(map[int64]struct{}),
+	}
+}
+
+func (w *waitSchemaSyncedController) Add(job *model.Job) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.job[job.ID] = struct{}{}
+}
+
+func (w *waitSchemaSyncedController) IsSynced(job *model.Job) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if _, ok := w.job[job.ID]; ok {
+		return true
+	}
+	return false
+}
+
+func (w *waitSchemaSyncedController) Release(job *model.Job) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.job, job.ID)
+}
+
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
-	schemaVersionMu    sync.Mutex
-	schemaVersionOwner atomicutil.Int64
-	schemaVersion      int64
-	uuid               string
-	store              kv.Storage
-	ownerManager       owner.Manager
-	schemaSyncer       util.SchemaSyncer
-	ddlJobDoneCh       chan struct{}
-	ddlEventCh         chan<- *util.Event
-	lease              time.Duration        // lease is schema lease.
-	binlogCli          *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoCache          *infoschema.InfoCache
-	statsHandle        *handle.Handle
-	tableLockCkr       util.DeadTableLockChecker
-	etcdCli            *clientv3.Client
+	schemaVersionMu     sync.Mutex
+	schemaVersionOwner  atomicutil.Int64
+	waitSchemaSyncedCtl waitSchemaSyncedController
+	schemaVersion       int64
+	uuid                string
+	store               kv.Storage
+	ownerManager        owner.Manager
+	schemaSyncer        util.SchemaSyncer
+	ddlJobDoneCh        chan struct{}
+	ddlEventCh          chan<- *util.Event
+	lease               time.Duration        // lease is schema lease.
+	binlogCli           *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoCache           *infoschema.InfoCache
+	statsHandle         *handle.Handle
+	tableLockCkr        util.DeadTableLockChecker
+	etcdCli             *clientv3.Client
 
 	// reorgCtx is used for reorganization.
 	reorgCtx struct {
@@ -420,17 +454,18 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	}
 
 	ddlCtx := &ddlCtx{
-		schemaVersionOwner: *atomicutil.NewInt64(0),
-		uuid:               id,
-		store:              opt.Store,
-		lease:              opt.Lease,
-		ddlJobDoneCh:       make(chan struct{}, 1),
-		ownerManager:       manager,
-		schemaSyncer:       syncer,
-		binlogCli:          binloginfo.GetPumpsClient(),
-		infoCache:          opt.InfoCache,
-		tableLockCkr:       deadLockCkr,
-		etcdCli:            opt.EtcdCli,
+		schemaVersionOwner:  *atomicutil.NewInt64(0),
+		waitSchemaSyncedCtl: newWaitSchemaSyncedController(),
+		uuid:                id,
+		store:               opt.Store,
+		lease:               opt.Lease,
+		ddlJobDoneCh:        make(chan struct{}, 1),
+		ownerManager:        manager,
+		schemaSyncer:        syncer,
+		binlogCli:           binloginfo.GetPumpsClient(),
+		infoCache:           opt.InfoCache,
+		tableLockCkr:        deadLockCkr,
+		etcdCli:             opt.EtcdCli,
 	}
 	ddlCtx.reorgCtx.reorgMap = make(map[int64]*reorgCtx)
 	ddlCtx.mu.hook = opt.Hook
