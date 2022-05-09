@@ -408,8 +408,24 @@ type LogicalSelection struct {
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
 
+<<<<<<< HEAD
 	// having selection can't be pushed down, because it must above the aggregation.
 	buildByHaving bool
+=======
+	// extract equivalence cols.
+	equivUniqueIDs := extractEquivalenceCols(p.Conditions, p.SCtx(), fds)
+
+	// apply operator's characteristic's FD setting.
+	fds.MakeNotNull(notnullColsUniqueIDs)
+	fds.AddConstants(constUniqueIDs)
+	for _, equiv := range equivUniqueIDs {
+		fds.AddEquivalence(equiv[0], equiv[1])
+	}
+	fds.ProjectCols(outputColsUniqueIDs)
+	// just trace it down in every operator for test checking.
+	p.fdSet = fds
+	return fds
+>>>>>>> 2f86eac3c... planner: introduce Cond-FD to maintain null-constraint FD (#34147)
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
