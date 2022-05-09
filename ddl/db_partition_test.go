@@ -2913,7 +2913,7 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	jobID := row.GetInt64(0)
 
 	var tableIDs []int64
-	historyJob, err := ddl.GetHistoryJobFromStore(tk.Session(), store, jobID)
+	historyJob, err := ddl.GetHistoryJob(tk.Session(), jobID)
 	require.NoError(t, err)
 	err = historyJob.DecodeArgs(&tableIDs)
 	require.NoError(t, err)

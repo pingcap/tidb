@@ -4426,7 +4426,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	jobID, err := strconv.Atoi(row[0].(string))
 	require.NoError(t, err)
 
-	job, err := ddl.GetHistoryJobFromStore(tk.Session(), store, int64(jobID))
+	job, err := ddl.GetHistoryJob(tk.Session(), int64(jobID))
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.

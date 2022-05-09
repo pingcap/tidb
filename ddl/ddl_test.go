@@ -71,8 +71,7 @@ func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
-	var err error
-	err = d.Start(nil)
+	err := d.Start(nil)
 	return d, err
 }
 
@@ -117,10 +116,7 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 }
 
 func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	tran := meta.NewMeta(txn)
-	historyJob, err := GetHistoryJob(ctx, tran, id)
+	historyJob, err := GetHistoryJob(ctx, id)
 	require.NoError(t, err)
 	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
 

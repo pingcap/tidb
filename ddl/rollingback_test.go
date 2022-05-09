@@ -86,7 +86,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 	require.EqualError(t, err, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
 
 	// Verification of the history job state.
-	job, err := ddl.GetHistoryJobFromStore(tk.Session(), store, jobID)
+	job, err := ddl.GetHistoryJob(tk.Session(), jobID)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), job.ErrorCount)
 	require.EqualError(t, job.Error, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")

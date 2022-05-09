@@ -941,7 +941,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 
 	tk.MustGetErrCode("rename table ddl_error_table to new_ddl_error_table", errno.ErrEntryTooLarge)
 
-	historyJob, err := ddl.GetHistoryJobFromStore(tk.Session(), store, jobID)
+	historyJob, err := ddl.GetHistoryJob(tk.Session(), jobID)
 	require.NoError(t, err)
 	require.NotNil(t, historyJob)
 	require.Equal(t, int64(1), historyJob.ErrorCount)

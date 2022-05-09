@@ -420,28 +420,12 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
 func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
-	job, err := GetHistoryJobFromStore(d.sessForAddDDL, d.store, id)
+	job, err := GetHistoryJob(d.sessForAddDDL, id)
 	return job, errors.Trace(err)
 }
 
-// GetHistoryJobFromStore return all history ddl from store.
-func GetHistoryJobFromStore(sess sessionctx.Context, store kv.Storage, id int64) (*model.Job, error) {
-	if variable.AllowConcurrencyDDL.Load() {
-		return GetHistoryJob(sess, nil, id)
-	}
-
-	var historyJob *model.Job
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		var err1 error
-		t := meta.NewMeta(txn)
-		historyJob, err1 = GetHistoryJob(nil, t, id)
-		return err1
-	})
-	return historyJob, errors.Trace(err)
-}
-
 // GetHistoryJob return all history ddl from.
-func GetHistoryJob(sess sessionctx.Context, t *meta.Meta, id int64) (*model.Job, error) {
+func GetHistoryJob(sess sessionctx.Context, id int64) (*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		jobs, err := getJobsBySQL(sess, "tidb_ddl_history", fmt.Sprintf("job_id = %d", id))
 		if err != nil || len(jobs) == 0 {
@@ -449,6 +433,15 @@ func GetHistoryJob(sess sessionctx.Context, t *meta.Meta, id int64) (*model.Job,
 		}
 		return jobs[0], nil
 	}
+	err := sessiontxn.NewTxn(context.Background(), sess)
+	if err != nil {
+		return nil, err
+	}
+	txn, err := sess.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	t := meta.NewMeta(txn)
 	job, err := t.GetHistoryDDLJob(id)
 	return job, errors.Trace(err)
 }
@@ -635,7 +628,7 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 		return true, nil
 	}
 
-	historyJob, err := GetHistoryJob(nil, t, job.DependencyID)
+	historyJob, err := t.GetHistoryDDLJob(job.DependencyID)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
