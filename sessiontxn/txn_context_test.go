@@ -549,14 +549,6 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
 	})
 
-	// Test PlanCache
-	path = []string{"assertTxnManagerInCachedPlanExec", "assertTxnManagerInShortPointGetPlan"}
-	doWithCheckPath(t, se, path, func() {
-		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
-	})
-
 	// In txn
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("begin")
