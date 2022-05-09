@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -770,7 +771,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	)
 
 	w.sessForJob.SetDiskFullOpt(level)
-	err := w.sessForJob.NewTxn(w.ctx)
+	err := sessiontxn.NewTxn(context.Background(), w.sessForJob)
 	if err != nil {
 		return err
 	}
