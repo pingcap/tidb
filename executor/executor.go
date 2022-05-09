@@ -158,7 +158,7 @@ func init() {
 	// register quota funcs
 	variable.SetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.SetBytesLimit
 	variable.GetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.GetBytesLimit
-	// TODO: do not attach now to avoid impact to global
+	// TODO: do not attach now to avoid impact to global, will attach later when analyze memory track is stable
 	//GlobalAnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 }
 
