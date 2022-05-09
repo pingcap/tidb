@@ -27,7 +27,10 @@ import (
 )
 
 const (
+	// CostFlagRecalculate indicates the optimizer to ignore cached cost and recalculate it again.
 	CostFlagRecalculate uint64 = 1 << iota
+
+	// CostFlagUseTrueCardinality indicates the optimizer to use true cardinality to calculate the cost.
 	CostFlagUseTrueCardinality
 )
 
