@@ -328,10 +328,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 
 				hotTables = append(hotTables, t)
 			}
-		} else {
-			hotTables = append(hotTables, t)
 		}
-
 	}
 	return hotTables, nil
 }
