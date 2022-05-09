@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1324,7 +1325,7 @@ func (e *Explain) RenderResult() error {
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatVisual:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
-			flat := FlattenPhysicalPlan(physicalPlan, e.ctx.GetSessionVars().StmtCtx)
+			flat := FlattenPhysicalPlan(physicalPlan)
 			str := VisualPlanStrFromFlatPlan(e.ctx, flat)
 			e.Rows = append(e.Rows, []string{str})
 		}
@@ -1354,8 +1355,10 @@ func visualDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPla
 	}
 	res := &tipb.VisualData{}
 	for _, op := range flat.Main {
-		if op.RootStats != nil || op.CopStats != nil {
+		rootStats, copStats, _, _ := getRuntimeInfo(explainCtx, op.Origin, nil)
+		if rootStats != nil || copStats != nil {
 			res.WithRuntimeStats = true
+			break
 		}
 	}
 	res.Main = visualOpTreeFromFlatOps(explainCtx, flat.Main)
@@ -1383,21 +1386,23 @@ func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 	out.Name = op.Origin.ExplainID().String()
 	out.Cost = op.EstCost
 	out.EstRows = op.EstRows
-	out.ActRows = uint64(op.ActRows)
 	out.RunAt = op.StoreType.Name()
+	rootStats, copStats, _, _ := getRuntimeInfo(explainCtx, op.Origin, nil)
 	// Get TimeUs
-	if op.RootStats != nil {
-		if basicStats := op.RootStats.MergeBasicStats(); basicStats != nil {
+	if rootStats != nil {
+		if basicStats := rootStats.MergeBasicStats(); basicStats != nil {
 			out.TimeUs = float64(time.Duration(basicStats.GetTime()).Microseconds())
 		}
-	} else if op.CopStats != nil {
+		out.ActRows = uint64(rootStats.GetActRows())
+	} else if copStats != nil {
 		var totalTime time.Duration
-		if times, _, _, _ := op.CopStats.MergeBasicStats(); len(times) > 0 {
+		if times, _, _, _ := copStats.MergeBasicStats(); len(times) > 0 {
 			for i := range times {
 				totalTime += times[i]
 			}
 			out.TimeUs = float64(totalTime.Microseconds())
 		}
+		out.ActRows = uint64(copStats.GetActRows())
 	}
 	// Get AccessXXX
 	switch p := op.Origin.(type) {
@@ -1637,68 +1642,57 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	return
 }
 
-func getRuntimeInfoFromExplainedOp(op *FlatOperator) (analyzeInfo, memoryInfo, diskInfo string) {
-	if op.RootStats == nil && op.CopStats == nil {
-		// be consistent with getRuntimeInfo()
-		return "", "", ""
-	}
-	if op.RootStats != nil {
-		analyzeInfo = op.RootStats.String()
-	}
-	if op.CopStats != nil {
-		if len(analyzeInfo) > 0 {
-			analyzeInfo += ", "
-		}
-		analyzeInfo += op.CopStats.String()
-	}
-	memoryInfo = "N/A"
-	if op.MemTracker != nil {
-		memoryInfo = op.MemTracker.FormatBytes(op.MemTracker.MaxConsumed())
-	}
-	diskInfo = "N/A"
-	if op.DiskTracker != nil {
-		diskInfo = op.DiskTracker.FormatBytes(op.DiskTracker.MaxConsumed())
-	}
-	return
-}
-
-func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
+func getRuntimeInfoStr(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
 	if runtimeStatsColl == nil {
 		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		if runtimeStatsColl == nil {
 			return
 		}
 	}
-	explainID := p.ID()
-
-	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
-	// So check copTaskExecDetail first and print the real cop task information if it's not empty.
-	if runtimeStatsColl.ExistsRootStats(explainID) {
-		rootStats := runtimeStatsColl.GetRootStats(explainID)
-		analyzeInfo = rootStats.String()
+	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(ctx, p, runtimeStatsColl)
+	actRows = "0"
+	memoryInfo = "N/A"
+	diskInfo = "N/A"
+	if rootStats != nil {
 		actRows = strconv.FormatInt(rootStats.GetActRows(), 10)
-	} else {
-		actRows = "0"
+		analyzeInfo = rootStats.String()
 	}
-	if runtimeStatsColl.ExistsCopStats(explainID) {
+	if copStats != nil {
 		if len(analyzeInfo) > 0 {
 			analyzeInfo += ", "
 		}
-		copStats := runtimeStatsColl.GetCopStats(explainID)
 		analyzeInfo += copStats.String()
 		actRows = strconv.FormatInt(copStats.GetActRows(), 10)
 	}
-	memoryInfo = "N/A"
-	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
 	if memTracker != nil {
 		memoryInfo = memTracker.FormatBytes(memTracker.MaxConsumed())
 	}
-
-	diskInfo = "N/A"
-	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	if diskTracker != nil {
 		diskInfo = diskTracker.FormatBytes(diskTracker.MaxConsumed())
 	}
+	return
+}
+
+func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (
+	rootStats *execdetails.RootRuntimeStats,
+	copStats *execdetails.CopRuntimeStats,
+	memTracker *memory.Tracker,
+	diskTracker *memory.Tracker,
+) {
+	if runtimeStatsColl == nil {
+		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+	}
+	explainID := p.ID()
+	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
+	// So check copTaskExecDetail first and print the real cop task information if it's not empty.
+	if runtimeStatsColl != nil && runtimeStatsColl.ExistsRootStats(explainID) {
+		rootStats = runtimeStatsColl.GetRootStats(explainID)
+	}
+	if runtimeStatsColl != nil && runtimeStatsColl.ExistsCopStats(explainID) {
+		copStats = runtimeStatsColl.GetCopStats(explainID)
+	}
+	memTracker = ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
+	diskTracker = ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	return
 }
 
@@ -1718,7 +1712,11 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		if strings.ToLower(e.Format) == types.ExplainFormatVerbose {
 			row = append(row, estCost)
 		}
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
+		statsColl := e.RuntimeStatsColl
+		if statsColl == nil {
+			statsColl = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		}
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}

@@ -91,7 +91,7 @@ func TestFlatPhysicalPlan(t *testing.T) {
 		p, _, err := planner.Optimize(context.Background(), tk.Session(), stmt, is)
 		require.NoError(t, err, comment)
 
-		explained := core.FlattenPhysicalPlan(p, tk.Session().GetSessionVars().StmtCtx)
+		explained := core.FlattenPhysicalPlan(p)
 		main := simplifyFlatPlan(explained.Main)
 		var ctes [][]*FlatPhysicalOperatorForTest
 		for _, cte := range explained.CTEs {

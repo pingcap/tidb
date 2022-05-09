@@ -16,9 +16,6 @@ package core
 
 import (
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/texttree"
 )
 
@@ -41,8 +38,6 @@ type FlatPhysicalPlan struct {
 	InExecute bool
 
 	ctesToFlatten []*PhysicalCTE
-	// We'll need the stmtCtx to get the runtime stats when building the FlatPhysicalPlan.
-	stmtCtx *stmtctx.StatementContext
 }
 
 // FlatPlanTree is a simplified plan tree.
@@ -92,12 +87,6 @@ type FlatOperator struct {
 	IsPhysicalPlan bool
 	// EstCost is only meaningful when IsPhysicalPlan is true.
 	EstCost float64
-
-	ActRows     int64
-	RootStats   *execdetails.RootRuntimeStats
-	CopStats    *execdetails.CopRuntimeStats
-	MemTracker  *memory.Tracker
-	DiskTracker *memory.Tracker
 }
 
 // DriverSide indicates the operator's location from its parent.
@@ -143,9 +132,9 @@ type operatorCtx struct {
 	isLastChild bool
 }
 
-// FlattenPhysicalPlan generates a FlatPhysicalPlan from a PhysicalPlan, Insert, Delete or Update.
-func FlattenPhysicalPlan(p Plan, stmtCtx *stmtctx.StatementContext) *FlatPhysicalPlan {
-	res := &FlatPhysicalPlan{stmtCtx: stmtCtx}
+// FlattenPhysicalPlan generates a FlatPhysicalPlan from a PhysicalPlan, Insert, Delete, Update, Explain or Execute.
+func FlattenPhysicalPlan(p Plan) *FlatPhysicalPlan {
+	res := &FlatPhysicalPlan{}
 	initInfo := &operatorCtx{
 		depth:       0,
 		driverSide:  Empty,
@@ -200,25 +189,6 @@ func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperato
 		res.IsPhysicalPlan = true
 		res.EstCost = pp.Cost()
 	}
-
-	runtimeStats := f.stmtCtx.RuntimeStatsColl
-	id := p.ID()
-	if runtimeStats != nil {
-		if runtimeStats.ExistsRootStats(id) {
-			rootStats := runtimeStats.GetRootStats(id)
-			res.RootStats = rootStats
-			res.ActRows = rootStats.GetActRows()
-		}
-		if runtimeStats.ExistsCopStats(id) {
-			copStats := runtimeStats.GetCopStats(id)
-			res.CopStats = copStats
-			res.ActRows = copStats.GetActRows()
-		}
-	}
-
-	res.MemTracker = f.stmtCtx.MemTracker.SearchTrackerWithoutLock(id)
-	res.DiskTracker = f.stmtCtx.DiskTracker.SearchTrackerWithoutLock(id)
-
 	return res
 }
 

@@ -1083,7 +1083,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		visualPlan = plannercore.VisualPlanStrFromFlatPlan(a.Ctx, flat)
 	}
 
-	resultRows := GetResultRowsCount(stmtCtx)
+	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
 
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
@@ -1166,18 +1166,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 }
 
 // GetResultRowsCount gets the count of the statement result rows.
-func GetResultRowsCount(stmtCtx *stmtctx.StatementContext) int64 {
-	if e := stmtCtx.GetFlatPlan(); e != nil {
-		flat := e.(*plannercore.FlatPhysicalPlan)
-		if flat != nil && len(flat.Main) > 0 {
-			return flat.Main[0].ActRows
-		}
-	}
-	pp := stmtCtx.GetPlan()
-	if pp == nil {
-		return 0
-	}
-	p := pp.(plannercore.Plan)
+func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p plannercore.Plan) int64 {
 	runtimeStatsColl := stmtCtx.RuntimeStatsColl
 	if runtimeStatsColl == nil {
 		return 0
@@ -1202,7 +1191,7 @@ func FlattenPhysicalPlanForStmtCtx(stmtCtx *stmtctx.StatementContext) *plannerco
 		return f
 	}
 	p := pp.(plannercore.Plan)
-	flat := plannercore.FlattenPhysicalPlan(p, stmtCtx)
+	flat := plannercore.FlattenPhysicalPlan(p)
 	if flat != nil {
 		stmtCtx.SetFlatPlan(flat)
 		return flat
@@ -1356,7 +1345,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
 	}
 
-	resultRows := GetResultRowsCount(stmtCtx)
+	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
 
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),

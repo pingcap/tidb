@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"hash"
-	"strconv"
 	"sync"
 
 	"github.com/pingcap/failpoint"
@@ -57,11 +56,8 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	buf.Grow(80 * opCount)
 	for _, op := range flat.Main {
 		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
-		analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoFromExplainedOp(op)
-		actRowsStr := ""
-		if op.ActRows > 0 || len(analyzeInfo) > 0 || len(memoryInfo) > 0 || len(diskInfo) > 0 {
-			actRowsStr = strconv.FormatInt(op.ActRows, 10)
-		}
+		p := op.Origin
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		plancodec.EncodePlanNode(
 			int(op.Depth),
 			op.Origin.ID(),
@@ -69,7 +65,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 			op.EstRows,
 			taskTypeInfo,
 			op.Origin.ExplainInfo(),
-			actRowsStr,
+			actRows,
 			analyzeInfo,
 			memoryInfo,
 			diskInfo,
@@ -89,11 +85,8 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 				tp = op.Origin.TP()
 			}
 			taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
-			analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoFromExplainedOp(op)
-			actRowsStr := ""
-			if op.ActRows > 0 || len(analyzeInfo) > 0 || len(memoryInfo) > 0 || len(diskInfo) > 0 {
-				actRowsStr = strconv.FormatInt(op.ActRows, 10)
-			}
+			p := op.Origin
+			actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 			plancodec.EncodePlanNode(
 				int(op.Depth),
 				id,
@@ -101,7 +94,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 				op.EstRows,
 				taskTypeInfo,
 				op.Origin.ExplainInfo(),
-				actRowsStr,
+				actRows,
 				analyzeInfo,
 				memoryInfo,
 				diskInfo,
@@ -165,7 +158,7 @@ func (pn *planEncoder) encodeCTEPlan() {
 			continue
 		}
 		taskTypeInfo := plancodec.EncodeTaskType(true, kv.TiKV)
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(x.SCtx(), x, nil)
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(x.SCtx(), x, nil)
 		rowCount := 0.0
 		if statsInfo := x.statsInfo(); statsInfo != nil {
 			rowCount = x.statsInfo().RowCount
@@ -181,7 +174,7 @@ func (pn *planEncoder) encodeCTEPlan() {
 
 func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth int) {
 	taskTypeInfo := plancodec.EncodeTaskType(isRoot, store)
-	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p, nil)
+	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 	rowCount := 0.0
 	if statsInfo := p.statsInfo(); statsInfo != nil {
 		rowCount = p.statsInfo().RowCount
