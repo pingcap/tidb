@@ -1414,7 +1414,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 									{
 										// colB doesn't have the default value
 										Name:      model.NewCIStr("colB"),
-										FieldType: types.NewFieldTypeBuilderP().SetType(0).SetFlag(1).Build(),
+										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
 							},
@@ -1566,7 +1566,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 									{
 										// colC doesn't have the default value
 										Name:      model.NewCIStr("colC"),
-										FieldType: types.NewFieldTypeBuilderP().SetType(0).SetFlag(1).Build(),
+										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
 							},
@@ -1617,7 +1617,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 									{
 										// colB doesn't have the default value
 										Name:      model.NewCIStr("colB"),
-										FieldType: types.NewFieldTypeBuilderP().SetType(0).SetFlag(1).Build(),
+										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 									{
 										// colC has the default value
@@ -1820,11 +1820,11 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 							Columns: []*model.ColumnInfo{
 								{
 									Name:      model.NewCIStr("colA"),
-									FieldType: types.NewFieldTypeBuilderP().SetType(0).SetFlag(1).Build(),
+									FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 								},
 								{
 									Name:      model.NewCIStr("colB"),
-									FieldType: types.NewFieldTypeBuilderP().SetType(0).SetFlag(1).Build(),
+									FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 								},
 							},
 						},
