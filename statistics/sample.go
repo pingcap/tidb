@@ -104,6 +104,7 @@ type SampleCollector struct {
 	CMSketch      *CMSketch
 	TopN          *TopN
 	TotalSize     int64 // TotalSize is the total size of column.
+	MemSize       int64 // major memory size of this sample collector.
 }
 
 // MergeSampleCollector merges two sample collectors.
