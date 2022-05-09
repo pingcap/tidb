@@ -75,7 +75,7 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 		return 0, err
 	}
 	p.planCost = childCost
-	p.planCost += p.children[0].StatsCount() * cpuFactor // selection cost: rows * cpu-factor
+	p.planCost += getStatsCount(p.children[0], costFlag) * cpuFactor // selection cost: rows * cpu-factor
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -103,13 +103,13 @@ func (p *PhysicalProjection) GetPlanCost(taskType property.TaskType, costFlag ui
 		return 0, err
 	}
 	p.planCost = childCost
-	p.planCost += p.GetCost(p.StatsCount()) // projection cost
+	p.planCost += p.GetCost(getStatsCount(p, costFlag)) // projection cost
 	p.planCostInit = true
 	return p.planCost, nil
 }
 
 // GetCost computes cost of index lookup operator itself.
-func (p *PhysicalIndexLookUpReader) GetCost() (cost float64) {
+func (p *PhysicalIndexLookUpReader) GetCost(costFlag uint64) (cost float64) {
 	indexPlan, tablePlan := p.indexPlan, p.tablePlan
 	ctx := p.ctx
 	sessVars := ctx.GetSessionVars()
@@ -117,7 +117,7 @@ func (p *PhysicalIndexLookUpReader) GetCost() (cost float64) {
 	// each handle is a range, the CPU cost of building copTasks should be:
 	// (indexRows / batchSize) * batchSize * CPUFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
-	indexRows := indexPlan.statsInfo().RowCount
+	indexRows := getStatsCount(indexPlan, costFlag)
 	idxCst := indexRows * sessVars.CPUFactor
 	// if the expectCnt is below the paging threshold, using paging API, recalculate idxCst.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
@@ -201,7 +201,7 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
 	// lookup-cpu-cost in TiDB
-	p.planCost += p.GetCost()
+	p.planCost += p.GetCost(costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -220,7 +220,7 @@ func (p *PhysicalIndexReader) GetPlanCost(taskType property.TaskType, costFlag u
 	// net I/O cost: rows * row-size * net-factor
 	tblStats := getTblStats(p.indexPlan)
 	rowSize := tblStats.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	p.planCost += p.indexPlan.StatsCount() * rowSize * getTableNetFactor(p.indexPlan)
+	p.planCost += getStatsCount(p.indexPlan, costFlag) * rowSize * getTableNetFactor(p.indexPlan)
 	// net seek cost
 	p.planCost += estimateNetSeekCost(p.indexPlan)
 	// consider concurrency
@@ -247,7 +247,7 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag u
 		p.planCost = childCost
 		// net I/O cost: rows * row-size * net-factor
 		rowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor
+		p.planCost += getStatsCount(p.tablePlan, costFlag) * rowSize * netFactor
 		// net seek cost
 		p.planCost += estimateNetSeekCost(p.tablePlan)
 		// consider concurrency
@@ -1049,9 +1049,16 @@ func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType, costF
 	p.planCost = childCost
 	// accumulate net cost
 	// TODO: this formula is wrong since it doesn't consider tableRowSize, fix it later
-	p.planCost += p.children[0].StatsCount() * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	p.planCost += getStatsCount(p.children[0], costFlag) * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	p.planCostInit = true
 	return p.planCost, nil
+}
+
+func getStatsCount(operator PhysicalPlan, costFlag uint64) float64 {
+	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
+		// TODO: return the true cardinality of this operator
+	}
+	return operator.StatsCount()
 }
 
 // estimateNetSeekCost calculates the net seek cost for the plan.

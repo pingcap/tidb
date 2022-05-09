@@ -609,7 +609,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	p.PartitionInfo = t.partitionInfo
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.stats = t.tablePlan.statsInfo()
-	newTask.cst += p.GetCost()
+	newTask.cst += p.GetCost(0)
 	p.cost = newTask.cst
 
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
