@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -60,7 +61,7 @@ func testCreateForeignKey(t *testing.T, d ddl.DDL, ctx sessionctx.Context, dbInf
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err := ctx.NewTxn(context.Background())
+	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = d.DoDDLJob(ctx, job)
