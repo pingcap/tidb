@@ -612,7 +612,7 @@ type RollbackStmt struct {
 	stmtNode
 	// CompletionType overwrites system variable `completion_type` within transaction
 	CompletionType CompletionType
-
+	// SavepointName is the savepoint name.
 	SavepointName string
 }
 
@@ -893,7 +893,7 @@ func (n *KillStmt) Accept(v Visitor) (Node, bool) {
 // SavepointStmt is the statement of SAVEPOINT.
 type SavepointStmt struct {
 	stmtNode
-
+	// Name is the savepoint name.
 	Name string
 }
 
@@ -914,7 +914,7 @@ func (n *SavepointStmt) Accept(v Visitor) (Node, bool) {
 // ReleaseSavepointStmt is the statement of RELEASE SAVEPOINT.
 type ReleaseSavepointStmt struct {
 	stmtNode
-
+	// Name is the savepoint name.
 	Name string
 }
 

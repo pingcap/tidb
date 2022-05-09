@@ -615,12 +615,10 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	if sessVars.BinlogClient != nil {
 		return ErrSavepointNotSupportedWithBinlog
 	}
-
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
-
 	savepoint := txn.GetSavepoint()
 	txnCtx.AddSavepoint(s.Name, savepoint)
 	return nil
@@ -728,7 +726,6 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
-
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err

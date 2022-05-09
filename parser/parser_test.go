@@ -547,7 +547,7 @@ func TestDMLStmt(t *testing.T) {
 		{"SAVEPOINT x", true, "SAVEPOINT x"},
 		{"RELEASE SAVEPOINT x", true, "RELEASE SAVEPOINT x"},
 		{"ROLLBACK TO x", true, "ROLLBACK TO x"},
-		{"ROLLBACK TO x", true, "ROLLBACK TO x"},
+		{"ROLLBACK TO X", true, "ROLLBACK TO X"},
 		{"ROLLBACK TO SAVEPOINT x", true, "ROLLBACK TO x"},
 
 		// table statement
