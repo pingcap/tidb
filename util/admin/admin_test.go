@@ -100,7 +100,7 @@ func TestGetDDLJobs(t *testing.T) {
 		err = m.EnQueueDDLJob(jobs[i])
 		require.NoError(t, err)
 
-		currJobs, err := GetDDLJobs(txn)
+		currJobs, err := GetAllDDLJobs(txn, nil)
 		require.NoError(t, err)
 		require.Len(t, currJobs, i+1)
 
@@ -119,7 +119,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs2, i+1)
 	}
 
-	currJobs, err := GetDDLJobs(txn)
+	currJobs, err := GetAllDDLJobs(txn, nil)
 	require.NoError(t, err)
 
 	for i, job := range jobs {
@@ -154,7 +154,7 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	m = meta.NewMeta(txn, meta.AddIndexJobListKey)
 	enQueueDDLJobs(t, m, model.ActionAddIndex, 5, 10)
 
-	currJobs, err := GetDDLJobs(txn)
+	currJobs, err := GetAllDDLJobs(txn, nil)
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 

@@ -217,8 +217,8 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 // GetDDLJobID is a sql that can get job id
 const GetDDLJobID = "select job_meta from mysql.tidb_ddl_job order by job_id"
 
-// GetConcurrencyDDLJobs get all DDL jobs and sort by job.ID
-func GetConcurrencyDDLJobs(sess sessionctx.Context) ([]*model.Job, error) {
+// getConcurrencyDDLJobs get all DDL jobs and sort by job.ID
+func getConcurrencyDDLJobs(sess sessionctx.Context) ([]*model.Job, error) {
 	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), GetDDLJobID)
 	if err != nil {
 		return nil, err
@@ -251,8 +251,8 @@ func GetConcurrencyDDLJobs(sess sessionctx.Context) ([]*model.Job, error) {
 	return jobs, nil
 }
 
-// GetDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+// getDDLJobs get all DDL jobs and sorts jobs by job.ID.
+func getDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
 	if err != nil {
@@ -270,10 +270,10 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(txn kv.Transaction, sess sessionctx.Context) ([]*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		return GetConcurrencyDDLJobs(sess)
+		return getConcurrencyDDLJobs(sess)
 	}
 
-	return GetDDLJobs(txn)
+	return getDDLJobs(txn)
 }
 
 type jobArray []*model.Job
