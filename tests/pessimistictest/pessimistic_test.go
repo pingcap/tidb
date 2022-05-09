@@ -156,9 +156,9 @@ func createMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption
 	}
 
 	return store, func() {
-		transaction.PrewriteMaxBackoff = 20000
 		dom.Close()
 		require.NoError(t, store.Close())
+		transaction.PrewriteMaxBackoff = 20000
 	}
 }
 
