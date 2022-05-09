@@ -114,13 +114,14 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 		}
 		children = append(children, pbArg)
 	}
-	sc := sctx.GetSessionVars().StmtCtx
-	if storeType == kv.TiFlash && !aggFunc.RetTp.IsDecimalValid() {
-		return nil, errors.New("aggregation can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(aggFunc.RetTp.GetFlen()) + "','" + strconv.Itoa(aggFunc.RetTp.GetDecimal()) + "').")
+	retType, err := expression.ToPBFieldTypeWithCheck(aggFunc.RetTp, storeType)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if tp == tipb.ExprType_GroupConcat {
 		orderBy := make([]*tipb.ByItem, 0, len(aggFunc.OrderByItems))
+		sc := sctx.GetSessionVars().StmtCtx
 		for _, arg := range aggFunc.OrderByItems {
 			pbArg := expression.SortByItemToPB(sc, client, arg.Expr, arg.Desc)
 			if pbArg == nil {
@@ -138,9 +139,9 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 		if err != nil {
 			return nil, errors.Errorf("Error happened when buildGroupConcat: %s", err.Error())
 		}
-		return &tipb.Expr{Tp: tp, Val: codec.EncodeUint(nil, maxLen), Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, OrderBy: orderBy, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}, nil
+		return &tipb.Expr{Tp: tp, Val: codec.EncodeUint(nil, maxLen), Children: children, FieldType: retType, HasDistinct: aggFunc.HasDistinct, OrderBy: orderBy, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}, nil
 	}
-	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}, nil
+	return &tipb.Expr{Tp: tp, Children: children, FieldType: retType, HasDistinct: aggFunc.HasDistinct, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}, nil
 }
 
 // AggFunctionModeToPB converts aggregate function mode to PB.
