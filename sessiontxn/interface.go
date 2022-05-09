@@ -78,14 +78,17 @@ const (
 	StmtActionNoIdea
 )
 
+// ErrorAction returns StmtActionError with specified error
 func ErrorAction(err error) (StmtErrorAction, error) {
 	return StmtActionError, err
 }
 
+// RetryReady returns StmtActionRetryReady, nil
 func RetryReady() (StmtErrorAction, error) {
 	return StmtActionRetryReady, nil
 }
 
+// NoIdea returns StmtActionNoIdea, nil
 func NoIdea() (StmtErrorAction, error) {
 	return StmtActionNoIdea, nil
 }
