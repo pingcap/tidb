@@ -116,7 +116,7 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 }
 
 func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	historyJob, err := GetHistoryJob(ctx, id)
+	historyJob, err := GetHistoryJobByID(ctx, id)
 	require.NoError(t, err)
 	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
 

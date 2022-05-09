@@ -390,7 +390,7 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 }
 
 func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	historyJob, err := ddl.GetHistoryJob(ctx, id)
+	historyJob, err := ddl.GetHistoryJobByID(ctx, id)
 	require.NoError(t, err)
 	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
 
@@ -411,7 +411,7 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 
 func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	sess := testkit.NewTestKit(t, store).Session()
-	historyJob, err := ddl.GetHistoryJob(sess, jobID)
+	historyJob, err := ddl.GetHistoryJobByID(sess, jobID)
 	require.NoError(t, err)
 	require.Equal(t, historyJob.State, model.JobStateSynced)
 	if isAdd {

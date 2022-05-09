@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util/admin"
 )
 
@@ -50,25 +50,31 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
-	var ddlInfo *admin.DDLInfo
+	se, err := d.sessPool.get()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = se.CommitTxn(context.Background())
+		d.sessPool.put(se)
+	}()
 
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		var err1 error
-		if variable.AllowConcurrencyDDL.Load() {
-			se, err := d.sessPool.get()
-			if err != nil {
-				return err
-			}
-			defer d.sessPool.put(se)
-			ddlInfo, err1 = admin.GetDDLInfoFromTable(txn, se)
-		} else {
-			ddlInfo, err1 = admin.GetDDLInfo(txn)
-		}
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		return errors.Trace(err1)
-	})
+	err = sessiontxn.NewTxn(context.Background(), se)
+	if err != nil {
+		return nil, err
+	}
+	se.GetSessionVars().SetInTxn(true)
+	txn, err := se.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	var ddlInfo *admin.DDLInfo
+	if variable.AllowConcurrencyDDL.Load() {
+		ddlInfo, err = admin.GetDDLInfoFromTable(txn, se)
+	} else {
+		ddlInfo, err = admin.GetDDLInfo(txn)
+	}
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

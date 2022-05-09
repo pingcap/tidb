@@ -609,7 +609,7 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 		return nil, nil, err
 	}
 	defer e.releaseSysSession(se)
-	job, err := ddl.GetHistoryJob(se, s.JobID)
+	job, err := ddl.GetHistoryJobByID(se, s.JobID)
 	if err != nil {
 		return nil, nil, err
 	}

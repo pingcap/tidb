@@ -1929,7 +1929,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 	require.Less(t, int64(0), jobID)
 
 	// Verification of the history job state.
-	job, err := ddl.GetHistoryJob(tk.Session(), jobID)
+	job, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), job.ErrorCount)
 	require.Equal(t, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled", job.Error.Error())

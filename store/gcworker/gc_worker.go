@@ -1882,7 +1882,7 @@ func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gc
 	})
 	if historyJob == nil {
 		se := createSession(w.store)
-		historyJob, err = ddl.GetHistoryJob(se, dr.JobID)
+		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)
 		se.Close()
 		if err != nil {
 			return
@@ -1954,7 +1954,7 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 	})
 	if historyJob == nil {
 		se := createSession(w.store)
-		historyJob, err = ddl.GetHistoryJob(se, dr.JobID)
+		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)
 		se.Close()
 		if err != nil {
 			return

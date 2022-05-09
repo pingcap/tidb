@@ -1680,7 +1680,7 @@ func (s *stateChangeSuite) TestModifyColumnTypeArgs() {
 
 	id, err := strconv.Atoi(jobID)
 	s.Require().NoError(err)
-	historyJob, err := ddl.GetHistoryJob(tk.Session(), int64(id))
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), int64(id))
 	s.Require().NoError(err)
 	s.Require().NotNil(historyJob)
 

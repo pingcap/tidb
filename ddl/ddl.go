@@ -897,7 +897,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			return context.Canceled
 		}
 
-		historyJob, err = d.getHistoryDDLJob(jobID)
+		historyJob, err = GetHistoryJobByID(d.sessForAddDDL, jobID)
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue

@@ -96,6 +96,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 // GetDDLInfoFromTable returns DDL information for new ddl framework.
 func GetDDLInfoFromTable(txn kv.Transaction, sess sessionctx.Context) (*DDLInfo, error) {
 	info := &DDLInfo{}
+	info.Jobs = make([]*model.Job, 0, 2)
 	jobs, err := getJobsBySQL(sess, "tidb_ddl_job", "not reorg order by job_id limit 1", nil)
 	if err != nil {
 		return nil, errors.Trace(err)

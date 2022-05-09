@@ -418,14 +418,8 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 	}
 }
 
-// getHistoryDDLJob gets a DDL job with job's ID from history queue.
-func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
-	job, err := GetHistoryJob(d.sessForAddDDL, id)
-	return job, errors.Trace(err)
-}
-
-// GetHistoryJob return all history ddl from.
-func GetHistoryJob(sess sessionctx.Context, id int64) (*model.Job, error) {
+// GetHistoryJobByID return history ddl by id.
+func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		jobs, err := getJobsBySQL(sess, "tidb_ddl_history", fmt.Sprintf("job_id = %d", id))
 		if err != nil || len(jobs) == 0 {
@@ -444,6 +438,15 @@ func GetHistoryJob(sess sessionctx.Context, id int64) (*model.Job, error) {
 	t := meta.NewMeta(txn)
 	job, err := t.GetHistoryDDLJob(id)
 	return job, errors.Trace(err)
+}
+
+// GetAllHistoryDDLJobs get all the done ddl jobs.
+func GetAllHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta) ([]*model.Job, error) {
+	if variable.AllowConcurrencyDDL.Load() {
+		return getJobsBySQL(sess, "tidb_ddl_history", "1")
+	}
+
+	return m.GetAllHistoryDDLJobs()
 }
 
 func injectFailPointForGetJob(job *model.Job) {

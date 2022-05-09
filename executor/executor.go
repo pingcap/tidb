@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -592,17 +593,30 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
+	session, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	e.ctx.GetSessionVars().SetInTxn(true)
-	jobs, err = admin.GetAllDDLJobs(txn, e.ctx)
+	defer func() {
+		_ = session.CommitTxn(context.Background())
+		e.releaseSysSession(session)
+	}()
+	err = sessiontxn.NewTxn(context.Background(), session)
+	if err != nil {
+		return err
+	}
+	txn, err := session.Txn(true)
+	if err != nil {
+		return err
+	}
+	session.GetSessionVars().SetInTxn(true)
+
+	jobs, err = admin.GetAllDDLJobs(txn, session)
 	if err != nil {
 		return err
 	}
 
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx, txn, admin.DefNumHistoryJobs)
+	historyJobs, err := admin.GetHistoryDDLJobs(session, txn, admin.DefNumHistoryJobs)
 	if err != nil {
 		return err
 	}

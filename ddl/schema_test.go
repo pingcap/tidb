@@ -333,7 +333,7 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 
 func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state *model.SchemaState) {
 	se := testkit.NewTestKit(t, store).Session()
-	historyJob, err := ddl.GetHistoryJob(se, job.ID)
+	historyJob, err := ddl.GetHistoryJobByID(se, job.ID)
 	require.NoError(t, err)
 	require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
 	if state != nil {
