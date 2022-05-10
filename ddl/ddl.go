@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -847,26 +846,17 @@ func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 	return false, nil
 }
 
-var (
-	// ErrDDLJobNotFound indicates the job id was not found.
-	ErrDDLJobNotFound = dbterror.ClassDDL.NewStd(errno.ErrDDLJobNotFound)
-	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
-	ErrCancelFinishedDDLJob = dbterror.ClassDDL.NewStd(errno.ErrCancelFinishedDDLJob)
-	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
-	ErrCannotCancelDDLJob = dbterror.ClassDDL.NewStd(errno.ErrCannotCancelDDLJob)
-)
-
-// DDLInfo is for DDL information.
-type DDLInfo struct {
+// Info is for DDL information.
+type Info struct {
 	SchemaVer   int64
 	ReorgHandle kv.Key       // It's only used for DDL information.
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
 // GetDDLInfo returns DDL information.
-func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
+func GetDDLInfo(txn kv.Transaction) (*Info, error) {
 	var err error
-	info := &DDLInfo{}
+	info := &Info{}
 	t := meta.NewMeta(txn)
 
 	info.Jobs = make([]*model.Job, 0, 2)
@@ -936,7 +926,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		delete(jobsMap, job.ID)
 		// These states can't be cancelled.
 		if job.IsDone() || job.IsSynced() {
-			errs[i] = ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
+			errs[i] = dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
 			continue
 		}
 		// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
@@ -944,7 +934,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			continue
 		}
 		if !job.IsRollbackable() {
-			errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+			errs[i] = dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
 			continue
 		}
 
@@ -966,7 +956,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		}
 	}
 	for id, i := range jobsMap {
-		errs[i] = ErrDDLJobNotFound.GenWithStackByArgs(id)
+		errs[i] = dbterror.ErrDDLJobNotFound.GenWithStackByArgs(id)
 	}
 	return errs, nil
 }

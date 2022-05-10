@@ -1014,9 +1014,9 @@ func TestIsJobRollbackable(t *testing.T) {
 
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
-		ErrDDLJobNotFound,
-		ErrCancelFinishedDDLJob,
-		ErrCannotCancelDDLJob,
+		dbterror.ErrDDLJobNotFound,
+		dbterror.ErrCancelFinishedDDLJob,
+		dbterror.ErrCannotCancelDDLJob,
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code

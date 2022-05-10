@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -1891,7 +1891,7 @@ func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gc
 			return
 		}
 		if historyJob == nil {
-			return ddl.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
+			return dbterror.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
 		}
 	}
 
@@ -1966,7 +1966,7 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 			return
 		}
 		if historyJob == nil {
-			return ddl.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
+			return dbterror.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
 		}
 	}
 

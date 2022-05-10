@@ -417,7 +417,7 @@ type ShowDDLExec struct {
 
 	ddlOwnerID string
 	selfID     string
-	ddlInfo    *ddl.DDLInfo
+	ddlInfo    *ddl.Info
 	done       bool
 }
 

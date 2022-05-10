@@ -613,7 +613,7 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 		return nil, nil, err
 	}
 	if job == nil {
-		return nil, nil, ddl.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
+		return nil, nil, dbterror.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
 	}
 	if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
 		return nil, nil, errors.Errorf("Job %v type is %v, not dropped/truncated table", job.ID, job.Type)
