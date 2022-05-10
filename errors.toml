@@ -521,21 +521,6 @@ error = '''
 data inconsistency in table: %s, index: %s, handle: %s, index-values:%#v != record-values:%#v
 '''
 
-["admin:8224"]
-error = '''
-DDL Job:%v not found
-'''
-
-["admin:8225"]
-error = '''
-This job:%v is finished, so can't be cancelled
-'''
-
-["admin:8226"]
-error = '''
-This job:%v is almost finished, can't be cancelled now
-'''
-
 ["autoid:1075"]
 error = '''
 Incorrect table definition; there can be only one auto column and it must be defined as a key
@@ -1154,6 +1139,21 @@ Failed to repair table: %s
 ["ddl:8216"]
 error = '''
 Invalid auto random: %s
+'''
+
+["ddl:8224"]
+error = '''
+DDL Job:%v not found
+'''
+
+["ddl:8225"]
+error = '''
+This job:%v is finished, so can't be cancelled
+'''
+
+["ddl:8226"]
+error = '''
+This job:%v is almost finished, can't be cancelled now
 '''
 
 ["ddl:8227"]
