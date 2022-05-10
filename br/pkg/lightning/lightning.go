@@ -55,6 +55,8 @@ import (
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	// get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`
+	_ "github.com/pingcap/tidb/planner/core"
 )
 
 type Lightning struct {
