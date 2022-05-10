@@ -319,7 +319,7 @@ func getTaskPlanCost(t task) (float64, error) {
 	default:
 		return 0, errors.New("unknown task type")
 	}
-	return t.plan().GetPlanCost(taskType)
+	return t.plan().GetPlanCost(taskType, 0)
 }
 
 type physicalOptimizeOp struct {
@@ -464,6 +464,40 @@ END:
 }
 
 func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
+	if prop.MPPPartitionTp != property.AnyType {
+		return invalidTask, 0, nil
+	}
+
+	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for p.findBestTask.
+	// Before function return, reset it for enforcing task prop.
+	oldProp := prop.CloneEssentialFields()
+	if prop.CanAddEnforcer {
+		// First, get the bestTask without enforced prop
+		prop.CanAddEnforcer = false
+		cnt := int64(0)
+		t, cnt, err = p.findBestTask(prop, planCounter, opt)
+		if err != nil {
+			return nil, 0, err
+		}
+		prop.CanAddEnforcer = true
+		if t != invalidTask {
+			cntPlan = cnt
+			return
+		}
+		// Next, get the bestTask with enforced prop
+		prop.SortItems = []property.SortItem{}
+	}
+	defer func() {
+		if err != nil {
+			return
+		}
+		if prop.CanAddEnforcer {
+			*prop = *oldProp
+			t = enforceProperty(prop, t, p.basePlan.ctx)
+			prop.CanAddEnforcer = true
+		}
+	}()
+
 	if !prop.IsEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
@@ -778,7 +812,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		return
 	}
 	var cnt int64
-	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
+	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldProp := prop.CloneEssentialFields()
 	if prop.CanAddEnforcer {
@@ -1964,7 +1998,8 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
 		pointGetPlan.PartitionInfo = partitionInfo
-		cost = pointGetPlan.GetCost(ds.TblCols)
+		pointGetPlan.accessCols = ds.TblCols
+		cost = pointGetPlan.GetCost()
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -1982,10 +2017,11 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
 		if candidate.path.IsSingleScan {
-			cost = pointGetPlan.GetCost(candidate.path.IdxCols)
+			pointGetPlan.accessCols = candidate.path.IdxCols
 		} else {
-			cost = pointGetPlan.GetCost(ds.TblCols)
+			pointGetPlan.accessCols = ds.TblCols
 		}
+		cost = pointGetPlan.GetCost()
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -1999,7 +2035,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 
 	rTsk.cst = cost
-	pointGetPlan.SetCost(cost)
+	rTsk.p.SetCost(cost)
 	return rTsk
 }
 
@@ -2033,7 +2069,8 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
-		cost = batchPointGetPlan.GetCost(ds.TblCols)
+		batchPointGetPlan.accessCols = ds.TblCols
+		cost = batchPointGetPlan.GetCost()
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -2057,10 +2094,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
 		if candidate.path.IsSingleScan {
-			cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
+			batchPointGetPlan.accessCols = candidate.path.IdxCols
 		} else {
-			cost = batchPointGetPlan.GetCost(ds.TblCols)
+			batchPointGetPlan.accessCols = ds.TblCols
 		}
+		cost = batchPointGetPlan.GetCost()
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -2074,7 +2112,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	}
 
 	rTsk.cst = cost
-	batchPointGetPlan.SetCost(cost)
+	rTsk.p.SetCost(cost)
 	return rTsk
 }
 

@@ -102,6 +102,16 @@ type Domain struct {
 	sysProcesses SysProcesses
 }
 
+// InfoCache export for test.
+func (do *Domain) InfoCache() *infoschema.InfoCache {
+	return do.infoCache
+}
+
+// EtcdClient export for test.
+func (do *Domain) EtcdClient() *clientv3.Client {
+	return do.etcdClient
+}
+
 // loadInfoSchema loads infoschema at startTS.
 // It returns:
 // 1. the needed infoschema
@@ -898,12 +908,24 @@ func (p *sessionPool) Get() (resource pools.Resource, err error) {
 	default:
 		resource, err = p.factory()
 	}
+
+	// Put the internal session to the map of SessionManager
+	failpoint.Inject("mockSessionPoolReturnError", func() {
+		err = errors.New("mockSessionPoolReturnError")
+	})
+
+	if nil == err {
+		infosync.StoreInternalSession(resource)
+	}
+
 	return
 }
 
 func (p *sessionPool) Put(resource pools.Resource) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	// Delete the internal session to the map of SessionManager
+	infosync.DeleteInternalSession(resource)
 	if p.mu.closed {
 		resource.Close()
 		return

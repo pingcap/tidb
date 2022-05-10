@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -683,10 +684,18 @@ func (tr *TableRestore) postProcess(
 		tblInfo := tr.tableInfo.Core
 		var err error
 		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
-			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.AutoRandomType).Base()+1)
+			var maxAutoRandom, autoRandomTotalBits uint64
+			autoRandomTotalBits = 64
+			autoRandomBits := tblInfo.AutoRandomBits // range from (0, 15]
+			if !tblInfo.IsAutoRandomBitColUnsigned() {
+				// if auto_random is signed, leave one extra bit
+				autoRandomTotalBits = 63
+			}
+			maxAutoRandom = 1<<(autoRandomTotalBits-autoRandomBits) - 1
+			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxAutoRandom)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle
-			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.RowIDAllocType).Base()+1)
+			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)
 		}
 		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
@@ -916,7 +925,7 @@ func (tr *TableRestore) importKV(
 		regionSplitSize = int64(config.SplitRegionSize)
 		if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 			if len(tasks) > 0 {
-				regionSplitSize = int64(config.SplitRegionSize) * int64(utils.MinInt(len(tasks), config.MaxSplitRegionSizeRatio))
+				regionSplitSize = int64(config.SplitRegionSize) * int64(mathutil.Min(len(tasks), config.MaxSplitRegionSizeRatio))
 			}
 			return nil, nil
 		}); err != nil {

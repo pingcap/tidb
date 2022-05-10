@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -285,7 +286,7 @@ LOOP:
 	// require.Contains(t, fmt.Sprintf("%v", ay), "c3_index")
 
 	// get all row handles
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	tbl := external.GetTableByName(t, tk, "test", "test_add_index")
 	handles := kv.NewHandleMap()
 	err := tables.IterRecords(tbl, tk.Session(), tbl.Cols(),
@@ -314,7 +315,7 @@ LOOP:
 	require.NoError(t, err)
 	require.NoError(t, txn.Rollback())
 
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
 }
@@ -695,7 +696,7 @@ func TestAddGlobalIndex(t *testing.T) {
 	require.NotNil(t, indexInfo)
 	require.True(t, indexInfo.Global)
 
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 
@@ -725,7 +726,7 @@ func TestAddGlobalIndex(t *testing.T) {
 	require.NotNil(t, indexInfo)
 	require.True(t, indexInfo.Global)
 
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	txn, err = tk.Session().Txn(true)
 	require.NoError(t, err)
 
@@ -754,7 +755,7 @@ func checkGlobalIndexRow(
 	idxVals []types.Datum,
 	rowVals []types.Datum,
 ) {
-	require.NoError(t, ctx.NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	sc := ctx.GetSessionVars().StmtCtx

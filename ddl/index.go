@@ -694,7 +694,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
 		indexInfo.State = model.StateDeleteOnly
@@ -702,7 +701,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		indexInfo.State = model.StateDeleteReorganization
@@ -710,9 +708,9 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateDeleteReorganization
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
+		indexInfo.State = model.StateNone
 		// Set column index flag.
 		dropIndexColumnFlag(tblInfo, indexInfo)
 		removeDependentHiddenColumns(tblInfo, indexInfo)
@@ -740,8 +738,9 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State))
 	}
+	job.SchemaState = indexInfo.State
 	return ver, errors.Trace(err)
 }
 
