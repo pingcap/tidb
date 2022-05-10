@@ -31,7 +31,7 @@ file_should_exist "$DUMPLING_OUTPUT_DIR/tls.t.000000000.sql"
 # test only use ssl-ca without clent key and cert
 rm -rf $DUMPLING_OUTPUT_DIR
 mkdir $DUMPLING_OUTPUT_DIR
-run_dumpling --ca "$DUMPLING_TEST_DIR/ca.pem"  --consistency none
+run_dumpling --ca "$DUMPLING_TEST_DIR/ca.pem" --consistency none
 
 file_should_exist "$DUMPLING_OUTPUT_DIR/tls-schema-create.sql"
 file_should_exist "$DUMPLING_OUTPUT_DIR/tls.t-schema.sql"

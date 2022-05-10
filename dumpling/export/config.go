@@ -632,13 +632,17 @@ func registerTLSConfig(conf *Config) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			conf.Security.SSLCertBytes, err = ioutil.ReadFile(conf.Security.CertPath)
-			if err != nil {
-				return errors.Trace(err)
+			if len(conf.Security.CertPath) > 0 {
+				conf.Security.SSLCertBytes, err = ioutil.ReadFile(conf.Security.CertPath)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
-			conf.Security.SSLKEYBytes, err = ioutil.ReadFile(conf.Security.KeyPath)
-			if err != nil {
-				return errors.Trace(err)
+			if len(conf.Security.KeyPath) > 0 {
+				conf.Security.SSLKEYBytes, err = ioutil.ReadFile(conf.Security.KeyPath)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 		tlsConfig, err = util.ToTLSConfigWithVerifyByRawbytes(conf.Security.SSLCABytes,
