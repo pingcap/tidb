@@ -74,7 +74,7 @@ func TestStreamStartChecks(t *testing.T) {
 				},
 			},
 			content: []string{
-				"{\"log-level\": \"debug\", \"backup-stream\": {\"enable\": true}}",
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": true}}",
 			},
 			// one tikv detected in this case and `enable-streaming` is true.
 			supportStream: true,
@@ -103,8 +103,8 @@ func TestStreamStartChecks(t *testing.T) {
 				},
 			},
 			content: []string{
-				"{\"log-level\": \"debug\", \"backup-stream\": {\"enable\": true}}",
-				"{\"log-level\": \"debug\", \"backup-stream\": {\"enable\": false}}",
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": true}}",
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": false}}",
 			},
 			// two tikv detected in this case and one of them's `enable-streaming` is false.
 			supportStream: false,

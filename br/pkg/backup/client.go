@@ -311,7 +311,7 @@ func BuildBackupRangeAndSchema(
 	}
 
 	ranges := make([]rtree.Range, 0)
-	backupSchemas := newBackupSchemas()
+	backupSchemas := NewBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -399,7 +399,7 @@ func BuildBackupRangeAndSchema(
 			}
 			tableInfo.Indices = tableInfo.Indices[:n]
 
-			backupSchemas.addSchema(dbInfo, tableInfo)
+			backupSchemas.AddSchema(dbInfo, tableInfo)
 
 			tableRanges, err := BuildTableRanges(tableInfo)
 			if err != nil {
@@ -426,7 +426,7 @@ func BuildFullSchema(storage kv.Storage, backupTS uint64) (*Schemas, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
 
-	newBackupSchemas := newBackupSchemas()
+	newBackupSchemas := NewBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -440,7 +440,7 @@ func BuildFullSchema(storage kv.Storage, backupTS uint64) (*Schemas, error) {
 
 		for _, table := range tables {
 			// add table
-			newBackupSchemas.addSchema(db, table)
+			newBackupSchemas.AddSchema(db, table)
 		}
 	}
 
