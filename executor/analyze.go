@@ -1472,8 +1472,8 @@ workLoop:
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including all SampleItems, if exceeds, fast fail
-				// 8 is size of reference, 32 is the size of "b := make([]byte, 0, 8)"
-				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 32)
+				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
