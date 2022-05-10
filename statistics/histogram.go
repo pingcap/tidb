@@ -92,7 +92,7 @@ type Bucket struct {
 }
 
 // EmptyBucketSize is the size of empty bucket, 3*8=24 now.
-const EmptyBucketSize = unsafe.Sizeof(Bucket{})
+const EmptyBucketSize = int64(unsafe.Sizeof(Bucket{}))
 
 type scalar struct {
 	lower        float64
