@@ -304,7 +304,6 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 		s.MemSize += deltaSize
 	}
 	memTracker.Consume(bufferedMemSize)
-	s.MemSize += bufferedMemSize
 }
 
 // Base implements the RowSampleCollector interface.
