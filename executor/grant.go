@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -118,7 +119,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	// Commit the old transaction, like DDL.
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		return err
 	}
 	defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()
@@ -739,11 +740,11 @@ func getTablePriv(ctx sessionctx.Context, name string, host string, db string, t
 		return "", "", errors.Errorf("get table privilege fail for %s %s %s %s", name, host, db, tbl)
 	}
 	row := rows[0]
-	if fields[0].Column.Tp == mysql.TypeSet {
+	if fields[0].Column.GetType() == mysql.TypeSet {
 		tablePriv := row.GetSet(0)
 		tPriv = tablePriv.Name
 	}
-	if fields[1].Column.Tp == mysql.TypeSet {
+	if fields[1].Column.GetType() == mysql.TypeSet {
 		columnPriv := row.GetSet(1)
 		cPriv = columnPriv.Name
 	}
@@ -765,7 +766,7 @@ func getColumnPriv(ctx sessionctx.Context, name string, host string, db string, 
 		return "", errors.Errorf("get column privilege fail for %s %s %s %s %s", name, host, db, tbl, col)
 	}
 	cPriv := ""
-	if fields[0].Column.Tp == mysql.TypeSet {
+	if fields[0].Column.GetType() == mysql.TypeSet {
 		setVal := rows[0].GetSet(0)
 		cPriv = setVal.Name
 	}

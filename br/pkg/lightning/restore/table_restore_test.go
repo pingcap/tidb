@@ -338,7 +338,6 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 		backend:        backend.MakeBackend(mockBackend),
 		errorSummaries: makeErrorSummaries(log.L()),
 		saveCpCh:       make(chan saveCp, 1),
-		diskQuotaLock:  newDiskQuotaLock(),
 	}
 	defer close(rc.saveCpCh)
 	go func() {
@@ -900,7 +899,8 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 
 	cfg.Mydumper.SourceDir = "."
 	cfg.Mydumper.CSV.Header = false
-	cfg.TikvImporter.Backend = config.BackendImporter
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.SortedKVDir = "/tmp/sorted"
 	tls, err := cfg.ToTLS()
 	require.NoError(s.T(), err)
 
@@ -935,8 +935,8 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		closedEngineLimit: worker.NewPool(ctx, 1, "closed_engine"),
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
-		diskQuotaLock:     newDiskQuotaLock(),
 		errorMgr:          errormanager.New(nil, cfg),
+		taskMgr:           noopTaskMetaMgr{},
 	}
 	go func() {
 		for scp := range chptCh {
@@ -1413,11 +1413,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 									},
 									{
 										// colB doesn't have the default value
-										Name: model.NewCIStr("colB"),
-										FieldType: types.FieldType{
-											// not null flag
-											Flag: 1,
-										},
+										Name:      model.NewCIStr("colB"),
+										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
 							},
@@ -1568,10 +1565,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 									},
 									{
 										// colC doesn't have the default value
-										Name: model.NewCIStr("colC"),
-										FieldType: types.FieldType{
-											Flag: 1,
-										},
+										Name:      model.NewCIStr("colC"),
+										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
 							},
@@ -1621,10 +1616,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB doesn't have the default value
-										Name: model.NewCIStr("colB"),
-										FieldType: types.FieldType{
-											Flag: 1,
-										},
+										Name:      model.NewCIStr("colB"),
+										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 									{
 										// colC has the default value
@@ -1826,16 +1819,12 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 						Core: &model.TableInfo{
 							Columns: []*model.ColumnInfo{
 								{
-									Name: model.NewCIStr("colA"),
-									FieldType: types.FieldType{
-										Flag: 1,
-									},
+									Name:      model.NewCIStr("colA"),
+									FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 								},
 								{
-									Name: model.NewCIStr("colB"),
-									FieldType: types.FieldType{
-										Flag: 1,
-									},
+									Name:      model.NewCIStr("colB"),
+									FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 								},
 							},
 						},
