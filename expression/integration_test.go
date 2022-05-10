@@ -4392,6 +4392,18 @@ func TestCollationAndCharset(t *testing.T) {
 	tk.MustQuery("select replace('abc' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci, 'd' collate utf8mb4_unicode_ci);").Check(testkit.Rows("adc"))
 }
 
+// https://github.com/pingcap/tidb/issues/34500.
+func TestJoinOnDifferentCollations(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a char(10) charset gbk collate gbk_chinese_ci, b time);")
+	tk.MustExec("insert into t values ('08:00:00', '08:00:00');")
+	tk.MustQuery("select t1.a, t2.b from t as t1 right join t as t2 on t1.a = t2.b;").
+		Check(testkit.Rows("08:00:00 08:00:00"))
+}
+
 func TestCoercibility(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
