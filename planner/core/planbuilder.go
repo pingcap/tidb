@@ -97,7 +97,6 @@ type tableHintInfo struct {
 	indexMergeHintList  []indexHintInfo
 	timeRangeHint       ast.HintTimeRange
 	limitHints          limitHintInfo
-	straightJoinOrder   bool
 }
 
 type limitHintInfo struct {
