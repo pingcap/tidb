@@ -67,7 +67,7 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	if err != nil {
 		return nil, err
 	}
-	var ddlInfo *DDLInfo
+	var ddlInfo *Info
 	if variable.AllowConcurrencyDDL.Load() {
 		ddlInfo, err = GetDDLInfoFromTable(txn, se)
 	} else {

@@ -24,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1082,14 +1082,53 @@ func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 	return false, nil
 }
 
-var (
-	// ErrDDLJobNotFound indicates the job id was not found.
-	ErrDDLJobNotFound = dbterror.ClassDDL.NewStd(errno.ErrDDLJobNotFound)
-	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
-	ErrCancelFinishedDDLJob = dbterror.ClassDDL.NewStd(errno.ErrCancelFinishedDDLJob)
-	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
-	ErrCannotCancelDDLJob = dbterror.ClassDDL.NewStd(errno.ErrCannotCancelDDLJob)
-)
+// Info is for DDL information.
+type Info struct {
+	SchemaVer   int64
+	ReorgHandle kv.Key       // It's only used for DDL information.
+	Jobs        []*model.Job // It's the currently running jobs.
+}
+
+// GetDDLInfo returns DDL information.
+func GetDDLInfo(txn kv.Transaction) (*Info, error) {
+	var err error
+	info := &Info{}
+	t := meta.NewMeta(txn)
+
+	info.Jobs = make([]*model.Job, 0, 2)
+	job, err := t.GetDDLJobByIdx(0)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if job != nil {
+		info.Jobs = append(info.Jobs, job)
+	}
+	addIdxJob, err := t.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if addIdxJob != nil {
+		info.Jobs = append(info.Jobs, addIdxJob)
+	}
+
+	info.SchemaVer, err = t.GetSchemaVersion()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if addIdxJob == nil {
+		return info, nil
+	}
+
+	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
+	if err != nil {
+		if meta.ErrDDLReorgElementNotExist.Equal(err) {
+			return info, nil
+		}
+		return nil, errors.Trace(err)
+	}
+
+	return info, nil
+}
 
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
@@ -1123,7 +1162,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		delete(jobsMap, job.ID)
 		// These states can't be cancelled.
 		if job.IsDone() || job.IsSynced() {
-			errs[i] = ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
+			errs[i] = dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
 			continue
 		}
 		// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
@@ -1131,7 +1170,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			continue
 		}
 		if !job.IsRollbackable() {
-			errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+			errs[i] = dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
 			continue
 		}
 
@@ -1153,7 +1192,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		}
 	}
 	for id, i := range jobsMap {
-		errs[i] = ErrDDLJobNotFound.GenWithStackByArgs(id)
+		errs[i] = dbterror.ErrDDLJobNotFound.GenWithStackByArgs(id)
 	}
 	return errs, nil
 }
@@ -1216,7 +1255,7 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 		}
 		delete(jobSet, job.ID)
 		if job.IsDone() || job.IsSynced() {
-			errs[i] = ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
+			errs[i] = dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
 			continue
 		}
 		// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
@@ -1228,7 +1267,7 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 			continue
 		}
 		if !job.IsRollbackable() {
-			errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+			errs[i] = dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
 			continue
 		}
 		job.State = model.JobStateCancelling
@@ -1248,62 +1287,14 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 		return nil, err
 	}
 	for id, idx := range jobSet {
-		errs[idx] = ErrDDLJobNotFound.GenWithStackByArgs(id)
+		errs[idx] = dbterror.ErrDDLJobNotFound.GenWithStackByArgs(id)
 	}
 	return errs, nil
 }
 
-// DDLInfo is for DDL information.
-type DDLInfo struct {
-	SchemaVer   int64
-	ReorgHandle kv.Key       // It's only used for DDL information.
-	Jobs        []*model.Job // It's the currently running jobs.
-}
-
-// GetDDLInfo returns DDL information.
-func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
-	var err error
-	info := &DDLInfo{}
-	t := meta.NewMeta(txn)
-
-	info.Jobs = make([]*model.Job, 0, 2)
-	job, err := t.GetDDLJobByIdx(0)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if job != nil {
-		info.Jobs = append(info.Jobs, job)
-	}
-	addIdxJob, err := t.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if addIdxJob != nil {
-		info.Jobs = append(info.Jobs, addIdxJob)
-	}
-
-	info.SchemaVer, err = t.GetSchemaVersion()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if addIdxJob == nil {
-		return info, nil
-	}
-
-	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
-	if err != nil {
-		if meta.ErrDDLReorgElementNotExist.Equal(err) {
-			return info, nil
-		}
-		return nil, errors.Trace(err)
-	}
-
-	return info, nil
-}
-
 // GetDDLInfoFromTable returns DDL information for new ddl framework.
-func GetDDLInfoFromTable(txn kv.Transaction, sess sessionctx.Context) (*DDLInfo, error) {
-	info := &DDLInfo{}
+func GetDDLInfoFromTable(txn kv.Transaction, sess sessionctx.Context) (*Info, error) {
+	info := &Info{}
 	info.Jobs = make([]*model.Job, 0, 2)
 	jobs, err := getJobsBySQL(sess, "tidb_ddl_job", "not reorg order by job_id limit 1")
 	if err != nil {
@@ -1400,6 +1391,51 @@ func GetDDLReorgHandle(job *model.Job, sess sessionctx.Context) (element *meta.E
 func GetHistoryDDLJobs(sess sessionctx.Context, txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	return GetLastNHistoryDDLJobs(sess, t, maxNumJobs)
+}
+
+func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
+	cnt, err := t.DDLJobQueueLen(jobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := make([]*model.Job, cnt)
+	for i := range jobs {
+		jobs[i], err = t.GetDDLJobByIdx(int64(i), jobListKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return jobs, nil
+}
+
+// GetDDLJobs get all DDL jobs and sorts jobs by job.ID.
+func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+	t := meta.NewMeta(txn)
+	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := append(generalJobs, addIdxJobs...)
+	sort.Sort(jobArray(jobs))
+	return jobs, nil
+}
+
+type jobArray []*model.Job
+
+func (v jobArray) Len() int {
+	return len(v)
+}
+
+func (v jobArray) Less(i, j int) bool {
+	return v[i].ID < v[j].ID
+}
+
+func (v jobArray) Swap(i, j int) {
+	v[i], v[j] = v[j], v[i]
 }
 
 // MaxHistoryJobs is exported for testing.

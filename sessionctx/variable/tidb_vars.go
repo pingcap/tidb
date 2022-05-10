@@ -636,6 +636,10 @@ const (
 
 	// TiDBEnableConcurrencyDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrencyDDL = "tidb_enable_concurrency_ddl"
+	// TiDBNonTransactionalIgnoreError is used to ignore error in non-transactional DMLs.
+	// When set to false, a non-transactional DML returns when it meets the first error.
+	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
+	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
 )
 
 // TiDB vars that have only global scope
@@ -845,6 +849,7 @@ const (
 	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
 	DefTiDBQueryLogMaxLen                        = 4096
 	DefTiDBEnableConcurrencyDDL                  = true
+	DefTiDBBatchDMLIgnoreError                   = false
 )
 
 // Process global variables.

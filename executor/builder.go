@@ -345,9 +345,9 @@ func (b *executorBuilder) buildShowNextRowID(v *plannercore.ShowNextRowID) Execu
 }
 
 func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
-	// We get DDLInfo here because for Executors that returns result set,
+	// We get Info here because for Executors that returns result set,
 	// next will be called after transaction has been committed.
-	// We need the transaction to get DDLInfo.
+	// We need the transaction to get Info.
 	e := &ShowDDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 	}

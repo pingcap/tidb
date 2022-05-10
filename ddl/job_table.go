@@ -526,21 +526,6 @@ func getDDLJobs(t *meta.Meta) ([]*model.Job, error) {
 	return jobs, nil
 }
 
-func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
-	cnt, err := t.DDLJobQueueLen(jobListKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	jobs := make([]*model.Job, cnt)
-	for i := range jobs {
-		jobs[i], err = t.GetDDLJobByIdx(int64(i), jobListKey)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return jobs, nil
-}
-
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
@@ -548,20 +533,6 @@ func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) 
 	}
 
 	return getDDLJobs(t)
-}
-
-type jobArray []*model.Job
-
-func (v jobArray) Len() int {
-	return len(v)
-}
-
-func (v jobArray) Less(i, j int) bool {
-	return v[i].ID < v[j].ID
-}
-
-func (v jobArray) Swap(i, j int) {
-	v[i], v[j] = v[j], v[i]
 }
 
 func getJobsBySQL(sess sessionctx.Context, tbl, condition string) ([]*model.Job, error) {
