@@ -42,6 +42,7 @@ type SimpleTxnContextProvider struct {
 	InfoSchema         infoschema.InfoSchema
 	GetReadTSFunc      func() (uint64, error)
 	GetForUpdateTSFunc func() (uint64, error)
+	UpdateForUpdateTS  func(seCtx sessionctx.Context, newForUpdateTS uint64) error
 
 	Pessimistic           bool
 	CausalConsistencyOnly bool
@@ -182,14 +183,14 @@ func (p *SimpleTxnContextProvider) handleAfterLockError(lockErr error) (sessiont
 		//         key1 lock not get and async rollback key1 is raised)
 		//         select for update key1 again(this time lock succ(maybe lock released by others))
 		//         the async rollback operation rollbacked the lock just acquired
-		tsErr := UpdateForUpdateTS(p.Sctx, 0)
+		tsErr := p.UpdateForUpdateTS(p.Sctx, 0)
 		if tsErr != nil {
 			logutil.Logger(p.Ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 		}
 		return sessiontxn.ErrorAction(lockErr)
 	}
 
-	if err := UpdateForUpdateTS(p.Sctx, 0); err != nil {
+	if err := p.UpdateForUpdateTS(p.Sctx, 0); err != nil {
 		return sessiontxn.ErrorAction(lockErr)
 	}
 
@@ -223,6 +224,3 @@ func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
 	p.isTxnActive = true
 	return txn, nil
 }
-
-// UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtains a new TS from PD.
-var UpdateForUpdateTS func(seCtx sessionctx.Context, newForUpdateTS uint64) error

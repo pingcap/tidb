@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -130,5 +131,6 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		Sctx:                  m.sctx,
 		Pessimistic:           txnMode == ast.Pessimistic,
 		CausalConsistencyOnly: r.CausalConsistencyOnly,
+		UpdateForUpdateTS:     executor.UpdateForUpdateTS,
 	}
 }
