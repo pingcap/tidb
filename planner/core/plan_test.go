@@ -203,7 +203,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 		p, ok := info.Plan.(core.Plan)
 		require.True(t, ok)
 		encodeStr := core.EncodePlan(p)
-		
+
 		// test the new encoding code
 		flat := core.FlattenPhysicalPlan(p)
 		newEncodeStr := core.EncodeFlatPlan(flat)
