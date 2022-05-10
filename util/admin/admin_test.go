@@ -17,6 +17,7 @@ package admin_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -55,7 +56,7 @@ func TestGetDDLInfo(t *testing.T) {
 	err = m.EnQueueDDLJob(job)
 	require.NoError(t, err)
 
-	info, err := GetDDLInfo(txn)
+	info, err := ddl.GetDDLInfo(txn)
 	require.NoError(t, err)
 	require.Len(t, info.Jobs, 1)
 	require.Equal(t, job, info.Jobs[0])
@@ -66,7 +67,7 @@ func TestGetDDLInfo(t *testing.T) {
 	err = m.EnQueueDDLJob(job1)
 	require.NoError(t, err)
 
-	info, err = GetDDLInfo(txn)
+	info, err = ddl.GetDDLInfo(txn)
 	require.NoError(t, err)
 	require.Len(t, info.Jobs, 2)
 	require.Equal(t, job, info.Jobs[0])
@@ -100,12 +101,12 @@ func TestGetDDLJobs(t *testing.T) {
 		err = m.EnQueueDDLJob(jobs[i])
 		require.NoError(t, err)
 
-		currJobs, err := GetAllDDLJobs(txn, nil)
+		currJobs, err := ddl.GetAllDDLJobs(nil, meta.NewMeta(txn))
 		require.NoError(t, err)
 		require.Len(t, currJobs, i+1)
 
 		currJobs2 = currJobs2[:0]
-		err = IterAllDDLJobs(nil, txn, func(jobs []*model.Job) (b bool, e error) {
+		err = ddl.IterAllDDLJobs(nil, txn, func(jobs []*model.Job) (b bool, e error) {
 			for _, job := range jobs {
 				if job.NotStarted() {
 					currJobs2 = append(currJobs2, job)
@@ -119,7 +120,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs2, i+1)
 	}
 
-	currJobs, err := GetAllDDLJobs(txn, nil)
+	currJobs, err := ddl.GetAllDDLJobs(nil, meta.NewMeta(txn))
 	require.NoError(t, err)
 
 	for i, job := range jobs {
@@ -154,7 +155,7 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	m = meta.NewMeta(txn, meta.AddIndexJobListKey)
 	enQueueDDLJobs(t, m, model.ActionAddIndex, 5, 10)
 
-	currJobs, err := GetAllDDLJobs(txn, nil)
+	currJobs, err := ddl.GetAllDDLJobs(nil, meta.NewMeta(txn))
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 
@@ -195,7 +196,7 @@ func TestCancelJobs(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	errs, err := CancelJobs(txn, ids)
+	errs, err := ddl.CancelJobs(txn, ids)
 	require.NoError(t, err)
 	for i, err := range errs {
 		if i == 0 {
@@ -205,11 +206,11 @@ func TestCancelJobs(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	errs, err = CancelJobs(txn, []int64{})
+	errs, err = ddl.CancelJobs(txn, []int64{})
 	require.NoError(t, err)
 	require.Nil(t, errs)
 
-	errs, err = CancelJobs(txn, []int64{-1})
+	errs, err = ddl.CancelJobs(txn, []int64{-1})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
 	require.Regexp(t, "DDL Job:-1 not found$", errs[0].Error())
@@ -223,7 +224,7 @@ func TestCancelJobs(t *testing.T) {
 	}
 	err = m.EnQueueDDLJob(job)
 	require.NoError(t, err)
-	errs, err = CancelJobs(txn, []int64{100})
+	errs, err = ddl.CancelJobs(txn, []int64{100})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
 	require.Regexp(t, "This job:100 is finished, so can't be cancelled$", errs[0].Error())
@@ -235,7 +236,7 @@ func TestCancelJobs(t *testing.T) {
 	job.ID = 101
 	err = m.EnQueueDDLJob(job)
 	require.NoError(t, err)
-	errs, err = CancelJobs(txn, []int64{101})
+	errs, err = ddl.CancelJobs(txn, []int64{101})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
 	require.Regexp(t, "This job:101 is almost finished, can't be cancelled now$", errs[0].Error())
@@ -271,7 +272,7 @@ func TestCancelJobs(t *testing.T) {
 	require.NoError(t, m.EnQueueDDLJob(job2, meta.AddIndexJobListKey))
 	require.NoError(t, m.EnQueueDDLJob(job3))
 
-	errs, err = CancelJobs(txn, []int64{job1.ID, job.ID, job2.ID, job3.ID})
+	errs, err = ddl.CancelJobs(txn, []int64{job1.ID, job.ID, job2.ID, job3.ID})
 	require.NoError(t, err)
 	for _, err := range errs {
 		require.NoError(t, err)
@@ -303,20 +304,20 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 		err = m.AddHistoryDDLJob(jobs[i], true)
 		require.NoError(t, err)
 
-		historyJobs, err := GetHistoryDDLJobs(nil, txn, DefNumHistoryJobs)
+		historyJobs, err := ddl.GetHistoryDDLJobs(nil, txn, ddl.DefNumHistoryJobs)
 		require.NoError(t, err)
 
-		if i+1 > MaxHistoryJobs {
-			require.Len(t, historyJobs, MaxHistoryJobs)
+		if i+1 > ddl.MaxHistoryJobs {
+			require.Len(t, historyJobs, ddl.MaxHistoryJobs)
 		} else {
 			require.Len(t, historyJobs, i+1)
 		}
 	}
 
-	delta := cnt - MaxHistoryJobs
-	historyJobs, err := GetHistoryDDLJobs(nil, txn, DefNumHistoryJobs)
+	delta := cnt - ddl.MaxHistoryJobs
+	historyJobs, err := ddl.GetHistoryDDLJobs(nil, txn, ddl.DefNumHistoryJobs)
 	require.NoError(t, err)
-	require.Len(t, historyJobs, MaxHistoryJobs)
+	require.Len(t, historyJobs, ddl.MaxHistoryJobs)
 
 	l := len(historyJobs) - 1
 	for i, job := range historyJobs {
@@ -326,10 +327,10 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	}
 
 	var historyJobs2 []*model.Job
-	err = IterHistoryDDLJobs(nil, txn, func(jobs []*model.Job) (b bool, e error) {
+	err = ddl.IterHistoryDDLJobs(nil, txn, func(jobs []*model.Job) (b bool, e error) {
 		for _, job := range jobs {
 			historyJobs2 = append(historyJobs2, job)
-			if len(historyJobs2) == DefNumHistoryJobs {
+			if len(historyJobs2) == ddl.DefNumHistoryJobs {
 				return true, nil
 			}
 		}

@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -643,7 +642,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	var start, end kv.Key
 	var physicalID int64
 	if variable.AllowConcurrencyDDL.Load() {
-		element, start, end, physicalID, err = admin.GetDDLReorgHandle(currJob, testkit.NewTestKit(t, store).Session())
+		element, start, end, physicalID, err = ddl.GetDDLReorgHandle(currJob, testkit.NewTestKit(t, store).Session())
 	} else {
 		element, start, end, physicalID, err = m.GetDDLReorgHandle(currJob)
 	}

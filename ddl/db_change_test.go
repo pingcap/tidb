@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -45,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -1279,7 +1279,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 			s.Require().NoError(err)
 			txn, err := sess.Txn(true)
 			s.Require().NoError(err)
-			jobs, err := admin.GetAllDDLJobs(txn, sess)
+			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
 			s.Require().NoError(err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -1308,7 +1308,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 			s.Require().NoError(err)
 			txn, err := sess.Txn(true)
 			s.Require().NoError(err)
-			jobs, err := admin.GetAllDDLJobs(txn, sess)
+			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
 			s.Require().NoError(err)
 			qLen = len(jobs)
 			if qLen == 1 {

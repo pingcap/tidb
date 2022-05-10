@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -127,7 +126,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		var physicalID int64
 		if variable.AllowConcurrencyDDL.Load() {
 			internalTk := testkit.NewTestKit(t, store)
-			e, start, end, physicalID, err = admin.GetDDLReorgHandle(currJob, internalTk.Session())
+			e, start, end, physicalID, err = ddl.GetDDLReorgHandle(currJob, internalTk.Session())
 		} else {
 			e, start, end, physicalID, err = m.GetDDLReorgHandle(currJob)
 		}

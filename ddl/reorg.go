@@ -33,13 +33,11 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -254,12 +252,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		case model.ActionModifyColumn:
 			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
 		}
-		var err1 error
-		if variable.AllowConcurrencyDDL.Load() {
-			err1 = w.RemoveDDLReorgHandle(job, reorgInfo.elements)
-		} else {
-			err1 = t.RemoveDDLReorgHandle(job, reorgInfo.elements)
-		}
+		err1 := w.RemoveDDLReorgHandle(t, job, reorgInfo.elements)
 		if err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 			return errors.Trace(err1)
@@ -285,12 +278,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a reorgInfo's handle.
 		// Since daemon-worker is triggered by timer to store the info half-way.
 		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
-		var err error
-		if variable.AllowConcurrencyDDL.Load() {
-			err = w.UpdateDDLReorgStartHandleNew(job, currentElement, doneKey)
-		} else {
-			err = t.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
-		}
+		err := w.UpdateDDLReorgStartHandle(t, job, currentElement, doneKey)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
 			zap.Duration("waitTime", waitTimeout),
 			zap.ByteString("elementType", currentElement.TypeKey),
@@ -633,11 +621,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		if variable.AllowConcurrencyDDL.Load() {
-			err = wk.UpdateDDLReorgHandle(job, start, end, pid, elements[0], true)
-		} else {
-			err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
-		}
+		err = wk.UpdateDDLReorgHandle(t, job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -657,11 +641,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		})
 
 		var err error
-		if variable.AllowConcurrencyDDL.Load() {
-			element, start, end, pid, err = admin.GetDDLReorgHandle(job, wk.sessForJob)
-		} else {
-			element, start, end, pid, err = t.GetDDLReorgHandle(job)
-		}
+		element, start, end, pid, err = wk.GetDDLReorgHandle(element, start, end, pid, err, job, t)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -710,11 +690,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 			zap.String("startHandle", tryDecodeToHandleString(start)),
 			zap.String("endHandle", tryDecodeToHandleString(end)))
 
-		if variable.AllowConcurrencyDDL.Load() {
-			err = wk.UpdateDDLReorgHandle(job, start, end, pid, elements[0], true)
-		} else {
-			err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
-		}
+		err = wk.UpdateDDLReorgHandle(t, job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -723,11 +699,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 		element = elements[0]
 	} else {
 		var err error
-		if variable.AllowConcurrencyDDL.Load() {
-			element, start, end, pid, err = admin.GetDDLReorgHandle(job, wk.sessForJob)
-		} else {
-			element, start, end, pid, err = t.GetDDLReorgHandle(job)
-		}
+		element, start, end, pid, err = wk.GetDDLReorgHandle(element, start, end, pid, err, job, t)
 
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.

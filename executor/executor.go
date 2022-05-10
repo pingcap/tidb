@@ -340,7 +340,7 @@ func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	}
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
 	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
-		e.errs, err = admin.CancelJobs(txn, e.jobIDs)
+		e.errs, err = ddl.CancelJobs(txn, e.jobIDs)
 		return
 	})
 	return errInTxn
@@ -428,7 +428,7 @@ type ShowDDLExec struct {
 
 	ddlOwnerID string
 	selfID     string
-	ddlInfo    *admin.DDLInfo
+	ddlInfo    *ddl.DDLInfo
 	done       bool
 }
 
@@ -493,11 +493,11 @@ type DDLJobRetriever struct {
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
 	m := meta.NewMeta(txn)
-	jobs, err := admin.GetAllDDLJobs(txn, sess)
+	jobs, err := ddl.GetAllDDLJobs(sess, m)
 	if err != nil {
 		return err
 	}
-	e.historyJobIter, err = admin.GetLastHistoryDDLJobsIterator(sess, m)
+	e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIterator(sess, m)
 	if err != nil {
 		return err
 	}
@@ -611,12 +611,12 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	}
 	session.GetSessionVars().SetInTxn(true)
 
-	jobs, err = admin.GetAllDDLJobs(txn, session)
+	jobs, err = ddl.GetAllDDLJobs(session, meta.NewMeta(txn))
 	if err != nil {
 		return err
 	}
 
-	historyJobs, err := admin.GetHistoryDDLJobs(session, txn, admin.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetHistoryDDLJobs(session, txn, ddl.DefNumHistoryJobs)
 	if err != nil {
 		return err
 	}
@@ -659,7 +659,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	}
 	e.DDLJobRetriever.is = e.is
 	if e.jobNumber == 0 {
-		e.jobNumber = admin.DefNumHistoryJobs
+		e.jobNumber = ddl.DefNumHistoryJobs
 	}
 	sess, err := e.getSysSession()
 	if err != nil {

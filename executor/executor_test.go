@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
@@ -5535,7 +5534,7 @@ func TestAdmin(t *testing.T) {
 	require.Equal(t, 6, row.Len())
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	ddlInfo, err := admin.GetDDLInfo(txn)
+	ddlInfo, err := ddl.GetDDLInfo(txn)
 	require.NoError(t, err)
 	require.Equal(t, ddlInfo.SchemaVer, row.GetInt64(0))
 	// TODO: Pass this test.
@@ -5563,7 +5562,7 @@ func TestAdmin(t *testing.T) {
 	require.Equal(t, 12, row.Len())
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err := admin.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, admin.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, ddl.DefNumHistoryJobs)
 	require.Greater(t, len(historyJobs), 1)
 	require.Greater(t, len(row.GetString(1)), 0)
 	require.NoError(t, err)
@@ -5588,7 +5587,7 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJobs, err = admin.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, admin.DefNumHistoryJobs)
+	historyJobs, err = ddl.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
 	require.NoError(t, err)
@@ -5652,10 +5651,10 @@ func TestAdmin(t *testing.T) {
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err = admin.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, 20)
+	historyJobs, err = ddl.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, 20)
 	require.NoError(t, err)
 
-	historyJobs2, err := admin.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, 20)
+	historyJobs2, err := ddl.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, 20)
 	require.NoError(t, err)
 	require.Equal(t, historyJobs2, historyJobs)
 }

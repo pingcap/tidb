@@ -451,19 +451,11 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, se sessionctx.Context, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allJobs := make([]*model.Job, 0)
-	defaultJobs, err := ddl.GetAllDDLJobs(se, snapMeta, meta.DefaultJobListKey)
+	allJobs, err := ddl.GetAllDDLJobs(se, snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("get default jobs", zap.Int("jobs", len(defaultJobs)))
-	allJobs = append(allJobs, defaultJobs...)
-	addIndexJobs, err := ddl.GetAllDDLJobs(se, snapMeta, meta.AddIndexJobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Debug("get add index jobs", zap.Int("jobs", len(addIndexJobs)))
-	allJobs = append(allJobs, addIndexJobs...)
+	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
 	historyJobs, err := ddl.GetAllHistoryDDLJobs(se, snapMeta)
 	if err != nil {
 		return errors.Trace(err)

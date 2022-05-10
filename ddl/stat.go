@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/util/admin"
 )
 
 var (
@@ -68,11 +67,11 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	if err != nil {
 		return nil, err
 	}
-	var ddlInfo *admin.DDLInfo
+	var ddlInfo *DDLInfo
 	if variable.AllowConcurrencyDDL.Load() {
-		ddlInfo, err = admin.GetDDLInfoFromTable(txn, se)
+		ddlInfo, err = GetDDLInfoFromTable(txn, se)
 	} else {
-		ddlInfo, err = admin.GetDDLInfo(txn)
+		ddlInfo, err = GetDDLInfo(txn)
 	}
 
 	if err != nil {

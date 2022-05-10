@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1072,12 +1071,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 		if kv.IsTxnRetryableError(err) {
 			return false, ver, errors.Trace(err)
 		}
-		var err1 error
-		if variable.AllowConcurrencyDDL.Load() {
-			err1 = w.RemoveDDLReorgHandle(job, reorgInfo.elements)
-		} else {
-			err1 = t.RemoveDDLReorgHandle(job, reorgInfo.elements)
-		}
+		err1 := w.RemoveDDLReorgHandle(t, job, reorgInfo.elements)
 		if err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))

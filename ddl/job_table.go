@@ -15,9 +15,9 @@
 package ddl
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -402,25 +402,32 @@ func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawA
 	return nil
 }
 
-func (w *worker) UpdateDDLReorgStartHandleNew(job *model.Job, element *meta.Element, startKey kv.Key) error {
-	sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
-	_, err := w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-	if err != nil {
-		return err
+func (w *worker) GetDDLReorgHandle(element *meta.Element, start kv.Key, end kv.Key, pid int64, err error, job *model.Job, t *meta.Meta) (*meta.Element, kv.Key, kv.Key, int64, error) {
+	if variable.AllowConcurrencyDDL.Load() {
+		element, start, end, pid, err = GetDDLReorgHandle(job, w.sessForJob)
+	} else {
+		element, start, end, pid, err = t.GetDDLReorgHandle(job)
 	}
-	sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key) values (%d, %d, %s)", job.ID, element.ID, wrapKey2String(startKey))
-	_, err = w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-	if err != nil {
-		return err
-	}
-	return nil
+	return element, start, end, pid, err
 }
 
-func (w *worker) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element, newSess bool) error {
-	var err error
-	sess := w.sessForJob
-	if newSess {
-		sess, err = w.sessPool.get()
+func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element *meta.Element, startKey kv.Key) error {
+	if variable.AllowConcurrencyDDL.Load() {
+		sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
+		_, err := w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+		if err != nil {
+			return err
+		}
+		sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key) values (%d, %d, %s)", job.ID, element.ID, wrapKey2String(startKey))
+		_, err = w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+		return err
+	}
+	return t.UpdateDDLReorgStartHandle(job, element, startKey)
+}
+
+func (w *worker) UpdateDDLReorgHandle(t *meta.Meta, job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	if variable.AllowConcurrencyDDL.Load() {
+		sess, err := w.sessPool.get()
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] fail to get sessPool", zap.Error(err))
 			return err
@@ -434,30 +441,31 @@ func (w *worker) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, p
 				logutil.BgLogger().Error("[ddl] fail to begin", zap.Error(err))
 			}
 		}()
-	}
-	sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
-	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-	if err != nil {
+		sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
+		_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+		if err != nil {
+			return err
+		}
+		sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key, end_key, physical_id) values (%d, %d, %s, %s, %d)", job.ID, element.ID, wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
+		_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 		return err
 	}
-	sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key, end_key, physical_id) values (%d, %d, %s, %s, %d)", job.ID, element.ID, wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
-	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-	if err != nil {
-		return err
-	}
-	return nil
+	return t.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
 }
 
-func (w *worker) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Element) error {
-	if len(elements) == 0 {
+func (w *worker) RemoveDDLReorgHandle(t *meta.Meta, job *model.Job, elements []*meta.Element) error {
+	if variable.AllowConcurrencyDDL.Load() {
+		if len(elements) == 0 {
+			return nil
+		}
+		sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+		_, err := w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+		if err != nil {
+			return err
+		}
 		return nil
 	}
-	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	_, err := w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-	if err != nil {
-		return err
-	}
-	return nil
+	return t.RemoveDDLReorgHandle(job, elements)
 }
 
 func wrapKey2String(key []byte) string {
@@ -467,18 +475,93 @@ func wrapKey2String(key []byte) string {
 	return fmt.Sprintf("0x%x", key)
 }
 
-// GetAllDDLJobs get All the ddl jobs by types.
-func GetAllDDLJobs(sess sessionctx.Context, m *meta.Meta, jobListKeys ...meta.JobListKeyType) ([]*model.Job, error) {
-	if variable.AllowConcurrencyDDL.Load() {
-		isReorg := "not reorg"
-		if len(jobListKeys) != 0 && bytes.Equal(jobListKeys[0], meta.AddIndexJobListKey) {
-			isReorg = "reorg"
-		}
+// GetDDLJobID is a sql that can get job id
+const GetDDLJobID = "select job_meta from mysql.tidb_ddl_job order by job_id"
 
-		return getJobsBySQL(sess, "tidb_ddl_job", isReorg)
+// getConcurrencyDDLJobs get all DDL jobs and sort by job.ID
+func getConcurrencyDDLJobs(sess sessionctx.Context) ([]*model.Job, error) {
+	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), GetDDLJobID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err = rs.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close result set error", zap.Error(err))
+		}
+	}()
+	var rows []chunk.Row
+	rows, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	jobs := make([]*model.Job, 0, 10)
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		job := &model.Job{}
+		err = job.Decode(jobBinary)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
+// getDDLJobs get all DDL jobs and sorts jobs by job.ID.
+func getDDLJobs(t *meta.Meta) ([]*model.Job, error) {
+	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := append(generalJobs, addIdxJobs...)
+	sort.Sort(jobArray(jobs))
+	return jobs, nil
+}
+
+func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
+	cnt, err := t.DDLJobQueueLen(jobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := make([]*model.Job, cnt)
+	for i := range jobs {
+		jobs[i], err = t.GetDDLJobByIdx(int64(i), jobListKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return jobs, nil
+}
+
+// GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
+func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
+	if variable.AllowConcurrencyDDL.Load() {
+		return getConcurrencyDDLJobs(sess)
 	}
 
-	return m.GetAllDDLJobsInQueue(jobListKeys...)
+	return getDDLJobs(t)
+}
+
+type jobArray []*model.Job
+
+func (v jobArray) Len() int {
+	return len(v)
+}
+
+func (v jobArray) Less(i, j int) bool {
+	return v[i].ID < v[j].ID
+}
+
+func (v jobArray) Swap(i, j int) {
+	v[i], v[j] = v[j], v[i]
 }
 
 func getJobsBySQL(sess sessionctx.Context, tbl, condition string) ([]*model.Job, error) {
