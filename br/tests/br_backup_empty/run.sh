@@ -16,6 +16,7 @@
 
 set -eu
 DB="$TEST_NAME"
+DB_COUNT=10
 
 # backup empty.
 echo "backup empty cluster start..."
@@ -34,7 +35,12 @@ if [ $? -ne 0 ]; then
 fi
 
 # backup and restore empty tables.
-run_sql "CREATE DATABASE $DB;"
+i=1
+while [ $i -le $DB_COUNT ]; do
+    run_sql "CREATE DATABASE $DB$i;"
+    i=$(($i+1))
+done
+
 echo "backup empty db start..."
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/empty_db"
 if [ $? -ne 0 ]; then
@@ -42,7 +48,10 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-run_sql "DROP DATABASE $DB"
+while [ $i -le $DB_COUNT ]; do
+    run_sql "DROP DATABASE $DB$i;"
+    i=$(($i+1))
+done
 
 # restore empty.
 echo "restore empty db start..."
@@ -52,7 +61,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-run_sql "CREATE TABLE $DB.usertable1 ( \
+run_sql "CREATE TABLE ${DB}1.usertable1 ( \
   YCSB_KEY varchar(64) NOT NULL, \
   FIELD0 varchar(1) DEFAULT NULL, \
   PRIMARY KEY (YCSB_KEY) \
@@ -61,11 +70,18 @@ run_sql "CREATE TABLE $DB.usertable1 ( \
 echo "backup empty table start..."
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/empty_table"
 
-run_sql "DROP DATABASE $DB;"
+while [ $i -le $DB_COUNT ]; do
+    run_sql "DROP DATABASE $DB$i;"
+    i=$(($i+1))
+done
+
 echo "restore empty table start..."
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/empty_table"
 
 # insert one row to make sure table is restored.
-run_sql "INSERT INTO $DB.usertable1 VALUES (\"a\", \"b\");"
+run_sql "INSERT INTO ${DB}1.usertable1 VALUES (\"a\", \"b\");"
 
-run_sql "DROP DATABASE $DB"
+while [ $i -le $DB_COUNT ]; do
+    run_sql "DROP DATABASE $DB$i;"
+    i=$(($i+1))
+done
