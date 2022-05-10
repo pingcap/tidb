@@ -16,7 +16,6 @@ package copr
 
 import (
 	"bytes"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"strconv"
 
 	"github.com/cznic/mathutil"
@@ -68,35 +67,6 @@ func (l *LocationKeyRanges) getBucketVersion() uint64 {
 	return l.Location.GetBucketVersion()
 }
 
-// getKeyLocation used in splitKeyRangeByBuckets Only
-func getKeyLocation(l *LocationKeyRanges) *tikv.KeyLocation {
-	// Sometimes, there may be some delay between region information and buckets information within the region.
-	// It may cause some gaps between the region startKey and first buckets key and region endKey and the last buckets key.
-	// To easy the implementation of splitKeyRangeByBuckets, we copy the l.Location (with original value untouched) and add region startKey
-	// if it is less than the first bucket key and add region endKey if it is larger than the last bucket key.
-	// Without the addition, loc.LocateBucket may return nil which can cause troubles.
-	loc := l.Location
-	if len(loc.Buckets.Keys) == 0 || (bytes.Compare(loc.StartKey, loc.Buckets.Keys[0]) < 0 ||
-		bytes.Compare(loc.Buckets.Keys[len(loc.Buckets.Keys)-1], loc.EndKey) < 0) {
-		// If we need to modify the location, we copy and modify it.
-		locCopy := *loc
-		// loc.LocateBucket uses bucket.Keys only
-		bucket := metapb.Buckets{Keys: make([][]byte, 0, len(loc.Buckets.Keys)+2)}
-		if bytes.Compare(loc.StartKey, loc.Buckets.Keys[0]) < 0 {
-			bucket.Keys = append(bucket.Keys, loc.StartKey)
-			bucket.Keys = append(bucket.Keys, loc.Buckets.Keys...)
-		} else {
-			bucket.Keys = append(bucket.Keys, loc.Buckets.Keys...)
-		}
-		if bytes.Compare(loc.Buckets.Keys[len(loc.Buckets.Keys)-1], loc.EndKey) < 0 {
-			bucket.Keys = append(bucket.Keys, locCopy.EndKey)
-		}
-		locCopy.Buckets = &bucket
-		loc = &locCopy
-	}
-	return loc
-}
-
 // splitKeyRangeByBuckets splits ranges in the same location by buckets and returns a LocationKeyRanges array.
 func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 	if l.Location.Buckets == nil || len(l.Location.Buckets.Keys) == 0 {
@@ -104,11 +74,10 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 	}
 
 	ranges := l.Ranges
-	loc := getKeyLocation(l)
-
+	loc := l.Location
 	res := []*LocationKeyRanges{}
 	for ranges.Len() > 0 {
-		bucket := loc.LocateBucket(ranges.At(0).StartKey)
+		bucket := loc.LocateBucketV2(ranges.At(0).StartKey)
 
 		// Iterate to the first range that is not complete in the bucket.
 		var r kv.KeyRange
