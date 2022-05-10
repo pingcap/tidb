@@ -14,12 +14,11 @@
       {
         "SQL": "explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
         "Plan": [
-          "Limit 1.00 root  offset:2, count:1",
-          "└─Projection 3.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
-          "  └─IndexLookUp 3.00 root  ",
-          "    ├─Limit(Build) 3.00 cop[tikv]  offset:0, count:3",
-          "    │ └─IndexRangeScan 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
-          "    └─TableRowIDScan(Probe) 3.00 cop[tikv] table:tbl keep order:false"
+          "TopN 1.00 root  test.tbl.b:desc, offset:2, count:1",
+          "└─IndexLookUp 3.00 root  ",
+          "  ├─TopN(Build) 3.00 cop[tikv]  test.tbl.b:desc, offset:0, count:3",
+          "  │ └─IndexRangeScan 4.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
+          "  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:tbl keep order:false"
         ]
       },
       {
