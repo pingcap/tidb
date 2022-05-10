@@ -1518,12 +1518,15 @@ workLoop:
 			if task.isColumn {
 				collectors[task.slicePos] = collector
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
-			if !task.isColumn {
-				e.memTracker.Consume(-collector.MemSize)
+			releaseCollectorMemory := func() {
+				if !task.isColumn {
+					e.memTracker.Consume(-collector.MemSize)
+				}
 			}
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
 			if err != nil {
 				resultCh <- err
+				releaseCollectorMemory()
 				continue
 			}
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
@@ -1531,6 +1534,7 @@ workLoop:
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
+			releaseCollectorMemory()
 		case <-exitCh:
 			return
 		}
