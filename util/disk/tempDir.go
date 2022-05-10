@@ -64,7 +64,7 @@ func InitializeTempDir() error {
 	tempDir := config.GetGlobalConfig().TempStoragePath
 	_, err := os.Stat(tempDir)
 	if err != nil && !os.IsExist(err) {
-		err = os.MkdirAll(tempDir, 0755)
+		err = os.MkdirAll(tempDir, 0750)
 		if err != nil {
 			return err
 		}
@@ -118,7 +118,7 @@ func CleanUp() {
 func CheckAndCreateDir(path string) error {
 	_, err := os.Stat(path)
 	if err != nil && !os.IsExist(err) {
-		err = os.MkdirAll(path, 0755)
+		err = os.MkdirAll(path, 0750)
 		if err != nil {
 			return err
 		}

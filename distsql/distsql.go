@@ -20,6 +20,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
@@ -35,10 +35,10 @@ import (
 )
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
-func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback)
+	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -77,9 +77,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
-	if !sctx.GetSessionVars().EnableStreaming {
-		kvReq.Streaming = false
-	}
+	kvReq.Streaming = false
 	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
 	originalSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 	eventCb := func(event trxevents.TransactionEvent) {
@@ -93,7 +91,13 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}
 
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction, eventCb)
+	option := &kv.ClientSendOption{
+		SessionMemTracker:          sctx.GetSessionVars().StmtCtx.MemTracker,
+		EnabledRateLimitAction:     enabledRateLimitAction,
+		EventCb:                    eventCb,
+		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo,
+	}
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -157,7 +161,7 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
-	resp := client.Send(ctx, kvReq, vars, stmtCtx.MemTracker, false, nil)
+	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -180,7 +184,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{}) (SelectResult, error) {
 	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
 	// Checksum function signature. The two-way dependence should be removed in future.
-	resp := client.Send(ctx, kvReq, vars, nil, false, nil)
+	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -210,9 +214,6 @@ func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
 
 func canUseChunkRPC(ctx sessionctx.Context) bool {
 	if !ctx.GetSessionVars().EnableChunkRPC {
-		return false
-	}
-	if ctx.GetSessionVars().EnableStreaming {
 		return false
 	}
 	if !checkAlignment() {
@@ -255,7 +256,7 @@ func init() {
 // WithSQLKvExecCounterInterceptor binds an interceptor for client-go to count the
 // number of SQL executions of each TiKV (if any).
 func WithSQLKvExecCounterInterceptor(ctx context.Context, stmtCtx *stmtctx.StatementContext) context.Context {
-	if topsqlstate.TopSQLEnabled() && stmtCtx.KvExecCounter != nil {
+	if stmtCtx.KvExecCounter != nil {
 		// Unlike calling Transaction or Snapshot interface, in distsql package we directly
 		// face tikv Request. So we need to manually bind RPCInterceptor to ctx. Instead of
 		// calling SetRPCInterceptor on Transaction or Snapshot.

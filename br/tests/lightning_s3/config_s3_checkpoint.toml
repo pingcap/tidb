@@ -1,0 +1,12 @@
+[lightning]
+index-concurrency = 1
+table-concurrency = 1
+
+[checkpoint]
+enable = true
+driver = "file"
+dsn = "s3://test-bucket/prix/cp_error_destroy.pb/?endpoint=http%3A//127.0.0.1%3A9900&access_key=s3accesskey&secret_access_key=s3secretkey&force_path_style=true"
+keep-after-success = "origin"
+
+[mydumper]
+read-block-size = 1

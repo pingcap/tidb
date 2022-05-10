@@ -16,7 +16,6 @@ package domain
 
 import (
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -29,9 +28,12 @@ import (
 	"go.uber.org/zap"
 )
 
-type planReplayer struct {
+// dumpFileGcChecker is used to gc dump file in circle
+// For now it is used by `plan replayer` and `trace plan` statement
+type dumpFileGcChecker struct {
 	sync.Mutex
-	planReplayerGCLease time.Duration
+	gcLease time.Duration
+	paths   []string
 }
 
 // GetPlanReplayerDirName returns plan replayer directory path.
@@ -56,32 +58,37 @@ func parseTime(s string) (time.Time, error) {
 	return time.Unix(0, i), nil
 }
 
-func (p *planReplayer) planReplayerGC(t time.Duration) {
+func (p *dumpFileGcChecker) gcDumpFiles(t time.Duration) {
 	p.Lock()
 	defer p.Unlock()
-	path := GetPlanReplayerDirName()
+	for _, path := range p.paths {
+		p.gcDumpFilesByPath(path, t)
+	}
+}
+
+func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			logutil.BgLogger().Warn("[PlanReplayer] open plan replayer directory failed", zap.Error(err))
+			logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
 		}
-		return
 	}
 
 	gcTime := time.Now().Add(-t)
 	for _, f := range files {
-		createTime, err := parseTime(f.Name())
+		fileName := f.Name()
+		createTime, err := parseTime(fileName)
 		if err != nil {
-			logutil.BgLogger().Warn("[PlanReplayer] parseTime failed", zap.Error(err))
+			logutil.BgLogger().Error("[dumpFileGcChecker] parseTime failed", zap.Error(err), zap.String("filename", fileName))
 			continue
 		}
 		if !createTime.After(gcTime) {
 			err := os.Remove(filepath.Join(path, f.Name()))
 			if err != nil {
-				logutil.BgLogger().Warn("[PlanReplayer] remove file failed", zap.Error(err))
+				logutil.BgLogger().Warn("[dumpFileGcChecker] remove file failed", zap.Error(err), zap.String("filename", fileName))
 				continue
 			}
-			logutil.BgLogger().Info(fmt.Sprintf("[PlanReplayer] GC %s", f.Name()))
+			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
 		}
 	}
 }

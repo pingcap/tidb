@@ -16,7 +16,6 @@ package bindinfo_test
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"strconv"
 	"testing"
@@ -29,52 +28,10 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
-
-// mockSessionManager is a mocked session manager which is used for test.
-type mockSessionManager1 struct {
-	PS []*util.ProcessInfo
-}
-
-func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
-	return nil
-}
-
-// ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager1) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
-	for _, item := range msm.PS {
-		ret[item.ID] = item
-	}
-	return ret
-}
-
-func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	for _, item := range msm.PS {
-		if item.ID == id {
-			return item, true
-		}
-	}
-	return &util.ProcessInfo{}, false
-}
-
-// Kill implements the SessionManager.Kill interface.
-func (msm *mockSessionManager1) Kill(cid uint64, query bool) {
-}
-
-func (msm *mockSessionManager1) KillAllConnections() {
-}
-
-func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {
-}
-
-func (msm *mockSessionManager1) ServerID() uint64 {
-	return 1
-}
 
 func TestPrepareCacheWithBinding(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -97,7 +54,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
 	tk.MustExec("execute stmt1;")
@@ -109,7 +66,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
 
@@ -117,7 +74,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt2;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "HashJoin"), res.Rows())
 	tk.MustExec("execute stmt2;")
@@ -128,7 +85,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt2;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "IndexJoin"), res.Rows())
 
@@ -137,7 +94,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
 	tk.MustExec("execute stmt3;")
@@ -149,7 +106,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
 
@@ -157,7 +114,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt4;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "HashJoin"), res.Rows())
 	tk.MustExec("execute stmt4;")
@@ -168,7 +125,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt4;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "IndexJoin"), res.Rows())
 
@@ -177,7 +134,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
 	tk.MustExec("execute stmt5;")
@@ -189,7 +146,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
 
@@ -200,7 +157,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t2:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
 
@@ -209,7 +166,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
 	tk.MustExec("execute stmt6;")
@@ -221,7 +178,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t2:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
 
@@ -235,7 +192,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt1;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "HashJoin"))
 	tk.MustExec("execute stmt1;")
@@ -245,7 +202,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt2;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "MergeJoin"))
 	tk.MustExec("execute stmt2;")
@@ -256,7 +213,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt1;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "MergeJoin"))
 
@@ -267,7 +224,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt1;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "IndexReader"))
 	tk.MustExec("execute stmt1;")
@@ -277,7 +234,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt1;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.False(t, tk.HasPlan4ExplainFor(res, "IndexReader"))
 	tk.MustExec("execute stmt1;")
@@ -288,7 +245,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt1;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.False(t, tk.HasPlan4ExplainFor(res, "IndexReader"))
 	tk.MustExec("execute stmt1;")
@@ -298,7 +255,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt2;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "IndexReader"))
 	tk.MustExec("execute stmt2;")
@@ -309,7 +266,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.MustExec("execute stmt1;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "IndexReader"))
 
@@ -324,7 +281,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "ia(a)"), res.Rows())
 	tk.MustExec("execute stmt1;")
@@ -337,7 +294,7 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "ib(b)"), res.Rows())
 }
@@ -406,7 +363,7 @@ func TestBindingSymbolList(t *testing.T) {
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
 	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, "using", bind.Status)
+	require.Equal(t, bindinfo.Enabled, bind.Status)
 	require.NotNil(t, bind.Charset)
 	require.NotNil(t, bind.Collation)
 	require.NotNil(t, bind.CreateTime)
@@ -498,7 +455,7 @@ func TestBestPlanInBaselines(t *testing.T) {
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
 	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, "using", bind.Status)
+	require.Equal(t, bindinfo.Enabled, bind.Status)
 
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
 	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
@@ -532,7 +489,7 @@ func TestErrorBind(t *testing.T) {
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 100", bind.BindSQL)
 	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, "using", bind.Status)
+	require.Equal(t, bindinfo.Enabled, bind.Status)
 	require.NotNil(t, bind.Charset)
 	require.NotNil(t, bind.Collation)
 	require.NotNil(t, bind.CreateTime)
@@ -651,7 +608,7 @@ func TestAddEvolveTasks(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 	status := rows[0][3].(string)
-	require.True(t, status == "using" || status == "rejected")
+	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
 }
 
 func TestRuntimeHintsInEvolveTasks(t *testing.T) {
@@ -707,40 +664,26 @@ func TestCaptureBaselinesScope(t *testing.T) {
 	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
 		"tidb_capture_plan_baselines OFF",
 	))
-	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"0",
-	))
 	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
 		"0",
 	))
 
-	tk1.MustExec("set @@session.tidb_capture_plan_baselines = on")
+	tk1.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
-		tk1.MustExec(" set @@session.tidb_capture_plan_baselines = off")
+		tk1.MustExec(" set GLOBAL tidb_capture_plan_baselines = off")
 	}()
-	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+
+	tk1.MustQuery(`show variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
 		"tidb_capture_plan_baselines ON",
 	))
 	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines OFF",
-	))
-	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"1",
-	))
-	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"0",
-	))
-	tk2.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
 		"tidb_capture_plan_baselines ON",
 	))
 	tk2.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines OFF",
-	))
-	tk2.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"1",
+		"tidb_capture_plan_baselines ON",
 	))
 	tk2.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"0",
+		"1",
 	))
 }
 
@@ -924,7 +867,7 @@ func TestNotEvolvePlanForReadStorageHint(t *testing.T) {
 	// None evolve task, because of the origin binding is a read_from_storage binding.
 	require.Len(t, rows, 1)
 	require.Equal(t, "SELECT /*+ read_from_storage(tiflash[`t`])*/ * FROM `test`.`t` WHERE `a` >= 1 AND `b` >= 1", rows[0][1])
-	require.Equal(t, "using", rows[0][3])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
 }
 
 func TestBindingWithIsolationRead(t *testing.T) {
@@ -1052,6 +995,10 @@ func TestSPMHitInfo(t *testing.T) {
 	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
 	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
+	tk.MustExec("set binding disabled for SELECT * from t1,t2 where t1.id = t2.id")
+	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
+	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
+
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 }
 
@@ -1069,23 +1016,23 @@ func TestReCreateBind(t *testing.T) {
 
 	tk.MustExec("create global binding for select * from t using select * from t")
 	tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Check(testkit.Rows(
-		"select * from `test` . `t` using",
+		"select * from `test` . `t` enabled",
 	))
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t`", rows[0][0])
-	require.Equal(t, "using", rows[0][3])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
 
 	tk.MustExec("create global binding for select * from t using select * from t")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t`", rows[0][0])
-	require.Equal(t, "using", rows[0][3])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
 
 	rows = tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, "deleted", rows[0][1])
-	require.Equal(t, "using", rows[1][1])
+	require.Equal(t, bindinfo.Enabled, rows[1][1])
 }
 
 func TestExplainShowBindSQL(t *testing.T) {
@@ -1179,6 +1126,9 @@ func TestSPMWithoutUseDatabase(t *testing.T) {
 	require.True(t, tk1.MustUseIndex("select * from test.t", "a"))
 	tk1.MustExec("select * from test.t")
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
+	tk1.MustExec("set binding disabled for select * from test.t")
+	tk1.MustExec("select * from test.t")
+	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
 }
 
 func TestBindingWithoutCharset(t *testing.T) {
@@ -1232,9 +1182,9 @@ func TestGCBindRecord(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
-	require.Equal(t, "using", rows[0][3])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
-		"using",
+		bindinfo.Enabled,
 	))
 
 	h := dom.BindHandle()
@@ -1243,9 +1193,9 @@ func TestGCBindRecord(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
-	require.Equal(t, "using", rows[0][3])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
-		"using",
+		bindinfo.Enabled,
 	))
 
 	tk.MustExec("drop global binding for select * from t where a = 1")

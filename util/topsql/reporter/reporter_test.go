@@ -21,11 +21,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util/topsql/reporter/mock"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,17 +47,24 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 		tsr.RegisterPlan(key, value)
 	}
 	// collect
-	var records []tracecpu.SQLCPUTimeRecord
+	var records []collector.SQLCPUTimeRecord
 	for i := begin; i < end; i++ {
-		records = append(records, tracecpu.SQLCPUTimeRecord{
+		records = append(records, collector.SQLCPUTimeRecord{
 			SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 			PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 			CPUTimeMs:  uint32(i + 1),
 		})
 	}
 	tsr.processCPUTimeData(timestamp, records)
-	// sleep a while for the asynchronous collect
-	time.Sleep(100 * time.Millisecond)
+	reportCache(tsr)
+}
+
+func reportCache(tsr *RemoteTopSQLReporter) {
+	tsr.doReport(&ReportData{
+		DataRecords: tsr.collecting.take().getReportRecords().toProto(),
+		SQLMetas:    tsr.normalizedSQLMap.take().toProto(),
+		PlanMetas:   tsr.normalizedPlanMap.take().toProto(tsr.decodePlan),
+	})
 }
 
 func mockPlanBinaryDecoderFunc(plan string) (string, error) {
@@ -82,43 +89,46 @@ func (ds *mockDataSink) TrySend(data *ReportData, _ time.Time) error {
 func (ds *mockDataSink) OnReporterClosing() {
 }
 
-func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) (*RemoteTopSQLReporter, *SingleTargetDataSink) {
+func setupRemoteTopSQLReporter(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
 	topsqlstate.GlobalState.MaxStatementCount.Store(int64(maxStatementsNum))
 	topsqlstate.GlobalState.MaxCollect.Store(10000)
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(int64(interval))
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = addr
-	})
-
+	topsqlstate.EnableTopSQL()
 	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
-	ds := NewSingleTargetDataSink(ts)
+	ds := newMockDataSink2()
+	if err := ts.Register(ds); err != nil {
+		panic(err)
+	}
 	return ts, ds
 }
 
-func initializeCache(maxStatementsNum, interval int, addr string) (*RemoteTopSQLReporter, *SingleTargetDataSink) {
-	ts, ds := setupRemoteTopSQLReporter(maxStatementsNum, interval, addr)
-	populateCache(ts, 0, maxStatementsNum, 1)
-	return ts, ds
+func findSQLMeta(metas []tipb.SQLMeta, sqlDigest []byte) (*tipb.SQLMeta, bool) {
+	for _, m := range metas {
+		if string(m.SqlDigest) == string(sqlDigest) {
+			return &m, true
+		}
+	}
+	return nil, false
+}
+
+func findPlanMeta(metas []tipb.PlanMeta, planDigest []byte) (*tipb.PlanMeta, bool) {
+	for _, m := range metas {
+		if string(m.PlanDigest) == string(planDigest) {
+			return &m, true
+		}
+	}
+	return nil, false
 }
 
 func TestCollectAndSendBatch(t *testing.T) {
-	agentServer, err := mock.StartMockAgentServer()
-	require.NoError(t, err)
-	defer agentServer.Stop()
-
-	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
-	defer func() {
-		ds.Close()
-		tsr.Close()
-	}()
+	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1)
 	populateCache(tsr, 0, maxSQLNum, 1)
-
-	agentServer.WaitCollectCnt(1, time.Second*5)
-	require.Len(t, agentServer.GetLatestRecords(), maxSQLNum)
+	require.Len(t, ds.data, 1)
+	data := ds.data[0]
+	require.Len(t, data.DataRecords, maxSQLNum)
 
 	// check for equality of server received batch and the original data
-	records := agentServer.GetLatestRecords()
-	for _, req := range records {
+	for _, req := range data.DataRecords {
 		id := 0
 		prefix := "sqlDigest"
 		if strings.HasPrefix(string(req.SqlDigest), prefix) {
@@ -131,33 +141,24 @@ func TestCollectAndSendBatch(t *testing.T) {
 			require.Equal(t, uint64(1), req.Items[i].TimestampSec)
 			require.Equal(t, uint32(id), req.Items[i].CpuTimeMs)
 		}
-		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
+		sqlMeta, exist := findSQLMeta(data.SQLMetas, req.SqlDigest)
 		require.True(t, exist)
 		require.Equal(t, "sqlNormalized"+strconv.Itoa(id), sqlMeta.NormalizedSql)
-		normalizedPlan, exist := agentServer.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
+		planMeta, exist := findPlanMeta(data.PlanMetas, req.PlanDigest)
 		require.True(t, exist)
-		require.Equal(t, "planNormalized"+strconv.Itoa(id), normalizedPlan)
+		require.Equal(t, "planNormalized"+strconv.Itoa(id), planMeta.NormalizedPlan)
 	}
 }
 
 func TestCollectAndEvicted(t *testing.T) {
-	agentServer, err := mock.StartMockAgentServer()
-	require.NoError(t, err)
-	defer agentServer.Stop()
-
-	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
-	defer func() {
-		ds.Close()
-		tsr.Close()
-	}()
+	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1)
 	populateCache(tsr, 0, maxSQLNum*2, 2)
-
-	agentServer.WaitCollectCnt(1, time.Second*10)
+	require.Len(t, ds.data, 1)
+	data := ds.data[0]
+	require.Len(t, data.DataRecords, maxSQLNum+1)
 
 	// check for equality of server received batch and the original data
-	records := agentServer.GetLatestRecords()
-	require.Len(t, records, maxSQLNum+1)
-	for _, req := range records {
+	for _, req := range data.DataRecords {
 		id := 0
 		prefix := "sqlDigest"
 		if strings.HasPrefix(string(req.SqlDigest), prefix) {
@@ -177,16 +178,16 @@ func TestCollectAndEvicted(t *testing.T) {
 		}
 		require.Greater(t, id, maxSQLNum)
 		require.Equal(t, uint32(id), req.Items[0].CpuTimeMs)
-		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
+		sqlMeta, exist := findSQLMeta(data.SQLMetas, req.SqlDigest)
 		require.True(t, exist)
 		require.Equal(t, "sqlNormalized"+strconv.Itoa(id), sqlMeta.NormalizedSql)
-		normalizedPlan, exist := agentServer.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
+		planMeta, exist := findPlanMeta(data.PlanMetas, req.PlanDigest)
 		require.True(t, exist)
-		require.Equal(t, "planNormalized"+strconv.Itoa(id), normalizedPlan)
+		require.Equal(t, "planNormalized"+strconv.Itoa(id), planMeta.NormalizedPlan)
 	}
 }
 
-func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) tracecpu.SQLCPUTimeRecord {
+func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) collector.SQLCPUTimeRecord {
 	key := []byte("sqlDigest" + strconv.Itoa(sqlID))
 	value := "sqlNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterSQL(key, value, sqlID%2 == 0)
@@ -195,70 +196,84 @@ func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32)
 	value = "planNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterPlan(key, value)
 
-	return tracecpu.SQLCPUTimeRecord{
+	return collector.SQLCPUTimeRecord{
 		SQLDigest:  []byte("sqlDigest" + strconv.Itoa(sqlID)),
 		PlanDigest: []byte("planDigest" + strconv.Itoa(sqlID)),
 		CPUTimeMs:  cpuTimeMs,
 	}
 }
 
-func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
-	tsr.processCPUTimeData(timestamp, records)
-	time.Sleep(time.Millisecond * 100)
-}
-
 func TestCollectAndTopN(t *testing.T) {
-	agentServer, err := mock.StartMockAgentServer()
-	require.NoError(t, err)
-	defer agentServer.Stop()
+	tsr, ds := setupRemoteTopSQLReporter(2, 1)
 
-	tsr, ds := setupRemoteTopSQLReporter(2, 1, agentServer.Address())
-	defer func() {
-		ds.Close()
-		tsr.Close()
-	}()
-
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
-	}
-	collectAndWait(tsr, 1, records)
-
-	records = []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 3, 3),
-		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
-	collectAndWait(tsr, 2, records)
+	// SQL-2:  2ms
+	// SQL-3:  3ms
+	// Others: 1ms
+	tsr.processCPUTimeData(1, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 4, 1),
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 3, 3),
 	}
-	collectAndWait(tsr, 3, records)
+	// SQL-1:  1ms
+	// SQL-3:  3ms
+	tsr.processCPUTimeData(2, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 5, 1),
-		newSQLCPUTimeRecord(tsr, 1, 1),
+	records = []collector.SQLCPUTimeRecord{
+		newSQLCPUTimeRecord(tsr, 4, 4),
+		newSQLCPUTimeRecord(tsr, 1, 10),
+		newSQLCPUTimeRecord(tsr, 3, 1),
 	}
-	collectAndWait(tsr, 4, records)
+	// SQL-1:  10ms
+	// SQL-4:  4ms
+	// Others: 1ms
+	tsr.processCPUTimeData(3, records)
+
+	records = []collector.SQLCPUTimeRecord{
+		newSQLCPUTimeRecord(tsr, 5, 5),
+		newSQLCPUTimeRecord(tsr, 4, 4),
+		newSQLCPUTimeRecord(tsr, 1, 10),
+		newSQLCPUTimeRecord(tsr, 2, 20),
+	}
+	// SQL-2:  20ms
+	// SQL-1:  1ms
+	// Others: 9ms
+	tsr.processCPUTimeData(4, records)
 
 	// Test for time jump back.
-	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 6, 1),
+	records = []collector.SQLCPUTimeRecord{
+		newSQLCPUTimeRecord(tsr, 6, 6),
 		newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 2, 2),
+		newSQLCPUTimeRecord(tsr, 3, 3),
 	}
-	collectAndWait(tsr, 0, records)
+	// SQL-6:  6ms
+	// SQL-3:  3ms
+	// Others: 3ms
+	tsr.processCPUTimeData(0, records)
 
-	// Wait agent server collect finish.
-	agentServer.WaitCollectCnt(1, time.Second*10)
+	reportCache(tsr)
 
 	// check for equality of server received batch and the original data
-	results := agentServer.GetLatestRecords()
-	require.Len(t, results, 3)
+	require.Len(t, ds.data, 1)
+	results := ds.data[0].DataRecords
+	// Digest  total
+	// "":     14ms    (others)
+	// SQL-1:  21ms
+	// SQL-2:  22ms
+	// SQL-3:  9ms
+	// SQL-4:  4ms
+	// SQL-6:  6ms
+	require.Len(t, results, 6)
 	sort.Slice(results, func(i, j int) bool {
 		return string(results[i].SqlDigest) < string(results[j].SqlDigest)
 	})
-	getTotalCPUTime := func(record *tipb.TopSQLRecord) int {
+	getTotalCPUTime := func(record tipb.TopSQLRecord) int {
 		total := uint32(0)
 		for _, i := range record.Items {
 			total += i.CpuTimeMs
@@ -266,32 +281,31 @@ func TestCollectAndTopN(t *testing.T) {
 		return int(total)
 	}
 	require.Nil(t, results[0].SqlDigest)
-	require.Equal(t, 5, getTotalCPUTime(results[0]))
-	require.Equal(t, uint64(0), results[0].Items[0].TimestampSec)
-	require.Equal(t, uint64(1), results[0].Items[1].TimestampSec)
-	require.Equal(t, uint64(3), results[0].Items[2].TimestampSec)
-	require.Equal(t, uint64(4), results[0].Items[3].TimestampSec)
+	require.Equal(t, []byte(nil), results[0].SqlDigest)
+	require.Equal(t, 14, getTotalCPUTime(results[0]))
+	require.Equal(t, uint64(1), results[0].Items[0].TimestampSec)
+	require.Equal(t, uint64(3), results[0].Items[1].TimestampSec)
+	require.Equal(t, uint64(4), results[0].Items[2].TimestampSec)
+	require.Equal(t, uint64(0), results[0].Items[3].TimestampSec)
 	require.Equal(t, uint32(1), results[0].Items[0].CpuTimeMs)
-	require.Equal(t, uint32(2), results[0].Items[1].CpuTimeMs)
-	require.Equal(t, uint32(1), results[0].Items[2].CpuTimeMs)
-	require.Equal(t, uint32(1), results[0].Items[3].CpuTimeMs)
+	require.Equal(t, uint32(1), results[0].Items[1].CpuTimeMs)
+	require.Equal(t, uint32(9), results[0].Items[2].CpuTimeMs)
+	require.Equal(t, uint32(3), results[0].Items[3].CpuTimeMs)
 	require.Equal(t, []byte("sqlDigest1"), results[1].SqlDigest)
-	require.Equal(t, 5, getTotalCPUTime(results[1]))
-	require.Equal(t, []byte("sqlDigest3"), results[2].SqlDigest)
-	require.Equal(t, 3, getTotalCPUTime(results[2]))
-	// sleep to wait for all SQL meta received.
-	time.Sleep(50 * time.Millisecond)
-	totalMetas := agentServer.GetTotalSQLMetas()
-	require.Equal(t, 6, len(totalMetas))
+	require.Equal(t, 21, getTotalCPUTime(results[1]))
+	require.Equal(t, []byte("sqlDigest2"), results[2].SqlDigest)
+	require.Equal(t, 22, getTotalCPUTime(results[2]))
+	require.Equal(t, []byte("sqlDigest3"), results[3].SqlDigest)
+	require.Equal(t, 9, getTotalCPUTime(results[3]))
+	require.Equal(t, []byte("sqlDigest4"), results[4].SqlDigest)
+	require.Equal(t, 4, getTotalCPUTime(results[4]))
+	require.Equal(t, []byte("sqlDigest6"), results[5].SqlDigest)
+	require.Equal(t, 6, getTotalCPUTime(results[5]))
+	require.Equal(t, 6, len(ds.data[0].SQLMetas))
 }
 
 func TestCollectCapacity(t *testing.T) {
-	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 60, "")
-	defer func() {
-		ds.Close()
-		tsr.Close()
-	}()
-
+	tsr, _ := setupRemoteTopSQLReporter(maxSQLNum, 60)
 	registerSQL := func(n int) {
 		for i := 0; i < n; i++ {
 			key := []byte("sqlDigest" + strconv.Itoa(i))
@@ -306,10 +320,10 @@ func TestCollectCapacity(t *testing.T) {
 			tsr.RegisterPlan(key, value)
 		}
 	}
-	genRecord := func(n int) []tracecpu.SQLCPUTimeRecord {
-		records := make([]tracecpu.SQLCPUTimeRecord, 0, n)
+	genRecord := func(n int) []collector.SQLCPUTimeRecord {
+		records := make([]collector.SQLCPUTimeRecord, 0, n)
 		for i := 0; i < n; i++ {
-			records = append(records, tracecpu.SQLCPUTimeRecord{
+			records = append(records, collector.SQLCPUTimeRecord{
 				SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 				PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 				CPUTimeMs:  uint32(i + 1),
@@ -343,27 +357,20 @@ func TestCollectCapacity(t *testing.T) {
 }
 
 func TestCollectInternal(t *testing.T) {
-	agentServer, err := mock.StartMockAgentServer()
-	require.NoError(t, err)
-	defer agentServer.Stop()
+	tsr, ds := setupRemoteTopSQLReporter(3000, 1)
 
-	tsr, ds := setupRemoteTopSQLReporter(3000, 1, agentServer.Address())
-	defer func() {
-		ds.Close()
-		tsr.Close()
-	}()
-
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
 	}
-	collectAndWait(tsr, 1, records)
+	tsr.processCPUTimeData(1, records)
 
-	// Wait agent server collect finish.
-	agentServer.WaitCollectCnt(1, time.Second*10)
+	reportCache(tsr)
 
 	// check for equality of server received batch and the original data
-	results := agentServer.GetLatestRecords()
+	require.Len(t, ds.data, 1)
+	data := ds.data[0]
+	results := data.DataRecords
 	require.Len(t, results, 2)
 	for _, req := range results {
 		id := 0
@@ -374,7 +381,7 @@ func TestCollectInternal(t *testing.T) {
 			id = n
 		}
 		require.NotEqualf(t, 0, id, "the id should not be 0")
-		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
+		sqlMeta, exist := findSQLMeta(data.SQLMetas, req.SqlDigest)
 		require.True(t, exist)
 		require.Equal(t, id%2 == 0, sqlMeta.IsInternalSql)
 	}
@@ -382,15 +389,15 @@ func TestCollectInternal(t *testing.T) {
 
 func TestMultipleDataSinks(t *testing.T) {
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
+	topsqlstate.EnableTopSQL()
 
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
-	defer tsr.Close()
 
 	var chs []chan *ReportData
 	for i := 0; i < 7; i++ {
 		chs = append(chs, make(chan *ReportData, 1))
 	}
-	var dss []DataSink
+	dss := make([]DataSink, 0, len(chs))
 	for _, ch := range chs {
 		dss = append(dss, newMockDataSink(ch))
 	}
@@ -398,10 +405,11 @@ func TestMultipleDataSinks(t *testing.T) {
 		require.NoError(t, tsr.Register(ds))
 	}
 
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 2),
 	}
 	tsr.processCPUTimeData(3, records)
+	reportCache(tsr)
 
 	for _, ch := range chs {
 		d := <-ch
@@ -429,10 +437,11 @@ func TestMultipleDataSinks(t *testing.T) {
 		tsr.Deregister(dss[i])
 	}
 
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 5),
 	}
 	tsr.processCPUTimeData(6, records)
+	reportCache(tsr)
 
 	for i := 1; i < 7; i += 2 {
 		d := <-chs[i]
@@ -465,15 +474,63 @@ func TestMultipleDataSinks(t *testing.T) {
 	}
 }
 
+func TestReporterWorker(t *testing.T) {
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(3)
+
+	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	r.Start()
+	defer r.Close()
+
+	ch := make(chan *ReportData, 1)
+	ds := newMockDataSink(ch)
+	err := r.Register(ds)
+	assert.NoError(t, err)
+
+	r.Collect(nil)
+	r.Collect([]collector.SQLCPUTimeRecord{{
+		SQLDigest:  []byte("S1"),
+		PlanDigest: []byte("P1"),
+		CPUTimeMs:  1,
+	}})
+	r.CollectStmtStatsMap(nil)
+	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S1",
+			PlanDigest: "P1",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:     1,
+			SumDurationNs: 1,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 1}},
+		},
+	})
+
+	var data *ReportData
+	select {
+	case data = <-ch:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "no data in ch")
+	}
+
+	assert.Len(t, data.DataRecords, 1)
+	assert.Equal(t, []byte("S1"), data.DataRecords[0].SqlDigest)
+	assert.Equal(t, []byte("P1"), data.DataRecords[0].PlanDigest)
+}
+
+func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
+	ts, ds := setupRemoteTopSQLReporter(maxStatementsNum, interval)
+	populateCache(ts, 0, maxStatementsNum, 1)
+	return ts, ds
+}
+
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
-	tsr, _ := initializeCache(maxSQLNum, 120, ":23333")
+	tsr, _ := initializeCache(maxSQLNum, 120)
 	for i := 0; i < b.N; i++ {
 		populateCache(tsr, 0, maxSQLNum, uint64(i))
 	}
 }
 
 func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
-	tsr, _ := initializeCache(maxSQLNum, 120, ":23333")
+	tsr, _ := initializeCache(maxSQLNum, 120)
 	begin := 0
 	end := maxSQLNum
 	for i := 0; i < b.N; i++ {

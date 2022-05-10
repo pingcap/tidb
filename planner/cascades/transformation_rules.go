@@ -310,8 +310,8 @@ type PushSelDownTiKVSingleGather struct {
 // NewRulePushSelDownTiKVSingleGather creates a new Transformation PushSelDownTiKVSingleGather.
 // The pattern of this rule is `Selection -> TiKVSingleGather -> Any`.
 func NewRulePushSelDownTiKVSingleGather() Transformation {
-	any := memo.NewPattern(memo.OperandAny, memo.EngineTiKVOrTiFlash)
-	tg := memo.BuildPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly, any)
+	any1 := memo.NewPattern(memo.OperandAny, memo.EngineTiKVOrTiFlash)
+	tg := memo.BuildPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly, any1)
 	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiDBOnly, tg)
 
 	rule := &PushSelDownTiKVSingleGather{}
@@ -442,7 +442,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	gbyItems := make([]expression.Expression, len(agg.GroupByItems))
 	copy(gbyItems, agg.GroupByItems)
 
-	partialPref, finalPref, funcMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
+	partialPref, finalPref, firstRowFuncMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
 		&plannercore.AggInfo{
 			AggFuncs:     aggFuncs,
 			GroupByItems: gbyItems,
@@ -453,7 +453,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs =
-		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.AggFuncs, finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
+		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
 
 	partialAgg := plannercore.LogicalAggregation{
 		AggFuncs:     partialPref.AggFuncs,
@@ -1602,7 +1602,7 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
-		if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
+		if !mysql.HasNotNullFlag(f.Args[0].GetType().GetFlag()) {
 			sel := plannercore.LogicalSelection{}.Init(ctx, agg.SelectBlockOffset())
 			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)

@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,9 +37,7 @@ func TestInMemoryAlloc(t *testing.T) {
 	}()
 
 	columnInfo := &model.ColumnInfo{
-		FieldType: types.FieldType{
-			Flag: mysql.AutoIncrementFlag,
-		},
+		FieldType: types.NewFieldTypeBuilder().SetFlag(mysql.AutoIncrementFlag).Build(),
 	}
 	tblInfo := &model.TableInfo{
 		Columns: []*model.ColumnInfo{columnInfo},
@@ -93,7 +91,7 @@ func TestInMemoryAlloc(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, autoid.ErrAutoincReadFailed))
 
 	// test unsigned
-	columnInfo.FieldType.Flag |= mysql.UnsignedFlag
+	columnInfo.FieldType.AddFlag(mysql.UnsignedFlag)
 	alloc = autoid.NewAllocatorFromTempTblInfo(tblInfo)
 	require.NotNil(t, alloc)
 

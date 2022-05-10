@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -217,6 +217,12 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
+// SetPartitionIDAndRanges sets `PartitionIDAndRanges` property.
+func (builder *RequestBuilder) SetPartitionIDAndRanges(PartitionIDAndRanges []kv.PartitionIDAndRanges) *RequestBuilder {
+	builder.PartitionIDAndRanges = PartitionIDAndRanges
+	return builder
+}
+
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
@@ -244,12 +250,20 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 		// Concurrency may be set to 1 by SetDAGRequest
 		builder.Request.Concurrency = sv.DistSQLScanConcurrency()
 	}
-	builder.Request.IsolationLevel = builder.getIsolationLevel()
+	replicaReadType := sv.GetReplicaRead()
+	if sv.StmtCtx.WeakConsistency {
+		builder.Request.IsolationLevel = kv.RC
+	} else if sv.StmtCtx.RCCheckTS {
+		builder.Request.IsolationLevel = kv.RCCheckTS
+		replicaReadType = kv.ReplicaReadLeader
+	} else {
+		builder.Request.IsolationLevel = builder.getIsolationLevel()
+	}
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
-	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	builder.SetResourceGroupTagger(sv.StmtCtx)
+	builder.Request.ReplicaRead = replicaReadType
+	builder.SetResourceGroupTagger(sv.StmtCtx.GetResourceGroupTagger())
 	return builder
 }
 
@@ -292,14 +306,17 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 }
 
 // SetResourceGroupTagger sets the request resource group tagger.
-func (builder *RequestBuilder) SetResourceGroupTagger(sc *stmtctx.StatementContext) *RequestBuilder {
-	if topsqlstate.TopSQLEnabled() {
-		builder.Request.ResourceGroupTagger = sc.GetResourceGroupTagger()
-	}
+func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGroupTagger) *RequestBuilder {
+	builder.Request.ResourceGroupTagger = tagger
 	return builder
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
+	// Stale Read uses the calculated TSO for the read,
+	// so there is no need to check the TxnScope here.
+	if builder.IsStaleness {
+		return nil
+	}
 	if builder.ReadReplicaScope == "" {
 		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
@@ -651,7 +668,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 	if txnScope == "" || txnScope == kv.GlobalTxnScope {
 		return true
 	}
-	bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
+	bundle, ok := is.PlacementBundleByPhysicalTableID(physicalTableID)
 	if !ok {
 		return true
 	}

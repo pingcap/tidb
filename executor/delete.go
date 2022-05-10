@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -122,7 +123,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 			datumRow := make([]types.Datum, 0, len(fields))
 			for i, field := range fields {
-				if columns[i].ID == model.ExtraPidColID {
+				if columns[i].ID == model.ExtraPidColID || columns[i].ID == model.ExtraPhysTblID {
 					continue
 				}
 
@@ -149,7 +150,7 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
@@ -159,6 +160,9 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
+		if unmatchedOuterRow(info, joinedRow) {
+			continue
+		}
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = kv.NewHandleMap()
 		}

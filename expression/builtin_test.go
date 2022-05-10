@@ -25,26 +25,25 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
 func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	concurrency := 10
-	wg.Add(concurrency)
 	var lock sync.Mutex
 	err = nil
 	for i := 0; i < concurrency; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Run(func() {
 			di, erri := evalBuiltinFunc(f, chunk.Row{})
 			lock.Lock()
 			if err == nil {
 				d, err = di, erri
 			}
 			lock.Unlock()
-		}()
+		})
 	}
 	wg.Wait()
 	return
@@ -59,7 +58,7 @@ func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = f.evalInt(row)
-		if mysql.HasUnsignedFlag(f.getRetTp().Flag) {
+		if mysql.HasUnsignedFlag(f.getRetTp().GetFlag()) {
 			res = uint64(intRes)
 		} else {
 			res = intRes
@@ -140,14 +139,14 @@ func TestIsNullFunc(t *testing.T) {
 func TestLock(t *testing.T) {
 	ctx := createContext(t)
 	lock := funcs[ast.GetLock]
-	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums(nil, 1)))
+	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock", 1)))
 	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), v.GetInt64())
 
 	releaseLock := funcs[ast.ReleaseLock]
-	f, err = releaseLock.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
+	f, err = releaseLock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock")))
 	require.NoError(t, err)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
@@ -184,9 +183,9 @@ func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Express
 
 var (
 	// MySQL int8.
-	int8Con = &Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Charset: charset.CharsetBin, Collate: charset.CollationBin}}
+	int8Con = &Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()}
 	// MySQL varchar.
-	varcharCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
+	varcharCon = &Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8).BuildP()}
 )
 
 func getInt8Con() Expression {

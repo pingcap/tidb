@@ -1,5 +1,4 @@
 /*!40101 SET NAMES binary*/;
-/*T![placement] SET PLACEMENT_CHECKS = 0*/;
 CREATE TABLE `quo``te/table` (
   `quo``te/col` int(11) NOT NULL,
   `a` int(11) DEFAULT NULL,

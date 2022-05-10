@@ -382,7 +382,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	close(ch)
 
 	// Keep the original order to make the result more stable
-	var results []result
+	var results []result // nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)

@@ -94,13 +94,6 @@ func (s *schemaValidator) IsStarted() bool {
 	return isStarted
 }
 
-func (s *schemaValidator) LatestSchemaVersion() int64 {
-	s.mux.RLock()
-	latestSchemaVer := s.latestSchemaVer
-	s.mux.RUnlock()
-	return latestSchemaVer
-}
-
 func (s *schemaValidator) Stop() {
 	logutil.BgLogger().Info("the schema validator stops")
 	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorStop).Inc()
@@ -185,13 +178,19 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 	}
 
 	changedTblMap := make(map[int64]uint64)
+	changedSchemaVers := make([]int64, 0)
 	for _, item := range newerDeltas {
+		affected := false
 		for i, tblID := range item.relatedIDs {
 			for _, relatedTblID := range tableIDs {
 				if tblID == relatedTblID {
 					changedTblMap[tblID] |= item.relatedActions[i]
+					affected = true
 				}
 			}
+		}
+		if affected {
+			changedSchemaVers = append(changedSchemaVers, item.schemaVersion)
 		}
 	}
 	if len(changedTblMap) > 0 {
@@ -207,6 +206,8 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		res.PhyTblIDS = tblIds
 		res.ActionTypes = actionTypes
 		res.Amendable = true
+		logutil.BgLogger().Info("schema of tables in the transaction are changed", zap.Int64s("conflicted table IDs", tblIds),
+			zap.Int64("transaction schema", currVer), zap.Int64s("schema versions that changed the tables", changedSchemaVers))
 		return res, true
 	}
 	return res, false

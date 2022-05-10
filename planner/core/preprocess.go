@@ -23,13 +23,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -38,11 +38,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 )
@@ -112,7 +115,12 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 // Preprocess resolves table names of the node, and checks some statements' validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
-	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
+	v := preprocessor{
+		ctx:                ctx,
+		tableAliasInJoin:   make([]map[string]interface{}, 0),
+		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
+		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
+	}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}
@@ -170,6 +178,12 @@ type PreprocessExecuteISUpdate struct {
 	Node                    ast.Node
 }
 
+// preprocessWith is used to record info from WITH statements like CTE name.
+type preprocessWith struct {
+	cteCanUsed      []string
+	cteBeforeOffset []int
+}
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
@@ -181,7 +195,9 @@ type preprocessor struct {
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
-	withName         map[string]interface{}
+	preprocessWith   *preprocessWith
+
+	staleReadProcessor staleread.Processor
 
 	// values that may be returned
 	*PreprocessorReturn
@@ -298,7 +314,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.TableSource:
 		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
-			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
+			p.err = dbterror.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
 		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
 			switch v.TableSample.SampleMethod {
@@ -309,9 +325,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
-	case *ast.WithClause:
-		for _, cte := range node.CTEs {
-			p.withName[cte.Name.L] = struct{}{}
+	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+		with := p.preprocessWith
+		beforeOffset := len(with.cteCanUsed)
+		with.cteBeforeOffset = append(with.cteBeforeOffset, beforeOffset)
+		if cteNode, exist := node.(*ast.CommonTableExpression); exist && cteNode.IsRecursive {
+			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
 		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
@@ -338,7 +357,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 func EraseLastSemicolon(stmt ast.StmtNode) {
 	sql := stmt.Text()
 	if len(sql) > 0 && sql[len(sql)-1] == ';' {
-		stmt.SetText(sql[:len(sql)-1])
+		stmt.SetText(nil, sql[:len(sql)-1])
 	}
 }
 
@@ -466,7 +485,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			return
 		}
 		if tbl.Meta().TempTableType != model.TempTableNone {
-			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+			p.err = dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
 			return
 		}
 		tableInfo := tbl.Meta()
@@ -555,6 +574,19 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.BRIEStmt:
 		if x.Kind == ast.BRIEKindRestore {
 			p.flag &= ^inCreateOrDropTable
+		}
+	case *ast.CommonTableExpression, *ast.SubqueryExpr:
+		with := p.preprocessWith
+		lenWithCteBeforeOffset := len(with.cteBeforeOffset)
+		if lenWithCteBeforeOffset < 1 {
+			p.err = ErrInternal.GenWithStack("len(cteBeforeOffset) is less than one.Maybe it was deleted in somewhere.Should match in Enter and Leave")
+			break
+		}
+		beforeOffset := with.cteBeforeOffset[lenWithCteBeforeOffset-1]
+		with.cteBeforeOffset = with.cteBeforeOffset[:lenWithCteBeforeOffset-1]
+		with.cteCanUsed = with.cteCanUsed[:beforeOffset]
+		if cteNode, exist := x.(*ast.CommonTableExpression); exist {
+			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
 		}
 	}
 
@@ -661,7 +693,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		if autoIncrementMustBeKey && !isKey {
 			p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 		}
-		switch col.Tp.Tp {
+		switch col.Tp.GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
 		default:
@@ -703,20 +735,20 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
-		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
 	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
-		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
-		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
@@ -773,18 +805,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			case ast.TableOptionShardRowID:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 				return
-			case ast.TableOptionPlacementPrimaryRegion,
-				ast.TableOptionPlacementRegions,
-				ast.TableOptionPlacementFollowerCount,
-				ast.TableOptionPlacementVoterCount,
-				ast.TableOptionPlacementLearnerCount,
-				ast.TableOptionPlacementSchedule,
-				ast.TableOptionPlacementConstraints,
-				ast.TableOptionPlacementLeaderConstraints,
-				ast.TableOptionPlacementLearnerConstraints,
-				ast.TableOptionPlacementFollowerConstraints,
-				ast.TableOptionPlacementVoterConstraints,
-				ast.TableOptionPlacementPolicy:
+			case ast.TableOptionPlacementPolicy:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("PLACEMENT")
 				return
 			}
@@ -792,14 +813,17 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
-			p.err = err
-			return
+			// Try to convert to BLOB or TEXT, see issue #30328
+			if !terror.ErrorEqual(err, types.ErrTooBigFieldLength) || !p.hasAutoConvertWarning(colDef) {
+				p.err = err
+				return
+			}
 		}
 		isPrimary, err := checkColumnOptions(stmt.TemporaryKeyword != ast.TemporaryNone, colDef.Options)
 		if err != nil {
@@ -821,7 +845,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				return
 			}
 			if constraint.IsEmptyIndex {
-				p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(constraint.Name)
+				p.err = dbterror.ErrWrongNameForIndex.GenWithStackByArgs(constraint.Name)
 				return
 			}
 		case ast.ConstraintPrimaryKey:
@@ -845,22 +869,40 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
 		return
 	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
-		p.err = ddl.ErrTableMustHaveColumns
+		p.err = dbterror.ErrTableMustHaveColumns
 		return
+	}
+
+	if stmt.Partition != nil {
+		for _, def := range stmt.Partition.Definitions {
+			pName := def.Name.String()
+			if isIncorrectName(pName) {
+				p.err = dbterror.ErrWrongPartitionName.GenWithStackByArgs(pName)
+				return
+			}
+		}
 	}
 }
 
 func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	vName := stmt.ViewName.Name.String()
 	if isIncorrectName(vName) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(vName)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(vName)
 		return
 	}
 	for _, col := range stmt.Cols {
 		if isIncorrectName(col.String()) {
-			p.err = ddl.ErrWrongColumnName.GenWithStackByArgs(col)
+			p.err = dbterror.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
 		}
+	}
+	if len(stmt.Definer.Username) > auth.UserNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Username, "user name", auth.UserNameMaxLength)
+		return
+	}
+	if len(stmt.Definer.Hostname) > auth.HostNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Hostname, "host name", auth.HostNameMaxLength)
+		return
 	}
 }
 
@@ -868,7 +910,7 @@ func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
 	switch s := stmt.(type) {
 	case *ast.SelectStmt:
 		if s.SelectIntoOpt != nil {
-			p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
+			p.err = dbterror.ErrViewSelectClause.GenWithStackByArgs("INFO")
 			return
 		}
 		if s.LockInfo != nil && s.LockInfo.LockType != ast.SelectLockNone {
@@ -911,7 +953,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
-			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
+			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
 
@@ -942,7 +984,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
 	for _, t := range tables {
 		if isIncorrectName(t.Name.String()) {
-			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
+			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
 	}
@@ -1015,11 +1057,11 @@ func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) 
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
 	if stmt.IndexName == "" {
-		p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(stmt.IndexName)
+		p.err = dbterror.ErrWrongNameForIndex.GenWithStackByArgs(stmt.IndexName)
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
@@ -1049,12 +1091,12 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 
 func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 	if isIncorrectName(oldTable) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(oldTable)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(oldTable)
 		return
 	}
 
 	if isIncorrectName(newTable) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(newTable)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(newTable)
 		return
 	}
 }
@@ -1062,11 +1104,11 @@ func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 	// Check create table stmt whether it's is in REPAIR MODE.
 	if !domainutil.RepairInfo.InRepairMode() {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("TiDB is not in REPAIR MODE")
+		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("TiDB is not in REPAIR MODE")
 		return
 	}
 	if len(domainutil.RepairInfo.GetRepairTableList()) == 0 {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("repair list is empty")
+		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("repair list is empty")
 		return
 	}
 
@@ -1079,7 +1121,7 @@ func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
 	specs := stmt.Specs
@@ -1087,7 +1129,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		if spec.NewTable != nil {
 			ntName := spec.NewTable.Name.String()
 			if isIncorrectName(ntName) {
-				p.err = ddl.ErrWrongTableName.GenWithStackByArgs(ntName)
+				p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(ntName)
 				return
 			}
 		}
@@ -1118,6 +1160,14 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				p.err = ErrInternal.GenWithStack(msg)
 				return
 			}
+		case ast.AlterTableAddPartitions:
+			for _, def := range spec.PartDefinitions {
+				pName := def.Name.String()
+				if isIncorrectName(pName) {
+					p.err = dbterror.ErrWrongPartitionName.GenWithStackByArgs(pName)
+					return
+				}
+			}
 		default:
 			// Nothing to do now.
 		}
@@ -1139,13 +1189,19 @@ func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecificat
 	return nil
 }
 
-// checkIndexInfo checks index name and index column names.
+// checkIndexInfo checks index name, index column names and prefix lengths.
 func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
-		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
+		return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
 	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
+	}
+	for _, idxSpec := range IndexPartSpecifications {
+		// -1 => unspecified/full, > 0 OK, 0 => error
+		if idxSpec.Expr == nil && idxSpec.Length == 0 {
+			return ErrKeyPart0.GenWithStackByArgs(idxSpec.Column.Name.O)
+		}
 	}
 	return checkDuplicateColumnName(IndexPartSpecifications)
 }
@@ -1156,9 +1212,9 @@ func checkUnsupportedTableOptions(options []*ast.TableOption) error {
 	for _, option := range options {
 		switch option.Tp {
 		case ast.TableOptionUnion:
-			err = ddl.ErrTableOptionUnionUnsupported
+			err = dbterror.ErrTableOptionUnionUnsupported
 		case ast.TableOptionInsertMethod:
-			err = ddl.ErrTableOptionInsertMethodUnsupported
+			err = dbterror.ErrTableOptionInsertMethodUnsupported
 		case ast.TableOptionEngine:
 			err = checkTableEngine(option.StrValue)
 		}
@@ -1186,7 +1242,7 @@ var mysqlValidTableEngineNames = map[string]struct{}{
 
 func checkTableEngine(engineName string) error {
 	if _, have := mysqlValidTableEngineNames[strings.ToLower(engineName)]; !have {
-		return ddl.ErrUnknownEngine.GenWithStackByArgs(engineName)
+		return dbterror.ErrUnknownEngine.GenWithStackByArgs(engineName)
 	}
 	return nil
 }
@@ -1204,7 +1260,7 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	if tableMetaInfo.ShardRowIDBits != 0 {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
-	if tableMetaInfo.DirectPlacementOpts != nil || tableMetaInfo.PlacementPolicyRef != nil {
+	if tableMetaInfo.PlacementPolicyRef != nil {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
 	}
 
@@ -1217,7 +1273,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	// Check column name.
 	cName := colDef.Name.Name.String()
 	if isIncorrectName(cName) {
-		return ddl.ErrWrongColumnName.GenWithStackByArgs(cName)
+		return dbterror.ErrWrongColumnName.GenWithStackByArgs(cName)
 	}
 
 	if isInvalidDefaultValue(colDef) {
@@ -1229,81 +1285,81 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	if tp == nil {
 		return nil
 	}
-	if tp.Flen > math.MaxUint32 {
+	if tp.GetFlen() > math.MaxUint32 {
 		return types.ErrTooBigDisplayWidth.GenWithStack("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
 	}
 
-	switch tp.Tp {
+	switch tp.GetType() {
 	case mysql.TypeString:
-		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
+		if tp.GetFlen() != types.UnspecifiedLength && tp.GetFlen() > mysql.MaxFieldCharLength {
 			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
 		}
 	case mysql.TypeVarchar:
-		if len(tp.Charset) == 0 {
+		if len(tp.GetCharset()) == 0 {
 			// It's not easy to get the schema charset and table charset here.
 			// The charset is determined by the order ColumnDefaultCharset --> TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
 			// return nil, to make the check in the ddl.CreateTable.
 			return nil
 		}
-		err := ddl.IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, tp.Charset)
+		err := ddl.IsTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
 		if err != nil {
 			return err
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		// For FLOAT, the SQL standard permits an optional specification of the precision.
 		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
-		if tp.Decimal == -1 {
-			switch tp.Tp {
+		if tp.GetDecimal() == -1 {
+			switch tp.GetType() {
 			case mysql.TypeDouble:
-				// For Double type Flen and Decimal check is moved to parser component
+				// For Double type flen and decimal check is moved to parser component
 			default:
-				if tp.Flen > mysql.MaxDoublePrecisionLength {
+				if tp.GetFlen() > mysql.MaxDoublePrecisionLength {
 					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
 				}
 			}
 		} else {
-			if tp.Decimal > mysql.MaxFloatingTypeScale {
-				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+			if tp.GetDecimal() > mysql.MaxFloatingTypeScale {
+				return types.ErrTooBigScale.GenWithStackByArgs(tp.GetDecimal(), colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
 			}
-			if tp.Flen > mysql.MaxFloatingTypeWidth || tp.Flen == 0 {
+			if tp.GetFlen() > mysql.MaxFloatingTypeWidth || tp.GetFlen() == 0 {
 				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 			}
-			if tp.Flen < tp.Decimal {
+			if tp.GetFlen() < tp.GetDecimal() {
 				return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 			}
 		}
 	case mysql.TypeSet:
-		if len(tp.Elems) > mysql.MaxTypeSetMembers {
+		if len(tp.GetElems()) > mysql.MaxTypeSetMembers {
 			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colDef.Name.Name.O)
 		}
 		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
-		for _, str := range colDef.Tp.Elems {
+		for _, str := range colDef.Tp.GetElems() {
 			if strings.Contains(str, ",") {
-				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.Tp), str)
+				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.GetType()), str)
 			}
 		}
 	case mysql.TypeNewDecimal:
-		if tp.Decimal > mysql.MaxDecimalScale {
-			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
+		if tp.GetDecimal() > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenWithStackByArgs(tp.GetDecimal(), colDef.Name.Name.O, mysql.MaxDecimalScale)
 		}
 
-		if tp.Flen > mysql.MaxDecimalWidth {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		if tp.GetFlen() > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetFlen(), colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
 
-		if tp.Flen < tp.Decimal {
+		if tp.GetFlen() < tp.GetDecimal() {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 		}
 		// If decimal and flen all equals 0, just set flen to default value.
-		if tp.Decimal == 0 && tp.Flen == 0 {
+		if tp.GetDecimal() == 0 && tp.GetFlen() == 0 {
 			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
-			tp.Flen = defaultFlen
+			tp.SetFlen(defaultFlen)
 		}
 	case mysql.TypeBit:
-		if tp.Flen <= 0 {
+		if tp.GetFlen() <= 0 {
 			return types.ErrInvalidFieldSize.GenWithStackByArgs(colDef.Name.Name.O)
 		}
-		if tp.Flen > mysql.MaxBitDisplayWidth {
+		if tp.GetFlen() > mysql.MaxBitDisplayWidth {
 			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
 		}
 	default:
@@ -1329,7 +1385,7 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 	for i := len(colDef.Options) - 1; i >= 0; i-- {
 		columnOpt := colDef.Options[i]
 		if columnOpt.Tp == ast.ColumnOptionDefaultValue {
-			if !(tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeDatetime) && isDefaultValNowSymFunc(columnOpt.Expr) {
+			if !(tp.GetType() == mysql.TypeTimestamp || tp.GetType() == mysql.TypeDatetime) && isDefaultValNowSymFunc(columnOpt.Expr) {
 				return true
 			}
 			break
@@ -1360,11 +1416,11 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 	for _, colDef := range stmt.Cols {
 		// check schema and table names.
 		if colDef.Name.Schema.O != sName && len(colDef.Name.Schema.O) != 0 {
-			p.err = ddl.ErrWrongDBName.GenWithStackByArgs(colDef.Name.Schema.O)
+			p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(colDef.Name.Schema.O)
 			return
 		}
 		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
-			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(colDef.Name.Table.O)
+			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(colDef.Name.Table.O)
 			return
 		}
 	}
@@ -1398,8 +1454,11 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		if _, ok := p.withName[tn.Name.L]; ok {
-			return
+
+		for _, cte := range p.preprocessWith.cteCanUsed {
+			if cte == tn.Name.L {
+				return
+			}
 		}
 
 		currentDB := p.ctx.GetSessionVars().CurrentDB
@@ -1407,6 +1466,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			p.err = errors.Trace(ErrNoDB)
 			return
 		}
+
 		tn.Schema = model.NewCIStr(currentDB)
 	}
 
@@ -1429,9 +1489,13 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	p.handleAsOfAndReadTS(tn.AsOf)
-	if p.err != nil {
-		return
+	if p.stmtTp == TypeSelect {
+		if p.err = p.staleReadProcessor.OnSelectTable(tn); p.err != nil {
+			return
+		}
+		if p.err = p.updateStateFromStaleReadProcessor(); p.err != nil {
+			return
+		}
 	}
 
 	table, err := p.tableByName(tn)
@@ -1459,24 +1523,24 @@ func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 		return
 	}
 	if tableInfo != nil {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L, "this table is in repair")
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tn.Name.L, "this table is in repair")
 	}
 }
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 	// Check the whether the repaired table is system table.
 	if util.IsMemOrSysDB(tn.Schema.L) {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
+		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
 		return
 	}
 	tableInfo, dbInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName(tn.Schema.L, tn.Name.L)
 	// tableName here only has the schema rather than DBInfo.
 	if dbInfo == nil {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("database " + tn.Schema.L + " is not in repair")
+		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("database " + tn.Schema.L + " is not in repair")
 		return
 	}
 	if tableInfo == nil {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("table " + tn.Name.L + " is not in repair")
+		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("table " + tn.Name.L + " is not in repair")
 		return
 	}
 	p.ctx.SetValue(domainutil.RepairedTable, tableInfo)
@@ -1512,22 +1576,10 @@ func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
 		return
 	}
 
-	if prepared.SnapshotTSEvaluator != nil {
-		snapshotTS, err := prepared.SnapshotTSEvaluator(p.ctx)
-		if err != nil {
-			p.err = err
+	if p.err = p.staleReadProcessor.OnExecutePreparedStmt(prepared.SnapshotTSEvaluator); p.err == nil {
+		if p.err = p.updateStateFromStaleReadProcessor(); p.err != nil {
 			return
 		}
-
-		is, err := domain.GetDomain(p.ctx).GetSnapshotInfoSchema(snapshotTS)
-		if err != nil {
-			p.err = err
-			return
-		}
-
-		p.LastSnapshotTS = snapshotTS
-		p.initedLastSnapshotTS = true
-		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
 	}
 }
 
@@ -1557,14 +1609,14 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	sName := stmt.Name.Name.String()
 	if isIncorrectName(sName) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(sName)
 		return
 	}
 }
 
 func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	if node.Tp.EvalType() == types.ETDecimal {
-		if node.Tp.Flen >= node.Tp.Decimal && node.Tp.Flen <= mysql.MaxDecimalWidth && node.Tp.Decimal <= mysql.MaxDecimalScale {
+		if node.Tp.GetFlen() >= node.Tp.GetDecimal() && node.Tp.GetFlen() <= mysql.MaxDecimalWidth && node.Tp.GetDecimal() <= mysql.MaxDecimalScale {
 			// valid
 			return
 		}
@@ -1575,141 +1627,64 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			p.err = err
 			return
 		}
-		if node.Tp.Flen < node.Tp.Decimal {
+		if node.Tp.GetFlen() < node.Tp.GetDecimal() {
 			p.err = types.ErrMBiggerThanD.GenWithStackByArgs(buf.String())
 			return
 		}
-		if node.Tp.Flen > mysql.MaxDecimalWidth {
-			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.Flen, buf.String(), mysql.MaxDecimalWidth)
+		if node.Tp.GetFlen() > mysql.MaxDecimalWidth {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.GetFlen(), buf.String(), mysql.MaxDecimalWidth)
 			return
 		}
-		if node.Tp.Decimal > mysql.MaxDecimalScale {
-			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.Decimal, buf.String(), mysql.MaxDecimalScale)
+		if node.Tp.GetDecimal() > mysql.MaxDecimalScale {
+			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.GetDecimal(), buf.String(), mysql.MaxDecimalScale)
 			return
 		}
 	}
 }
 
-// handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
-func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
-	if p.stmtTp != TypeSelect {
-		return
+func (p *preprocessor) updateStateFromStaleReadProcessor() error {
+	if p.initedLastSnapshotTS {
+		return nil
 	}
-	defer func() {
+
+	if p.IsStaleness = p.staleReadProcessor.IsStaleness(); p.IsStaleness {
+		p.LastSnapshotTS = p.staleReadProcessor.GetStalenessReadTS()
+		p.SnapshotTSEvaluator = p.staleReadProcessor.GetStalenessTSEvaluatorForPrepare()
+		p.InfoSchema = p.staleReadProcessor.GetStalenessInfoSchema()
 		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 		// in stmtCtx
-		if p.flag&inPrepare == 0 && p.IsStaleness {
+		if p.flag&initTxnContextProvider != 0 {
 			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
-		}
-	}()
-	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
-	// otherwise we should directly set the return param from TxnCtx.
-	p.ReadReplicaScope = kv.GlobalReplicaScope
-	if p.ctx.GetSessionVars().InTxn() {
-		if node != nil {
-			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
-			return
-		}
-		txnCtx := p.ctx.GetSessionVars().TxnCtx
-		p.ReadReplicaScope = txnCtx.TxnScope
-		// It means we meet following case:
-		// 1. start transaction read only as of timestamp ts
-		// 2. select statement
-		if txnCtx.IsStaleness {
-			p.LastSnapshotTS = txnCtx.StartTS
-			p.IsStaleness = txnCtx.IsStaleness
-			p.initedLastSnapshotTS = true
-			return
-		}
-	}
-	scope := config.GetTxnScopeFromConfig()
-	if p.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && scope != kv.GlobalReplicaScope {
-		p.ReadReplicaScope = scope
-	}
-
-	// If the statement is in auto-commit mode, we will check whether there exists read_ts, if exists,
-	// we will directly use it. The txnScope will be defined by the zone label, if it is not set, we will use
-	// global txnScope directly.
-	readTS := p.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
-	readStaleness := p.ctx.GetSessionVars().ReadStaleness
-	var ts uint64
-	switch {
-	case readTS > 0:
-		ts = readTS
-		if node != nil {
-			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
-			return
-		}
-		if !p.initedLastSnapshotTS {
-			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
-				return ts, nil
+			if !p.ctx.GetSessionVars().InTxn() {
+				txnManager := sessiontxn.GetTxnManager(p.ctx)
+				newTxnRequest := &sessiontxn.EnterNewTxnRequest{
+					Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
+					Provider: staleread.NewStalenessTxnContextProvider(p.ctx, p.LastSnapshotTS, p.InfoSchema),
+				}
+				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
+					return err
+				}
+				if err := txnManager.OnStmtStart(context.TODO()); err != nil {
+					return err
+				}
 			}
-			p.LastSnapshotTS = ts
-			p.IsStaleness = true
-		}
-	case readTS == 0 && node != nil:
-		// If we didn't use read_ts, and node isn't nil, it means we use 'select table as of timestamp ... '
-		// for stale read
-		// It means we meet following case:
-		// select statement with as of timestamp
-		ts, p.err = calculateTsExpr(p.ctx, node)
-		if p.err != nil {
-			return
-		}
-		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
-			p.err = errors.Trace(err)
-			return
-		}
-		if !p.initedLastSnapshotTS {
-			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
-				return calculateTsExpr(ctx, node)
-			}
-			p.LastSnapshotTS = ts
-			p.IsStaleness = true
-		}
-	case readTS == 0 && node == nil && readStaleness != 0:
-		// If both readTS and node is empty while the readStaleness isn't, it means we meet following situation:
-		// set @@tidb_read_staleness='-5';
-		// select * from t;
-		// Then the following select statement should be affected by the tidb_read_staleness in session.
-		ts, p.err = calculateTsWithReadStaleness(p.ctx, readStaleness)
-		if p.err != nil {
-			return
-		}
-		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
-			p.err = errors.Trace(err)
-			return
-		}
-		if !p.initedLastSnapshotTS {
-			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
-				return calculateTsWithReadStaleness(p.ctx, readStaleness)
-			}
-			p.LastSnapshotTS = ts
-			p.IsStaleness = true
 		}
 	}
 
-	// If the select statement is related to multi tables, we should grantee that all tables use the same timestamp
-	if p.LastSnapshotTS != ts {
-		p.err = ErrAsOf.GenWithStack("can not set different time in the as of")
-		return
+	// It is a little hacking for the below codes. `ReadReplicaScope` is used both by stale read's closest read and local txn.
+	// They are different features and the value for `ReadReplicaScope` will be conflicted in some scenes.
+	// But because local txn is still an experimental feature, we should make stale read work first.
+	if p.IsStaleness || p.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
+		// When stale read or closet read is set, we read the tidb's locality as the read replica scope
+		p.ReadReplicaScope = config.GetTxnScopeFromConfig()
+	} else {
+		// Otherwise, use the scope from TxnCtx for local txn validation
+		p.ReadReplicaScope = p.ctx.GetSessionVars().TxnCtx.TxnScope
 	}
-	if p.LastSnapshotTS != 0 {
-		dom := domain.GetDomain(p.ctx)
-		is, err := dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
-		// if infoschema is empty, LastSnapshotTS init failed
-		if err != nil {
-			p.err = err
-			return
-		}
-		if is == nil {
-			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
-			return
-		}
-		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
-	}
+
 	p.initedLastSnapshotTS = true
+	return nil
 }
 
 // ensureInfoSchema get the infoschema from the preprocessor.
@@ -1737,7 +1712,23 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 		return
 	}
 
-	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
-		InfoSchema: p.ensureInfoSchema(),
-	})
+	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
+		// When the current provider is `legacy.SimpleTxnContextProvider` it should to keep the logic equals to the old implement.
+		// After refactoring, the `legacy.SimpleTxnContextProvider` will be removed, and this code will be removed too.
+		provider.InfoSchema = p.ensureInfoSchema()
+	}
+}
+
+func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
+	sessVars := p.ctx.GetSessionVars()
+	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.GetType() == mysql.TypeVarchar {
+		colDef.Tp.SetType(mysql.TypeBlob)
+		if colDef.Tp.GetCharset() == charset.CharsetBin {
+			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
+		} else {
+			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
+		}
+		return true
+	}
+	return false
 }

@@ -187,7 +187,10 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 
 	query := &storage.Query{Prefix: prefix}
 	// only need each object's name and size
-	query.SetAttrSelection([]string{"Name", "Size"})
+	err := query.SetAttrSelection([]string{"Name", "Size"})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	iter := s.bucket.Objects(ctx, query)
 	for {
 		attrs, err := iter.Next()
@@ -219,6 +222,19 @@ func (s *gcsStorage) Create(ctx context.Context, name string) (ExternalFileWrite
 	wc.StorageClass = s.gcs.StorageClass
 	wc.PredefinedACL = s.gcs.PredefinedAcl
 	return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+}
+
+// Rename file name from oldFileName to newFileName.
+func (s *gcsStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	data, err := s.ReadFile(ctx, oldFileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.WriteFile(ctx, newFileName, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return s.DeleteFile(ctx, oldFileName)
 }
 
 func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*gcsStorage, error) {

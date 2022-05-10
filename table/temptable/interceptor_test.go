@@ -868,7 +868,7 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 			inter = emptyRetrieverInterceptor
 		}
 		result, err := inter.OnBatchGet(ctx, snap, c.keys)
-		require.Nil(t, err, i)
+		require.NoError(t, err, i)
 		require.NotNil(t, result, i)
 		require.Equal(t, c.result, result, i)
 		if c.nilSession {

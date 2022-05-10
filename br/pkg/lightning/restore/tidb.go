@@ -18,10 +18,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
-	tmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
@@ -62,24 +62,6 @@ var defaultImportVariablesTiDB = map[string]string{
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
-}
-
-// getSQLErrCode returns error code if err is a mysql error
-func getSQLErrCode(err error) (terror.ErrCode, bool) {
-	mysqlErr, ok := errors.Cause(err).(*tmysql.MySQLError)
-	if !ok {
-		return -1, false
-	}
-
-	return terror.ErrCode(mysqlErr.Number), true
-}
-
-func isUnknownSystemVariableErr(err error) bool {
-	code, ok := getSQLErrCode(err)
-	if !ok {
-		return strings.Contains(err.Error(), "Unknown system variable")
-	}
-	return code == mysql.ErrUnknownSystemVariable
 }
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
@@ -111,16 +93,16 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"tidb_opt_write_row_id": "1",
 		// always set auto-commit to ON
 		"autocommit": "1",
+		// alway set transaction mode to optimistic
+		"tidb_txn_mode": "optimistic",
 	}
 
 	if dsn.Vars != nil {
-		for k, v := range dsn.Vars {
-			vars[k] = v
-		}
+		maps.Copy(vars, dsn.Vars)
 	}
 
 	for k, v := range vars {
-		q := fmt.Sprintf("SET SESSION %s = %s;", k, v)
+		q := fmt.Sprintf("SET SESSION %s = '%s';", k, v)
 		if _, err1 := db.ExecContext(ctx, q); err1 != nil {
 			log.L().Warn("set session variable failed, will skip this query", zap.String("query", q),
 				zap.Error(err1))
@@ -177,7 +159,7 @@ loopCreate:
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateStmts, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
+		sqlCreateStmts, err = createIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
 		if err != nil {
 			break
 		}
@@ -200,17 +182,10 @@ loopCreate:
 	return errors.Trace(err)
 }
 
-func createDatabaseIfNotExistStmt(dbName string) string {
-	var createDatabase strings.Builder
-	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
-	common.WriteMySQLIdentifier(&createDatabase, dbName)
-	return createDatabase.String()
-}
-
-func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
+func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
-		return []string{}, err
+		return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
 	}
 
 	var res strings.Builder
@@ -219,6 +194,9 @@ func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName s
 	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {
 		switch node := stmt.(type) {
+		case *ast.CreateDatabaseStmt:
+			node.Name = dbName
+			node.IfNotExists = true
 		case *ast.CreateTableStmt:
 			node.Table.Schema = model.NewCIStr(dbName)
 			node.Table.Name = model.NewCIStr(tblName)
@@ -232,7 +210,7 @@ func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName s
 			node.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {
-			return []string{}, err
+			return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
 		}
 		ctx.WritePlain(";")
 		retStmts = append(retStmts, res.String())
@@ -275,7 +253,7 @@ func LoadSchemaInfo(
 		for _, tbl := range schema.Tables {
 			tblInfo, ok := tableMap[strings.ToLower(tbl.Name)]
 			if !ok {
-				return nil, errors.Errorf("table '%s' schema not found", tbl.Name)
+				return nil, common.ErrSchemaNotExists.GenWithStackByArgs(tbl.DB, tbl.Name)
 			}
 			tableName := tblInfo.Name.String()
 			if tblInfo.State != model.StatePublic {
@@ -287,13 +265,15 @@ func LoadSchemaInfo(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// Table names are case-sensitive in mydump.MDTableMeta.
+			// We should always use the original tbl.Name in checkpoints.
 			tableInfo := &checkpoints.TidbTableInfo{
 				ID:   tblInfo.ID,
 				DB:   schema.Name,
-				Name: tableName,
+				Name: tbl.Name,
 				Core: tblInfo,
 			}
-			dbInfo.Tables[tableName] = tableInfo
+			dbInfo.Tables[tbl.Name] = tableInfo
 		}
 
 		result[schema.Name] = dbInfo
@@ -369,7 +349,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 	return result
 }
 
-func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
+func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, error) {
 	newCollationEnabled := false
 	newCollationVal, err := g.ObtainStringWithLog(
 		ctx,
@@ -379,9 +359,13 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
 	)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
+	} else if errors.ErrorEqual(err, sql.ErrNoRows) {
+		// ignore if target variable is not found, this may happen if tidb < v4.0
+		newCollationEnabled = false
+		err = nil
 	}
 
-	return newCollationEnabled
+	return newCollationEnabled, errors.Trace(err)
 }
 
 // AlterAutoIncrement rebase the table auto increment id
@@ -389,9 +373,17 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
 // the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
-func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr int64) error {
-	logger := log.With(zap.String("table", tableName), zap.Int64("auto_increment", incr))
-	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr uint64) error {
+	var query string
+	logger := log.With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
+	if incr > math.MaxInt64 {
+		// automatically set max value
+		logger.Warn("auto_increment out of the maximum value TiDB supports, automatically set to the max", zap.Uint64("auto_increment", incr))
+		incr = math.MaxInt64
+		query = fmt.Sprintf("ALTER TABLE %s FORCE AUTO_INCREMENT=%d", tableName, incr)
+	} else {
+		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+	}
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_increment", logger)
 	task.End(zap.ErrorLevel, err)
@@ -404,8 +396,16 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 	return errors.Annotatef(err, "%s", query)
 }
 
-func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase int64) error {
-	logger := log.With(zap.String("table", tableName), zap.Int64("auto_random", randomBase))
+func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64, maxAutoRandom uint64) error {
+	logger := log.With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
+	if randomBase == maxAutoRandom+1 {
+		// insert a tuple with key maxAutoRandom
+		randomBase = maxAutoRandom
+	} else if randomBase > maxAutoRandom {
+		// TiDB does nothing when inserting an overflow value
+		logger.Warn("auto_random out of the maximum value TiDB supports")
+		return nil
+	}
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_random_base", logger)

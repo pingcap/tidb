@@ -32,6 +32,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -164,7 +165,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	switch stmt.(type) {
-	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt:
+	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDeleteStmt:
 		return ErrUnsupportedPs
 	}
 
@@ -197,21 +198,22 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	if topsqlstate.TopSQLEnabled() {
-		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, vars.InRestrictedSQL)
+		e.ctx.GetSessionVars().StmtCtx.IsSQLRegistered.Store(true)
+		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, vars.InRestrictedSQL)
 	}
 
 	var (
-		normalizedSQL4PC, normalizedSQL4PCHash string
-		selectStmtNode                         ast.StmtNode
+		normalizedSQL4PC, digest4PC string
+		selectStmtNode              ast.StmtNode
 	)
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
 		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
-		selectStmtNode, normalizedSQL4PC, normalizedSQL4PCHash, err = planner.ExtractSelectAndNormalizeDigest(stmt, e.ctx.GetSessionVars().CurrentDB)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = planner.ExtractSelectAndNormalizeDigest(stmt, e.ctx.GetSessionVars().CurrentDB)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""
-			normalizedSQL4PCHash = ""
+			digest4PC = ""
 		}
 	}
 
@@ -224,12 +226,16 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var p plannercore.Plan
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
+	e.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	destBuilder, _ := plannercore.NewPlanBuilder().Init(e.ctx, ret.InfoSchema, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
 		return err
 	}
-	if p.Schema().Len() > 0 {
+	// In MySQL prepare protocol, the server need to tell the client how many column the prepared statement would return when executing it.
+	// For a query with on result, e.g. an insert statement, there will be no result, so 'e.Fields' is not set.
+	// Usually, p.Schema().Len() == 0 means no result. A special case is the 'do' statement, it looks like 'select' but discard the result.
+	if !isNoResultPlan(p) {
 		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
 	}
 	if e.ID == 0 {
@@ -240,14 +246,16 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	preparedObj := &plannercore.CachedPrepareStmt{
-		PreparedAst:          prepared,
-		VisitInfos:           destBuilder.GetVisitInfo(),
-		NormalizedSQL:        normalizedSQL,
-		SQLDigest:            digest,
-		ForUpdateRead:        destBuilder.GetIsForUpdateRead(),
-		SnapshotTSEvaluator:  ret.SnapshotTSEvaluator,
-		NormalizedSQL4PC:     normalizedSQL4PC,
-		NormalizedSQL4PCHash: normalizedSQL4PCHash,
+		PreparedAst:         prepared,
+		StmtDB:              e.ctx.GetSessionVars().CurrentDB,
+		StmtText:            stmt.Text(),
+		VisitInfos:          destBuilder.GetVisitInfo(),
+		NormalizedSQL:       normalizedSQL,
+		SQLDigest:           digest,
+		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
+		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
+		NormalizedSQL4PC:    normalizedSQL4PC,
+		SQLDigest4PC:        digest4PC,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
@@ -327,9 +335,13 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
-		e.ctx.PreparedPlanCache().Delete(plannercore.NewPlanCacheKey(
-			vars, id, prepared.SchemaVersion,
-		))
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion)
+		if err != nil {
+			return err
+		}
+		if !vars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
+			e.ctx.PreparedPlanCache().Delete(cacheKey)
+		}
 	}
 	vars.RemovePreparedStmt(id)
 	return nil
@@ -337,7 +349,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, args []types.Datum) (*ExecStmt, bool, bool, error) {
+	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
@@ -346,6 +358,8 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, false, false, err
 	}
+	isStaleness := snapshotTS != 0
+	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
 	execStmt.BinaryArgs = args
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
@@ -355,17 +369,21 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	failpoint.Inject("assertTxnManagerInCompile", func() {
 		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
+		staleread.AssertStmtStaleness(sctx, snapshotTS != 0)
+		if snapshotTS != 0 {
+			sessiontxn.AssertTxnManagerReadTS(sctx, snapshotTS)
+		}
 	})
 
 	stmt := &ExecStmt{
-		GoCtx:       ctx,
-		InfoSchema:  is,
-		Plan:        execPlan,
-		StmtNode:    execStmt,
-		Ctx:         sctx,
-		OutputNames: names,
-		Ti:          &TelemetryInfo{},
-		SnapshotTS:  snapshotTS,
+		GoCtx:            ctx,
+		InfoSchema:       is,
+		Plan:             execPlan,
+		StmtNode:         execStmt,
+		Ctx:              sctx,
+		OutputNames:      names,
+		Ti:               &TelemetryInfo{},
+		ReplicaReadScope: replicaReadScope,
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)

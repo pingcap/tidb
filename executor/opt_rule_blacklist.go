@@ -37,11 +37,7 @@ func (e *ReloadOptRuleBlacklistExec) Next(ctx context.Context, _ *chunk.Chunk) e
 // LoadOptRuleBlacklist loads the latest data from table mysql.opt_rule_blacklist.
 func LoadOptRuleBlacklist(ctx sessionctx.Context) (err error) {
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParamsInternal(context.TODO(), "select HIGH_PRIORITY name from mysql.opt_rule_blacklist")
-	if err != nil {
-		return err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "select HIGH_PRIORITY name from mysql.opt_rule_blacklist")
 	if err != nil {
 		return err
 	}

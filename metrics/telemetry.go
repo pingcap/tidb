@@ -52,11 +52,11 @@ type CTEUsageCounter struct {
 
 // Sub returns the difference of two counters.
 func (c CTEUsageCounter) Sub(rhs CTEUsageCounter) CTEUsageCounter {
-	new := CTEUsageCounter{}
-	new.NonRecursiveCTEUsed = c.NonRecursiveCTEUsed - rhs.NonRecursiveCTEUsed
-	new.RecursiveUsed = c.RecursiveUsed - rhs.RecursiveUsed
-	new.NonCTEUsed = c.NonCTEUsed - rhs.NonCTEUsed
-	return new
+	return CTEUsageCounter{
+		NonRecursiveCTEUsed: c.NonRecursiveCTEUsed - rhs.NonRecursiveCTEUsed,
+		RecursiveUsed:       c.RecursiveUsed - rhs.RecursiveUsed,
+		NonCTEUsed:          c.NonCTEUsed - rhs.NonCTEUsed,
+	}
 }
 
 // GetCTECounter gets the TxnCommitCounter.
@@ -65,5 +65,24 @@ func GetCTECounter() CTEUsageCounter {
 		NonRecursiveCTEUsed: readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "nonRecurCTE"})),
 		RecursiveUsed:       readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "recurCTE"})),
 		NonCTEUsed:          readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "notCTE"})),
+	}
+}
+
+// NonTransactionalStmtCounter records the usages of non-transactional statements.
+type NonTransactionalStmtCounter struct {
+	DeleteCount int64 `json:"delete"`
+}
+
+// Sub returns the difference of two counters.
+func (n NonTransactionalStmtCounter) Sub(rhs NonTransactionalStmtCounter) NonTransactionalStmtCounter {
+	return NonTransactionalStmtCounter{
+		DeleteCount: n.DeleteCount - rhs.DeleteCount,
+	}
+}
+
+// GetNonTransactionalStmtCounter gets the NonTransactionalStmtCounter.
+func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
+	return NonTransactionalStmtCounter{
+		DeleteCount: readCounter(NonTransactionalDeleteCount),
 	}
 }

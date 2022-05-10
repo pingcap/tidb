@@ -1,0 +1,14 @@
+ddl TestSchema
+ddl TestCacheTableSizeLimit
+executor TestPBMemoryLeak
+ddl TestModifyColumn
+planner/core TestPartitionWithVariedDataSources
+expression TestGetLock
+ddl TestParallelDDL
+server TestTopSQLCPUProfile
+executor TestStaleReadPrepare
+executor TestHashRowContainer
+executor TestIndexJoin31494
+ddl TestAddColumn
+executor TestDefaultValForAnalyze
+executor TestIn

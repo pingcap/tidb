@@ -57,6 +57,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mathutil"
+	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -64,6 +66,7 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
@@ -76,6 +79,10 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
+	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	maxWriteAndIngestRetryTimes = 30
+	maxRetryBackoffTime         = 30 * time.Second
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -85,6 +92,8 @@ const (
 	// lower the max-key-count to avoid tikv trigger region auto split
 	regionMaxKeyCount      = 1_280_000
 	defaultRegionSplitSize = 96 * units.MiB
+	// The max ranges count in a batch to split and scatter.
+	maxBatchSplitRanges = 4096
 
 	propRangeIndex = "tikv.range_index"
 
@@ -111,8 +120,82 @@ var (
 	errorEngineClosed = errors.New("engine is closed")
 )
 
-// getImportClientFn is a variable alias for getImportClient used for unit test.
-var getImportClientFn = getImportClient
+// ImportClientFactory is factory to create new import client for specific store.
+type ImportClientFactory interface {
+	Create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error)
+	Close()
+}
+
+type importClientFactoryImpl struct {
+	conns          *common.GRPCConns
+	splitCli       split.SplitClient
+	tls            *common.TLS
+	tcpConcurrency int
+}
+
+func newImportClientFactoryImpl(splitCli split.SplitClient, tls *common.TLS, tcpConcurrency int) *importClientFactoryImpl {
+	return &importClientFactoryImpl{
+		conns:          common.NewGRPCConns(),
+		splitCli:       splitCli,
+		tls:            tls,
+		tcpConcurrency: tcpConcurrency,
+	}
+}
+
+func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
+	store, err := f.splitCli.GetStore(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	opt := grpc.WithInsecure()
+	if f.tls.TLSConfig() != nil {
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig()))
+	}
+	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+
+	bfConf := backoff.DefaultConfig
+	bfConf.MaxDelay = gRPCBackOffMaxDelay
+	// we should use peer address for tiflash. for tikv, peer address is empty
+	addr := store.GetPeerAddress()
+	if addr == "" {
+		addr = store.GetAddress()
+	}
+	conn, err := grpc.DialContext(
+		ctx,
+		addr,
+		opt,
+		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                gRPCKeepAliveTime,
+			Timeout:             gRPCKeepAliveTimeout,
+			PermitWithoutStream: true,
+		}),
+	)
+	cancel()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return conn, nil
+}
+
+func (f *importClientFactoryImpl) getGrpcConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
+	return f.conns.GetGrpcConn(ctx, storeID, f.tcpConcurrency,
+		func(ctx context.Context) (*grpc.ClientConn, error) {
+			return f.makeConn(ctx, storeID)
+		})
+}
+
+func (f *importClientFactoryImpl) Create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+	conn, err := f.getGrpcConn(ctx, storeID)
+	if err != nil {
+		return nil, err
+	}
+	return sst.NewImportSSTClient(conn), nil
+}
+
+func (f *importClientFactoryImpl) Close() {
+	f.conns.Close()
+}
 
 // Range record start and end key for localStoreDir.DB
 // so we can write it to tikv in streaming
@@ -125,7 +208,6 @@ type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
 	pdCtl    *pdutil.PdController
-	conns    common.GRPCConns
 	splitCli split.SplitClient
 	tikvCli  *tikvclient.KVStore
 	tls      *common.TLS
@@ -139,17 +221,19 @@ type local struct {
 	batchWriteKVPairs int
 	checkpointEnabled bool
 
-	tcpConcurrency int
-	maxOpenFiles   int
+	dupeConcurrency int
+	maxOpenFiles    int
 
 	engineMemCacheSize      int
 	localWriterMemCacheSize int64
 	supportMultiIngest      bool
 
-	checkTiKVAvaliable bool
-	duplicateDetection bool
-	duplicateDB        *pebble.DB
-	errorMgr           *errormanager.ErrorManager
+	checkTiKVAvaliable  bool
+	duplicateDetection  bool
+	duplicateDB         *pebble.DB
+	keyAdapter          KeyAdapter
+	errorMgr            *errormanager.ErrorManager
+	importClientFactory ImportClientFactory
 
 	bufferPool *membuf.Pool
 }
@@ -179,9 +263,9 @@ func NewLocalBackend(
 
 	pdCtl, err := pdutil.NewPdController(ctx, cfg.TiDB.PdAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
-		return backend.MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
+		return backend.MakeBackend(nil), common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
-	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig())
+	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig(), false)
 
 	shouldCreate := true
 	if cfg.Checkpoint.Enable {
@@ -197,7 +281,7 @@ func NewLocalBackend(
 	if shouldCreate {
 		err = os.Mkdir(localFile, 0o700)
 		if err != nil {
-			return backend.MakeBackend(nil), errors.Annotate(err, "invalid sorted-kv-dir for local backend, please change the config or delete the path")
+			return backend.MakeBackend(nil), common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(localFile)
 		}
 	}
 
@@ -205,22 +289,27 @@ func NewLocalBackend(
 	if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		duplicateDB, err = openDuplicateDB(localFile)
 		if err != nil {
-			return backend.MakeBackend(nil), errors.Annotate(err, "open duplicate db failed")
+			return backend.MakeBackend(nil), common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
 	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(cfg.TiDB.PdAddr, ","), tls.TLSConfig())
 	if err != nil {
-		return backend.MakeBackend(nil), err
+		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()))
 	pdCliForTiKV := &tikvclient.CodecPDClient{Client: pdCtl.GetPDClient()}
 	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
-		return backend.MakeBackend(nil), err
+		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-
+	importClientFactory := newImportClientFactoryImpl(splitCli, tls, rangeConcurrency)
+	duplicateDetection := cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone
+	keyAdapter := KeyAdapter(noopKeyAdapter{})
+	if duplicateDetection {
+		keyAdapter = dupDetectKeyAdapter{}
+	}
 	local := &local{
 		engines:  sync.Map{},
 		pdCtl:    pdCtl,
@@ -233,23 +322,23 @@ func NewLocalBackend(
 		localStoreDir:     localFile,
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
 		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
-		tcpConcurrency:    rangeConcurrency,
+		dupeConcurrency:   rangeConcurrency * 2,
 		batchWriteKVPairs: cfg.TikvImporter.SendKVPairs,
 		checkpointEnabled: cfg.Checkpoint.Enable,
-		maxOpenFiles:      utils.MaxInt(maxOpenFiles, openFilesLowerThreshold),
+		maxOpenFiles:      mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		duplicateDetection:      cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		duplicateDetection:      duplicateDetection,
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
+		keyAdapter:              keyAdapter,
 		errorMgr:                errorMgr,
-
-		bufferPool: membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
+		importClientFactory:     importClientFactory,
+		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
 	}
-	local.conns = common.NewGRPCConns()
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
-		return backend.MakeBackend(nil), err
+		return backend.MakeBackend(nil), common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
 	return backend.MakeBackend(local), nil
@@ -372,49 +461,6 @@ func (local *local) lockAllEnginesUnless(newState, ignoreStateMask importMutexSt
 	return allEngines
 }
 
-func (local *local) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	store, err := local.splitCli.GetStore(ctx, storeID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	opt := grpc.WithInsecure()
-	if local.tls.TLSConfig() != nil {
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(local.tls.TLSConfig()))
-	}
-	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
-
-	bfConf := backoff.DefaultConfig
-	bfConf.MaxDelay = gRPCBackOffMaxDelay
-	// we should use peer address for tiflash. for tikv, peer address is empty
-	addr := store.GetPeerAddress()
-	if addr == "" {
-		addr = store.GetAddress()
-	}
-	conn, err := grpc.DialContext(
-		ctx,
-		addr,
-		opt,
-		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                gRPCKeepAliveTime,
-			Timeout:             gRPCKeepAliveTimeout,
-			PermitWithoutStream: true,
-		}),
-	)
-	cancel()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return conn, nil
-}
-
-func (local *local) getGrpcConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	return local.conns.GetGrpcConn(ctx, storeID, local.tcpConcurrency,
-		func(ctx context.Context) (*grpc.ClientConn, error) {
-			return local.makeConn(ctx, storeID)
-		})
-}
-
 // Close the local backend.
 func (local *local) Close() {
 	allEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
@@ -424,11 +470,11 @@ func (local *local) Close() {
 		engine.Close()
 		engine.unlock()
 	}
-	local.conns.Close()
+	local.importClientFactory.Close()
 	local.bufferPool.Destroy()
 
 	if local.duplicateDB != nil {
-		// Check whether there are duplicates.
+		// Check if there are duplicates that are not collected.
 		iter := local.duplicateDB.NewIter(&pebble.IterOptions{})
 		hasDuplicates := iter.First()
 		allIsWell := true
@@ -444,7 +490,7 @@ func (local *local) Close() {
 			log.L().Warn("close duplicate db failed", zap.Error(err))
 			allIsWell = false
 		}
-		// If checkpoint is disabled or we don't detect any duplicate, then this duplicate
+		// If checkpoint is disabled, or we don't detect any duplicate, then this duplicate
 		// db dir will be useless, so we clean up this dir.
 		if allIsWell && (!local.checkpointEnabled || !hasDuplicates) {
 			if err := os.RemoveAll(filepath.Join(local.localStoreDir, duplicateDBName)); err != nil {
@@ -553,16 +599,12 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		return errors.Trace(err)
 	}
 	if !common.IsDirExists(sstDir) {
-		if err := os.Mkdir(sstDir, 0o755); err != nil {
+		if err := os.Mkdir(sstDir, 0o750); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	engineCtx, cancel := context.WithCancel(ctx)
 
-	keyAdapter := KeyAdapter(noopKeyAdapter{})
-	if local.duplicateDetection {
-		keyAdapter = dupDetectKeyAdapter{}
-	}
 	e, _ := local.engines.LoadOrStore(engineUUID, &Engine{
 		UUID:               engineUUID,
 		sstDir:             sstDir,
@@ -574,7 +616,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		duplicateDetection: local.duplicateDetection,
 		duplicateDB:        local.duplicateDB,
 		errorMgr:           local.errorMgr,
-		keyAdapter:         keyAdapter,
+		keyAdapter:         local.keyAdapter,
 	})
 	engine := e.(*Engine)
 	engine.db = db
@@ -619,16 +661,12 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			db:                 db,
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
+			keyAdapter:         local.keyAdapter,
 			duplicateDetection: local.duplicateDetection,
 			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 		}
 		engine.sstIngester = dbSSTIngester{e: engine}
-		keyAdapter := KeyAdapter(noopKeyAdapter{})
-		if local.duplicateDetection {
-			keyAdapter = dupDetectKeyAdapter{}
-		}
-		engine.keyAdapter = keyAdapter
 		if err = engine.loadEngineMeta(); err != nil {
 			return err
 		}
@@ -660,15 +698,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 }
 
 func (local *local) getImportClient(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
-	return getImportClientFn(local, ctx, storeID)
-}
-
-func getImportClient(local *local, ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
-	conn, err := local.getGrpcConn(ctx, storeID)
-	if err != nil {
-		return nil, err
-	}
-	return sst.NewImportSSTClient(conn), nil
+	return local.importClientFactory.Create(ctx, storeID)
 }
 
 type rangeStats struct {
@@ -687,6 +717,10 @@ func (local *local) WriteToTiKV(
 	regionSplitSize int64,
 	regionSplitKeys int64,
 ) ([]*sst.SSTMeta, Range, rangeStats, error) {
+	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
+		failpoint.Return(nil, Range{}, rangeStats{},
+			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
+	})
 	if local.checkTiKVAvaliable {
 		for _, peer := range region.Region.GetPeers() {
 			var e error
@@ -924,30 +958,32 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 	curSize := uint64(0)
 	curKeys := uint64(0)
 	curKey := fullRange.start
+
 	sizeProps.iter(func(p *rangeProperty) bool {
-		if bytes.Equal(p.Key, engineMetaKey) {
+		if bytes.Compare(p.Key, curKey) <= 0 {
 			return true
+		}
+		if bytes.Compare(p.Key, fullRange.end) > 0 {
+			return false
 		}
 		curSize += p.Size
 		curKeys += p.Keys
 		if int64(curSize) >= sizeLimit || int64(curKeys) >= keysLimit {
-			// in case the sizeLimit or keysLimit is too small
-			endKey := p.Key
-			if bytes.Equal(curKey, endKey) {
-				endKey = nextKey(endKey)
-			}
-			ranges = append(ranges, Range{start: curKey, end: endKey})
-			curKey = endKey
+			ranges = append(ranges, Range{start: curKey, end: p.Key})
+			curKey = p.Key
 			curSize = 0
 			curKeys = 0
 		}
 		return true
 	})
 
-	if curKeys > 0 {
-		ranges = append(ranges, Range{start: curKey, end: fullRange.end})
-	} else {
-		ranges[len(ranges)-1].end = fullRange.end
+	if bytes.Compare(curKey, fullRange.end) < 0 {
+		// If the remaining range is too small, append it to last range.
+		if len(ranges) > 0 && curKeys == 0 {
+			ranges[len(ranges)-1].end = fullRange.end
+		} else {
+			ranges = append(ranges, Range{start: curKey, end: fullRange.end})
+		}
 	}
 	return ranges
 }
@@ -986,7 +1022,8 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 		return ranges, nil
 	}
 
-	sizeProps, err := engine.getSizeProperties()
+	logger := log.With(zap.Stringer("engine", engine.UUID))
+	sizeProps, err := getSizeProperties(logger, engine.db, local.keyAdapter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -994,7 +1031,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
 		regionSplitSize, regionSplitKeys)
 
-	log.L().Info("split engine key ranges", zap.Stringer("engine", engine.UUID),
+	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
 		logutil.Key("firstKey", firstKey), logutil.Key("lastKey", lastKey),
 		zap.Int("ranges", len(ranges)))
@@ -1069,7 +1106,7 @@ WriteAndIngest:
 			err = local.writeAndIngestPairs(ctx, engine, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
-				if common.IsContextCanceledError(err) {
+				if !common.IsRetryableError(err) {
 					return err
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -1116,7 +1153,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if common.IsContextCanceledError(err) {
+			if !common.IsRetryableError(err) {
 				return err
 			}
 
@@ -1135,7 +1172,7 @@ loopWrite:
 
 		for i := 0; i < len(metas); i += batch {
 			start := i * batch
-			end := utils.MinInt((i+1)*batch, len(metas))
+			end := mathutil.Min((i+1)*batch, len(metas))
 			ingestMetas := metas[start:end]
 			errCnt := 0
 			for errCnt < maxRetryTimes {
@@ -1213,7 +1250,7 @@ loopWrite:
 			engine.importedKVSize.Add(rangeStats.totalBytes)
 			engine.importedKVCount.Add(rangeStats.count)
 			engine.finishedRanges.add(finishedRange)
-			metric.BytesCounter.WithLabelValues(metric.TableStateImported).Add(float64(rangeStats.totalBytes))
+			metric.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
 		}
 		return errors.Trace(err)
 	}
@@ -1250,16 +1287,22 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				wg.Done()
 			}()
 			var err error
-			// max retry backoff time: 2+4+8+16=30s
+			// max retry backoff time: 2+4+8+16+30*26=810s
 			backOffTime := time.Second
-			for i := 0; i < maxRetryTimes; i++ {
+			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
 				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
 				}
+				if !common.IsRetryableError(err) {
+					break
+				}
 				log.L().Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
 				backOffTime *= 2
+				if backOffTime > maxRetryBackoffTime {
+					backOffTime = maxRetryBackoffTime
+				}
 				select {
 				case <-time.After(backOffTime):
 				case <-ctx.Done():
@@ -1279,6 +1322,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	// wait for all sub tasks finish to avoid panic. if we return on the first error,
 	// the outer tasks may close the pebble db but some sub tasks still read from the db
 	wg.Wait()
+	if allErr == nil {
+		return ctx.Err()
+	}
 	return allErr
 }
 
@@ -1321,7 +1367,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionByRanges(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize)
+			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
@@ -1342,16 +1388,6 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		}
 	}
 
-	if lf.Duplicates.Load() > 0 {
-		if err := lf.saveEngineMeta(); err != nil {
-			log.L().Error("failed to save engine meta", log.ShortError(err))
-			return err
-		}
-		log.L().Warn("duplicate detected during import engine", zap.Stringer("uuid", engineUUID),
-			zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength), zap.Int64("duplicate-kvs", lf.Duplicates.Load()),
-			zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
-	}
-
 	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID),
 		zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength),
 		zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
@@ -1359,48 +1395,39 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 }
 
 func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
-	if local.duplicateDB == nil {
-		return false, nil
-	}
-
-	logger := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect duplicate local keys")
+	logger := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()
 
-	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
+	atomicHasDupe := atomic.NewBool(false)
+	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe)
 	if err != nil {
-		return false, err
+		return false, errors.Trace(err)
 	}
-	ts := oracle.ComposeTS(physicalTS, logicalTS)
-	duplicateManager, err := NewDuplicateManager(local, ts, opts)
-	if err != nil {
-		return false, errors.Annotate(err, "open duplicatemanager failed")
+	if err := duplicateManager.CollectDuplicateRowsFromDupDB(ctx, local.duplicateDB, local.keyAdapter); err != nil {
+		return false, errors.Trace(err)
 	}
-	hasDupe, err = duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, tableName, local.duplicateDB)
-	if err != nil {
-		return false, errors.Annotate(err, "collect local duplicate rows failed")
-	}
-	return hasDupe, nil
+	return atomicHasDupe.Load(), nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
-	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tableName))
-	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
-	if err != nil {
-		return false, err
-	}
-	ts := oracle.ComposeTS(physicalTS, logicalTS)
+func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+	logger := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
+	defer func() {
+		logger.End(zap.ErrorLevel, err)
+	}()
 
-	duplicateManager, err := NewDuplicateManager(local, ts, opts)
+	atomicHasDupe := atomic.NewBool(false)
+	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe)
 	if err != nil {
-		return false, errors.Annotate(err, "open duplicatemanager failed")
+		return false, errors.Trace(err)
 	}
-	hasDupe, err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, tbl, tableName)
-	if err != nil {
-		return false, errors.Annotate(err, "collect remote duplicate rows failed")
+	if err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, local.importClientFactory); err != nil {
+		return false, errors.Trace(err)
 	}
-	return hasDupe, nil
+	return atomicHasDupe.Load(), nil
 }
 
 func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
@@ -1427,21 +1454,29 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		return err
 	}
 
-	preRowID := int64(0)
-	for {
-		handleRows, lastRowID, err := local.errorMgr.GetConflictKeys(ctx, tableName, preRowID, 1000)
-		if err != nil {
-			return errors.Annotate(err, "cannot query conflict keys")
-		}
-		if len(handleRows) == 0 {
-			break
-		}
-		if err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder); err != nil {
-			return errors.Annotate(err, "cannot delete duplicated entries")
-		}
-		preRowID = lastRowID
-	}
-	return nil
+	errLimiter := rate.NewLimiter(1, 1)
+	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
+	err = local.errorMgr.ResolveAllConflictKeys(
+		ctx, tableName, pool,
+		func(ctx context.Context, handleRows [][2][]byte) error {
+			for {
+				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
+				if err == nil {
+					return nil
+				}
+				if log.IsContextCanceledError(err) {
+					return err
+				}
+				if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
+					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+				}
+				if err = errLimiter.Wait(ctx); err != nil {
+					return err
+				}
+			}
+		},
+	)
+	return errors.Trace(err)
 }
 
 func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error) {
@@ -1450,7 +1485,6 @@ func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, h
 	if err != nil {
 		return err
 	}
-	txn.SetPessimistic(true)
 	defer func() {
 		if err == nil {
 			err = txn.Commit(ctx)
@@ -1478,7 +1512,7 @@ func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, h
 			return err
 		}
 
-		handle, err := decoder.DecodeHandleFromTable(handleRow[0])
+		handle, err := decoder.DecodeHandleFromRowKey(handleRow[0])
 		if err != nil {
 			return err
 		}
@@ -1489,7 +1523,7 @@ func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, h
 		}
 	}
 
-	logger.Info("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
+	logger.Debug("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
 	return nil
 }
 
@@ -1509,17 +1543,10 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err == nil {
-		// Reset engineMeta except `Duplicates`.
-		meta := engineMeta{
-			Duplicates: *atomic.NewInt64(localEngine.engineMeta.Duplicates.Load()),
-		}
-		if err := saveEngineMetaToDB(&meta, db); err != nil {
-			return errors.Trace(err)
-		}
 		localEngine.db = db
-		localEngine.engineMeta = meta
+		localEngine.engineMeta = engineMeta{}
 		if !common.IsDirExists(localEngine.sstDir) {
-			if err := os.Mkdir(localEngine.sstDir, 0o755); err != nil {
+			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1735,7 +1762,7 @@ func (local *local) isIngestRetryable(
 		// Thus directly retry ingest may cause TiKV panic. So always return retryWrite here to avoid
 		// this issue.
 		// See: https://github.com/tikv/tikv/issues/9496
-		return retryWrite, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+		return retryWrite, newRegion, common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
@@ -1765,7 +1792,7 @@ func (local *local) isIngestRetryable(
 		if newRegion != nil {
 			retryTy = retryWrite
 		}
-		return retryTy, newRegion, errors.Errorf("epoch not match: %s", errPb.GetMessage())
+		return retryTy, newRegion, common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
 		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
 		newRegion, err = getRegion()
@@ -1773,6 +1800,10 @@ func (local *local) isIngestRetryable(
 			return retryNone, nil, errors.Trace(err)
 		}
 		return retryWrite, newRegion, errors.New(errPb.GetMessage())
+	case errPb.ServerIsBusy != nil:
+		return retryNone, nil, common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
+	case errPb.RegionNotFound != nil:
+		return retryNone, nil, common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
 	}
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
