@@ -609,7 +609,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	p.PartitionInfo = t.partitionInfo
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.stats = t.tablePlan.statsInfo()
-	newTask.cst += p.GetCost()
+	newTask.cst += p.GetCost(0)
 	p.cost = newTask.cst
 
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
@@ -1662,7 +1662,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
-				cop.addCost(partialAgg.(*PhysicalStreamAgg).GetCost(inputRows, false))
+				cop.addCost(partialAgg.(*PhysicalStreamAgg).GetCost(inputRows, false, 0))
 				partialAgg.SetCost(cop.cost())
 			}
 			t = cop.convertToRootTask(p.ctx)
@@ -1675,7 +1675,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	} else {
 		attachPlan2Task(p, t)
 	}
-	t.addCost(final.GetCost(inputRows, true))
+	t.addCost(final.GetCost(inputRows, true, 0))
 	t.plan().SetCost(t.cost())
 	return t
 }
@@ -1707,7 +1707,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *mppTask) task {
 	if proj != nil {
 		attachPlan2Task(proj, mpp)
 	}
-	mpp.addCost(p.GetCost(inputRows, false, true))
+	mpp.addCost(p.GetCost(inputRows, false, true, 0))
 	p.cost = mpp.cost()
 	return mpp
 }
@@ -1728,7 +1728,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if proj != nil {
 			attachPlan2Task(proj, mpp)
 		}
-		mpp.addCost(p.GetCost(inputRows, false, true))
+		mpp.addCost(p.GetCost(inputRows, false, true, 0))
 		p.cost = mpp.cost()
 		return mpp
 	case Mpp2Phase:
@@ -1762,7 +1762,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		attachPlan2Task(finalAgg, newMpp)
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows, false, true))
+		newMpp.addCost(p.GetCost(inputRows, false, true, 0))
 		finalAgg.SetCost(newMpp.cost())
 		if proj != nil {
 			attachPlan2Task(proj, newMpp)
@@ -1775,14 +1775,14 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
-		mpp.addCost(p.GetCost(inputRows, false, true))
+		mpp.addCost(p.GetCost(inputRows, false, true, 0))
 		if partialAgg != nil {
 			partialAgg.SetCost(mpp.cost())
 		}
 		t = mpp.convertToRootTask(p.ctx)
 		inputRows = t.count()
 		attachPlan2Task(finalAgg, t)
-		t.addCost(p.GetCost(inputRows, true, false))
+		t.addCost(p.GetCost(inputRows, true, false, 0))
 		finalAgg.SetCost(t.cost())
 		return t
 	case MppScalar:
@@ -1811,7 +1811,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			proj.SetSchema(p.schema)
 		}
 		attachPlan2Task(proj, newMpp)
-		newMpp.addCost(p.GetCost(inputRows, false, true))
+		newMpp.addCost(p.GetCost(inputRows, false, true, 0))
 		finalAgg.SetCost(newMpp.cost())
 		proj.SetCost(newMpp.cost())
 		return newMpp
@@ -1847,7 +1847,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
-				cop.addCost(partialAgg.(*PhysicalHashAgg).GetCost(inputRows, false, false))
+				cop.addCost(partialAgg.(*PhysicalHashAgg).GetCost(inputRows, false, false, 0))
 			}
 			// In `newPartialAggregate`, we are using stats of final aggregation as stats
 			// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
@@ -1880,7 +1880,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// hash aggregation, it would cause under-estimation as the reason mentioned in comment above.
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
-	t.addCost(final.GetCost(inputRows, true, false))
+	t.addCost(final.GetCost(inputRows, true, false, 0))
 	t.plan().SetCost(t.cost())
 	return t
 }
