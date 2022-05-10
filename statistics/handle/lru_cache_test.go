@@ -23,7 +23,6 @@ import (
 )
 
 var (
-	columnMemoryUsage            = int64(4)
 	indexMemoryUsage             = int64(4)
 	columnTotalMemoryUsage       = statistics.EmptyHistogramSize + 4
 	indexTotalMemoryUsage        = statistics.EmptyHistogramSize + 4
