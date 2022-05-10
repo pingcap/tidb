@@ -1030,10 +1030,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			}
 			continue
 		}
-		oldRootCollectorSize := rootCollectorSize
+		oldRootCollectorSize := rootRowCollector.Base().MemSize
 		rootRowCollector.MergeCollector(mergeResult.collector)
-		rootCollectorSize = rootRowCollector.Base().MemSize
-		e.memTracker.Consume(rootCollectorSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
+		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 	}
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -1162,7 +1161,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			totalSampleCollectorSize += sampleCollector.MemSize
 		}
 	}
-	e.memTracker.Consume(-rootCollectorSize - totalSampleCollectorSize)
+	e.memTracker.Consume(-rootRowCollector.Base().MemSize - totalSampleCollectorSize)
 	return
 }
 
