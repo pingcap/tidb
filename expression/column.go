@@ -665,6 +665,9 @@ func (col *Column) Coercibility() Coercibility {
 
 // Repertoire returns the repertoire value which is used to check collations.
 func (col *Column) Repertoire() Repertoire {
+	if col.repertoire != 0 {
+		return col.repertoire
+	}
 	switch col.RetType.EvalType() {
 	case types.ETJson:
 		return UNICODE
