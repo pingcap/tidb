@@ -2211,6 +2211,11 @@ error = '''
 [%d] can not retry select for update statement
 '''
 
+["session:8143"]
+error = '''
+non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v
+'''
+
 ["structure:8217"]
 error = '''
 invalid encoded hash key flag

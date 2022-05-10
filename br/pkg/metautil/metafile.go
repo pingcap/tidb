@@ -335,7 +335,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				tableMap[tableInfo.ID] = table
 			} else {
 				// empty database
-				tableMap[0] = table
+				tableMap[dbInfo.ID] = table
 			}
 			return nil
 		})
