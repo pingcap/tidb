@@ -749,6 +749,7 @@ var tokenMap = map[string]int{
 	"TRIM":                     trim,
 	"TRUE":                     trueKwd,
 	"TRUNCATE":                 truncate,
+	"TRUE_CARD_COST":           trueCardCost,
 	"TYPE":                     tp,
 	"UNBOUNDED":                unbounded,
 	"UNCOMMITTED":              uncommitted,
@@ -933,6 +934,8 @@ var hintTokenMap = map[string]int{
 	"USE_CASCADES":            hintUseCascades,
 	"NTH_PLAN":                hintNthPlan,
 	"FORCE_INDEX":             hintForceIndex,
+	"STRAIGHT_JOIN":           hintStraightJoin,
+	"LEADING":                 hintLeading,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,

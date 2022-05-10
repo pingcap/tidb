@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -97,7 +98,7 @@ func (mb *kvMemBuf) Recycle(buf *bytesBuf) {
 
 func (mb *kvMemBuf) AllocateBuf(size int) {
 	mb.Lock()
-	size = utils.MaxInt(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
+	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
 	if len(mb.availableBufs) > 0 && mb.availableBufs[0].cap >= size {
 		mb.buf = mb.availableBufs[0]
 		mb.availableBufs = mb.availableBufs[1:]
