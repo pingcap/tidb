@@ -627,6 +627,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
 		proj.SetChildren(p)
+		newTask.addCost(proj.GetCost(p.StatsCount()))
 		proj.cost = newTask.cst
 		newTask.p = proj
 	} else {

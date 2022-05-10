@@ -14,12 +14,11 @@
       {
         "SQL": "explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
         "Plan": [
-          "Limit 1.00 root  offset:2, count:1",
-          "└─Projection 3.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
-          "  └─IndexLookUp 3.00 root  ",
-          "    ├─Limit(Build) 3.00 cop[tikv]  offset:0, count:3",
-          "    │ └─IndexRangeScan 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
-          "    └─TableRowIDScan(Probe) 3.00 cop[tikv] table:tbl keep order:false"
+          "TopN 1.00 root  test.tbl.b:desc, offset:2, count:1",
+          "└─IndexLookUp 3.00 root  ",
+          "  ├─TopN(Build) 3.00 cop[tikv]  test.tbl.b:desc, offset:0, count:3",
+          "  │ └─IndexRangeScan 4.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
+          "  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:tbl keep order:false"
         ]
       },
       {
@@ -6003,22 +6002,22 @@
       {
         "SQL": "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10",
         "Plan": [
-          "Limit 0.00 root  offset:0, count:10",
-          "└─Projection 0.00 root  test.t.a, test.t.b, test.t.c, test.t.d",
-          "  └─IndexLookUp 0.00 root  ",
-          "    ├─IndexRangeScan(Build) 2.50 cop[tikv] table:t, index:idx(a, b, c) range:(1 2,1 10), keep order:true, stats:pseudo",
-          "    └─Selection(Probe) 0.00 cop[tikv]  eq(test.t.d, 10)",
+          "TopN 0.00 root  test.t.b, test.t.c, offset:0, count:10",
+          "└─IndexLookUp 0.00 root  ",
+          "  ├─IndexRangeScan(Build) 2.50 cop[tikv] table:t, index:idx(a, b, c) range:(1 2,1 10), keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 0.00 cop[tikv]  test.t.b, test.t.c, offset:0, count:10",
+          "    └─Selection 0.00 cop[tikv]  eq(test.t.d, 10)",
           "      └─TableRowIDScan 2.50 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10",
         "Plan": [
-          "Limit 0.00 root  offset:0, count:10",
-          "└─Projection 0.00 root  test.t.a, test.t.b, test.t.c, test.t.d",
-          "  └─IndexLookUp 0.00 root  ",
-          "    ├─IndexRangeScan(Build) 2.50 cop[tikv] table:t, index:idx(a, b, c) range:(1 2,1 10), keep order:true, desc, stats:pseudo",
-          "    └─Selection(Probe) 0.00 cop[tikv]  eq(test.t.d, 10)",
+          "TopN 0.00 root  test.t.b:desc, test.t.c:desc, offset:0, count:10",
+          "└─IndexLookUp 0.00 root  ",
+          "  ├─IndexRangeScan(Build) 2.50 cop[tikv] table:t, index:idx(a, b, c) range:(1 2,1 10), keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 0.00 cop[tikv]  test.t.b:desc, test.t.c:desc, offset:0, count:10",
+          "    └─Selection 0.00 cop[tikv]  eq(test.t.d, 10)",
           "      └─TableRowIDScan 2.50 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
