@@ -73,8 +73,8 @@ type Datum struct {
 }
 
 // EmptyDatumSize is the size of empty datum, please update it when change the data structure.
-// 1 + 1 (byte) + 2 (uint16) + 4 (uint32) + 8 (int64) + 16 (string) + 24 ([]byte) + 16 (interface{})
-const EmptyDatumSize = 72
+// 72 = 1 + 1 (byte) + 2 (uint16) + 4 (uint32) + 8 (int64) + 16 (string) + 24 ([]byte) + 16 (interface{})
+const EmptyDatumSize = int64(unsafe.Sizeof(Datum{}))
 
 // Clone create a deep copy of the Datum.
 func (d *Datum) Clone() *Datum {

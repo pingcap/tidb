@@ -670,8 +670,6 @@ const (
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
-	// TiDBGCManualTrigger indicates the memory size to trigger manual GC.
-	TiDBGCManualTrigger = "tidb_gc_manual_trigger"
 )
 
 // TiDB intentional limits

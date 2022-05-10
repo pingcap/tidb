@@ -69,7 +69,7 @@ type ReservoirRowSampleItem struct {
 }
 
 // EmptyReservoirSampleItemSize (24 + 16 + 8), please update it when change the data struct.
-const EmptyReservoirSampleItemSize = 48
+const EmptyReservoirSampleItemSize = int64(unsafe.Sizeof(ReservoirRowSampleItem{}))
 
 // MemUsage returns the memory usage of sample item.
 func (i ReservoirRowSampleItem) MemUsage() (sum int64) {
@@ -147,7 +147,6 @@ func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirR
 		FMSketches: make([]*FMSketch, 0, totalLen),
 		TotalSizes: make([]int64, totalLen),
 	}
-	base.MemSize = int64(unsafe.Sizeof(base.Samples)) + int64(unsafe.Sizeof(base.NullCount)) + int64(unsafe.Sizeof(base.FMSketches)) + int64(unsafe.Sizeof(base.TotalSizes)) + 4
 	return &ReservoirRowSampleCollector{
 		baseCollector: base,
 		MaxSampleSize: maxSampleSize,

@@ -18,6 +18,7 @@ import (
 	"context"
 	"sort"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -48,7 +49,8 @@ type SampleItem struct {
 }
 
 // EmptySampleItemSize is the size of empty SampleItem, please update it when change the data structure.
-const EmptySampleItemSize = 96
+// 96 = 72 (datum) + 8 (int) + 16
+const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
 // CopySampleItems returns a deep copy of SampleItem slice.
 func CopySampleItems(items []*SampleItem) []*SampleItem {
