@@ -89,10 +89,23 @@ run_curl "https://localhost:$PPROF_PORT/debug/pprof/trace?seconds=1" &>/dev/null
 echo "pprof started..."
 
 run_curl https://$PD_ADDR/pd/api/v1/config/schedule | grep '"disable": false'
-run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."enable-location-replacement"' | grep "false"
-run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-pending-peer-count"' | grep "2147483647"
-run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-size"' | grep -E "^0$"
-run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-keys"' | grep -E "^0$"
+
+# after apply the pause api. these configs won't change any more.
+# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."enable-location-replacement"' | grep "false"
+# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-pending-peer-count"' | grep "2147483647"
+# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-size"' | grep -E "^0$"
+# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-keys"' | grep -E "^0$"
+
+# after https://github.com/tikv/pd/pull/4781 merged.
+# we can use a hack way to check whether we pause config succeed.
+# By setting a paused config again and expect to fail with a clear message.
+run_pd_ctl -u https://$PD_ADDR config set max-merge-region-size 0 | grep -q "need to clean up TTL first for schedule.max-merge-region-size"
+run_pd_ctl -u https://$PD_ADDR config set max-merge-region-keys 0 | grep -q "need to clean up TTL first for schedule.max-merge-region-keys"
+run_pd_ctl -u https://$PD_ADDR config set max-pending-peer-count 0 | grep -q "need to clean up TTL first for schedule.max-pending-peer-count"
+run_pd_ctl -u https://$PD_ADDR config set enable-location-replacement false | grep -q "need to clean up TTL first for schedule.enable-location-replacement"
+run_pd_ctl -u https://$PD_ADDR config set leader-schedule-limit 0 | grep -q "need to clean up TTL first for schedule.leader-schedule-limit"
+run_pd_ctl -u https://$PD_ADDR config set region-schedule-limit 0 | grep -q "need to clean up TTL first for schedule.region-schedule-limit"
+run_pd_ctl -u https://$PD_ADDR config set max-snapshot-count 0 | grep -q "need to clean up TTL first for schedule.max-snapshot-count"
 
 backup_fail=0
 # generate 1.sst to make another backup failed.

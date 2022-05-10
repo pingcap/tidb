@@ -377,7 +377,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
 		if n, ok := val.(int); ok && staleread.IsStmtStaleness(a.Ctx) {
 			txnManager := sessiontxn.GetTxnManager(a.Ctx)
-			ts, err := txnManager.GetReadTS()
+			ts, err := txnManager.GetStmtReadTS()
 			if err != nil {
 				panic(err)
 			}
@@ -490,10 +490,10 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// `rs.Close` in `handleStmt`
 		if sc != nil && rs == nil {
 			if sc.MemTracker != nil {
-				sc.MemTracker.DetachFromGlobalTracker()
+				sc.MemTracker.Detach()
 			}
 			if sc.DiskTracker != nil {
-				sc.DiskTracker.DetachFromGlobalTracker()
+				sc.DiskTracker.Detach()
 			}
 		}
 	}()
@@ -1009,10 +1009,10 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
 	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 		if stmtCtx.DiskTracker != nil {
-			stmtCtx.DiskTracker.DetachFromGlobalTracker()
+			stmtCtx.DiskTracker.Detach()
 		}
 		if stmtCtx.MemTracker != nil {
-			stmtCtx.MemTracker.DetachFromGlobalTracker()
+			stmtCtx.MemTracker.Detach()
 		}
 	}
 }

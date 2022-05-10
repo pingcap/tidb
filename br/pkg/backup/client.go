@@ -329,8 +329,8 @@ func BuildBackupRangeAndSchema(
 		}
 
 		if len(tables) == 0 {
-			log.Warn("It's not necessary for backing up empty database",
-				zap.Stringer("db", dbInfo.Name))
+			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
+			backupSchemas.addSchema(dbInfo, nil)
 			continue
 		}
 

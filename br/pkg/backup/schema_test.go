@@ -100,7 +100,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	_, backupSchemas, _, err := backup.BuildBackupRangeAndSchema(
 		m.Storage, testFilter, math.MaxUint64, false)
 	require.NoError(t, err)
-	require.Nil(t, backupSchemas)
+	require.NotNil(t, backupSchemas)
 
 	// Database is not exist.
 	fooFilter, err := filter.Parse([]string{"foo.t1"})
@@ -117,7 +117,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	_, backupSchemas, _, err = backup.BuildBackupRangeAndSchema(
 		m.Storage, noFilter, math.MaxUint64, false)
 	require.NoError(t, err)
-	require.Nil(t, backupSchemas)
+	require.NotNil(t, backupSchemas)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")

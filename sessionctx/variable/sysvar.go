@@ -683,6 +683,15 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return fmt.Sprint(QueryLogMaxLen.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBMemQuotaAnalyze, Value: strconv.Itoa(DefTiDBMemQuotaAnalyze), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatInt(GetMemQuotaAnalyze(), 10), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			SetMemQuotaAnalyze(TidbOptInt64(val, DefTiDBMemQuotaAnalyze))
+			return nil
+		},
+	},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
@@ -1438,6 +1447,12 @@ var defaultSysVars = []*SysVar{
 		s.MemQuotaQuery = TidbOptInt64(val, DefTiDBMemQuotaQuery)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonTransactionalIgnoreError, Value: BoolToOnOff(DefTiDBBatchDMLIgnoreError), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.NonTransactionalIgnoreError = TiDBOptOn(val)
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
