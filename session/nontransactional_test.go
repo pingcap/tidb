@@ -98,10 +98,29 @@ func TestNonTransactionalDeleteErrorMessage(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
-	failpoint.Enable("github.com/pingcap/tidb/session/batchDeleteError", `return`)
+	tk.MustExec("set @@tidb_nontransactional_ignore_error=1")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDeleteError", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/session/batchDeleteError")
 	err := tk.ExecToErr("batch on a limit 3 delete from t")
 	require.EqualError(t, err, "Early return: error occurred in the first job. All jobs are canceled: injected batch delete error")
+
+	tk.MustExec("truncate t")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
+	}
+	tk.MustExec("set @@tidb_nontransactional_ignore_error=1")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDeleteError", `1*return(false)->return(true)`))
+	err = tk.ExecToErr("batch on a limit 3 delete from t")
+	require.ErrorContains(t, err, "33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, injected batch delete error;\n")
+
+	tk.MustExec("truncate t")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
+	}
+	tk.MustExec("set @@tidb_nontransactional_ignore_error=0")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/batchDeleteError", `1*return(false)->return(true)`))
+	err = tk.ExecToErr("batch on a limit 3 delete from t")
+	require.EqualError(t, err, "[session:8143]non-transactional job failed, job id: 2, total jobs: 34. job range: [KindInt64 3, KindInt64 5], job sql: job id: 2, estimated size: 3, sql: DELETE FROM `test`.`t` WHERE `a` BETWEEN 3 AND 5, err: injected batch delete error")
 }
 
 func TestNonTransactionalDeleteSplitOnTiDBRowID(t *testing.T) {
@@ -408,9 +427,9 @@ func TestNonTransactionalDeleteShardOnUnsupportedTypes(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a set('e0', 'e1', 'e2'), b int, key(a))")
+	tk.MustExec("create table t(a set('e0', 'e1', 'e2'), b int, primary key(a) clustered, key(b))")
 	tk.MustExec("insert into t values ('e2,e0', 3)")
-	err := tk.ExecToErr("batch on a limit 1 delete from t")
+	err := tk.ExecToErr("batch limit 1 delete from t where a = 'e0,e2'")
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 
@@ -419,4 +438,14 @@ func TestNonTransactionalDeleteShardOnUnsupportedTypes(t *testing.T) {
 	err = tk.ExecToErr("batch on a limit 1 delete from t2")
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("1"))
+}
+func TestNonTransactionalDeleteCTE(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, v int, key(id))")
+	tk.MustExec("insert into t values (1, 2), (2, 3), (3, 1)")
+	tk.MustExec("with t1 as (select v from t) delete from t where id in (select * from t1)")
+	tk.MustQuery("select * from t").Check(testkit.Rows(""))
 }
