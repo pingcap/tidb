@@ -136,6 +136,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	if sessionMemTracker != nil && enabledRateLimitAction {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
+
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	}

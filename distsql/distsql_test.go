@@ -161,7 +161,7 @@ func TestAnalyze(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars())
+	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx)
 	require.NoError(t, err)
 
 	result, ok := response.(*selectResult)
