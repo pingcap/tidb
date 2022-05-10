@@ -17,10 +17,8 @@ package local
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1852,19 +1850,7 @@ func (local *local) EngineFileSizes() (res []backend.EngineFileSize) {
 	return
 }
 
-func getSplitConfFromStore(url string, httpClient *http.Client) (int64, int64, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, 0, errors.Errorf("get split conf from store failed, status code: %d", resp.StatusCode)
-	}
+func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
 	var (
 		nested struct {
 			Coprocessor struct {
@@ -1873,7 +1859,7 @@ func getSplitConfFromStore(url string, httpClient *http.Client) (int64, int64, e
 			} `json:"coprocessor"`
 		}
 	)
-	if err = json.NewDecoder(resp.Body).Decode(&nested); err != nil {
+	if err := tls.WithHost(host).GetJSON(ctx, "/config", &nested); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	splitSize, err := units.FromHumanSize(nested.Coprocessor.RegionSplitSize)
@@ -1889,22 +1875,11 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 	if err != nil {
 		return 0, 0, err
 	}
-	scheme := "http"
-	httpClient := http.DefaultClient
-	if tls != nil {
-		scheme = "https"
-		httpClient = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: tls.TLSConfig(),
-			},
-		}
-	}
 	for _, store := range stores {
 		if store.StatusAddress == "" {
 			continue
 		}
-		url := fmt.Sprintf("%s://%s/config", scheme, store.StatusAddress)
-		regionSplitSize, regionSplitKeys, err := getSplitConfFromStore(url, httpClient)
+		regionSplitSize, regionSplitKeys, err := getSplitConfFromStore(ctx, store.StatusAddress, tls)
 		if err == nil {
 			return regionSplitSize, regionSplitKeys, nil
 		}
