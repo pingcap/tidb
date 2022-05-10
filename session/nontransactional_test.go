@@ -427,9 +427,9 @@ func TestNonTransactionalDeleteShardOnUnsupportedTypes(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a set('e0', 'e1', 'e2'), b int, key(a))")
+	tk.MustExec("create table t(a set('e0', 'e1', 'e2'), b int, primary key(a) clustered, key(b))")
 	tk.MustExec("insert into t values ('e2,e0', 3)")
-	err := tk.ExecToErr("split on a limit 1 delete from t")
+	err := tk.ExecToErr("split limit 1 delete from t where a = 'e0,e2'")
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 

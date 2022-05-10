@@ -46,6 +46,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// ErrNonTransactionalJobFailure is the error when a non-transactional job fails. The error is returned and following jobs are canceled.
 var ErrNonTransactionalJobFailure = dbterror.ClassSession.NewStd(errno.ErrNonTransactionalJobFailure)
 
 // job: handle keys in [start, end]
@@ -279,7 +280,8 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 		format.RestoreBracketAroundBinaryOperation|
 		format.RestoreStringWithoutCharset, &sb))
 	if err != nil {
-		job.err = errors.Annotate(err, "Failed to restore delete statement")
+		logutil.Logger(ctx).Error("Non-transactional delete, failed to restore the delete statement", zap.Error(err))
+		job.err = errors.New("Failed to restore the delete statement, probably because of unsupported type of the shard column")
 		return ""
 	}
 	deleteSQL := sb.String()
