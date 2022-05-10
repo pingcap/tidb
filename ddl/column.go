@@ -659,7 +659,7 @@ func needCheckColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	if oldCol.GetCharset() != newCol.GetCharset() {
 		return oldCol.GetCharset() == charset.CharsetLatin1
 	}
-	return true
+	return false
 }
 
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
