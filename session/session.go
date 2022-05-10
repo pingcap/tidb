@@ -2371,7 +2371,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, err
 		}
-	} else if preparedStmt.ForUpdateRead {
+	} else if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
