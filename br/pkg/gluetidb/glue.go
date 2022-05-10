@@ -121,18 +121,22 @@ func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 
 func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
 	rs, err := gs.se.ExecuteInternal(ctx, sql, args...)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// Some of SQLs (like ADMIN RECOVER INDEX) may lazily take effect
 	// when we polling the result set.
 	// At least call `next` once for triggering theirs side effect.
 	// (Maybe we'd better drain all returned rows?)
 	if rs != nil {
+		defer rs.Close()
 		c := rs.NewChunk(nil)
 		if err := rs.Next(ctx, c); err != nil {
 			log.Warn("Error during draining result of internal sql.", logutil.Redact(zap.String("sql", sql)), logutil.ShortError(err))
 			return nil
 		}
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // CreateDatabase implements glue.Session.

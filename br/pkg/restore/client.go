@@ -531,11 +531,11 @@ func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DB
 // CreateDatabase creates a database.
 func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 	if rc.IsSkipCreateSQL() {
-		log.Info("skip create database", zap.Stringer("database", db.Name))
+		log.Info("skip create database", zap.Stringer("name", db.Name))
 		return nil
 	}
 
-	log.Info("create database", zap.Stringer("database", db.Name))
+	log.Info("create database", zap.Stringer("name", db.Name))
 
 	if !rc.supportPolicy {
 		log.Info("set placementPolicyRef to nil when target tidb not support policy",

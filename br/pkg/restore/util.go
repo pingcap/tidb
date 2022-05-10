@@ -44,17 +44,20 @@ type AppliedFile interface {
 func getTableIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
 	tableIDMap := make(map[int64]int64)
 
-	tableIDMap[oldTable.ID] = newTable.ID
-	if oldTable.Partition != nil {
-		for _, srcPart := range oldTable.Partition.Definitions {
-			for _, destPart := range newTable.Partition.Definitions {
-				if srcPart.Name == destPart.Name {
-					tableIDMap[srcPart.ID] = destPart.ID
-				}
+	if oldTable.Partition != nil && newTable.Partition != nil {
+		nameMapID := make(map[string]int64)
+
+		for _, old := range oldTable.Partition.Definitions {
+			nameMapID[old.Name.L] = old.ID
+		}
+		for _, new := range newTable.Partition.Definitions {
+			if oldID, exist := nameMapID[new.Name.L]; exist {
+				tableIDMap[oldID] = new.ID
 			}
 		}
 	}
 
+	tableIDMap[oldTable.ID] = newTable.ID
 	return tableIDMap
 }
 
