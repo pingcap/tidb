@@ -42,6 +42,7 @@ type mockLogicalJoin struct {
 	logicalSchemaProducer
 	involvedNodeSet int
 	statsMap        map[int]*property.StatsInfo
+	JoinType        JoinType
 }
 
 func (mj mockLogicalJoin) init(ctx sessionctx.Context) *mockLogicalJoin {
@@ -56,6 +57,7 @@ func (mj *mockLogicalJoin) recursiveDeriveStats(_ [][]*expression.Column) (*prop
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
 
+<<<<<<< HEAD
 func (s *testJoinReorderDPSuite) newMockJoin(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, _ []expression.Expression) LogicalPlan {
 	retJoin := mockLogicalJoin{}.init(s.ctx)
 	retJoin.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
@@ -77,6 +79,26 @@ func (s *testJoinReorderDPSuite) newMockJoin(lChild, rChild LogicalPlan, eqConds
 func (s *testJoinReorderDPSuite) mockStatsInfo(state int, count float64) {
 	s.statsMap[state] = &property.StatsInfo{
 		RowCount: count,
+=======
+func newMockJoin(ctx sessionctx.Context, statsMap map[int]*property.StatsInfo) func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) LogicalPlan {
+	return func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) LogicalPlan {
+		retJoin := mockLogicalJoin{}.init(ctx)
+		retJoin.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
+		retJoin.statsMap = statsMap
+		if mj, ok := lChild.(*mockLogicalJoin); ok {
+			retJoin.involvedNodeSet = mj.involvedNodeSet
+		} else {
+			retJoin.involvedNodeSet = 1 << uint(lChild.ID())
+		}
+		if mj, ok := rChild.(*mockLogicalJoin); ok {
+			retJoin.involvedNodeSet |= mj.involvedNodeSet
+		} else {
+			retJoin.involvedNodeSet |= 1 << uint(rChild.ID())
+		}
+		retJoin.SetChildren(lChild, rChild)
+		retJoin.JoinType = joinType
+		return retJoin
+>>>>>>> 199eb8e6c... core: support left join and right join for join reorder (#23149)
 	}
 }
 
