@@ -78,6 +78,12 @@ func TestPreferRangeScan(t *testing.T) {
 		p, ok := info.Plan.(core.Plan)
 		require.True(t, ok)
 		normalized, _ := core.NormalizePlan(p)
+
+		// test the new normalization code
+		flat := core.FlattenPhysicalPlan(p)
+		newNormalized, _ := core.NormalizeFlatPlan(flat)
+		require.Equal(t, normalized, newNormalized)
+
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
 		require.NoError(t, err)
@@ -115,6 +121,12 @@ func TestNormalizedPlan(t *testing.T) {
 		p, ok := info.Plan.(core.Plan)
 		require.True(t, ok)
 		normalized, _ := core.NormalizePlan(p)
+
+		// test the new normalization code
+		flat := core.FlattenPhysicalPlan(p)
+		newNormalized, _ := core.NormalizeFlatPlan(flat)
+		require.Equal(t, normalized, newNormalized)
+
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
 		require.NoError(t, err)
@@ -155,6 +167,13 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 		ep, ok := info.Plan.(*core.Explain)
 		require.True(t, ok)
 		normalized, digest := core.NormalizePlan(ep.TargetPlan)
+
+		// test the new normalization code
+		flat := core.FlattenPhysicalPlan(ep.TargetPlan)
+		newNormalized, newPlanDigest := core.NormalizeFlatPlan(flat)
+		require.Equal(t, digest, newPlanDigest)
+		require.Equal(t, normalized, newNormalized)
+
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
 		require.NoError(t, err)
@@ -184,6 +203,12 @@ func TestEncodeDecodePlan(t *testing.T) {
 		p, ok := info.Plan.(core.Plan)
 		require.True(t, ok)
 		encodeStr := core.EncodePlan(p)
+		
+		// test the new encoding code
+		flat := core.FlattenPhysicalPlan(p)
+		newEncodeStr := core.EncodeFlatPlan(flat)
+		require.Equal(t, encodeStr, newEncodeStr)
+
 		planTree, err := plancodec.DecodePlan(encodeStr)
 		require.NoError(t, err)
 		return planTree
@@ -404,12 +429,25 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	require.True(t, ok)
 	normalized1, digest1 := core.NormalizePlan(physicalPlan)
 
+	// test the new normalization code
+	flat := core.FlattenPhysicalPlan(physicalPlan)
+	newNormalized, newPlanDigest := core.NormalizeFlatPlan(flat)
+	require.Equal(t, digest1, newPlanDigest)
+	require.Equal(t, normalized1, newNormalized)
+
 	tk.MustQuery(sql2)
 	info = tk.Session().ShowProcess()
 	require.NotNil(t, info)
 	physicalPlan, ok = info.Plan.(core.PhysicalPlan)
 	require.True(t, ok)
 	normalized2, digest2 := core.NormalizePlan(physicalPlan)
+
+	// test the new normalization code
+	flat = core.FlattenPhysicalPlan(physicalPlan)
+	newNormalized, newPlanDigest = core.NormalizeFlatPlan(flat)
+	require.Equal(t, digest2, newPlanDigest)
+	require.Equal(t, normalized2, newNormalized)
+
 	comment := fmt.Sprintf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
 	if isSame {
 		require.Equal(t, normalized1, normalized2, comment)

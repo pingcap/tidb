@@ -237,10 +237,14 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return "", parser.NewDigest(nil)
 	}
-	hasher := sha256.New()
-	var buf bytes.Buffer
+	d := digesterPool.Get().(*planDigester)
+	defer func() {
+		d.buf.Reset()
+		d.hasher.Reset()
+		digesterPool.Put(d)
+	}()
 	// assume an operator costs around 30 bytes, preallocate space for them
-	buf.Grow(30 * len(selectPlan))
+	d.buf.Grow(30 * len(selectPlan))
 	depthOffset := len(flat.Main) - len(selectPlan)
 	for _, op := range selectPlan {
 		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
@@ -250,15 +254,15 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 			op.Origin.TP(),
 			taskTypeInfo,
 			p.ExplainNormalizedInfo(),
-			&buf,
+			&d.buf,
 		)
 	}
-
-	_, err := hasher.Write(buf.Bytes())
+	normalized = d.buf.String()
+	_, err := d.hasher.Write(d.buf.Bytes())
 	if err != nil {
 		panic(err)
 	}
-	digest = parser.NewDigest(hasher.Sum(nil))
+	digest = parser.NewDigest(d.hasher.Sum(nil))
 	return
 }
 
@@ -269,16 +273,18 @@ func NormalizePlan(p Plan) (normalized string, digest *parser.Digest) {
 		return "", parser.NewDigest(nil)
 	}
 	d := digesterPool.Get().(*planDigester)
-	defer digesterPool.Put(d)
+	defer func() {
+		d.buf.Reset()
+		d.hasher.Reset()
+		digesterPool.Put(d)
+	}()
 	d.normalizePlanTree(selectPlan)
 	normalized = d.buf.String()
 	_, err := d.hasher.Write(d.buf.Bytes())
 	if err != nil {
 		panic(err)
 	}
-	d.buf.Reset()
 	digest = parser.NewDigest(d.hasher.Sum(nil))
-	d.hasher.Reset()
 	return
 }
 
