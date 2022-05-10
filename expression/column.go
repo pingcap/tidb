@@ -662,7 +662,22 @@ func (col *Column) Coercibility() Coercibility {
 
 // Repertoire returns the repertoire value which is used to check collations.
 func (col *Column) Repertoire() Repertoire {
+<<<<<<< HEAD
 	if col.RetType.EvalType() != types.ETString {
+=======
+	if col.repertoire != 0 {
+		return col.repertoire
+	}
+	switch col.RetType.EvalType() {
+	case types.ETJson:
+		return UNICODE
+	case types.ETString:
+		if col.RetType.GetCharset() == charset.CharsetASCII {
+			return ASCII
+		}
+		return UNICODE
+	default:
+>>>>>>> c789478fa... expression: use existing repertoire for Column if possible (#34501)
 		return ASCII
 	}
 	if col.RetType.Charset == charset.CharsetASCII {
