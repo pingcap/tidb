@@ -17,12 +17,8 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"strconv"
 	"unsafe"
-
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/mysql"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"

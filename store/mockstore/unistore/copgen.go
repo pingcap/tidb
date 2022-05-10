@@ -170,7 +170,7 @@ func (c *TestGenConfig) dumpTable(tblID int64) error {
 
 	fmt.Printf("%v %v %v %v\n", tableStart, tableEnd, rawStartKey, rawEndKey)
 
-	firstRegion, peers := c.Cluster.GetRegionByKey(rawStartKey)
+	firstRegion, peers, _ := c.Cluster.GetRegionByKey(rawStartKey)
 	fmt.Printf("firstRegion id %d region start %v table start %v\n", firstRegion.Id, firstRegion.StartKey, rawStartKey)
 	if bytes.Compare(firstRegion.StartKey, rawStartKey) != 0 {
 		newRegionID := c.Cluster.AllocID()
@@ -181,7 +181,7 @@ func (c *TestGenConfig) dumpTable(tblID int64) error {
 		c.Cluster.Split(firstRegion.Id, newRegionID, tableStart, peersID, peers.Id)
 	}
 
-	lastRegion, peers := c.Cluster.GetRegionByKey(rawEndKey)
+	lastRegion, peers, _ := c.Cluster.GetRegionByKey(rawEndKey)
 	fmt.Printf("lastRegion id %d region start %v table end %v\n", lastRegion.Id, lastRegion.StartKey, rawEndKey)
 	if bytes.Compare(lastRegion.StartKey, rawEndKey) != 0 {
 		newRegionID := c.Cluster.AllocID()
