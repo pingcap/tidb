@@ -17,8 +17,10 @@ package local
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,8 +92,8 @@ const (
 
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
 	// lower the max-key-count to avoid tikv trigger region auto split
-	regionMaxKeyCount      = 1_280_000
-	defaultRegionSplitSize = 96 * units.MiB
+	regionMaxKeyCount      = 144_000_000
+	defaultRegionSplitSize = 10 * units.GiB
 	// The max ranges count in a batch to split and scatter.
 	maxBatchSplitRanges = 4096
 
@@ -1342,9 +1344,16 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-	regionSplitKeys := int64(regionMaxKeyCount)
-	if regionSplitSize > defaultRegionSplitSize {
-		regionSplitKeys = int64(float64(regionSplitSize) / float64(defaultRegionSplitSize) * float64(regionMaxKeyCount))
+	kvRegionSplitSize, regionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+	if err == nil {
+		if kvRegionSplitSize > regionSplitSize {
+			regionSplitSize = kvRegionSplitSize
+		}
+	} else {
+		regionSplitKeys = int64(regionMaxKeyCount)
+		if regionSplitSize > defaultRegionSplitSize {
+			regionSplitKeys = int64(float64(regionSplitSize) / float64(defaultRegionSplitSize) * float64(regionMaxKeyCount))
+		}
 	}
 
 	// split sorted file into range by 96MB size per file
@@ -1841,4 +1850,65 @@ func (local *local) EngineFileSizes() (res []backend.EngineFileSize) {
 		return true
 	})
 	return
+}
+
+func getSplitConfFromStore(url string, httpClient *http.Client) (int64, int64, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, errors.Errorf("get split conf from store failed, status code: %d", resp.StatusCode)
+	}
+	var (
+		nested struct {
+			Coprocessor struct {
+				RegionSplitSize string `json:"region-split-size"`
+				RegionSplitKeys int64  `json:"region-split-keys"`
+			} `json:"coprocessor"`
+		}
+	)
+	if err = json.NewDecoder(resp.Body).Decode(&nested); err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	splitSize, err := units.FromHumanSize(nested.Coprocessor.RegionSplitSize)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	return splitSize, nested.Coprocessor.RegionSplitKeys, nil
+}
+
+func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (int64, int64, error) {
+	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return 0, 0, err
+	}
+	scheme := "http"
+	httpClient := http.DefaultClient
+	if tls != nil {
+		scheme = "https"
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: tls.TLSConfig(),
+			},
+		}
+	}
+	for _, store := range stores {
+		if store.StatusAddress == "" {
+			continue
+		}
+		url := fmt.Sprintf("%s://%s/config", scheme, store.StatusAddress)
+		regionSplitSize, regionSplitKeys, err := getSplitConfFromStore(url, httpClient)
+		if err == nil {
+			return regionSplitSize, regionSplitKeys, nil
+		}
+		log.L().Warn("get region split size and keys failed", zap.Error(err), zap.String("store", store.StatusAddress))
+	}
+	return 0, 0, errors.New("get region split size and keys failed")
 }
