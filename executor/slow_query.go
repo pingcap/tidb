@@ -663,9 +663,8 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types.Datum, tz *time.Location, field, value string, checker *slowLogChecker, lineNum int) bool {
 	factory := e.columnValueFactoryMap[field]
 	if factory == nil {
-		switch {
 		// Fix issue 34320, when slow log time is not in the output columns, the time filter condition is mistakenly discard.
-		case field == variable.SlowLogTimeStr && checker != nil:
+		if field == variable.SlowLogTimeStr && checker != nil {
 			t, err := ParseTime(value)
 			if err != nil {
 				err = fmt.Errorf("Parse slow log at line %v, failed field is %v, failed value is %v, error is %v", lineNum, field, value, err)
@@ -674,9 +673,8 @@ func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types
 			}
 			timeValue := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
 			return checker.isTimeValid(timeValue)
-		default:
-			return true
 		}
+		return true
 	}
 	valid, err := factory(row, value, tz, checker)
 	if err != nil {
