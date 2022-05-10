@@ -675,6 +675,8 @@ const (
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
+	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
+	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 )
 
 // TiDB intentional limits
@@ -850,6 +852,7 @@ const (
 	DefTiDBQueryLogMaxLen                        = 4096
 	DefTiDBEnableConcurrencyDDL                  = true
 	DefTiDBBatchDMLIgnoreError                   = false
+	DefTiDBMemQuotaAnalyze                       = -1
 )
 
 // Process global variables.
@@ -887,4 +890,11 @@ var (
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	AllowConcurrencyDDL                   = atomic.NewBool(DefTiDBEnableConcurrencyDDL)
+)
+
+var (
+	// SetMemQuotaAnalyze is the func registered by global/subglobal tracker to set memory quota.
+	SetMemQuotaAnalyze func(quota int64) = nil
+	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
+	GetMemQuotaAnalyze func() int64 = nil
 )
