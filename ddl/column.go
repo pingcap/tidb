@@ -1266,7 +1266,6 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 			}
 		}
 	})
-
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), []*model.ColumnInfo{oldCol}, []*model.ColumnInfo{col}, reorgInfo)
