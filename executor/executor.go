@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -341,7 +342,7 @@ type CancelDDLJobsExec struct {
 func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
 	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
-		e.errs, err = admin.CancelJobs(txn, e.jobIDs)
+		e.errs, err = ddl.CancelJobs(txn, e.jobIDs)
 		return
 	})
 	return errInTxn
@@ -429,7 +430,7 @@ type ShowDDLExec struct {
 
 	ddlOwnerID string
 	selfID     string
-	ddlInfo    *admin.DDLInfo
+	ddlInfo    *ddl.Info
 	done       bool
 }
 
@@ -493,7 +494,7 @@ type DDLJobRetriever struct {
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
-	jobs, err := admin.GetDDLJobs(txn)
+	jobs, err := ddl.GetDDLJobs(txn)
 	if err != nil {
 		return err
 	}
@@ -596,11 +597,11 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs, err := admin.GetDDLJobs(txn)
+	jobs, err := ddl.GetDDLJobs(txn)
 	if err != nil {
 		return err
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
 	if err != nil {
 		return err
 	}
@@ -643,7 +644,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	}
 	e.DDLJobRetriever.is = e.is
 	if e.jobNumber == 0 {
-		e.jobNumber = admin.DefNumHistoryJobs
+		e.jobNumber = ddl.DefNumHistoryJobs
 	}
 	err = e.DDLJobRetriever.initial(txn)
 	if err != nil {
