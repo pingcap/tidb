@@ -25,9 +25,9 @@ import (
 var (
 	columnMemoryUsage            = int64(4)
 	indexMemoryUsage             = int64(4)
-	columnTotalMemoryUsage       = int64(statistics.EmptyHistogramSize) + 4
-	indexTotalMemoryUsage        = int64(statistics.EmptyHistogramSize) + 4
-	indexEvictedTotalMemoryUsage = int64(statistics.EmptyHistogramSize)
+	columnTotalMemoryUsage       = statistics.EmptyHistogramSize + 4
+	indexTotalMemoryUsage        = statistics.EmptyHistogramSize + 4
+	indexEvictedTotalMemoryUsage = statistics.EmptyHistogramSize
 )
 
 // each column and index consumes 4 bytes memory

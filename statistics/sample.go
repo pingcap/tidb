@@ -18,6 +18,7 @@ import (
 	"context"
 	"sort"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -47,8 +48,8 @@ type SampleItem struct {
 	Handle kv.Handle
 }
 
-// EmptySampleItemSize is the size of empty SampleItem, please update it when change the data structure.
-const EmptySampleItemSize = 96
+// EmptySampleItemSize is the size of empty SampleItem, 96 = 72 (datum) + 8 (int) + 16.
+const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
 // CopySampleItems returns a deep copy of SampleItem slice.
 func CopySampleItems(items []*SampleItem) []*SampleItem {
@@ -104,6 +105,7 @@ type SampleCollector struct {
 	CMSketch      *CMSketch
 	TopN          *TopN
 	TotalSize     int64 // TotalSize is the total size of column.
+	MemSize       int64 // major memory size of this sample collector.
 }
 
 // MergeSampleCollector merges two sample collectors.

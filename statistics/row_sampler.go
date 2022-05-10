@@ -68,8 +68,8 @@ type ReservoirRowSampleItem struct {
 	Handle  kv.Handle
 }
 
-// EmptyReservoirSampleItemSize (24 + 16 + 8), please update it when change the data struct.
-const EmptyReservoirSampleItemSize = 48
+// EmptyReservoirSampleItemSize = (24 + 16 + 8) now.
+const EmptyReservoirSampleItemSize = int64(unsafe.Sizeof(ReservoirRowSampleItem{}))
 
 // MemUsage returns the memory usage of sample item.
 func (i ReservoirRowSampleItem) MemUsage() (sum int64) {
@@ -147,7 +147,6 @@ func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirR
 		FMSketches: make([]*FMSketch, 0, totalLen),
 		TotalSizes: make([]int64, totalLen),
 	}
-	base.MemSize = int64(unsafe.Sizeof(base.Samples)) + int64(unsafe.Sizeof(base.NullCount)) + int64(unsafe.Sizeof(base.FMSketches)) + int64(unsafe.Sizeof(base.TotalSizes)) + 4
 	return &ReservoirRowSampleCollector{
 		baseCollector: base,
 		MaxSampleSize: maxSampleSize,
@@ -269,7 +268,7 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	return collector
 }
 
-func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) (tmpMemSize int64) {
+func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) {
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
@@ -279,37 +278,31 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	s.TotalSizes = pbCollector.TotalSize
 	sampleNum := len(pbCollector.Samples)
 	s.Samples = make(WeightedRowSampleHeap, 0, sampleNum)
+	// consume mandatory memory at the beginning, including all empty ReservoirRowSampleItems and all empty Datums of all sample rows, if exceeds, fast fail
 	if len(pbCollector.Samples) > 0 {
 		rowLen := len(pbCollector.Samples[0].Row)
-		// 24 is the size of datum array, 8 is the size of reference
-		emptySize := (int64(types.EmptyDatumSize)*int64(rowLen) + EmptyReservoirSampleItemSize + 8) * int64(sampleNum)
-		s.MemSize += emptySize
-		tmpMemSize += int64(sampleNum) * 24
-		memTracker.Consume(emptySize + tmpMemSize)
+		// 8 is the size of reference
+		initMemSize := int64(sampleNum) * (int64(rowLen)*types.EmptyDatumSize + EmptyReservoirSampleItemSize + 8)
+		s.MemSize += initMemSize
+		memTracker.Consume(initMemSize)
 	}
 	bufferedMemSize := int64(0)
 	for _, pbSample := range pbCollector.Samples {
-		data := make([]types.Datum, 0, len(pbSample.Row))
+		rowLen := len(pbSample.Row)
+		data := make([]types.Datum, 0, rowLen)
 		for _, col := range pbSample.Row {
 			b := make([]byte, len(col))
 			copy(b, col)
-			newDatum := types.NewBytesDatum(b)
-			data = append(data, newDatum)
-			bufferedMemSize += newDatum.MemUsage() - types.EmptyDatumSize
+			data = append(data, types.NewBytesDatum(b))
 		}
 		// Directly copy the weight.
 		sampleItem := &ReservoirRowSampleItem{Columns: data, Weight: pbSample.Weight}
 		s.Samples = append(s.Samples, sampleItem)
-		bufferedMemSize += sampleItem.MemUsage() - EmptyReservoirSampleItemSize
-		if bufferedMemSize > int64(104857600) { // track when exceeds 100 MB
-			memTracker.Consume(bufferedMemSize)
-			s.MemSize += bufferedMemSize
-			bufferedMemSize = int64(0)
-		}
+		deltaSize := sampleItem.MemUsage() - EmptyReservoirSampleItemSize - int64(rowLen)*types.EmptyDatumSize
+		memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+		s.MemSize += deltaSize
 	}
 	memTracker.Consume(bufferedMemSize)
-	s.MemSize += bufferedMemSize
-	return
 }
 
 // Base implements the RowSampleCollector interface.
@@ -423,7 +416,6 @@ func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *Bernoulli
 		FMSketches: make([]*FMSketch, 0, totalLen),
 		TotalSizes: make([]int64, totalLen),
 	}
-	base.MemSize = int64(unsafe.Sizeof(base.Samples)) + int64(unsafe.Sizeof(base.NullCount)) + int64(unsafe.Sizeof(base.FMSketches)) + int64(unsafe.Sizeof(base.TotalSizes)) + 8
 	return &BernoulliRowSampleCollector{
 		baseCollector: base,
 		SampleRate:    sampleRate,

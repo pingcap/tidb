@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -80,9 +81,8 @@ type Histogram struct {
 	Correlation float64
 }
 
-// EmptyHistogramSize is the size of empty histogram, please update it when change the data structure.
-// 8*6 for int64 & float64, 24*2 for arrays, 8*2 for references
-const EmptyHistogramSize = 112
+// EmptyHistogramSize is the size of empty histogram, about 112 = 8*6 for int64 & float64, 24*2 for arrays, 8*2 for references.
+const EmptyHistogramSize = int64(unsafe.Sizeof(Histogram{}))
 
 // Bucket store the bucket count and repeat.
 type Bucket struct {
@@ -91,8 +91,8 @@ type Bucket struct {
 	NDV    int64
 }
 
-// EmptyBucketSize is the size of empty bucket, please update it when change the data structure.
-const EmptyBucketSize = 24
+// EmptyBucketSize is the size of empty bucket, 3*8=24 now.
+const EmptyBucketSize = int64(unsafe.Sizeof(Bucket{}))
 
 type scalar struct {
 	lower        float64
@@ -100,8 +100,8 @@ type scalar struct {
 	commonPfxLen int // commonPfxLen is the common prefix length of the lower bound and upper bound when the value type is KindString or KindBytes.
 }
 
-// EmptyScalarSize is the size of empty scalar, please update it when change the data structure.
-const EmptyScalarSize = 20
+// EmptyScalarSize is the size of empty scalar.
+const EmptyScalarSize = int64(unsafe.Sizeof(scalar{}))
 
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {

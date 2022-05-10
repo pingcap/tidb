@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 )
 
@@ -81,9 +82,10 @@ type actionMu struct {
 // softScale means the scale of the soft limit to the hard limit.
 const softScale = 0.8
 
+// bytesLimits holds limit config atomically.
 type bytesLimits struct {
-	bytesHardLimit int64 // bytesHardLimit <= 0 means no limit.
-	bytesSoftLimit int64
+	bytesHardLimit int64 // bytesHardLimit <= 0 means no limit, used for actionMuForHardLimit.
+	bytesSoftLimit int64 // bytesSoftLimit <= 0 means no limit, used for actionMuForSoftLimit.
 }
 
 // InitTracker initializes a memory tracker.
@@ -373,6 +375,15 @@ func (t *Tracker) Consume(bytes int64) {
 	}
 }
 
+// BufferedConsume is used to buffer memory usage and do late consume
+func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
+	*bufferedMemSize += bytes
+	if *bufferedMemSize > int64(config.TrackMemWhenExceeds) {
+		t.Consume(*bufferedMemSize)
+		*bufferedMemSize = int64(0)
+	}
+}
+
 // BytesConsumed returns the consumed memory usage value in bytes.
 func (t *Tracker) BytesConsumed() int64 {
 	return atomic.LoadInt64(&t.bytesConsumed)
@@ -591,11 +602,11 @@ const (
 	LabelForNonTransactionalDML = -23
 	// LabelForAnalyzeMemory represents the label of the memory of each analyze job
 	LabelForAnalyzeMemory int = -23
-	// LabelForAnalyzeSharedMemory represents the label of the global memory of all analyze jobs
-	LabelForAnalyzeSharedMemory int = -24
+	// LabelForGlobalAnalyzeMemory represents the label of the global memory of all analyze jobs
+	LabelForGlobalAnalyzeMemory int = -24
 )
 
 // MetricsTypes is used to get label for metrics
 var MetricsTypes = map[int]string{
-	LabelForAnalyzeSharedMemory: "analyze",
+	LabelForGlobalAnalyzeMemory: "analyze",
 }

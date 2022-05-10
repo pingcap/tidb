@@ -693,9 +693,9 @@ func (c *TopN) MemoryUsage() (sum int64) {
 	if c == nil {
 		return
 	}
-	sum = 32
+	sum = 32 // size of array (24) + reference (8)
 	for _, meta := range c.TopN {
-		sum += 32 + int64(cap(meta.Encoded))
+		sum += 32 + int64(cap(meta.Encoded)) // 32 is size of byte array (24) + size of uint64 (8)
 	}
 	return
 }
