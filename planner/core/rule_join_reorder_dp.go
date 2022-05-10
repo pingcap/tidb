@@ -22,7 +22,7 @@ import (
 
 type joinReorderDPSolver struct {
 	*baseSingleGroupJoinOrderSolver
-	newJoin func(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, otherConds []expression.Expression) LogicalPlan
+	newJoin func(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType) LogicalPlan
 }
 
 type joinGroupEqEdge struct {
@@ -244,8 +244,13 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan LogicalPlan, e
 			eqConds = append(eqConds, newSf)
 		}
 	}
+<<<<<<< HEAD
 	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds)
 	_, err := join.recursiveDeriveStats()
+=======
+	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, InnerJoin)
+	_, err := join.recursiveDeriveStats(nil)
+>>>>>>> 199eb8e6c... core: support left join and right join for join reorder (#23149)
 	return join, err
 }
 
@@ -266,7 +271,7 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, ot
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds))
+			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, InnerJoin))
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}

@@ -342,6 +342,7 @@ n_name
 order by
 revenue desc;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Sort_23	5.00	root		Column#49:desc
 └─Projection_25	5.00	root		tpch.nation.n_name, Column#49
   └─HashAgg_26	5.00	root		group by:Column#52, funcs:sum(Column#50)->Column#49, funcs:firstrow(Column#51)->tpch.nation.n_name
@@ -365,6 +366,32 @@ Sort_23	5.00	root		Column#49:desc
             │   └─TableFullScan_60	500000.00	cop[tikv]	table:supplier	keep order:false
             └─TableReader_63(Probe)	300005811.00	root		data:TableFullScan_62
               └─TableFullScan_62	300005811.00	cop[tikv]	table:lineitem	keep order:false
+=======
+Sort	5.00	root		Column#49:desc
+└─Projection	5.00	root		tpch.nation.n_name, Column#49
+  └─HashAgg	5.00	root		group by:Column#52, funcs:sum(Column#50)->Column#49, funcs:firstrow(Column#51)->tpch.nation.n_name
+    └─Projection	11822812.50	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#50, tpch.nation.n_name, tpch.nation.n_name
+      └─Projection	11822812.50	root		tpch.lineitem.l_extendedprice, tpch.lineitem.l_discount, tpch.nation.n_name
+        └─HashJoin	11822812.50	root		inner join, equal:[eq(tpch.orders.o_custkey, tpch.customer.c_custkey) eq(tpch.supplier.s_nationkey, tpch.customer.c_nationkey)]
+          ├─TableReader(Build)	7500000.00	root		data:TableFullScan
+          │ └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+          └─HashJoin(Probe)	11822812.50	root		inner join, equal:[eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)]
+            ├─TableReader(Build)	11822812.50	root		data:Selection
+            │ └─Selection	11822812.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1994-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000)
+            │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
+            └─HashJoin(Probe)	61163763.01	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.lineitem.l_suppkey)]
+              ├─HashJoin(Build)	100000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+              │ ├─HashJoin(Build)	5.00	root		inner join, equal:[eq(tpch.region.r_regionkey, tpch.nation.n_regionkey)]
+              │ │ ├─TableReader(Build)	1.00	root		data:Selection
+              │ │ │ └─Selection	1.00	cop[tikv]		eq(tpch.region.r_name, "MIDDLE EAST")
+              │ │ │   └─TableFullScan	5.00	cop[tikv]	table:region	keep order:false
+              │ │ └─TableReader(Probe)	25.00	root		data:TableFullScan
+              │ │   └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
+              │ └─TableReader(Probe)	500000.00	root		data:TableFullScan
+              │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
+              └─TableReader(Probe)	300005811.00	root		data:TableFullScan
+                └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
+>>>>>>> 199eb8e6c... core: support left join and right join for join reorder (#23149)
 /*
 Q6 Forecasting Revenue Change Query
 This query quantifies the amount of revenue increase that would have resulted from eliminating certain companywide
