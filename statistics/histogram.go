@@ -1336,6 +1336,11 @@ func (idx *Index) DropEvicted() {
 	idx.CMSketch = nil
 }
 
+// IsEvicted returns whether index statistics got evicted
+func (idx *Index) IsEvicted() bool {
+	return idx.CMSketch == nil
+}
+
 func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
