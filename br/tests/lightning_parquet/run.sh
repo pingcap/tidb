@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2019 PingCAP, Inc.
 #
@@ -21,7 +21,7 @@ check_row_count() {
     check_contains "count(*): $2"
 }
 
-for BACKEND in local importer tidb; do
+for BACKEND in local tidb; do
     if [ "$BACKEND" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi

@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
@@ -129,7 +130,7 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 	}
 
 	txnManager := sessiontxn.GetTxnManager(ctx)
-	if provider, ok := txnManager.GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); ok {
+	if provider, ok := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
 		provider.GetReadTSFunc = b.getReadTS
 		provider.GetForUpdateTSFunc = func() (uint64, error) {
 			if b.forUpdateTS != 0 {
@@ -764,7 +765,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 				panic(fmt.Sprintf("%d != %d", b.is.SchemaMetaVersion(), is.SchemaMetaVersion()))
 			}
 
-			ts, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
+			ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
 			if err != nil {
 				panic(e)
 			}
@@ -779,7 +780,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
 		staleread.AssertStmtStaleness(b.ctx, true)
-		ts, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
+		ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
 		if err != nil {
 			panic(e)
 		}
@@ -1569,9 +1570,9 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 
 	txnManager := sessiontxn.GetTxnManager(b.ctx)
 	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
-		return txnManager.GetForUpdateTS()
+		return txnManager.GetStmtForUpdateTS()
 	}
-	return txnManager.GetReadTS()
+	return txnManager.GetStmtReadTS()
 }
 
 // getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level

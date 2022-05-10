@@ -2402,17 +2402,23 @@ func EstimatedMemUsage(array []Datum, numOfRows int) int64 {
 	if numOfRows == 0 {
 		return 0
 	}
-	var bytesConsumed int
+	var bytesConsumed int64
 	for _, d := range array {
-		switch d.Kind() {
-		case KindMysqlDecimal:
-			bytesConsumed += sizeOfMyDecimal
-		case KindMysqlTime:
-			bytesConsumed += sizeOfMysqlTime
-		default:
-			bytesConsumed += len(d.b)
-		}
+		bytesConsumed += d.EstimatedMemUsage()
 	}
-	bytesConsumed += len(array) * sizeOfEmptyDatum
-	return int64(bytesConsumed * numOfRows)
+	return bytesConsumed * int64(numOfRows)
+}
+
+// EstimatedMemUsage returns the estimated bytes consumed of a Datum.
+func (d Datum) EstimatedMemUsage() int64 {
+	bytesConsumed := sizeOfEmptyDatum
+	switch d.Kind() {
+	case KindMysqlDecimal:
+		bytesConsumed += sizeOfMyDecimal
+	case KindMysqlTime:
+		bytesConsumed += sizeOfMysqlTime
+	default:
+		bytesConsumed += len(d.b)
+	}
+	return int64(bytesConsumed)
 }
