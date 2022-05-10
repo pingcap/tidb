@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -1275,7 +1274,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 		var qLen int
 		for {
 			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err1 := admin.GetDDLJobs(txn)
+				jobs, err1 := ddl.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
 				}
@@ -1305,7 +1304,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 		var qLen int
 		for {
 			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err3 := admin.GetDDLJobs(txn)
+				jobs, err3 := ddl.GetDDLJobs(txn)
 				if err3 != nil {
 					return err3
 				}
