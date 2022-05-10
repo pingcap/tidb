@@ -416,7 +416,6 @@ func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *Bernoulli
 		FMSketches: make([]*FMSketch, 0, totalLen),
 		TotalSizes: make([]int64, totalLen),
 	}
-	base.MemSize = int64(unsafe.Sizeof(base.Samples)) + int64(unsafe.Sizeof(base.NullCount)) + int64(unsafe.Sizeof(base.FMSketches)) + int64(unsafe.Sizeof(base.TotalSizes)) + 8
 	return &BernoulliRowSampleCollector{
 		baseCollector: base,
 		SampleRate:    sampleRate,
