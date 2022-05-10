@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -37,11 +38,16 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
+
+// ErrNonTransactionalJobFailure is the error when a non-transactional job fails. The error is returned and following jobs are canceled.
+var ErrNonTransactionalJobFailure = dbterror.ClassSession.NewStd(errno.ErrNonTransactionalJobFailure)
 
 // job: handle keys in [start, end]
 type job struct {
@@ -74,7 +80,7 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	if err != nil {
 		return nil, err
 	}
-	if err := checkConstraint(ctx, stmt, se); err != nil {
+	if err := checkConstraint(stmt, se); err != nil {
 		return nil, err
 	}
 	metrics.NonTransactionalDeleteCount.Inc()
@@ -106,14 +112,14 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize, se.GetSessionVars().EnableRedactLog)
 }
 
-func checkConstraint(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) error {
+func checkConstraint(stmt *ast.NonTransactionalDeleteStmt, se Session) error {
 	sessVars := se.GetSessionVars()
 	if !(sessVars.IsAutocommit() && !sessVars.InTxn()) {
-		return errors.Errorf("non-transactional statement can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
+		return errors.Errorf("non-transactional DML can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
 			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
 	}
 	if config.GetGlobalConfig().EnableBatchDML && sessVars.DMLBatchSize > 0 && (sessVars.BatchDelete || sessVars.BatchInsert) {
-		return errors.Errorf("can't run non-transactional statement with batch dml")
+		return errors.Errorf("can't run non-transactional DML with batch-dml")
 	}
 
 	if sessVars.ReadConsistency.IsWeak() {
@@ -199,6 +205,9 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 		if i == 0 && jobs[i].err != nil {
 			return nil, errors.Annotate(jobs[i].err, "Early return: error occurred in the first job. All jobs are canceled")
 		}
+		if jobs[i].err != nil && !se.GetSessionVars().NonTransactionalIgnoreError {
+			return nil, ErrNonTransactionalJobFailure.GenWithStackByArgs(jobs[i].jobID, len(jobs), jobs[i].start.String(), jobs[i].end.String(), jobs[i].String(se.GetSessionVars().EnableRedactLog), jobs[i].err.Error())
+		}
 	}
 	return splitStmts, nil
 }
@@ -271,7 +280,8 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 		format.RestoreBracketAroundBinaryOperation|
 		format.RestoreStringWithoutCharset, &sb))
 	if err != nil {
-		job.err = errors.Annotate(err, "Failed to restore delete statement")
+		logutil.Logger(ctx).Error("Non-transactional delete, failed to restore the delete statement", zap.Error(err))
+		job.err = errors.New("Failed to restore the delete statement, probably because of unsupported type of the shard column")
 		return ""
 	}
 	deleteSQL := sb.String()
@@ -294,8 +304,10 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	rs, err := se.ExecuteStmt(ctx, options.stmt.DeleteStmt)
 
 	// collect errors
-	failpoint.Inject("splitDeleteError", func(_ failpoint.Value) {
-		err = errors.New("injected split delete error")
+	failpoint.Inject("splitDeleteError", func(val failpoint.Value) {
+		if val.(bool) {
+			err = errors.New("injected split delete error")
+		}
 	})
 	if err != nil {
 		logutil.Logger(ctx).Error("Non-transactional delete SQL failed", zap.String("job", deleteSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
@@ -580,44 +592,18 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 			MaxChunkSize: maxChunkSize,
 		}, nil
 	}
-	resultFields := []*ast.ResultField{
-		{
-			Column: &model.ColumnInfo{
-				FieldType: *types.NewFieldType(mysql.TypeString),
-			},
-			ColumnAsName: model.NewCIStr("job"),
-		},
-		{
-			Column: &model.ColumnInfo{
-				FieldType: *types.NewFieldType(mysql.TypeString),
-			},
-			ColumnAsName: model.NewCIStr("sql"),
-		},
-		{
-			Column: &model.ColumnInfo{
-				FieldType: *types.NewFieldType(mysql.TypeString),
-			},
-			ColumnAsName: model.NewCIStr("error"),
-		},
-	}
 
-	rows := make([][]interface{}, 0, len(failedJobs))
+	// ignoreError must be set.
 	var sb strings.Builder
 	for _, job := range failedJobs {
-		row := make([]interface{}, 2)
-		row[0] = job.String(false)
-		row[1] = job.err.Error()
-		rows = append(rows, row)
 		sb.WriteString(fmt.Sprintf("%s, %s;\n", job.String(redactLog), job.err.Error()))
 	}
 
+	errStr := sb.String()
 	// log errors here in case the output is too long. There can be thousands of errors.
-	logutil.Logger(ctx).Warn("Non-transactional delete failed",
-		zap.Int("num_failed_jobs", len(failedJobs)), zap.String("failed_jobs", sb.String()))
+	logutil.Logger(ctx).Error("Non-transactional delete failed",
+		zap.Int("num_failed_jobs", len(failedJobs)), zap.String("failed_jobs", errStr))
 
-	return &sqlexec.SimpleRecordSet{
-		ResultFields: resultFields,
-		Rows:         rows,
-		MaxChunkSize: maxChunkSize,
-	}, nil
+	return nil, errors.New(fmt.Sprintf("%d/%d jobs failed in the non-transactional DML: %s, ...(more in logs)",
+		len(failedJobs), len(jobs), errStr[:mathutil.Min(500, len(errStr)-1)]))
 }
