@@ -15,11 +15,12 @@
 package handle
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"golang.org/x/exp/maps"
-	"sync"
 )
 
 // statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
