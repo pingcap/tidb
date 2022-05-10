@@ -1433,7 +1433,7 @@ workLoop:
 				}
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
-				// consume mandatory memory at the beginning, including empty sampleItems of all samples, if exceeds, fast fail
+				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
 				collectorMemSize := int64(unsafe.Sizeof(sampleItems)) + int64(sampleNum)*(8+statistics.EmptySampleItemSize)
 				e.memTracker.Consume(collectorMemSize)
 				bufferedMemSize := int64(0)
@@ -1476,7 +1476,7 @@ workLoop:
 				idx := e.indexes[task.slicePos-colLen]
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
-				// consume mandatory memory at the beginning, including all sampleItems, if exceeds, fast fail
+				// consume mandatory memory at the beginning, including all SampleItems, if exceeds, fast fail
 				// 8 is size of reference, 32 is the size of "b := make([]byte, 0, 8)"
 				collectorMemSize := int64(unsafe.Sizeof(sampleItems)) + (8+statistics.EmptySampleItemSize+32)*int64(sampleNum)
 				e.memTracker.Consume(collectorMemSize)
