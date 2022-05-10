@@ -241,17 +241,6 @@ func (s *statsInnerCache) FreshMemUsage() {
 	}
 }
 
-// FreshTableCost implements statsCacheInner
-func (s *statsInnerCache) FreshTableCost(tblID int64) {
-	s.Lock()
-	defer s.Unlock()
-	element, exist := s.elements[tblID]
-	if !exist {
-		return
-	}
-	s.freshTableCost(tblID, element)
-}
-
 // Copy implements statsCacheInner
 func (s *statsInnerCache) Copy() statsCacheInner {
 	s.RLock()

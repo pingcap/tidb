@@ -15,8 +15,11 @@
 package handle
 
 import (
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"golang.org/x/exp/maps"
+	"sync"
 )
 
 // statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
@@ -32,15 +35,23 @@ type statsCacheInner interface {
 	Map() map[int64]*statistics.Table
 	Len() int
 	FreshMemUsage()
-	FreshTableCost(int64)
 	Copy() statsCacheInner
 	SetCapacity(int64)
 }
 
 func newStatsCache() statsCache {
-	capacity := variable.StatsCacheMemQuota.Load()
+	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
+	if enableQuota {
+		capacity := variable.StatsCacheMemQuota.Load()
+		return statsCache{
+			statsCacheInner: newStatsLruCache(capacity),
+		}
+	}
 	return statsCache{
-		statsCacheInner: newStatsLruCache(capacity),
+		statsCacheInner: &mapCache{
+			tables:   make(map[int64]cacheItem),
+			memUsage: 0,
+		},
 	}
 }
 
@@ -96,3 +107,141 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	}
 	return newCache
 }
+
+type cacheItem struct {
+	key   int64
+	value *statistics.Table
+	cost  int64
+}
+
+type mapCache struct {
+	sync.RWMutex
+	tables   map[int64]cacheItem
+	memUsage int64
+}
+
+// GetByQuery implements statsCacheInner
+func (m *mapCache) GetByQuery(k int64) (*statistics.Table, bool) {
+	return m.Get(k)
+}
+
+// Get implements statsCacheInner
+func (m *mapCache) Get(k int64) (*statistics.Table, bool) {
+	m.RLock()
+	defer m.RUnlock()
+	v, ok := m.tables[k]
+	return v.value, ok
+}
+
+// PutByQuery implements statsCacheInner
+func (m *mapCache) PutByQuery(k int64, v *statistics.Table) {
+	m.Put(k, v)
+}
+
+// Put implements statsCacheInner
+func (m *mapCache) Put(k int64, v *statistics.Table) {
+	m.Lock()
+	defer m.Unlock()
+	item, ok := m.tables[k]
+	if ok {
+		oldCost := item.cost
+		newCost := v.MemoryUsage().TotalMemUsage
+		item.value = v
+		item.cost = newCost
+		m.tables[k] = item
+		m.memUsage += newCost - oldCost
+		return
+	}
+	cost := v.MemoryUsage().TotalMemUsage
+	item = cacheItem{
+		key:   k,
+		value: v,
+		cost:  cost,
+	}
+	m.tables[k] = item
+	m.memUsage += cost
+}
+
+// Del implements statsCacheInner
+func (m *mapCache) Del(k int64) {
+	m.Lock()
+	defer m.Unlock()
+	item, ok := m.tables[k]
+	if !ok {
+		return
+	}
+	delete(m.tables, k)
+	m.memUsage -= item.cost
+}
+
+// Cost implements statsCacheInner
+func (m *mapCache) Cost() int64 {
+	m.RLock()
+	defer m.RUnlock()
+	return m.memUsage
+}
+
+// Keys implements statsCacheInner
+func (m *mapCache) Keys() []int64 {
+	m.RLock()
+	defer m.RUnlock()
+	ks := make([]int64, 0, m.Len())
+	for k := range m.tables {
+		ks = append(ks, k)
+	}
+	return ks
+}
+
+// Values implements statsCacheInner
+func (m *mapCache) Values() []*statistics.Table {
+	m.RLock()
+	defer m.RUnlock()
+	vs := make([]*statistics.Table, 0, m.Len())
+	for _, v := range m.tables {
+		vs = append(vs, v.value)
+	}
+	return vs
+}
+
+// Map implements statsCacheInner
+func (m *mapCache) Map() map[int64]*statistics.Table {
+	m.RLock()
+	defer m.RUnlock()
+	t := make(map[int64]*statistics.Table, m.Len())
+	for k, v := range m.tables {
+		t[k] = v.value
+	}
+	return t
+}
+
+// Len implements statsCacheInner
+func (m *mapCache) Len() int {
+	m.RLock()
+	defer m.RUnlock()
+	return len(m.tables)
+}
+
+// FreshMemUsage implements statsCacheInner
+func (m *mapCache) FreshMemUsage() {
+	m.Lock()
+	defer m.Unlock()
+	for _, v := range m.tables {
+		oldCost := v.cost
+		newCost := v.value.MemoryUsage().TotalMemUsage
+		m.memUsage += newCost - oldCost
+	}
+}
+
+// Copy implements statsCacheInner
+func (m *mapCache) Copy() statsCacheInner {
+	m.RLock()
+	defer m.RUnlock()
+	newM := &mapCache{
+		tables:   make(map[int64]cacheItem, m.Len()),
+		memUsage: m.memUsage,
+	}
+	maps.Copy(newM.tables, m.tables)
+	return newM
+}
+
+func (m *mapCache) SetCapacity(int64) {}
