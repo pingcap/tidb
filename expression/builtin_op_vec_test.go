@@ -81,7 +81,7 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETInt},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
 			},
 			geners: []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
 		},
