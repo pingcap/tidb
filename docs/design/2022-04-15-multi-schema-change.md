@@ -132,7 +132,17 @@ ALTER TABLE t DROP COLUMN b, RENAME COLUMN a TO b, ADD INDEX i(b), DROP INDEX i;
 ERROR 1060 (42S21): Duplicate column name 'b'
 ```
 
-TiDB validates the schema changes against a snapshot schema structure retrieved before the execution, regardless of the previous changes in the same DDL SQL statement.
+TiDB validates the schema changes against a snapshot schema structure retrieved before the execution, regardless of the previous changes in the same DDL statement. This may affect some common use cases. For example, `ALTER TABLE t ADD COLUMN a, ADD INDEX i1(a);` is not supported. However, it is not difficult to support such statements: removing the specific validation is enough. 
+
+## Future work
+
+In the future, this implementation can be utilized to develop other features or achieve some optimizations:
+
+- The table-level data reorganization like `ALTER TABLE CONVERT TO CHARSET` can be implemented by splitting a job into multiple sub-jobs.
+
+- In the scenario of adding multiple indexes, we can improve the performance by reducing the read cost: merge multiple "ADD INDEX" sub-jobs into one sub-job, and read the data once instead of multiple times.
+
+Furthermore, to help users understand how multi-schema change works, it is a good choice to support "EXPLAIN DDL", which can display some useful information like execution order, sub-jobs, and others.
 
 ## Alternative Proposals
 
