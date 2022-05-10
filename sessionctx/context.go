@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -118,8 +117,8 @@ type Context interface {
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
-	// DDLOwnerChecker returns owner.DDLOwnerChecker.
-	DDLOwnerChecker() owner.DDLOwnerChecker
+	// IsDDLOwner checks whether this session is DDL owner.
+	IsDDLOwner() bool
 	// AddTableLock adds table lock to the session lock map.
 	AddTableLock([]model.TableLockTpInfo)
 	// ReleaseTableLocks releases table locks in the session lock map.
@@ -150,6 +149,12 @@ type Context interface {
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context
 	ShowProcess() *util.ProcessInfo
+	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
+	GetAdvisoryLock(string, int64) error
+	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
+	ReleaseAdvisoryLock(string) bool
+	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
+	ReleaseAllAdvisoryLocks() int
 }
 
 type basicCtxType int

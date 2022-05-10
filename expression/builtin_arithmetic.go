@@ -18,13 +18,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	math2 "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -298,7 +297,7 @@ func (s *builtinArithmeticPlusRealSig) evalReal(row chunk.Row) (float64, bool, e
 	if isLHSNull || isRHSNull {
 		return 0, true, nil
 	}
-	if !math2.IsFinite(a + b) {
+	if !mathutil.IsFinite(a + b) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return a + b, false, nil
@@ -366,7 +365,7 @@ func (s *builtinArithmeticMinusRealSig) evalReal(row chunk.Row) (float64, bool, 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if !math2.IsFinite(a - b) {
+	if !mathutil.IsFinite(a - b) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return a - b, false, nil

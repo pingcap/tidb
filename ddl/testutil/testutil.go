@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -68,7 +69,7 @@ func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64,
 	if err != nil {
 		return nil, err
 	}
-	err = se.NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), se)
 	if err != nil {
 		return nil, err
 	}
