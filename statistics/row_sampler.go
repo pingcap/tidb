@@ -279,7 +279,7 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	s.TotalSizes = pbCollector.TotalSize
 	sampleNum := len(pbCollector.Samples)
 	s.Samples = make(WeightedRowSampleHeap, 0, sampleNum)
-	// consume mandatory memory at the beginning, if exceeds, fast fail
+	// consume mandatory memory at the beginning, including empty sampleItem and empty row datums of all samples, if exceeds, fast fail
 	if len(pbCollector.Samples) > 0 {
 		rowLen := len(pbCollector.Samples[0].Row)
 		// 8 is the size of reference
