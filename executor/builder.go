@@ -27,10 +27,11 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
@@ -56,12 +58,12 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -129,7 +131,7 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 	}
 
 	txnManager := sessiontxn.GetTxnManager(ctx)
-	if provider, ok := txnManager.GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); ok {
+	if provider, ok := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
 		provider.GetReadTSFunc = b.getReadTS
 		provider.GetForUpdateTSFunc = func() (uint64, error) {
 			if b.forUpdateTS != 0 {
@@ -344,9 +346,9 @@ func (b *executorBuilder) buildShowNextRowID(v *plannercore.ShowNextRowID) Execu
 }
 
 func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
-	// We get DDLInfo here because for Executors that returns result set,
+	// We get Info here because for Executors that returns result set,
 	// next will be called after transaction has been committed.
-	// We need the transaction to get DDLInfo.
+	// We need the transaction to get Info.
 	e := &ShowDDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 	}
@@ -366,7 +368,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		return nil
 	}
 
-	ddlInfo, err := admin.GetDDLInfo(txn)
+	ddlInfo, err := ddl.GetDDLInfo(txn)
 	if err != nil {
 		b.err = err
 		return nil
@@ -699,7 +701,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 	if b.err != nil {
 		return nil
 	}
-	n := int(mathutil.MinUint64(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
+	n := int(mathutil.Min(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	base.initCap = n
 	e := &LimitExec{
@@ -764,7 +766,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 				panic(fmt.Sprintf("%d != %d", b.is.SchemaMetaVersion(), is.SchemaMetaVersion()))
 			}
 
-			ts, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
+			ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
 			if err != nil {
 				panic(e)
 			}
@@ -779,7 +781,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
 		staleread.AssertStmtStaleness(b.ctx, true)
-		ts, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
+		ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
 		if err != nil {
 			panic(e)
 		}
@@ -1569,9 +1571,9 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 
 	txnManager := sessiontxn.GetTxnManager(b.ctx)
 	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
-		return txnManager.GetForUpdateTS()
+		return txnManager.GetStmtForUpdateTS()
 	}
-	return txnManager.GetReadTS()
+	return txnManager.GetStmtReadTS()
 }
 
 // getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
@@ -2315,6 +2317,10 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	if !ok || idx.Len() == 0 || idx.LastAnalyzePos.IsNull() {
 		return analyzeTask
 	}
+	// If idx got evicted previously, we directly use IndexPushDown task as incremental analyze task will cause inaccuracy
+	if idx.IsEvicted() {
+		return analyzeTask
+	}
 	var oldHist *statistics.Histogram
 	if statistics.IsAnalyzed(idx.Flag) {
 		exec := analyzeTask.idxExec
@@ -2542,7 +2548,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task pl
 	}
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
-	return math.Min(1, 110000/float64(statsTbl.Count))
+	return math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.Count))
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {

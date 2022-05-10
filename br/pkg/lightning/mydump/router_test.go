@@ -160,7 +160,7 @@ func TestMultiRouteRule(t *testing.T) {
 	}
 
 	// multi rule don't intersect with each other
-	// add another rule that math same pattern with the third rule, the result should be no different
+	// add another rule that match same pattern with the third rule, the result should be no different
 	p := &config.FileRouteRule{Pattern: `^(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "test_schema", Table: "test_table", Type: "$type", Key: "$key", Compression: "$cp"}
 	rules = append(rules, p)
 	r, err = NewFileRouter(rules)
