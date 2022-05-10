@@ -100,20 +100,26 @@ func NewSchemasReplace(
 
 // TidyOldSchemas produces schemas information.
 func (sr *SchemasReplace) TidyOldSchemas() *backup.Schemas {
+	var schemaIsEmpty bool
 	schemas := backup.NewBackupSchemas()
-	// note:
-	// when the PR about backup empty database merged, it can backup empty database schema.
+
 	for _, dr := range sr.DbMap {
 		if dr.OldDBInfo == nil {
 			continue
 		}
 
+		schemaIsEmpty = true
 		for _, tr := range dr.TableMap {
 			if tr.OldTableInfo == nil {
 				continue
 			}
-
 			schemas.AddSchema(dr.OldDBInfo, tr.OldTableInfo)
+			schemaIsEmpty = false
+		}
+
+		// backup this empty schema if it has nothing table.
+		if schemaIsEmpty {
+			schemas.AddSchema(dr.OldDBInfo, nil)
 		}
 	}
 	return schemas

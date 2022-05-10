@@ -1253,6 +1253,11 @@ func initFullBackupTables(
 		}
 
 		for _, table := range db.Tables {
+			// check this db is empty.
+			if table.Info == nil {
+				tables[db.Info.ID] = table
+				continue
+			}
 			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
@@ -1271,6 +1276,10 @@ func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) 
 			// skip system table for now
 			continue
 		}
+		if t.Info == nil {
+			continue
+		}
+
 		newTableInfo, err := client.GetTableSchema(client.GetDomain(), t.DB.Name, t.Info.Name)
 		if err != nil {
 			// If table not existed, skip it directly.

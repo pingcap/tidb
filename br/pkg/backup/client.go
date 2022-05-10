@@ -330,7 +330,7 @@ func BuildBackupRangeAndSchema(
 
 		if len(tables) == 0 {
 			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
-			backupSchemas.addSchema(dbInfo, nil)
+			backupSchemas.AddSchema(dbInfo, nil)
 			continue
 		}
 
@@ -436,6 +436,11 @@ func BuildFullSchema(storage kv.Storage, backupTS uint64) (*Schemas, error) {
 		tables, err := m.ListTables(db.ID)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+
+		// backup this empty db if this schema is empty.
+		if len(tables) == 0 {
+			newBackupSchemas.AddSchema(db, nil)
 		}
 
 		for _, table := range tables {

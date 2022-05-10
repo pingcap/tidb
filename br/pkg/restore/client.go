@@ -1736,6 +1736,10 @@ func (rc *Client) InitSchemasReplaceForDDL(
 			dbMap[t.DB.ID] = dbReplace
 		}
 
+		if t.Info == nil {
+			// If the db is empty, skip it.
+			continue
+		}
 		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
 		if err != nil {
 			log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
