@@ -24,7 +24,8 @@ import (
 
 type joinReorderGreedySolver struct {
 	*baseSingleGroupJoinOrderSolver
-	eqEdges []*expression.ScalarFunction
+	eqEdges   []*expression.ScalarFunction
+	joinTypes []JoinType
 }
 
 // solve reorders the join nodes in the group based on a greedy algorithm.
@@ -54,6 +55,8 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 		})
 		tracer.appendLogicalJoinCost(node, cost)
 	}
+
+	// Sort plans by cost
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
@@ -110,27 +113,44 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan LogicalPlan) (LogicalPlan, []expression.Expression) {
 	var usedEdges []*expression.ScalarFunction
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
-	for _, edge := range s.eqEdges {
+	joinType := InnerJoin
+	for idx, edge := range s.eqEdges {
 		lCol := edge.GetArgs()[0].(*expression.Column)
 		rCol := edge.GetArgs()[1].(*expression.Column)
-		if leftNode.Schema().Contains(lCol) && rightNode.Schema().Contains(rCol) {
+		if leftPlan.Schema().Contains(lCol) && rightPlan.Schema().Contains(rCol) {
+			joinType = s.joinTypes[idx]
 			usedEdges = append(usedEdges, edge)
-		} else if rightNode.Schema().Contains(lCol) && leftNode.Schema().Contains(rCol) {
-			newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
-			usedEdges = append(usedEdges, newSf)
+		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
+			joinType = s.joinTypes[idx]
+			if joinType != InnerJoin {
+				rightPlan, leftPlan = leftPlan, rightPlan
+				usedEdges = append(usedEdges, edge)
+			} else {
+				newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+				usedEdges = append(usedEdges, newSf)
+			}
 		}
 	}
 	if len(usedEdges) == 0 {
 		return nil, nil
 	}
 	var otherConds []expression.Expression
-	mergedSchema := expression.MergeSchema(leftNode.Schema(), rightNode.Schema())
+	var leftConds []expression.Expression
+	var rightConds []expression.Expression
+	mergedSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
+
+	remainOtherConds, leftConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		return expression.ExprFromSchema(expr, leftPlan.Schema()) && !expression.ExprFromSchema(expr, rightPlan.Schema())
+	})
+	remainOtherConds, rightConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		return expression.ExprFromSchema(expr, rightPlan.Schema()) && !expression.ExprFromSchema(expr, leftPlan.Schema())
+	})
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
-	return s.newJoinWithEdges(leftNode, rightNode, usedEdges, otherConds), remainOtherConds
+	return s.newJoinWithEdges(leftPlan, rightPlan, usedEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds
 }

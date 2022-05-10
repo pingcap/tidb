@@ -27,29 +27,47 @@ import (
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
-// InnerJoins to construct a join group. This join group is further used to
+// Joins to construct a join group. This join group is further used to
 // construct a new join order based on a reorder algorithm.
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
-// results in a join group {a, b, LeftJoin(c, d)}.
-func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) {
+// results in a join group {a, b, c, d}.
+func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
+	otherConds []expression.Expression, joinTypes []JoinType) {
 	join, isJoin := p.(*LogicalJoin)
-	if !isJoin || join.preferJoinType > uint(0) || join.JoinType != InnerJoin || join.StraightJoin {
-		return []LogicalPlan{p}, nil, nil
+	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
+		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
+		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
+		return []LogicalPlan{p}, nil, nil, nil
+	}
+	if join.JoinType != RightOuterJoin {
+		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes := extractJoinGroup(join.children[0])
+		group = append(group, lhsGroup...)
+		eqEdges = append(eqEdges, lhsEqualConds...)
+		otherConds = append(otherConds, lhsOtherConds...)
+		joinTypes = append(joinTypes, lhsJoinTypes...)
+	} else {
+		group = append(group, join.children[0])
 	}
 
-	lhsGroup, lhsEqualConds, lhsOtherConds := extractJoinGroup(join.children[0])
-	rhsGroup, rhsEqualConds, rhsOtherConds := extractJoinGroup(join.children[1])
+	if join.JoinType != LeftOuterJoin {
+		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes := extractJoinGroup(join.children[1])
+		group = append(group, rhsGroup...)
+		eqEdges = append(eqEdges, rhsEqualConds...)
+		otherConds = append(otherConds, rhsOtherConds...)
+		joinTypes = append(joinTypes, rhsJoinTypes...)
+	} else {
+		group = append(group, join.children[1])
+	}
 
-	group = append(group, lhsGroup...)
-	group = append(group, rhsGroup...)
 	eqEdges = append(eqEdges, join.EqualConditions...)
-	eqEdges = append(eqEdges, lhsEqualConds...)
-	eqEdges = append(eqEdges, rhsEqualConds...)
 	otherConds = append(otherConds, join.OtherConditions...)
-	otherConds = append(otherConds, lhsOtherConds...)
-	otherConds = append(otherConds, rhsOtherConds...)
-	return group, eqEdges, otherConds
+	otherConds = append(otherConds, join.LeftConditions...)
+	otherConds = append(otherConds, join.RightConditions...)
+	for range join.EqualConditions {
+		joinTypes = append(joinTypes, join.JoinType)
+	}
+	return group, eqEdges, otherConds, joinTypes
 }
 
 type joinReOrderSolver struct {
@@ -72,7 +90,8 @@ func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	var err error
-	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
+
+	curJoinGroup, eqEdges, otherConds, joinTypes := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
@@ -85,10 +104,20 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			otherConds: otherConds,
 		}
 		originalSchema := p.Schema()
-		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
+
+		// Not support outer join reorder when using the DP algorithm
+		isSupportDP := true
+		for _, joinType := range joinTypes {
+			if joinType != InnerJoin {
+				isSupportDP = false
+				break
+			}
+		}
+		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 				eqEdges:                        eqEdges,
+				joinTypes:                      joinTypes,
 			}
 			p, err = groupSolver.solve(curJoinGroup, tracer)
 		} else {
@@ -189,10 +218,14 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 	return join
 }
 
-func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) LogicalPlan {
+func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild LogicalPlan,
+	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType) LogicalPlan {
 	newJoin := s.newCartesianJoin(lChild, rChild)
 	newJoin.EqualConditions = eqEdges
 	newJoin.OtherConditions = otherConds
+	newJoin.LeftConditions = leftConds
+	newJoin.RightConditions = rightConds
+	newJoin.JoinType = joinType
 	return newJoin
 }
 
