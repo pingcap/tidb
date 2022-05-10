@@ -72,7 +72,7 @@ type Datum struct {
 	x         interface{} // x hold all other types.
 }
 
-// EmptyDatumSize is the size of empty datum, please update it when change the data structure.
+// EmptyDatumSize is the size of empty datum.
 // 72 = 1 + 1 (byte) + 2 (uint16) + 4 (uint32) + 8 (int64) + 16 (string) + 24 ([]byte) + 16 (interface{})
 const EmptyDatumSize = int64(unsafe.Sizeof(Datum{}))
 

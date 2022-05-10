@@ -48,8 +48,7 @@ type SampleItem struct {
 	Handle kv.Handle
 }
 
-// EmptySampleItemSize is the size of empty SampleItem, please update it when change the data structure.
-// 96 = 72 (datum) + 8 (int) + 16
+// EmptySampleItemSize is the size of empty SampleItem, 96 = 72 (datum) + 8 (int) + 16.
 const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
 // CopySampleItems returns a deep copy of SampleItem slice.

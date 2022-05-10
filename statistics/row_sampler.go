@@ -68,7 +68,7 @@ type ReservoirRowSampleItem struct {
 	Handle  kv.Handle
 }
 
-// EmptyReservoirSampleItemSize (24 + 16 + 8), please update it when change the data struct.
+// EmptyReservoirSampleItemSize = (24 + 16 + 8) now.
 const EmptyReservoirSampleItemSize = int64(unsafe.Sizeof(ReservoirRowSampleItem{}))
 
 // MemUsage returns the memory usage of sample item.
