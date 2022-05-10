@@ -28,15 +28,8 @@ type WindowFuncDesc struct {
 }
 
 // NewWindowFuncDesc creates a window function signature descriptor.
-func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (*WindowFuncDesc, error) {
+func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, skipCheckArgs bool) (*WindowFuncDesc, error) {
 	// if we are in the prepare statement, skip the params check since it's not been initialized.
-	skipCheckArgs := false
-	for _, one := range args {
-		if c, ok := one.(*expression.Constant); ok && c.ParamMarker != nil {
-			skipCheckArgs = true
-		}
-	}
-
 	if !skipCheckArgs {
 		switch strings.ToLower(name) {
 		case ast.WindowFuncNthValue:

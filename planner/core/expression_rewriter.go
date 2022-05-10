@@ -1073,14 +1073,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
-		var (
-			value     expression.Expression
-			needParam bool
-		)
-		if !v.InExecute {
-			needParam = true
-		}
-		value, er.err = expression.ParamMarkerExpression(er.sctx, v, needParam)
+		var value expression.Expression
+		value, er.err = expression.ParamMarkerExpression(er.sctx, v, false)
 		if er.err != nil {
 			return retNode, false
 		}
