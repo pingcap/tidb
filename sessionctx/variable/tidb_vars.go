@@ -633,6 +633,11 @@ const (
 
 	// TiDBQueryLogMaxLen is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
+
+	// TiDBNonTransactionalIgnoreError is used to ignore error in non-transactional DMLs.
+	// When set to false, a non-transactional DML returns when it meets the first error.
+	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
+	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
 )
 
 // TiDB vars that have only global scope
@@ -670,6 +675,8 @@ const (
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
 	// TiDBStatsCacheMemQuota records stats cache quota
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
+	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
+	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 )
 
 // TiDB intentional limits
@@ -845,6 +852,8 @@ const (
 	DefTiDBStatsCacheMemQuota                    = 0
 	MaxTiDBStatsCacheMemQuota                    = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                        = 4096
+	DefTiDBBatchDMLIgnoreError                   = false
+	DefTiDBMemQuotaAnalyze                       = -1
 )
 
 // Process global variables.
@@ -882,4 +891,11 @@ var (
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+)
+
+var (
+	// SetMemQuotaAnalyze is the func registered by global/subglobal tracker to set memory quota.
+	SetMemQuotaAnalyze func(quota int64) = nil
+	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
+	GetMemQuotaAnalyze func() int64 = nil
 )
