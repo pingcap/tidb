@@ -86,36 +86,74 @@ func TestGCS(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, exist)
 
-	checkFilePath := func(stg *gcsStorage) {
-		list := ""
+	checkWalkDir := func(stg *gcsStorage, opt *WalkOption) {
 		var totalSize int64 = 0
-		err = stg.WalkDir(ctx, nil, func(name string, size int64) error {
-			list += name
+		err = stg.WalkDir(ctx, opt, func(name string, size int64) error {
 			totalSize += size
+			// also test can use this path open file
+			_, err := stg.Open(ctx, name)
+			require.NoError(t, err)
 			return nil
 		})
 		require.NoError(t, err)
-		require.Equal(t, "keykey1key2", list)
 		require.Equal(t, int64(42), totalSize)
 	}
-	// test right prefix
-	checkFilePath(stg)
-	// test prefix without slash in new bucket
+	// test right prefix without sub dir opt
 	{
-		gcs2 := &backuppb.GCS{
+		checkWalkDir(stg, nil)
+	}
+
+	// test right prefix with sub dir opt
+	{
+		gcs := &backuppb.GCS{
+			Bucket:          bucketName,
+			Prefix:          "a/", // right prefix is /a/b/
+			StorageClass:    "NEARLINE",
+			PredefinedAcl:   "private",
+			CredentialsBlob: "Fake Credentials",
+		}
+		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+			SendCredentials:  false,
+			CheckPermissions: []Permission{AccessBuckets},
+			HTTPClient:       server.HTTPClient(),
+		})
+		require.NoError(t, err)
+		checkWalkDir(stg, &WalkOption{SubDir: "b/"})
+	}
+
+	// test prefix without slash in new bucket without sub dir opt
+	{
+		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
 			Prefix:          "a/b", // right prefix is "a/b/"
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
 			CredentialsBlob: "Fake Credentials",
 		}
-		stg2, err := newGCSStorage(ctx, gcs2, &ExternalStorageOptions{
+		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
-		checkFilePath(stg2)
+		checkWalkDir(stg, nil)
+	}
+	// test prefix without slash in new bucket with sub dir opt
+	{
+		gcs := &backuppb.GCS{
+			Bucket:          bucketName,
+			Prefix:          "a", // right prefix is "a/b/"
+			StorageClass:    "NEARLINE",
+			PredefinedAcl:   "private",
+			CredentialsBlob: "Fake Credentials",
+		}
+		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+			SendCredentials:  false,
+			CheckPermissions: []Permission{AccessBuckets},
+			HTTPClient:       server.HTTPClient(),
+		})
+		require.NoError(t, err)
+		checkWalkDir(stg, &WalkOption{SubDir: "b/"})
 	}
 
 	// test 1003 files
