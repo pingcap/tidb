@@ -14082,7 +14082,7 @@
         "name": "instance",
         "options": [],
         "query": {
-          "query": "label_values(process_start_time_seconds{k8s_cluster=\"$k8s_cluster\", job=\"tidb\"}, instance)",
+          "query": "label_values(tidb_server_connections{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}, instance)",
           "refId": "quota-instance-Variable-Query"
         },
         "refresh": 1,
