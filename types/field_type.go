@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
-	utilMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -40,7 +40,7 @@ type FieldType = ast.FieldType
 // with a type and other information about field type.
 func NewFieldType(tp byte) *FieldType {
 	charset1, collate1 := DefaultCharsetForType(tp)
-	return NewFieldTypeBuilderP().
+	return NewFieldTypeBuilder().
 		SetType(tp).
 		SetCharset(charset1).
 		SetCollate(collate1).
@@ -53,7 +53,7 @@ func NewFieldType(tp byte) *FieldType {
 // with a type and other information about field type.
 func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
 	coll, _ := charset.GetCollationByName(collation)
-	return NewFieldTypeBuilderP().SetType(tp).SetFlen(length).SetCharset(coll.CharsetName).SetCollate(collation).SetDecimal(UnspecifiedLength).BuildP()
+	return NewFieldTypeBuilder().SetType(tp).SetFlen(length).SetCharset(coll.CharsetName).SetCollate(collation).SetDecimal(UnspecifiedLength).BuildP()
 }
 
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
@@ -221,18 +221,18 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		SetBinChsClnFlag(tp)
 	case int:
 		tp.SetType(mysql.TypeLonglong)
-		tp.SetFlen(utilMath.StrLenOfInt64Fast(int64(x)))
+		tp.SetFlen(mathutil.StrLenOfInt64Fast(int64(x)))
 		tp.SetDecimal(0)
 		SetBinChsClnFlag(tp)
 	case int64:
 		tp.SetType(mysql.TypeLonglong)
-		tp.SetFlen(utilMath.StrLenOfInt64Fast(x))
+		tp.SetFlen(mathutil.StrLenOfInt64Fast(x))
 		tp.SetDecimal(0)
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.SetType(mysql.TypeLonglong)
 		tp.AddFlag(mysql.UnsignedFlag)
-		tp.SetFlen(utilMath.StrLenOfUint64Fast(x))
+		tp.SetFlen(mathutil.StrLenOfUint64Fast(x))
 		tp.SetDecimal(0)
 		SetBinChsClnFlag(tp)
 	case string:

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	math2 "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 func (b *builtinArithmeticMultiplyRealSig) vectorized() bool {
@@ -320,7 +320,7 @@ func (b *builtinArithmeticMinusRealSig) vecEvalReal(input *chunk.Chunk, result *
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if !math2.IsFinite(x[i] - y[i]) {
+		if !mathutil.IsFinite(x[i] - y[i]) {
 			if result.IsNull(i) {
 				continue
 			}
@@ -521,7 +521,7 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(input *chunk.Chunk, result *c
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if !math2.IsFinite(x[i] + y[i]) {
+		if !mathutil.IsFinite(x[i] + y[i]) {
 			if result.IsNull(i) {
 				continue
 			}
