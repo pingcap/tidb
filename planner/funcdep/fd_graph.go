@@ -39,6 +39,11 @@ type fdEdge struct {
 	conditionNC *FastIntSet
 }
 
+type conditionNotNull struct {
+	notNullCols *FastIntSet
+	conditionNC *FastIntSet
+}
+
 // FDSet is the main portal of functional dependency, it stores the relationship between (extended table / physical table)'s
 // columns. For more theory about this design, ref the head comments in the funcdep/doc.go.
 type FDSet struct {
@@ -54,6 +59,11 @@ type FDSet struct {
 	// but we should record {2,3} as not-null down for the convenience of transferring
 	// Lax FD: {1} ~~> {2,3} to strict FD: {1} --> {2,3} with {1} as not-null next time.
 	NotNullCols FastIntSet
+	// after left join, the not-null constraint from inner table or part from inner table with
+	// join predicate should be abandoned because of the null-supplied rows. we also should record
+	// this down, and bring it visible again when there is a null-reject predicate on any of the
+	// inner cols in the future.
+	ncNotNullCols []*conditionNotNull
 	// HashCodeToUniqueID map the expression's hashcode to a statement allocated unique
 	// ID quite like the unique ID bounded with column. It's mainly used to add the expr
 	// to the fdSet as an extended column. <NOT CONCURRENT SAFE FOR NOW>
@@ -228,6 +238,14 @@ func (s *FDSet) AddNCFunctionalDependency(from, to, nc FastIntSet, strict, equiv
 		strict:      strict,
 		equiv:       equiv,
 		conditionNC: &nc,
+	})
+}
+
+// AddNCNotNullCols is to add conditional not null columns to the fdGraph.
+func (s *FDSet) AddNCNotNullCols(originNotNullCols FastIntSet, nullConstraintCols FastIntSet) {
+	s.ncNotNullCols = append(s.ncNotNullCols, &conditionNotNull{
+		&originNotNullCols,
+		&nullConstraintCols,
 	})
 }
 
@@ -524,6 +542,21 @@ func (s *FDSet) EquivalenceCols() (eqs []*FastIntSet) {
 func (s *FDSet) MakeNotNull(notNullCols FastIntSet) {
 	notNullCols.UnionWith(s.NotNullCols)
 	notNullColsSet := s.closureOfEquivalence(notNullCols)
+	// make nc Not Null Cols visible.
+	for i := 0; i < len(s.ncNotNullCols); i++ {
+		cnc := s.ncNotNullCols[i]
+		if cnc.conditionNC.Intersects(notNullColsSet) {
+			// condition satisfied.
+			s.ncNotNullCols = append(s.ncNotNullCols[:i], s.ncNotNullCols[i+1:]...)
+			i--
+			newNotNullColsSet := s.closureOfEquivalence(notNullColsSet.Union(*cnc.notNullCols))
+			if !newNotNullColsSet.Difference(notNullColsSet).IsEmpty() {
+				notNullColsSet = newNotNullColsSet
+				// expand not-null set.
+				i = -1
+			}
+		}
+	}
 	// make nc FD visible.
 	for i := 0; i < len(s.ncEdges); i++ {
 		fd := s.ncEdges[i]
@@ -813,7 +846,46 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 			s.addFunctionalDependency(edge.from, edge.to, false, edge.equiv)
 		}
 	}
+	// handle the ncEdges from inner side before innerFD, because the current join predicate may bring the visibility to some
+	// cond-fds from the inner side. (which should be affected by null-supplied row)
+	// 1: equivalence cond-fd: once the join predicate can bring it visible again, the equivalence FD exists regardless of null-supplied row.
+	// 2: constant null fd: once the join predicate can bring it visible again, only the part of constant null FD exists regardless of null-supplied row.
+	for i := 0; i < len(innerFDs.ncEdges); i++ {
+		fd := innerFDs.ncEdges[i]
+		if fd.conditionNC != nil && fd.conditionNC.Intersects(filterFDs.NotNullCols) {
+			// condition satisfied.
+			innerFDs.ncEdges = append(innerFDs.ncEdges[:i], innerFDs.ncEdges[i+1:]...)
+			i--
+			if fd.isConstant() {
+				// for constant FD
+				// 1: column = definite value; add cond-fd with a NEW null-reject column set. (not in not-null columns join predicate)
+				// 2: column is null; add constant fd directly.
+				ncnColSet := FastIntSet{}
+				for _, ncn := range innerFDs.ncNotNullCols {
+					// use this to judge whether col in the constant FD here is original null value or some definite.
+					if ncn.conditionNC.Intersects(filterFDs.NotNullCols) {
+						ncnColSet.UnionWith(*ncn.notNullCols)
+					}
+				}
+				constantNull := fd.to.Difference(filterFDs.NotNullCols.Union(ncnColSet))
+				s.AddConstants(constantNull)
+				s.AddNCFunctionalDependency(fd.from, fd.to.Difference(constantNull), innerCols, fd.strict, fd.equiv)
+				continue
+			} else if fd.equiv {
+				// for equivalence FD
+				// since the null-supplied rows won't affect the equivalence, so add it directly.
+				s.AddEquivalence(fd.from, fd.to)
+				continue
+			} else if !fd.strict {
+				// for the lax FD theoretically, kept even with null-supplied rows.
+				s.addFunctionalDependency(fd.from, fd.to, fd.strict, fd.equiv)
+			}
+			// the all others: strict FD theoretically lost because of null-supplied rows.
+		}
+	}
+	// All that left ncEdges are preserved to s waiting for being visible again.
 	s.ncEdges = append(s.ncEdges, innerFDs.ncEdges...)
+	s.ncNotNullCols = append(s.ncNotNullCols, innerFDs.ncNotNullCols...)
 
 	determinantOuterCols := filterFDs.AllCols().Intersection(outerCols)
 	for _, edge := range filterFDs.fdEdges {
@@ -886,7 +958,9 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 	}
 
 	// merge the not-null-cols/registered-map from both side together.
-	s.NotNullCols.UnionWith(filterFDs.NotNullCols)
+	s.AddNCNotNullCols(innerFDs.NotNullCols.Copy(), innerCols.Copy())
+	s.AddNCNotNullCols(filterFDs.NotNullCols.Intersection(innerCols), innerCols.Copy())
+	s.NotNullCols.UnionWith(filterFDs.NotNullCols.Intersection(outerCols))
 	// inner cols can be nullable since then.
 	s.NotNullCols.DifferenceWith(innerCols)
 	if s.HashCodeToUniqueID == nil {

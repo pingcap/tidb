@@ -178,6 +178,15 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3 join (customer1 c1 left join customer2 c2 on c1.a=1) on c3.b=1 where c2.pk in (7,9) group by c2.b;")
 	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  join (customer1 c1 left join customer2 c2 on c1.a=1) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
 	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  join (customer1 c1 left join customer2 c2 on c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+	// inner cond-fd can be visible by outer left join predicate even without selection. (only for equivalence and constant null)
+	tk.MustQuery("select c1.a, count(*) from customer2 c3  left join (customer1 c1 left join customer2 c2 on c1.a=c2.b) on c3.b=c2.b group by c2.b;")
+	tk.MustExec("alter table customer2 add column c int;")
+	err = tk.ExecToErr("select c1.a, c2.c, count(*) from customer2 c3  left join (customer1 c1 left join customer2 c2 on c1.a=c2.b and c2.c=1) on c3.b=c2.b group by c2.b;")
+	require.NotNil(t, err)
+	// even predicate c3.b=c2.b can bring cond-fd c1.a=c2.b to light, while c2.c=1 are still invisible because of null-supplied rows.
+	require.Equal(t, err.Error(), "[planner:1055]Expression #2 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.c2.c' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	// indeed, predicate c3.b=c2.b can bring both cond-fd c1.a=c2.b and c2.c=1 to light even with null-supplied rows.
+	tk.MustQuery("select c1.a, c2.c, count(*) from customer2 c3  left join (customer1 c1 left join customer2 c2 on c1.a=c2.b and c2.c is null) on c3.b=c2.b group by c2.b;")
 
 	tk.MustExec("drop view if exists customer")
 	// this left join can extend left pk to all cols.
@@ -333,5 +342,4 @@ func TestOnlyFullGroupByRefactorLeftJoinCases(t *testing.T) {
 	tk.MustQuery("select c1.a, c2.b, count(*) from customer1 c1 left join customer2 c2 on (c1.a=1) where c2.pk in (7,9) group by c2.b")
 
 	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=1 and c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
-
 }

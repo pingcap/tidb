@@ -83,10 +83,14 @@ package funcdep
 // left side couldn't be guaranteed to be definite or null. like a=2 here. Let's collect all of this
 // on-condition FD down, correspondent with a null-constraints column set, name it as Cond-FD.
 //
-// lax equivalencies are theoretically possible, but it won't be constructed from an outer join unless
-// t already has a constant FD in column `a` here before outer join take a run. So the lax equivalence
-// has some pre-conditions as you see, and it couldn't cover the case shown above. Let us do it like a
-// Cond-FD does.
+// lax equivalencies are theoretically possible, take an example here {a} ~= {c} with 1==1, 1~=NULL,
+// 2~=NULL. From the definition, we can strengthen a lax EQ by null-reject both sides of the edge. while
+// From what we shown here, we only have to check the any one to be null-reject from {c,d,e} side. Besides,
+// constant FD of {} -> {b} can also seen as a kind of condition FD waiting for null-reject of any one
+// from {c,d,e}.
+//
+// For the sake of handing this kind of condition FD, we introduce what we mentioned above as Cond-FD,
+// which can been as an carrier of lax-EQ and lax-Constant. Let us do it like a Cond-FD does.
 //
 // The FD constructed from the join predicate should be considered as Cond-FD. Here like equivalence of
 // {a} == {c} and constant FD {b} = 1 (if the join condition is e=1, it's here too). We can say that for
@@ -135,7 +139,7 @@ package funcdep
 //
 // Provide that the result of the first left join is like:
 //  left join on (a=c) res:
-//   a     b    c     e     e
+//   a     b    c     d     e
 //  ---------------------------
 //   1     2    1     1     1
 //   null  2  null  null  null
@@ -148,11 +152,11 @@ package funcdep
 //   3   3    null null null null null
 //
 //  Even like that, the case of old Cond-FD and new Cond-FD are existed too. Seems the null-constraint column set of
-//  old Cond-FD {c,d,e} can be expanded as {a,b,c,d,e} visually, but we couldn't derive the inference of the join predicate
-//  (e=a). The null-reject of column `a` couldn't bring the visibility to the old Cond-FD theoretically, it just happened
-//  to refuse that row with a null value in column a.
+//  old Cond-FD {c,d,e} can be expanded as {a,b,c,d,e} visually? Actually we couldn't derive it from the join predicate
+//  (e=a). The null-reject of column `a` couldn't bring the visibility to the old Cond-FD with {c,d,e} theoretically,
+//  it just happened to refuse that row with a null value in column a, making it seem like we can expand {c,d,e} as {a,b,c,d,e}.
 //
-// Think about adding one more row in first left join result.
+//  Think about adding one more row in first left join result.
 //
 //  left join on (a=c) res:
 //   a     b    c     d     e
@@ -168,16 +172,30 @@ package funcdep
 //   2   2    null null null null null
 //   3   3    3     3   null null null
 //
-//  Conclusion:
 //  As you see that's right we couldn't derive the inference of the join predicate (e=a) to expand old Cond-FD's nc
-//  {c,d,e} as {a,b,c,d,e}. So the rule for Cond-FD is quite simple, just keep the old ncEdge from right, appending
-//  the new ncEdges in current left join.
+//  {c,d,e} as {a,b,c,d,e}. The null-reject of column `a` couldn't bring the visibility to the old Cond-FD with {c,d,e} theoretically.
 //
+//  But how about the join predicate of current left join is {e=c}?
+//
+//  THEN: left join on (e=c) res:
+//   e   f    a     b     c    d    e
+//  ---------------------------------
+//   1   2    1     2     1    1    1
+//   2   2    null null null null null
+//   3   3    null null null null null
+//
+//  That's true! The null-reject of column `c` could bring the visibility to the old Cond-FD with {c,d,e}, make the Cond-FD visible
+//  again and then we can treat it as a sort of inner FD as well.
+//
+//  Conclusion:
 //  If the first left join result is in the outer side of the second left join, just keep the ncEdge from left as well,
 //  appending the new ncEdges in current left join.
 //
-//  For a inner join, both side of the join result won't be appended with null-supplied rows, so we can simply collect
-//  the ncEdges from both join side together.
+//  If the first left join result is in the inner side of the second left join, take care of that current join predicate may
+//  bring visibility to the inner Cond-FD before our appending the new ncEdges in current left join.
+//
+//  For a inner join, both side of the join result won't be appended with null-supplied rows, so we can simply collect the ncEdges
+//  from both join side together.
 //
 // NOTE 3.
 // Under left outer join Q = S * T on (P)
@@ -213,6 +231,6 @@ package funcdep
 // 2: Any constant functional dependency f: {} -> {y} that held in T may be decomposed to multi strict FD first:
 //       1: if y1 ⊆ y and y1 are null constant (come from y1 is null), then constant FD {} -> {y1} saved.
 //       2: for other y, a cond-fd are preserved with null-constraint cols as T.
-// 3: Any constant function dependency f: {} -> {y} that produced from predicate P:
+// 3: Any constant function dependency f: {} -> {y} that produced from predicate P, decomposing to multi strict FD first:
 //       1: for part of y ⊆ T, do it like what 2 says.
 //       2: for part of y ⊆ S, do it like a cond-fd with null-constraint cols as T.
