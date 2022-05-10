@@ -375,4 +375,11 @@ var (
 
 	// ErrBinlogUnsafeSystemFunction when use a system function that may return a different value on the slave.
 	ErrBinlogUnsafeSystemFunction = ClassDDL.NewStd(mysql.ErrBinlogUnsafeSystemFunction)
+
+	// ErrDDLJobNotFound indicates the job id was not found.
+	ErrDDLJobNotFound = ClassDDL.NewStd(mysql.ErrDDLJobNotFound)
+	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
+	ErrCancelFinishedDDLJob = ClassDDL.NewStd(mysql.ErrCancelFinishedDDLJob)
+	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
+	ErrCannotCancelDDLJob = ClassDDL.NewStd(mysql.ErrCannotCancelDDLJob)
 )

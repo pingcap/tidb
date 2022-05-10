@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/admin"
 )
 
 var (
@@ -50,11 +49,11 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
-	var ddlInfo *admin.DDLInfo
+	var ddlInfo *Info
 
 	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
-		ddlInfo, err1 = admin.GetDDLInfo(txn)
+		ddlInfo, err1 = GetDDLInfo(txn)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
