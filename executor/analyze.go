@@ -1001,8 +1001,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for i := 0; i < l; i++ {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
-	rootCollectorSize := rootRowCollector.Base().MemSize
-	e.memTracker.Consume(rootCollectorSize)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
@@ -1366,7 +1364,6 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 	for i := 0; i < l; i++ {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
-	e.memTracker.Consume(retCollector.Base().MemSize)
 	for {
 		data, ok := <-taskCh
 		if !ok {
