@@ -770,14 +770,17 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustGetErrCode("alter table t charset utf8 collate utf8_bin collate utf8mb4_bin collate utf8_bin;", errno.ErrCollationCharsetMismatch)
 
 	tk.MustExec("alter table t charset utf8")
+	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), index i(a)) charset latin1 collate latin1_bin")
 	tk.MustExec("alter table t charset utf8mb4")
+	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), index i(a)) charset latin1 collate latin1_bin")
 	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("admin check table t")
 
 	tk.MustGetErrCode("alter table t charset latin1 charset utf8 charset utf8mb4 collate utf8_bin;", errno.ErrConflictingDeclarations)
 

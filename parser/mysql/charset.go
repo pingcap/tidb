@@ -593,7 +593,7 @@ const (
 	MaxBytesOfCharacter = 4
 )
 
-// IsUTF8Charset checks if charset is utf8, utf8mb4 or latin1
+// IsUTF8Charset checks if charset is utf8, utf8mb4 or latin1.
 func IsUTF8Charset(charset string) bool {
 	return charset == UTF8Charset || charset == UTF8MB4Charset || charset == Latin1Charset
 }
