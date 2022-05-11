@@ -28,6 +28,15 @@ var (
 			Name:      "panic_total",
 			Help:      "Counter of panic.",
 		}, []string{LblType})
+
+	// MemoryUsage measures the usage gauge of memory.
+	MemoryUsage = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "memory_usage",
+			Help:      "Memory Usage",
+		}, []string{LblType})
 )
 
 // metrics labels.
@@ -166,6 +175,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ReadFromTableCacheCounter)
 	prometheus.MustRegister(LoadTableCacheDurationHistogram)
 	prometheus.MustRegister(NonTransactionalDeleteCount)
+	prometheus.MustRegister(MemoryUsage)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

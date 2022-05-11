@@ -2802,6 +2802,12 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().GetEnableIndexMerge(), IsTrue)
 
+	// Test STRAIGHT_JOIN hint
+	tk.MustExec("select /*+ straight_join() */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.StraightJoinOrder, IsTrue)
+	tk.MustExec("select /*+ straight_join(), straight_join() */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+
 	// Test USE_TOJA hint
 	tk.Se.GetSessionVars().SetAllowInSubqToJoinAndAgg(true)
 	tk.MustExec("select /*+ USE_TOJA(false) */ 1;")
