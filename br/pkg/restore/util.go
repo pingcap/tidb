@@ -186,7 +186,7 @@ func GetRewriteRuleOfTable(
 	return &RewriteRules{Data: dataRules}
 }
 
-// GetSSTMetaFromFile compares the keys in file, region and rewrite rules, then returns a sst conn.
+// GetSSTMetaFromFile compares the kvs in file, region and rewrite rules, then returns a sst conn.
 // The range of the returned sst meta is [regionRule.NewKeyPrefix, append(regionRule.NewKeyPrefix, 0xff)].
 func GetSSTMetaFromFile(
 	id []byte,
@@ -202,7 +202,7 @@ func GetSSTMetaFromFile(
 		cfName = writeCFName
 	}
 	// Find the overlapped part between the file and the region.
-	// Here we rewrites the keys to compare with the keys of the region.
+	// Here we rewrites the kvs to compare with the kvs of the region.
 	rangeStart := regionRule.GetNewKeyPrefix()
 	//  rangeStart = max(rangeStart, region.StartKey)
 	if bytes.Compare(rangeStart, region.GetStartKey()) < 0 {
@@ -349,10 +349,10 @@ func GoValidateFileRanges(
 					zap.Int("File(write)", stat.TotalWriteCFFile),
 					zap.Int("File(default)", stat.TotalDefaultCFFile),
 					zap.Int("Region(total)", stat.TotalRegions),
-					zap.Int("Regoin(keys avg)", stat.RegionKeysAvg),
+					zap.Int("Regoin(kvs avg)", stat.RegionKeysAvg),
 					zap.Int("Region(bytes avg)", stat.RegionBytesAvg),
 					zap.Int("Merged(regions)", stat.MergedRegions),
-					zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
+					zap.Int("Merged(kvs avg)", stat.MergedRegionKeysAvg),
 					zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
 
 				tableWithRange := TableWithRange{
@@ -448,6 +448,14 @@ func matchOldPrefix(key []byte, rewriteRules *RewriteRules) *import_sstpb.Rewrit
 		}
 	}
 	return nil
+}
+
+func SplitKeyTS(key []byte) ([]byte, uint64, error) {
+	if len(key) < 8 {
+		return nil, 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"the length of key is smaller than 8, key:%s", redact.Key(key))
+	}
+	return codec.DecodeUintDesc(key[len(key)-8:])
 }
 
 func GetKeyTS(key []byte) (uint64, error) {

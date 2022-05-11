@@ -4,7 +4,9 @@ package restore
 
 import (
 	"context"
+	"reflect"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/tikv/client-go/v2/config"
@@ -31,14 +33,35 @@ func NewRawkvClient(ctx context.Context, pdAddrs []string, security config.Secur
 		pd.WithMaxErrorRetry(5))
 }
 
+func string2Bytes(s string) []byte {
+	sh := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	bh := reflect.SliceHeader{
+		Data: sh.Data,
+		Len:  sh.Len,
+		Cap:  sh.Len,
+	}
+	return *(*[]byte)(unsafe.Pointer(&bh))
+}
+
+func bytes2String(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
+
+type KVPair struct {
+	ts    uint64
+	key   []byte
+	value []byte
+}
+
 // RawKVBatchClient is used to put raw kv-entry into tikv.
 // Note: it is not thread safe.
 type RawKVBatchClient struct {
-	cf          string
-	cap         int
-	size        int
-	keys        [][]byte
-	values      [][]byte
+	cf   string
+	cap  int
+	size int
+	// use map to remove duplicate entry, cause duplicate entry will make tikv panic when resolved_ts enabled.
+	// see https://github.com/tikv/tikv/blob/a401f78bc86f7e6ea6a55ad9f453ae31be835b55/components/resolved_ts/src/cmd.rs#L204
+	kvs         map[string]KVPair
 	rawkvClient RawkvClient
 }
 
@@ -49,8 +72,7 @@ func NewRawKVBatchClient(
 ) *RawKVBatchClient {
 	return &RawKVBatchClient{
 		cap:         batchCount,
-		keys:        make([][]byte, 0, batchCount),
-		values:      make([][]byte, 0, batchCount),
+		kvs:         make(map[string]KVPair),
 		rawkvClient: rawkvClient,
 	}
 }
@@ -67,12 +89,31 @@ func (c *RawKVBatchClient) SetColumnFamily(columnFamily string) {
 
 // Put puts (key, value) into buffer justly, wait for batch write if the buffer is full.
 func (c *RawKVBatchClient) Put(ctx context.Context, key, value []byte) error {
-	c.keys = append(c.keys, key)
-	c.values = append(c.values, value)
+	k, ts, err := SplitKeyTS(key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	sk := bytes2String(k)
+	if v, ok := c.kvs[sk]; ok {
+		if v.ts < ts {
+			c.kvs[sk] = KVPair{ts, key, value}
+			c.size++
+		}
+	} else {
+		c.kvs[sk] = KVPair{ts, key, value}
+		c.size++
+	}
 	c.size++
 
 	if c.size >= c.cap {
-		err := c.rawkvClient.BatchPut(ctx, c.keys, c.values, rawkv.SetColumnFamily(c.cf))
+		keys := make([][]byte, 0, len(c.kvs))
+		values := make([][]byte, 0, len(c.kvs))
+		for _, kv := range c.kvs {
+			keys = append(keys, kv.key)
+			values = append(values, kv.value)
+		}
+		err := c.rawkvClient.BatchPut(ctx, keys, values, rawkv.SetColumnFamily(c.cf))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -85,7 +126,13 @@ func (c *RawKVBatchClient) Put(ctx context.Context, key, value []byte) error {
 // PutRest writes the rest pairs (key, values) into tikv.
 func (c *RawKVBatchClient) PutRest(ctx context.Context) error {
 	if c.size > 0 {
-		err := c.rawkvClient.BatchPut(ctx, c.keys, c.values, rawkv.SetColumnFamily(c.cf))
+		keys := make([][]byte, 0, len(c.kvs))
+		values := make([][]byte, 0, len(c.kvs))
+		for _, kv := range c.kvs {
+			keys = append(keys, kv.key)
+			values = append(values, kv.value)
+		}
+		err := c.rawkvClient.BatchPut(ctx, keys, values, rawkv.SetColumnFamily(c.cf))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -96,7 +143,6 @@ func (c *RawKVBatchClient) PutRest(ctx context.Context) error {
 }
 
 func (c *RawKVBatchClient) reset() {
-	c.keys = make([][]byte, 0, c.cap)
-	c.values = make([][]byte, 0, c.cap)
+	c.kvs = make(map[string]KVPair)
 	c.size = 0
 }
