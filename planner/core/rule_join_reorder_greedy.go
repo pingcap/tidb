@@ -39,7 +39,12 @@ type joinReorderGreedySolver struct {
 //
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
-func (s *joinReorderGreedySolver) solve(tracer *joinReorderTrace) (LogicalPlan, error) {
+func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
+	var err error
+	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans, tracer)
+	if err != nil {
+		return nil, err
+	}
 	// Sort plans by cost
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost

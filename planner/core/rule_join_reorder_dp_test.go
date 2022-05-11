@@ -190,8 +190,6 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 		ctx:     ctx,
 		eqEdges: eqEdges,
 	}
-	err := baseGroupSolver.deriveStatsAndGenerateJRNodeGroup(joinGroups, nil)
-	require.NoError(t, err)
 	solver := &joinReorderDPSolver{
 		baseSingleGroupJoinOrderSolver: baseGroupSolver,
 		newJoin:                        newMockJoin(ctx, statsMap),
@@ -214,14 +212,11 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	joinGroup = append(joinGroup, newDataSource(ctx, "b", 100))
 	joinGroup = append(joinGroup, newDataSource(ctx, "c", 100))
 	joinGroup = append(joinGroup, newDataSource(ctx, "d", 100))
-	baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-		ctx: ctx,
-	}
-	err := baseGroupSolver.deriveStatsAndGenerateJRNodeGroup(joinGroup, nil)
-	require.NoError(t, err)
 	solver := &joinReorderDPSolver{
-		baseSingleGroupJoinOrderSolver: baseGroupSolver,
-		newJoin:                        newMockJoin(ctx, statsMap),
+		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
+			ctx: ctx,
+		},
+		newJoin: newMockJoin(ctx, statsMap),
 	}
 	result, err := solver.solve(joinGroup, nil)
 	require.NoError(t, err)

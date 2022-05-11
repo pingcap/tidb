@@ -106,10 +106,6 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			eqEdges:    eqEdges,
 			joinTypes:  joinTypes,
 		}
-		err = baseGroupSolver.deriveStatsAndGenerateJRNodeGroup(curJoinGroup, tracer)
-		if err != nil {
-			return nil, err
-		}
 
 		originalSchema := p.Schema()
 
@@ -125,7 +121,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
-			p, err = groupSolver.solve(tracer)
+			p, err = groupSolver.solve(curJoinGroup, tracer)
 		} else {
 			dpSolver := &joinReorderDPSolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
@@ -178,22 +174,22 @@ type baseSingleGroupJoinOrderSolver struct {
 	joinTypes    []JoinType
 }
 
-// deriveStatsAndGenerateJRNodeGroup used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
-func (s *baseSingleGroupJoinOrderSolver) deriveStatsAndGenerateJRNodeGroup(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) error {
-	s.curJoinGroup = make([]*jrNode, 0, len(joinNodePlans))
+// generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
+func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) ([]*jrNode, error) {
+	joinGroup := make([]*jrNode, 0, len(joinNodePlans))
 	for _, node := range joinNodePlans {
 		_, err := node.recursiveDeriveStats(nil)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		cost := s.baseNodeCumCost(node)
-		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
+		joinGroup = append(joinGroup, &jrNode{
 			p:       node,
 			cumCost: cost,
 		})
 		tracer.appendLogicalJoinCost(node, cost)
 	}
-	return nil
+	return joinGroup, nil
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
