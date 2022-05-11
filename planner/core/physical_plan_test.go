@@ -279,7 +279,8 @@ func TestDAGPlanTopN(t *testing.T) {
 }
 
 func assertSameHints(t *testing.T, expected, actual []*ast.TableOptimizerHint) {
-	var expectedStr, actualStr []string
+	expectedStr := make([]string, 0, len(expected))
+	actualStr := make([]string, 0, len(actual))
 	for _, h := range expected {
 		expectedStr = append(expectedStr, hint.RestoreTableOptimizerHint(h))
 	}

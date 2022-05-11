@@ -224,6 +224,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 	tk.MustExec("set @a = 1;")
 	tk.MustExec("execute stmt using @a;")
 	planTree = getPlanTree()
+	require.Empty(t, planTree)
 
 	tk.MustExec("insert into t1 values (1,1,1), (2,2,2);")
 	planTree = getPlanTree()
