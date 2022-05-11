@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/sessiontxn"
 	"math"
 	"sort"
 	"strconv"
@@ -1352,6 +1353,9 @@ func GetConcurrentDDLReorgHandle(job *model.Job, sess *session) (element *meta.E
 		physicalTableID = rows[0].GetInt64(2)
 		return nil
 	})
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
 	element = &meta.Element{
 		ID:      id,
 		TypeKey: tp,
@@ -1514,11 +1518,18 @@ func newSession(s sessionctx.Context) *session {
 }
 
 func (s *session) begin() error {
-	return s.execute(context.Background(), "begin")
+	err := sessiontxn.NewTxn(context.Background(), s.s)
+	if err != nil {
+		return err
+	}
+	s.s.GetSessionVars().SetInTxn(true)
+	return nil
 }
 
 func (s *session) commit() error {
-	return s.execute(context.Background(), "commit")
+	s.s.GetSessionVars().SetInTxn(false)
+	s.s.StmtCommit()
+	return s.s.CommitTxn(context.Background())
 }
 
 func (s *session) txn() (kv.Transaction, error) {
@@ -1526,6 +1537,7 @@ func (s *session) txn() (kv.Transaction, error) {
 }
 
 func (s *session) rollback() {
+	s.s.StmtRollback()
 	s.s.RollbackTxn(context.Background())
 }
 

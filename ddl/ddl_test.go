@@ -663,7 +663,7 @@ func TestReorg(t *testing.T) {
 			})
 			require.NoError(t, err)
 			job.SnapshotVer = uint64(1)
-			err = info.UpdateReorgMeta(info.StartKey)
+			err = info.UpdateReorgMeta(info.StartKey, nil)
 			require.NoError(t, err)
 			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)

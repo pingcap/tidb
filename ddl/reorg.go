@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"sync"
@@ -621,7 +620,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = wk.UpdateDDLReorgHandle(t, job, start, end, pid, elements[0])
+		err = UpdateDDLReorgHandle(t, wk.sess, job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -690,7 +689,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 			zap.String("startHandle", tryDecodeToHandleString(start)),
 			zap.String("endHandle", tryDecodeToHandleString(end)))
 
-		err = wk.UpdateDDLReorgHandle(t, job, start, end, pid, elements[0])
+		err = UpdateDDLReorgHandle(t, wk.sess, job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -723,17 +722,31 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 	return &info, nil
 }
 
-func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
+func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) error {
 	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
 
-	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
-	})
+	se, err := pool.get()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	return nil
+	defer pool.put(se)
+
+	sess := newSession(se)
+	err = sess.begin()
+	if err != nil {
+		return err
+	}
+
+	txn, err := sess.txn()
+	if err != nil {
+		return err
+	}
+
+	err = UpdateDDLReorgHandle(meta.NewMeta(txn), sess, r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
+	if err != nil {
+		return err
+	}
+	return sess.commit()
 }
