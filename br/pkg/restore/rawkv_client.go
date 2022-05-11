@@ -4,13 +4,12 @@ package restore
 
 import (
 	"context"
-	"time"
-	"unsafe"
-
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
+	"time"
 )
 
 // RawkvClient is the interface for rawkv.client
@@ -32,10 +31,6 @@ func NewRawkvClient(ctx context.Context, pdAddrs []string, security config.Secur
 		pd.WithMaxErrorRetry(5))
 }
 
-func bytes2String(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
-}
-
 type KVPair struct {
 	ts    uint64
 	key   []byte
@@ -50,7 +45,7 @@ type RawKVBatchClient struct {
 	size int
 	// use map to remove duplicate entry, cause duplicate entry will make tikv panic when resolved_ts enabled.
 	// see https://github.com/tikv/tikv/blob/a401f78bc86f7e6ea6a55ad9f453ae31be835b55/components/resolved_ts/src/cmd.rs#L204
-	kvs         map[string]KVPair
+	kvs         map[hack.MutableString]KVPair
 	rawkvClient RawkvClient
 }
 
@@ -61,7 +56,7 @@ func NewRawKVBatchClient(
 ) *RawKVBatchClient {
 	return &RawKVBatchClient{
 		cap:         batchCount,
-		kvs:         make(map[string]KVPair),
+		kvs:         make(map[hack.MutableString]KVPair),
 		rawkvClient: rawkvClient,
 	}
 }
@@ -83,7 +78,7 @@ func (c *RawKVBatchClient) Put(ctx context.Context, key, value []byte) error {
 		return errors.Trace(err)
 	}
 
-	sk := bytes2String(k)
+	sk := hack.String(k)
 	if v, ok := c.kvs[sk]; ok {
 		if v.ts < ts {
 			c.kvs[sk] = KVPair{ts, key, value}
@@ -130,6 +125,6 @@ func (c *RawKVBatchClient) PutRest(ctx context.Context) error {
 }
 
 func (c *RawKVBatchClient) reset() {
-	c.kvs = make(map[string]KVPair)
+	c.kvs = make(map[hack.MutableString]KVPair)
 	c.size = 0
 }
