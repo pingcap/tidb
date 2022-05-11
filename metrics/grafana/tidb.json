@@ -1957,6 +1957,13 @@
               "interval": "",
               "legendFormat": "GCTrigger-{{instance}}",
               "refId": "G"
+            },
+            {
+              "expr": "tidb_server_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "{{type}}-{{instance}}",
+              "refId": "H"
             }
           ],
           "thresholds": [],
@@ -4112,7 +4119,7 @@
           "reverseYBuckets": false,
           "targets": [
             {
-              "expr": "sum(increase(tidb_tikvclient_txn_regions_num_bucket[1m])) by (le)",
+              "expr": "sum(increase(tidb_tikvclient_txn_regions_num_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"2pc_prewrite\"}[1m])) by (le)",
               "format": "heatmap",
               "intervalFactor": 2,
               "legendFormat": "{{le}}",

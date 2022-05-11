@@ -1017,6 +1017,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInconsistentIndexedValue:      mysql.Message("writing inconsistent data in table: %s, index: %s, col: %s, indexed-value:{%s} != record-value:{%s}", []int{3, 4}),
 	ErrAssertionFailed:               mysql.Message("assertion failed: key: %s, assertion: %s, start_ts: %v, existing start ts: %v, existing commit ts: %v", []int{0}),
 	ErrInstanceScope:                 mysql.Message("modifying %s will require SET GLOBAL in a future version of TiDB", nil),
+	ErrNonTransactionalJobFailure:    mysql.Message("non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v", []int{2, 3, 4}),
 	ErrAutoIncrementOverflow:         mysql.Message("AUTO_INCREMENT has reached the maximum value limitation", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
@@ -1049,6 +1050,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLockExpire:                          mysql.Message("TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction", nil),
 	ErrTableOptionUnionUnsupported:         mysql.Message("CREATE/ALTER table with union option is not supported", nil),
 	ErrTableOptionInsertMethodUnsupported:  mysql.Message("CREATE/ALTER table with insert method option is not supported", nil),
+	ErrUserLockDeadlock:                    mysql.Message("Deadlock found when trying to get user-level lock; try rolling back transaction/releasing locks and restarting lock acquisition.", nil),
+	ErrUserLockWrongName:                   mysql.Message("Incorrect user-level lock name '%s'.", nil),
 
 	ErrBRIEBackupFailed:  mysql.Message("Backup failed: %s", nil),
 	ErrBRIERestoreFailed: mysql.Message("Restore failed: %s", nil),

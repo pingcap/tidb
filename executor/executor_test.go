@@ -30,6 +30,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	error2 "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -59,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
@@ -1959,7 +1960,7 @@ func TestCheckIndex(t *testing.T) {
 	// table     data (handle, data): (1, 10), (2, 20)
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
-	require.NoError(t, ctx.NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	_, err = tb.AddRecord(ctx, recordVal1)
 	require.NoError(t, err)
 	_, err = tb.AddRecord(ctx, recordVal2)
@@ -3154,7 +3155,7 @@ func TestIssue19148(t *testing.T) {
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	require.Zero(t, tblInfo.Meta().Columns[0].Flag)
+	require.Zero(t, tblInfo.Meta().Columns[0].GetFlag())
 }
 
 func TestIssue19667(t *testing.T) {
@@ -3467,7 +3468,6 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalShuffle{},
 		&plannercore.PhysicalUnionAll{},
 	}
-	executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, math.MaxUint64, false, "global")
 
 	opsNeedsCoveredMask := uint64(1<<len(opsNeedsCovered) - 1)
 	opsAlreadyCoveredMask := uint64(0)
@@ -3497,8 +3497,13 @@ func TestUnreasonablyClose(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tc)
 		stmt, err := p.ParseOneStmt(tc, "", "")
 		require.NoError(t, err, comment)
-		err = tk.Session().NewTxn(context.Background())
+		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err, comment)
+
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO())
+		require.NoError(t, err, comment)
+
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
 
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NotNil(t, p)
@@ -3615,7 +3620,7 @@ func TestOOMPanicAction(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b double);")
 	tk.MustExec("insert into t values (1,1)")
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -5527,7 +5532,7 @@ func TestAdmin(t *testing.T) {
 	require.Equal(t, 6, row.Len())
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	ddlInfo, err := admin.GetDDLInfo(txn)
+	ddlInfo, err := ddl.GetDDLInfo(txn)
 	require.NoError(t, err)
 	require.Equal(t, ddlInfo.SchemaVer, row.GetInt64(0))
 	// TODO: Pass this test.
@@ -5555,7 +5560,7 @@ func TestAdmin(t *testing.T) {
 	require.Equal(t, 12, row.Len())
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
 	require.Greater(t, len(historyJobs), 1)
 	require.Greater(t, len(row.GetString(1)), 0)
 	require.NoError(t, err)
@@ -5580,7 +5585,7 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJobs, err = admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	historyJobs, err = ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
 	require.NoError(t, err)
@@ -5644,7 +5649,7 @@ func TestAdmin(t *testing.T) {
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err = admin.GetHistoryDDLJobs(txn, 20)
+	historyJobs, err = ddl.GetHistoryDDLJobs(txn, 20)
 	require.NoError(t, err)
 
 	// Split region for history ddl job queues.
@@ -5653,7 +5658,7 @@ func TestAdmin(t *testing.T) {
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
 	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
-	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
+	historyJobs2, err := ddl.GetHistoryDDLJobs(txn, 20)
 	require.NoError(t, err)
 	require.Equal(t, historyJobs2, historyJobs)
 }
@@ -5924,7 +5929,7 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int as(-a))")
 	tk.MustExec("insert into t(a) values(1), (3), (7)")
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -5938,4 +5943,40 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	tk.MustMatchErrMsg("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)", "Out Of Memory Quota!.*")
 	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
 	tk.MustQuery("select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )'").Check(testkit.Rows("Update"))
+}
+
+func TestIsFastPlan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, a int)")
+
+	cases := []struct {
+		sql        string
+		isFastPlan bool
+	}{
+		{"select a from t where id=1", true},
+		{"select a+id from t where id=1", true},
+		{"select 1", true},
+		{"select @@autocommit", true},
+		{"set @@autocommit=1", true},
+		{"set @a=1", true},
+		{"select * from t where a=1", false},
+		{"select * from t", false},
+	}
+
+	for _, ca := range cases {
+		if strings.HasPrefix(ca.sql, "select") {
+			tk.MustQuery(ca.sql)
+		} else {
+			tk.MustExec(ca.sql)
+		}
+		info := tk.Session().ShowProcess()
+		require.NotNil(t, info)
+		p, ok := info.Plan.(plannercore.Plan)
+		require.True(t, ok)
+		ok = executor.IsFastPlan(p)
+		require.Equal(t, ca.isFastPlan, ok)
+	}
 }

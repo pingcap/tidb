@@ -326,6 +326,11 @@ error = '''
 init meta manager error
 '''
 
+["Lightning:KV:EpochNotMatch"]
+error = '''
+epoch not match
+'''
+
 ["Lightning:KV:ErrCheckKVVersion"]
 error = '''
 check tikv version error
@@ -339,6 +344,21 @@ check multi-ingest support error
 ["Lightning:KV:ErrCreateKVClient"]
 error = '''
 create kv client error
+'''
+
+["Lightning:KV:NotLeader"]
+error = '''
+not leader
+'''
+
+["Lightning:KV:RegionNotFound"]
+error = '''
+region not found
+'''
+
+["Lightning:KV:ServerIsBusy"]
+error = '''
+server is busy
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
@@ -499,21 +519,6 @@ TiDB admin check table failed.
 ["admin:8223"]
 error = '''
 data inconsistency in table: %s, index: %s, handle: %s, index-values:%#v != record-values:%#v
-'''
-
-["admin:8224"]
-error = '''
-DDL Job:%v not found
-'''
-
-["admin:8225"]
-error = '''
-This job:%v is finished, so can't be cancelled
-'''
-
-["admin:8226"]
-error = '''
-This job:%v is almost finished, can't be cancelled now
 '''
 
 ["autoid:1075"]
@@ -846,6 +851,16 @@ error = '''
 Incorrect partition name
 '''
 
+["ddl:1628"]
+error = '''
+Comment for table '%-.64s' is too long (max = %d)
+'''
+
+["ddl:1629"]
+error = '''
+Comment for field '%-.64s' is too long (max = %d)
+'''
+
 ["ddl:1652"]
 error = '''
 Duplicate partition field name '%-.192s'
@@ -899,6 +914,11 @@ Found a row that does not match the partition
 ["ddl:1740"]
 error = '''
 Table to exchange with partition has foreign key references: '%-.64s'
+'''
+
+["ddl:1793"]
+error = '''
+Comment for table partition '%-.64s' is too long (max = %d)
 '''
 
 ["ddl:1826"]
@@ -1056,7 +1076,7 @@ error = '''
 `%s` is unsupported on temporary tables.
 '''
 
-["ddl:8143"]
+["ddl:8144"]
 error = '''
 AUTO_INCREMENT has reached the maximum value limitation
 '''
@@ -1124,6 +1144,21 @@ Failed to repair table: %s
 ["ddl:8216"]
 error = '''
 Invalid auto random: %s
+'''
+
+["ddl:8224"]
+error = '''
+DDL Job:%v not found
+'''
+
+["ddl:8225"]
+error = '''
+This job:%v is finished, so can't be cancelled
+'''
+
+["ddl:8226"]
+error = '''
+This job:%v is almost finished, can't be cancelled now
 '''
 
 ["ddl:8227"]
@@ -2131,6 +2166,11 @@ error = '''
 The '%-.64s' syntax is reserved for purposes internal to the MySQL server
 '''
 
+["schema:1450"]
+error = '''
+Changing schema from '%-.192s' to '%-.192s' is not allowed.
+'''
+
 ["schema:1831"]
 error = '''
 Duplicate index '%-.64s' defined on the table '%-.64s.%-.64s'. This is deprecated and will be disallowed in a future release.
@@ -2174,6 +2214,11 @@ Unknown placement policy '%-.192s'
 ["session:8002"]
 error = '''
 [%d] can not retry select for update statement
+'''
+
+["session:8143"]
+error = '''
+non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v
 '''
 
 ["structure:8217"]

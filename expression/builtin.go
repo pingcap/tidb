@@ -155,70 +155,28 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
-		fieldType = &types.FieldType{
-			Tp:      mysql.TypeLonglong,
-			Flen:    mysql.MaxIntWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-		}
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).BuildP()
 	case types.ETReal:
-		fieldType = &types.FieldType{
-			Tp:      mysql.TypeDouble,
-			Flen:    mysql.MaxRealWidth,
-			Decimal: types.UnspecifiedLength,
-			Flag:    mysql.BinaryFlag,
-		}
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxRealWidth).SetDecimal(types.UnspecifiedLength).BuildP()
 	case types.ETDecimal:
-		fieldType = &types.FieldType{
-			Tp:      mysql.TypeNewDecimal,
-			Flen:    11,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-		}
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlag(mysql.BinaryFlag).SetFlen(11).BuildP()
 	case types.ETString:
-		fieldType = &types.FieldType{
-			Tp:      mysql.TypeVarString,
-			Decimal: types.UnspecifiedLength,
-			Charset: ec.Charset,
-			Collate: ec.Collation,
-			Flen:    types.UnspecifiedLength,
-		}
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).SetCharset(ec.Charset).SetCollate(ec.Collation).BuildP()
 	case types.ETDatetime:
-		fieldType = &types.FieldType{
-			Tp:      mysql.TypeDatetime,
-			Flen:    mysql.MaxDatetimeWidthWithFsp,
-			Decimal: types.MaxFsp,
-			Flag:    mysql.BinaryFlag,
-		}
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDatetimeWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
 	case types.ETTimestamp:
-		fieldType = &types.FieldType{
-			Tp:      mysql.TypeTimestamp,
-			Flen:    mysql.MaxDatetimeWidthWithFsp,
-			Decimal: types.MaxFsp,
-			Flag:    mysql.BinaryFlag,
-		}
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDatetimeWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
 	case types.ETDuration:
-		fieldType = &types.FieldType{
-			Tp:      mysql.TypeDuration,
-			Flen:    mysql.MaxDurationWidthWithFsp,
-			Decimal: types.MaxFsp,
-			Flag:    mysql.BinaryFlag,
-		}
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDurationWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
 	case types.ETJson:
-		fieldType = &types.FieldType{
-			Tp:      mysql.TypeJSON,
-			Flen:    mysql.MaxBlobWidth,
-			Decimal: 0,
-			Charset: mysql.DefaultCharset,
-			Collate: mysql.DefaultCollationName,
-			Flag:    mysql.BinaryFlag,
-		}
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxBlobWidth).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
 	}
-	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
-		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
+	if mysql.HasBinaryFlag(fieldType.GetFlag()) && fieldType.GetType() != mysql.TypeJSON {
+		fieldType.SetCharset(charset.CharsetBin)
+		fieldType.SetCollate(charset.CollationBin)
 	}
 	if _, ok := booleanFunctions[funcName]; ok {
-		fieldType.Flag |= mysql.IsBooleanFlag
+		fieldType.AddFlag(mysql.IsBooleanFlag)
 	}
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
@@ -251,8 +209,8 @@ func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
-	bf.SetCharsetAndCollation(tp.Charset, tp.Collate)
-	bf.setCollator(collate.GetCollator(tp.Collate))
+	bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
+	bf.setCollator(collate.GetCollator(tp.GetCollate()))
 	return bf, nil
 }
 
@@ -357,13 +315,15 @@ func (b *baseBuiltinFunc) isChildrenVectorized() bool {
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	switch b.tp.EvalType() {
 	case types.ETString:
-		if b.tp.Flen >= mysql.MaxBlobWidth {
-			b.tp.Tp = mysql.TypeLongBlob
-		} else if b.tp.Flen >= 65536 {
-			b.tp.Tp = mysql.TypeMediumBlob
+		if b.tp.GetFlen() >= mysql.MaxBlobWidth {
+			b.tp.SetType(mysql.TypeLongBlob)
+		} else if b.tp.GetFlen() >= 65536 {
+			b.tp.SetType(mysql.TypeMediumBlob)
 		}
-		if len(b.tp.Charset) <= 0 {
-			b.tp.Charset, b.tp.Collate = charset.GetDefaultCharsetAndCollate()
+		if len(b.tp.GetCharset()) <= 0 {
+			charset, collate := charset.GetDefaultCharsetAndCollate()
+			b.tp.SetCharset(charset)
+			b.tp.SetCollate(collate)
 		}
 	}
 	return b.tp
@@ -783,8 +743,6 @@ var funcs = map[string]functionClass{
 	ast.BinToUUID:       &binToUUIDFunctionClass{baseFunctionClass{ast.BinToUUID, 1, 2}},
 	ast.TiDBShard:       &tidbShardFunctionClass{baseFunctionClass{ast.TiDBShard, 1, 1}},
 
-	// get_lock() and release_lock() are parsed but do nothing.
-	// It is used for preventing error in Ruby's activerecord migrations.
 	ast.GetLock:     &lockFunctionClass{baseFunctionClass{ast.GetLock, 2, 2}},
 	ast.ReleaseLock: &releaseLockFunctionClass{baseFunctionClass{ast.ReleaseLock, 1, 1}},
 
@@ -929,25 +887,25 @@ func GetBuiltinList() []string {
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForDatetime(fsp int) {
-	b.tp.Decimal = fsp
-	b.tp.Flen = mysql.MaxDatetimeWidthNoFsp + fsp
+	b.tp.SetDecimal(fsp)
+	b.tp.SetFlen(mysql.MaxDatetimeWidthNoFsp + fsp)
 	if fsp > 0 {
 		// Add the length for `.`.
-		b.tp.Flen++
+		b.tp.SetFlen(b.tp.GetFlen() + 1)
 	}
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForDate() {
-	b.tp.Decimal = 0
-	b.tp.Flen = mysql.MaxDateWidth
-	b.tp.Tp = mysql.TypeDate
+	b.tp.SetDecimal(0)
+	b.tp.SetFlen(mysql.MaxDateWidth)
+	b.tp.SetType(mysql.TypeDate)
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
-	b.tp.Decimal = fsp
-	b.tp.Flen = mysql.MaxDurationWidthNoFsp + fsp
+	b.tp.SetDecimal(fsp)
+	b.tp.SetFlen(mysql.MaxDurationWidthNoFsp + fsp)
 	if fsp > 0 {
 		// Add the length for `.`.
-		b.tp.Flen++
+		b.tp.SetFlen(b.tp.GetFlen() + 1)
 	}
 }

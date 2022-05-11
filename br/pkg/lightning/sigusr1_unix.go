@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build linux || darwin || freebsd || unix
-// +build linux darwin freebsd unix
 
 package lightning
 

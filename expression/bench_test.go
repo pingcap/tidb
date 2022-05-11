@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -63,40 +63,23 @@ func (h *benchHelper) init() {
 	h.ctx.GetSessionVars().MaxChunkSize = numRows
 
 	h.inputTypes = make([]*types.FieldType, 0, 10)
-	h.inputTypes = append(h.inputTypes, &types.FieldType{
-		Tp:      mysql.TypeLonglong,
-		Flen:    mysql.MaxIntWidth,
-		Decimal: 0,
-		Flag:    mysql.BinaryFlag,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	})
-	h.inputTypes = append(h.inputTypes, &types.FieldType{
-		Tp:      mysql.TypeDouble,
-		Flen:    mysql.MaxRealWidth,
-		Decimal: types.UnspecifiedLength,
-		Flag:    mysql.BinaryFlag,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	})
-	h.inputTypes = append(h.inputTypes, &types.FieldType{
-		Tp:      mysql.TypeNewDecimal,
-		Flen:    11,
-		Decimal: 0,
-		Flag:    mysql.BinaryFlag,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	})
+	ftb := types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
+	h.inputTypes = append(h.inputTypes, ftb.BuildP())
+
+	ftb = types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeDouble).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxRealWidth).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
+	h.inputTypes = append(h.inputTypes, ftb.BuildP())
+
+	ftb = types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeNewDecimal).SetFlag(mysql.BinaryFlag).SetFlen(11).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
+	h.inputTypes = append(h.inputTypes, ftb.BuildP())
 
 	// Use 20 string columns to show the cache performance.
 	for i := 0; i < 20; i++ {
-		h.inputTypes = append(h.inputTypes, &types.FieldType{
-			Tp:      mysql.TypeVarString,
-			Flen:    0,
-			Decimal: types.UnspecifiedLength,
-			Charset: charset.CharsetUTF8,
-			Collate: charset.CollationUTF8,
-		})
+		ftb = types.NewFieldTypeBuilder()
+		ftb.SetType(mysql.TypeVarString).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8)
+		h.inputTypes = append(h.inputTypes, ftb.BuildP())
 	}
 
 	h.inputChunk = chunk.NewChunkWithCapacity(h.inputTypes, numRows)
@@ -462,8 +445,8 @@ func (g *rangeDurationGener) gen() interface{} {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}
-	tm := (math.Abs(g.randGen.Int63n(12))*3600 + math.Abs(g.randGen.Int63n(60))*60 + math.Abs(g.randGen.Int63n(60))) * 1000
-	tu := (tm + math.Abs(g.randGen.Int63n(1000))) * 1000
+	tm := (mathutil.Abs(g.randGen.Int63n(12))*3600 + mathutil.Abs(g.randGen.Int63n(60))*60 + mathutil.Abs(g.randGen.Int63n(60))) * 1000
+	tu := (tm + mathutil.Abs(g.randGen.Int63n(1000))) * 1000
 	return types.Duration{
 		Duration: time.Duration(tu * 1000)}
 }
@@ -1485,7 +1468,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					i++
 				}
 			default:
-				t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+				t.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 			}
 
 			// check warnings
@@ -1527,7 +1510,7 @@ func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCas
 					require.True(t, (0 <= v) && (v < 1))
 				}
 			default:
-				t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+				t.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 			}
 		}
 	}
@@ -1630,7 +1613,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 						}
 					}
 				default:
-					b.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+					b.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 				}
 			})
 			b.Run(baseFuncName+"-NonVecBuiltinFunc", func(b *testing.B) {
@@ -1743,7 +1726,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 						}
 					}
 				default:
-					b.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+					b.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 				}
 			})
 		}
