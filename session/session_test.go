@@ -577,9 +577,6 @@ func TestErrorRollback(t *testing.T) {
 	for i := 0; i < cnt; i++ {
 		go func() {
 			defer wg.Done()
-			store, clean := createMockStoreAndSetup(t)
-			defer clean()
-
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
 			tk.MustExec("set @@session.tidb_retry_limit = 100")
