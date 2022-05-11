@@ -362,7 +362,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		if j >= 0 && j < len(row) {
 			theDatum = &row[j]
 		}
-		value, err = kvcodec.getActualDatum(rowID, theDatum, col)
+		value, err = kvcodec.getActualDatum(rowID, i, theDatum)
 		if err != nil {
 			return nil, logKVConvertFailed(logger, row, j, col.ToInfo(), err)
 		}
@@ -440,12 +440,20 @@ func isPKCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasPriKeyFlag(colInfo.GetFlag())
 }
 
-func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, inputDatum *types.Datum, col *table.Column) (types.Datum, error) {
+func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
 	var (
 		value types.Datum
 		err   error
 	)
+
 	tblMeta := kvcodec.tbl.Meta()
+	cols := kvcodec.tbl.Cols()
+
+	if colIndex < 0 || colIndex >= len(cols) {
+		return value, errors.New("invalid column index to get actual datum")
+	}
+	col := cols[colIndex]
+
 	isBadNullValue := false
 	if inputDatum != nil {
 		value, err = table.CastValue(kvcodec.se, *inputDatum, col.ToInfo(), false, false)

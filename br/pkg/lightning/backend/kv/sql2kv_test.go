@@ -323,6 +323,11 @@ func TestEncodeDoubleAutoIncrement(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	strDatumForID := types.NewStringDatum("1")
+	actualDatum, err := encoder.(*tableKVEncoder).getActualDatum(70, 0, &strDatumForID)
+	require.NoError(t, err)
+	require.Equal(t, types.NewFloat64Datum(1.0), actualDatum)
+
 	pairsExpect, err := encoder.Encode(logger, []types.Datum{
 		types.NewFloat64Datum(1.0),
 	}, 70, []int{0, -1}, "1.csv", 1234)
@@ -385,23 +390,34 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		require.NoError(t, err)
 
 		realRowID := encoder.(*tableKVEncoder).autoIDFn(rowID)
+
+		var nullDatum types.Datum
+		nullDatum.SetNull()
+
+		expectIDDatum := types.NewIntDatum(realRowID)
+		actualIDDatum, err := encoder.(*tableKVEncoder).getActualDatum(rowID, 0, nil)
+		require.NoError(t, err)
+		require.Equal(t, expectIDDatum, actualIDDatum)
+
+		actualIDDatum, err = encoder.(*tableKVEncoder).getActualDatum(rowID, 0, &nullDatum)
+		require.NoError(t, err)
+		require.Equal(t, expectIDDatum, actualIDDatum)
+
 		pairsExpect, err := encoder.Encode(logger, []types.Datum{
 			types.NewIntDatum(realRowID),
 		}, rowID, []int{0}, "1.csv", 1234)
 		require.NoError(t, err)
 
 		// test insert a NULL value on auto_xxxx column, and it is set to NOT NULL
-		var nullDatum types.Datum
-		nullDatum.SetNull()
 		pairs, err := encoder.Encode(logger, []types.Datum{
 			nullDatum,
-		}, rowID, []int{0, -1}, "1.csv", 1234)
+		}, rowID, []int{0}, "1.csv", 1234)
 		require.NoError(t, err)
 		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
 		require.Equalf(t, rowID, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
 
 		// test insert a row without specifying the auto_xxxx column
-		pairs, err = encoder.Encode(logger, []types.Datum{}, rowID, []int{0, -1}, "1.csv", 1234)
+		pairs, err = encoder.Encode(logger, []types.Datum{}, rowID, []int{0}, "1.csv", 1234)
 		require.NoError(t, err)
 		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
 		require.Equalf(t, rowID, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
