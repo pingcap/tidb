@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -95,7 +94,7 @@ type worker struct {
 	wg              tidbutil.WaitGroupWrapper
 
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
-	sessForJob      sessionctx.Context
+	sess            *session
 	reorgCtx        *reorgCtx // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 	logCtx          context.Context
@@ -129,6 +128,11 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 	if err != nil {
 		return nil, err
 	}
+	if tp == addIdxWorker {
+		sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	} else {
+		sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+	}
 	worker := &worker{
 		id:              ddlWorkerID.Add(1),
 		tp:              tp,
@@ -139,7 +143,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
-		sessForJob:      sessForJob,
+		sess:            newSession(sessForJob),
 	}
 	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
 	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
@@ -170,7 +174,7 @@ func (w *worker) String() string {
 
 func (w *worker) Close() {
 	startTime := time.Now()
-	w.sessPool.put(w.sessForJob)
+	w.sessPool.put(w.sess.session())
 	w.wg.Wait()
 	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -595,7 +599,7 @@ func (w *worker) AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bo
 		if err != nil {
 			return err
 		}
-		_, err = w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_history(job_id, job_meta, job_seq) values (%d, 0x%x, %d)", job.ID, b, job.SeqNum))
+		err = w.sess.execute(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_history(job_id, job_meta, job_seq) values (%d, 0x%x, %d)", job.ID, b, job.SeqNum))
 		return errors.Trace(err)
 	}
 
@@ -691,13 +695,13 @@ func (w *worker) HandleDDLJobWhenDoneOrRollbackDone(d *ddlCtx, job *model.Job, t
 	}
 	err := w.finishDDLJob(t, job)
 	if err != nil {
-		w.sessForJob.RollbackTxn(w.ctx)
+		w.sess.rollback()
 		w.unlockSeqNum()
 		log.Error("finishDDLJob", zap.Error(err))
 		return err
 	}
-	w.sessForJob.StmtCommit()
-	err = w.sessForJob.CommitTxn(w.ctx)
+
+	err = w.sess.commit()
 	if err != nil {
 		log.Error("sessForJob.CommitTxn", zap.Error(err))
 		w.unlockSeqNum()
@@ -726,7 +730,7 @@ func (w *worker) HandleDDLJobWhenDoneOrRollbackDone(d *ddlCtx, job *model.Job, t
 	return nil
 }
 
-func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level kvrpcpb.DiskFullOpt) error {
+func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job) error {
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -740,22 +744,18 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 		waitTime  = 2 * d.lease
 	)
 
-	w.sessForJob.SetDiskFullOpt(level)
-	err := sessiontxn.NewTxn(context.Background(), w.sessForJob)
+	err := w.sess.begin()
 	if err != nil {
 		return err
 	}
-	w.sessForJob.PrepareTSFuture(w.ctx)
-	txn, err := w.sessForJob.Txn(true)
+	txn, err := w.sess.txn()
 	if err != nil {
 		return err
 	}
-	txn.SetDiskFullOpt(level)
 	w.setDDLLabelForTopSQL(job)
 	if tagger := w.getResourceGroupTaggerForTopSQL(); tagger != nil {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
-	w.sessForJob.GetSessionVars().SetInTxn(true)
 	t := meta.NewMeta(txn)
 	if job.IsDone() || job.IsRollbackDone() {
 		return w.HandleDDLJobWhenDoneOrRollbackDone(d, job, t)
@@ -771,16 +771,15 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 
 	if job.IsCancelled() {
 		defer d.ResetSchemaVersion(job)
-		w.sessForJob.StmtRollback()
+		w.sess.rollback()
 		err = w.finishDDLJob(t, job)
 		if err != nil {
-			w.sessForJob.RollbackTxn(context.TODO())
+			w.sess.rollback()
 			w.unlockSeqNum()
 			log.Error("finishDDLJob", zap.Error(err))
 			return err
 		}
-		w.sessForJob.StmtCommit()
-		err = w.sessForJob.CommitTxn(w.ctx)
+		err = w.sess.commit()
 		if err != nil {
 			w.unlockSeqNum()
 			log.Error("txn.Commit", zap.Error(err))
@@ -800,7 +799,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 		// then shouldn't discard the KV modification.
 		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 		// Otherwise, we should discard the KV modification when running job.
-		w.sessForJob.StmtRollback()
+		w.sess.rollback()
 		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 		// Result in the retry duration is up to 2 * lease.
 		schemaVer = 0
@@ -808,14 +807,13 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 
 	err = w.UpdateDDLJob(t, job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
-		w.sessForJob.RollbackTxn(context.TODO())
+		w.sess.rollback()
 		d.ResetSchemaVersion(job)
 		w.unlockSeqNum()
 		return err
 	}
 	writeBinlog(d.binlogCli, txn, job)
-	w.sessForJob.StmtCommit()
-	err = w.sessForJob.CommitTxn(w.ctx)
+	err = w.sess.commit()
 	d.ResetSchemaVersion(job)
 	if err != nil {
 		log.Error("sessForJob.CommitTxn", zap.Error(err))

@@ -626,20 +626,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // GetHistoryDDLCount the count of done ddl jobs.
 func (d *ddl) GetHistoryDDLCount() (count uint64, err error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		rs, err := d.sessForAddDDL.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "select count(1) from mysql.tidb_ddl_history")
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		var rows []chunk.Row
-		if rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 8); err != nil {
-			return 0, errors.Trace(err)
-		}
-		if err = rs.Close(); err != nil {
-			return 0, errors.Trace(err)
-		}
-
-		count = rows[0].GetUint64(0)
-		return count, nil
+		err = newSession(d.sessForAddDDL).execute(context.Background(), "select count(1) from mysql.tidb_ddl_history", func(rows []chunk.Row) error {
+			count = rows[0].GetUint64(0)
+			return nil
+		})
+		return
 	}
 
 	err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -1541,8 +1532,8 @@ func (s *session) txn() (kv.Transaction, error) {
 	return s.s.Txn(true)
 }
 
-func (s *session) rollback() error {
-	return s.execute(context.Background(), "rollback")
+func (s *session) rollback() {
+	s.s.RollbackTxn(context.Background())
 }
 
 func (s *session) execute(ctx context.Context, query string, fns ...func(rows []chunk.Row) error) error {
@@ -1551,6 +1542,9 @@ func (s *session) execute(ctx context.Context, query string, fns ...func(rows []
 		return errors.Trace(err)
 	}
 
+	if rs == nil {
+		return nil
+	}
 	var rows []chunk.Row
 	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
 		return errors.Trace(err)
@@ -1564,4 +1558,8 @@ func (s *session) execute(ctx context.Context, query string, fns ...func(rows []
 		}
 	}
 	return errors.Trace(err)
+}
+
+func (s *session) session() sessionctx.Context {
+	return s.s
 }

@@ -55,9 +55,7 @@ func (d *ddl) deleteRunningDDLJobMap(id int) {
 }
 
 const (
-	getGeneralJobSQL               = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id)) and not reorg"
-	getGeneralJobWithoutRunningSQL = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id)) and not reorg and job_id not in (%s)"
-	getJob                         = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id) and %s reorg and job_id not in (%s)"
+	getJob = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id) and %s reorg and job_id not in (%s)"
 )
 
 type jobType int
@@ -227,7 +225,7 @@ func (d *ddl) doGeneralDDLJobWorker(wk *worker, job *model.Job) {
 			asyncNotify(d.ddlJobCh)
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
-		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh, kvrpcpb.DiskFullOpt_AllowedOnAlmostFull); err != nil {
+		if err := wk.HandleDDLJob(d.ddlCtx, job); err != nil {
 			log.Error("[ddl] handle General DDL job failed", zap.Error(err))
 		}
 	})
@@ -266,7 +264,7 @@ func (d *ddl) doReorgDDLJobWorker(wk *worker, job *model.Job) {
 			asyncNotify(d.ddlJobCh)
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
-		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh, kvrpcpb.DiskFullOpt_NotAllowedOnFull); err != nil {
+		if err := wk.HandleDDLJob(d.ddlCtx, job); err != nil {
 			log.Error("[ddl] handle Reorg DDL job failed", zap.Error(err))
 		}
 	})
@@ -297,7 +295,7 @@ func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 	}
 	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	defer d.sessPool.put(sess)
-	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), addDDLJobSQL+sql)
+	err = newSession(sess).execute(context.Background(), addDDLJobSQL+sql)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] add job to mysql.tidb_ddl_job table", zap.Error(err))
 	}
@@ -306,14 +304,13 @@ func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
-	_, err := w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-	return err
+	return w.sess.execute(context.Background(), sql)
 }
 
 const updateConcurrencyDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = 0x%x where job_id = %d"
 
 func (w *worker) updateConcurrencyDDLJob(job *model.Job, updateRawArgs bool) error {
-	return updateConcurrencyDDLJob(w.sessForJob, job, updateRawArgs)
+	return updateConcurrencyDDLJob(w.sess.session(), job, updateRawArgs)
 }
 
 func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawArgs bool) error {
@@ -323,7 +320,7 @@ func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawA
 	}
 	log.Warn("update ddl job", zap.String("job", job.String()))
 	sql := fmt.Sprintf(updateConcurrencyDDLJobSQL, b, job.ID)
-	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+	err = newSession(sctx).execute(context.Background(), sql)
 	if err != nil {
 		logutil.BgLogger().Error("update meet error", zap.Error(err))
 		return err
@@ -342,12 +339,12 @@ func GetDDLReorgHandle(job *model.Job, t *meta.Meta, sess sessionctx.Context) (*
 func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element *meta.Element, startKey kv.Key) error {
 	if variable.AllowConcurrencyDDL.Load() {
 		sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
-		_, err := w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+		err := w.sess.execute(context.Background(), sql)
 		if err != nil {
 			return err
 		}
 		sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key) values (%d, %d, %s)", job.ID, element.ID, wrapKey2String(startKey))
-		_, err = w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+		err = w.sess.execute(context.Background(), sql)
 		return err
 	}
 	return t.UpdateDDLReorgStartHandle(job, element, startKey)
@@ -387,7 +384,7 @@ func (w *worker) RemoveDDLReorgHandle(t *meta.Meta, job *model.Job, elements []*
 			return nil
 		}
 		sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-		_, err := w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+		err := w.sess.execute(context.Background(), sql)
 		if err != nil {
 			return err
 		}
@@ -464,28 +461,21 @@ func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) 
 }
 
 func getJobsBySQL(sess sessionctx.Context, tbl, condition string) ([]*model.Job, error) {
-	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition))
+	jobs := make([]*model.Job, 0, 16)
+	err := newSession(sess).execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), func(rows []chunk.Row) error {
+		for _, row := range rows {
+			jobBinary := row.GetBytes(0)
+			job := model.Job{}
+			err := job.Decode(jobBinary)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			jobs = append(jobs, &job)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var rows []chunk.Row
-	if rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 8); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err = rs.Close(); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	jobs := make([]*model.Job, 0, len(rows))
-	for _, row := range rows {
-		jobBinary := row.GetBytes(0)
-		job := model.Job{}
-		err = job.Decode(jobBinary)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		jobs = append(jobs, &job)
-	}
-
 	return jobs, nil
 }
