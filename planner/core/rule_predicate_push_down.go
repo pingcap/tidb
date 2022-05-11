@@ -315,10 +315,11 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 		RetType:  expr.GetType().Clone(),
 	}
 	col.SetCoercibility(expr.Coercibility())
+	col.SetRepertoire(expr.Repertoire())
 	p.schema.Append(col)
 	// reset ParseToJSONFlag in order to keep the flag away from json column
-	if col.GetType().Tp == mysql.TypeJSON {
-		col.GetType().Flag &= ^mysql.ParseToJSONFlag
+	if col.GetType().GetType() == mysql.TypeJSON {
+		col.GetType().DelFlag(mysql.ParseToJSONFlag)
 	}
 	return col
 }
@@ -624,7 +625,7 @@ func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) ex
 	if childCol == nil {
 		childCol = schema.RetrieveColumn(arg1)
 	}
-	if isNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.Flag) {
+	if isNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx, childCol)
 	}
 	return nil
@@ -931,6 +932,9 @@ func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.Scalar
 func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	if p.cte.recursivePartLogicalPlan != nil {
 		// Doesn't support recursive CTE yet.
+		return predicates, p.self
+	}
+	if !p.isOuterMostCTE {
 		return predicates, p.self
 	}
 	if len(predicates) == 0 {

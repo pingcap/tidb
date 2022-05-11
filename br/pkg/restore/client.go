@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -47,8 +46,9 @@ import (
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mathutil"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -75,14 +75,17 @@ type Client struct {
 	pdClient      pd.Client
 	toolClient    SplitClient
 	fileImporter  FileImporter
+	rawKVClient   *RawKVBatchClient
 	workerPool    *utils.WorkerPool
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 
 	databases map[string]*utils.Database
 	ddlJobs   []*model.Job
-	// ddlJobsMap record the tables' auto id need to restore after create table
-	ddlJobsMap map[UniqueTableName]bool
+
+	// store tables need to rebase info like auto id and random id and so on after create table
+	rebasedTablesMap map[UniqueTableName]bool
+
 	backupMeta *backuppb.BackupMeta
 	// TODO Remove this field or replace it with a []*DB,
 	// since https://github.com/pingcap/br/pull/377 needs more DBs to speed up DDL execution.
@@ -169,6 +172,10 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 	// tikv.Glue will return nil, tidb.Glue will return available domain
 	if rc.dom != nil {
 		rc.statsHandler = rc.dom.StatsHandle()
+	}
+	// init backupMeta only for passing unit test
+	if rc.backupMeta == nil {
+		rc.backupMeta = new(backuppb.BackupMeta)
 	}
 
 	// Only in binary we can use multi-thread sessions to create tables.
@@ -272,6 +279,10 @@ func (rc *Client) Close() {
 	if rc.db != nil {
 		rc.db.Close()
 	}
+	if rc.rawKVClient != nil {
+		rc.rawKVClient.Close()
+	}
+
 	log.Info("Restore client closed")
 }
 
@@ -297,6 +308,10 @@ func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool
 	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rateLimit)
+}
+
+func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
+	rc.rawKVClient = c
 }
 
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
@@ -508,24 +523,19 @@ func (rc *Client) CreatePolicies(ctx context.Context, policyMap *sync.Map) error
 }
 
 // GetDBSchema gets the schema of a db from TiDB cluster
-func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DBInfo, error) {
+func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DBInfo, bool) {
 	info := dom.InfoSchema()
-	dbInfo, exist := info.SchemaByName(dbName)
-	if !exist {
-		log.Warn("schema not exist", zap.String("dbName", dbName.String()))
-		return nil, errors.Annotatef(berrors.ErrRestoreSchemaNotExists, "%v not exist", dbName.String())
-	}
-	return dbInfo, nil
+	return info.SchemaByName(dbName)
 }
 
 // CreateDatabase creates a database.
 func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 	if rc.IsSkipCreateSQL() {
-		log.Info("skip create database", zap.Stringer("database", db.Name))
+		log.Info("skip create database", zap.Stringer("name", db.Name))
 		return nil
 	}
 
-	log.Info("create database", zap.Stringer("database", db.Name))
+	log.Info("create database", zap.Stringer("name", db.Name))
 
 	if !rc.supportPolicy {
 		log.Info("set placementPolicyRef to nil when target tidb not support policy",
@@ -588,7 +598,7 @@ func (rc *Client) createTables(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
 	} else {
-		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap(), rc.GetSupportPolicy(), rc.GetPolicyMap())
+		err := db.CreateTables(ctx, tables, rc.GetRebasedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -628,7 +638,7 @@ func (rc *Client) createTable(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap(), rc.GetSupportPolicy(), rc.GetPolicyMap())
+		err := db.CreateTable(ctx, table, rc.GetRebasedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -666,7 +676,7 @@ func (rc *Client) GoCreateTables(
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
-	rc.GenerateDDLJobsMap()
+	rc.GenerateRebasedTables(tables)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -772,7 +782,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
-		end := utils.MinInt(lastSent+int(rc.batchDdlSize), len(tables))
+		end := mathutil.Min(lastSent+int(rc.batchDdlSize), len(tables))
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
 		tableSlice := tables[lastSent:end]
@@ -1407,25 +1417,27 @@ func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
 }
 
-// GenerateDDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
-// if we execute some DDLs before create table.
-// we may get two situation that need to rebase auto increment/random id.
-// 1. truncate table: truncate will generate new id cache.
-// 2. create table/create and rename table: the first create table will lock down the id cache.
-// because we cannot create onExistReplace table.
-// so the final create DDL with the correct auto increment/random id won't be executed.
-func (rc *Client) GenerateDDLJobsMap() {
-	rc.ddlJobsMap = make(map[UniqueTableName]bool)
-	for _, job := range rc.ddlJobs {
-		switch job.Type {
-		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
-			rc.ddlJobsMap[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
-		}
+// GenerateRebasedTables generate a map[UniqueTableName]bool to represent tables that haven't updated table info.
+// there are two situations:
+// 1. tables that already exists in the restored cluster.
+// 2. tables that are created by executing ddl jobs.
+// so, only tables in incremental restoration will be added to the map
+func (rc *Client) GenerateRebasedTables(tables []*metautil.Table) {
+	if !rc.IsIncremental() {
+		// in full restoration, all tables are created by Session.CreateTable, and all tables' info is updated.
+		rc.rebasedTablesMap = make(map[UniqueTableName]bool)
+		return
+	}
+
+	rc.rebasedTablesMap = make(map[UniqueTableName]bool, len(tables))
+	for _, table := range tables {
+		rc.rebasedTablesMap[UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}] = true
 	}
 }
 
-func (rc *Client) GetDDLJobsMap() map[UniqueTableName]bool {
-	return rc.ddlJobsMap
+// GetRebasedTables returns tables that may need to be rebase auto increment id or auto random id
+func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
+	return rc.rebasedTablesMap
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
@@ -1716,30 +1728,31 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	for _, t := range *tables {
 		name, _ := utils.GetSysDBName(t.DB.Name)
 		dbName := model.NewCIStr(name)
-		newDBInfo, err := rc.GetDBSchema(rc.GetDomain(), dbName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
-		if err != nil {
-			return nil, errors.Trace(err)
+		newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
+		if !exist {
+			log.Info("db not existed", zap.String("dbname", dbName.String()))
+			continue
 		}
 
 		dbReplace, exist := dbMap[t.DB.ID]
 		if !exist {
-			dbReplace = &stream.DBReplace{
-				DBID:     newDBInfo.ID,
-				OldName:  name,
-				NewName:  newDBInfo.Name.String(),
-				TableMap: make(map[stream.OldID]*stream.TableReplace),
-			}
+			dbReplace = stream.NewDBReplace(t.DB, newDBInfo.ID)
 			dbMap[t.DB.ID] = dbReplace
 		}
 
+		if t.Info == nil {
+			// If the db is empty, skip it.
+			continue
+		}
+		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
+		if err != nil {
+			log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
+			continue
+		}
+
 		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
-			TableID:      newTableInfo.ID,
-			OldName:      t.Info.Name.String(),
-			NewName:      newTableInfo.Name.String(),
+			OldTableInfo: t.Info,
+			NewTableID:   newTableInfo.ID,
 			PartitionMap: getTableIDMap(newTableInfo, t.Info),
 			IndexMap:     getIndexIDMap(newTableInfo, t.Info),
 		}
@@ -1749,14 +1762,14 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		log.Info("replace info", func() []zapcore.Field {
 			fields := make([]zapcore.Field, 0, (len(dbReplace.TableMap)+1)*3)
 			fields = append(fields,
-				zap.String("dbName", dbReplace.OldName),
+				zap.String("dbName", dbReplace.OldDBInfo.Name.O),
 				zap.Int64("oldID", oldDBID),
-				zap.Int64("newID", dbReplace.DBID))
+				zap.Int64("newID", dbReplace.NewDBID))
 			for oldTableID, tableReplace := range dbReplace.TableMap {
 				fields = append(fields,
-					zap.String("table", tableReplace.OldName),
+					zap.String("table", tableReplace.OldTableInfo.Name.String()),
 					zap.Int64("oldID", oldTableID),
-					zap.Int64("newID", tableReplace.TableID))
+					zap.Int64("newID", tableReplace.NewTableID))
 			}
 			return fields
 		}()...)
@@ -1768,22 +1781,38 @@ func (rc *Client) InitSchemasReplaceForDDL(
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
 func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
-	rawkvClient *rawkv.Client,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
 	progressInc func(),
 ) error {
+	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
+
+	// The k-v envets in default CF should be restored firstly. The reason is that:
+	// The error of transactions of meta will happen,
+	// if restore default CF events successfully, but failed to restore write CF events.
 	for _, f := range files {
-		log.Info("restore meta kv events", zap.String("file", f.Path),
-			zap.String("cf", f.Cf), zap.Int64(("kv-count"), f.NumberOfEntries),
-			zap.Uint64("min-ts", f.MinTs), zap.Uint64("max-ts", f.MaxTs))
-		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
+		if f.Cf == stream.WriteCF {
+			filesInWriteCF = append(filesInWriteCF, f)
+			continue
+		}
+
+		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		progressInc()
 	}
 
+	// Restore files in write CF.
+	for _, f := range filesInWriteCF {
+		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		progressInc()
+	}
+
+	// Update global schema version and report all of TiDBs.
 	if err := rc.UpdateSchemaVersion(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1793,15 +1822,18 @@ func (rc *Client) RestoreMetaKVFiles(
 // RestoreMetaKVFiles tries to restore a file about meta kv-event from stream-backup.
 func (rc *Client) RestoreMetaKVFile(
 	ctx context.Context,
-	rawKVClient *rawkv.Client,
 	file *backuppb.DataFileInfo,
 	sr *stream.SchemasReplace,
 ) error {
+	log.Info("restore meta kv events", zap.String("file", file.Path),
+		zap.String("cf", file.Cf), zap.Int64(("kv-count"), file.NumberOfEntries),
+		zap.Uint64("min-ts", file.MinTs), zap.Uint64("max-ts", file.MaxTs))
+
+	rc.rawKVClient.SetColumnFamily(file.GetCf())
 	buff, err := rc.storage.ReadFile(ctx, file.Path)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
 		return errors.Annotatef(berrors.ErrInvalidMetaFile,
 			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
@@ -1824,7 +1856,7 @@ func (rc *Client) RestoreMetaKVFile(
 		// We can restore more key-value in default CF.
 		if ts > rc.restoreTS {
 			continue
-		} else if file.Cf == "write" && ts < rc.startTS {
+		} else if file.Cf == stream.WriteCF && ts < rc.startTS {
 			continue
 		}
 
@@ -1843,14 +1875,12 @@ func (rc *Client) RestoreMetaKVFile(
 		log.Debug("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
 			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
 
-		// to do...
-		// use BatchPut instead of put
-		rawKVClient.SetColumnFamily(file.Cf)
-		if err := rawKVClient.Put(ctx, newEntry.Key, newEntry.Value); err != nil {
+		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	return nil
+
+	return rc.rawKVClient.PutRest(ctx)
 }
 
 func transferBoolToValue(enable bool) string {
@@ -1930,5 +1960,31 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		return errors.Annotatef(err, "failed to put global schema verson %v to etcd", ver)
 	}
 
+	return nil
+}
+
+func (rc *Client) SaveSchemas(
+	ctx context.Context,
+	sr *stream.SchemasReplace,
+	logStartTS uint64,
+	restoreTS uint64,
+) error {
+	metaFileName := metautil.CreateMetaFileName(restoreTS)
+	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
+	metaWriter.Update(func(m *backuppb.BackupMeta) {
+		// save log startTS to backupmeta file
+		m.StartVersion = logStartTS
+	})
+
+	schemas := sr.TidyOldSchemas()
+	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
+	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }

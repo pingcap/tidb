@@ -102,7 +102,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage() > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
 	require.True(t, statsTbl.Pseudo)
 
 	testKit.MustExec("analyze table t")
@@ -131,7 +131,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage() > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
 	require.False(t, statsTbl.Pseudo)
 
 	// If the new schema add a column, the table stats can still work.
@@ -359,7 +359,7 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker())
+	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
 	require.NoError(t, err)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
@@ -423,6 +423,10 @@ func TestVersion(t *testing.T) {
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	// We can read it without analyze again! Thanks for PrevLastVersion.
+	require.NotNil(t, statsTbl2.Columns[int64(3)])
+	// assert WithGetTableStatsByQuery get the same result
+	statsTbl2 = h.GetTableStats(tableInfo2, handle.WithTableStatsByQuery())
+	require.False(t, statsTbl2.Pseudo)
 	require.NotNil(t, statsTbl2.Columns[int64(3)])
 }
 
@@ -905,6 +909,9 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 
 	delta := buckets/2 + 10
 	for _, idxStats := range tblStats.Indices {
+		if len(idxStats.Buckets) == 0 {
+			continue // it's not loaded
+		}
 		numTopN := idxStats.TopN.Num()
 		numBuckets := len(idxStats.Buckets)
 		// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
@@ -926,7 +933,6 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 }
 
 func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
-	t.Skip("unstable test")
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
@@ -967,7 +973,6 @@ func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
 }
 
 func TestAnalyzeGlobalStatsWithOpts2(t *testing.T) {
-	t.Skip("unstable test")
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
@@ -2260,6 +2265,155 @@ func TestIndexUsageInformation(t *testing.T) {
 		"test t_idx idx_a 3 2",
 		"test t_idx idx_b 2 2",
 	))
+}
+
+//Functional Test:test batch insert
+func TestIndexUsageInformationMultiIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	session.SetIndexUsageSyncLease(1)
+	defer session.SetIndexUsageSyncLease(0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	//len(column) = 11.len(index) = 11
+	tk.MustExec("create table t_idx(a int, b int, c int, d int, e int, f int, g int, h int, i int, j int, k int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+	tk.MustExec("create unique index idx_b on t_idx(b)")
+	tk.MustExec("create unique index idx_c on t_idx(c)")
+	tk.MustExec("create unique index idx_d on t_idx(d)")
+	tk.MustExec("create unique index idx_e on t_idx(e)")
+	tk.MustExec("create unique index idx_f on t_idx(f)")
+	tk.MustExec("create unique index idx_g on t_idx(g)")
+	tk.MustExec("create unique index idx_h on t_idx(h)")
+	tk.MustExec("create unique index idx_i on t_idx(i)")
+	tk.MustExec("create unique index idx_j on t_idx(j)")
+	tk.MustExec("create unique index idx_k on t_idx(k)")
+
+	tk.MustQuery("select a from t_idx where a=1")
+	querySQL := `select idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected
+					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
+					where tables.table_schema = idx.table_schema
+						AND tables.table_name = idx.table_name
+						AND tables.tidb_table_id = stats.table_id
+						AND idx.index_id = stats.index_id
+						AND idx.table_name = "t_idx" ORDER BY idx.key_name`
+	do := dom
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	require.NoError(t, err)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 1 0",
+	))
+	tk.MustExec("insert into t_idx values(1,1,1,1,1,1,1,1,1,1,1)")
+	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select a from t_idx where a=1")
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	require.NoError(t, err)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 2",
+	))
+
+	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select b from t_idx where b=1")
+	tk.MustQuery("select c from t_idx where c=1")
+	tk.MustQuery("select d from t_idx where d=1")
+	tk.MustQuery("select e from t_idx where e=1")
+	tk.MustQuery("select f from t_idx where f=1")
+	tk.MustQuery("select g from t_idx where g=1")
+	tk.MustQuery("select h from t_idx where h=1")
+	tk.MustQuery("select i from t_idx where i=1")
+	tk.MustQuery("select j from t_idx where j=1")
+	tk.MustQuery("select k from t_idx where k=1")
+
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	require.NoError(t, err)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 4 3",
+		"test t_idx idx_b 1 1",
+		"test t_idx idx_c 1 1",
+		"test t_idx idx_d 1 1",
+		"test t_idx idx_e 1 1",
+		"test t_idx idx_f 1 1",
+		"test t_idx idx_g 1 1",
+		"test t_idx idx_h 1 1",
+		"test t_idx idx_i 1 1",
+		"test t_idx idx_j 1 1",
+		"test t_idx idx_k 1 1",
+	))
+
+	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select b from t_idx where b=1")
+	tk.MustQuery("select c from t_idx where c=1")
+	tk.MustQuery("select d from t_idx where d=1")
+	tk.MustQuery("select e from t_idx where e=1")
+	tk.MustQuery("select f from t_idx where f=1")
+	tk.MustQuery("select g from t_idx where g=1")
+	tk.MustQuery("select h from t_idx where h=1")
+	tk.MustQuery("select i from t_idx where i=1")
+	tk.MustQuery("select j from t_idx where j=1")
+	tk.MustQuery("select k from t_idx where k=1")
+
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	require.NoError(t, err)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 5 4",
+		"test t_idx idx_b 2 2",
+		"test t_idx idx_c 2 2",
+		"test t_idx idx_d 2 2",
+		"test t_idx idx_e 2 2",
+		"test t_idx idx_f 2 2",
+		"test t_idx idx_g 2 2",
+		"test t_idx idx_h 2 2",
+		"test t_idx idx_i 2 2",
+		"test t_idx idx_j 2 2",
+		"test t_idx idx_k 2 2",
+	))
+}
+
+//cd statistics/handle
+//go test -run BenchmarkIndexUsageInformationInsert -bench BenchmarkIndexUsageInformationInsert -benchmem -benchtime=20s
+//old    6998           3379135 ns/op          994594 B/op      12659 allocs/op
+//new   18472           1299401 ns/op          473919 B/op       5628 allocs/op
+
+func BenchmarkIndexUsageInformationInsert(b *testing.B) {
+	//init
+	b.StopTimer()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(b)
+	defer clean()
+	session.SetIndexUsageSyncLease(1)
+	defer session.SetIndexUsageSyncLease(0)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	//len(column) = 11.len(index) = 11
+	tk.MustExec("create table t_idx(a int, b int, c int, d int, e int, f int, g int, h int, i int, j int, k int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+	tk.MustExec("create unique index idx_b on t_idx(b)")
+	tk.MustExec("create unique index idx_c on t_idx(c)")
+	tk.MustExec("create unique index idx_d on t_idx(d)")
+	tk.MustExec("create unique index idx_e on t_idx(e)")
+	tk.MustExec("create unique index idx_f on t_idx(f)")
+	tk.MustExec("create unique index idx_g on t_idx(g)")
+	tk.MustExec("create unique index idx_h on t_idx(h)")
+	tk.MustExec("create unique index idx_i on t_idx(i)")
+	tk.MustExec("create unique index idx_j on t_idx(j)")
+	tk.MustExec("create unique index idx_k on t_idx(k)")
+	b.StartTimer()
+
+	for i := 0; i < b.N; i++ {
+		tk.MustQuery("select a from t_idx where a=1")
+		tk.MustQuery("select b from t_idx where b=1")
+		tk.MustQuery("select c from t_idx where c=1")
+		tk.MustQuery("select d from t_idx where d=1")
+		tk.MustQuery("select e from t_idx where e=1")
+		tk.MustQuery("select f from t_idx where f=1")
+		tk.MustQuery("select g from t_idx where g=1")
+		tk.MustQuery("select h from t_idx where h=1")
+		tk.MustQuery("select i from t_idx where i=1")
+		tk.MustQuery("select j from t_idx where j=1")
+		tk.MustQuery("select k from t_idx where k=1")
+		do := dom
+		err := do.StatsHandle().DumpIndexUsageToKV()
+		require.NoError(b, err)
+	}
 }
 
 func TestGCIndexUsageInformation(t *testing.T) {

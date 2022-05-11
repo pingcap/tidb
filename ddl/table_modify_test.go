@@ -29,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
@@ -114,9 +112,6 @@ func TestCreateTable(t *testing.T) {
 }
 
 func TestLockTableReadOnly(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("skip race test")
-	}
 	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
 	defer clean()
 	tk1 := testkit.NewTestKit(t, store)
@@ -181,9 +176,6 @@ func TestLockTableReadOnly(t *testing.T) {
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
 func TestConcurrentLockTables(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("skip race test")
-	}
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tableModifyLease)
 	defer clean()
 	tk1 := testkit.NewTestKit(t, store)
@@ -234,7 +226,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 		var qLen int
 		for {
 			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err1 := admin.GetDDLJobs(txn)
+				jobs, err1 := ddl.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
 				}
@@ -263,7 +255,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 		var qLen int
 		for {
 			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err3 := admin.GetDDLJobs(txn)
+				jobs, err3 := ddl.GetDDLJobs(txn)
 				if err3 != nil {
 					return err3
 				}

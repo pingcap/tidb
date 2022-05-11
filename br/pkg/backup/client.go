@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -311,7 +311,7 @@ func BuildBackupRangeAndSchema(
 	}
 
 	ranges := make([]rtree.Range, 0)
-	backupSchemas := newBackupSchemas()
+	backupSchemas := NewBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -329,8 +329,8 @@ func BuildBackupRangeAndSchema(
 		}
 
 		if len(tables) == 0 {
-			log.Warn("It's not necessary for backing up empty database",
-				zap.Stringer("db", dbInfo.Name))
+			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
+			backupSchemas.AddSchema(dbInfo, nil)
 			continue
 		}
 
@@ -399,7 +399,7 @@ func BuildBackupRangeAndSchema(
 			}
 			tableInfo.Indices = tableInfo.Indices[:n]
 
-			backupSchemas.addSchema(dbInfo, tableInfo)
+			backupSchemas.AddSchema(dbInfo, tableInfo)
 
 			tableRanges, err := BuildTableRanges(tableInfo)
 			if err != nil {
@@ -426,7 +426,7 @@ func BuildFullSchema(storage kv.Storage, backupTS uint64) (*Schemas, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
 
-	newBackupSchemas := newBackupSchemas()
+	newBackupSchemas := NewBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -438,9 +438,14 @@ func BuildFullSchema(storage kv.Storage, backupTS uint64) (*Schemas, error) {
 			return nil, errors.Trace(err)
 		}
 
+		// backup this empty db if this schema is empty.
+		if len(tables) == 0 {
+			newBackupSchemas.AddSchema(db, nil)
+		}
+
 		for _, table := range tables {
 			// add table
-			newBackupSchemas.addSchema(db, table)
+			newBackupSchemas.AddSchema(db, table)
 		}
 	}
 
@@ -960,9 +965,17 @@ func doSendBackup(
 	})
 	bCli, err := client.Backup(ctx, &req)
 	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
-			err = status.Error(codes.Unavailable, "Unavailable error")
+		switch val.(string) {
+		case "Unavaiable":
+			{
+				logutil.CL(ctx).Debug("failpoint reset-retryable-error unavailable injected.")
+				err = status.Error(codes.Unavailable, "Unavailable error")
+			}
+		case "Internal":
+			{
+				logutil.CL(ctx).Debug("failpoint reset-retryable-error internal injected.")
+				err = status.Error(codes.Internal, "Internal error")
+			}
 		}
 	})
 	failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
@@ -1056,9 +1069,15 @@ const (
 
 // isRetryableError represents whether we should retry reset grpc connection.
 func isRetryableError(err error) bool {
-
-	if status.Code(err) == codes.Unavailable {
-		return true
+	// some errors can be retried
+	// https://github.com/pingcap/tidb/issues/34350
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded,
+		codes.ResourceExhausted, codes.Aborted, codes.Internal:
+		{
+			log.Warn("backup met some errors, these errors can be retry 5 times", zap.Error(err))
+			return true
+		}
 	}
 
 	// At least, there are two possible cancel() call,
@@ -1066,6 +1085,7 @@ func isRetryableError(err error) bool {
 	if status.Code(err) == codes.Canceled {
 		if s, ok := status.FromError(err); ok {
 			if strings.Contains(s.Message(), gRPC_Cancel) {
+				log.Warn("backup met grpc cancel error, this errors can be retry 5 times", zap.Error(err))
 				return true
 			}
 		}

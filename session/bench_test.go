@@ -44,7 +44,7 @@ var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.Log.EnableSlowLog.Store(false)
+		cfg.Instance.EnableSlowLog.Store(false)
 	})
 
 	store, err := mockstore.NewMockStore()
@@ -1813,7 +1813,7 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtID, is.(infoschema.InfoSchema), 0, args)
+		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtID, is.(infoschema.InfoSchema), 0, kv.GlobalTxnScope, args)
 		if err != nil {
 			b.Fatal(err)
 		}

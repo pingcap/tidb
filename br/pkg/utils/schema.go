@@ -114,8 +114,3 @@ func GetSysDBName(tempDB model.CIStr) (string, bool) {
 	}
 	return tempDB.O[len(temporaryDBNamePrefix):], true
 }
-
-// EscapeName replaces all "`" in name with "``"
-func EscapeName(name string) string {
-	return strings.Replace(name, "`", "``", -1)
-}

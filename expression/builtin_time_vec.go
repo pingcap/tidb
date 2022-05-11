@@ -138,7 +138,7 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 
 	result.ReserveString(n)
 	ds := buf1.Decimals()
-	fsp := b.tp.Decimal
+	fsp := b.tp.GetDecimal()
 	for i := 0; i < n; i++ {
 		if buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
@@ -172,7 +172,7 @@ func (b *builtinSysDateWithoutFspSig) vecEvalTime(input *chunk.Chunk, result *ch
 
 	result.ResizeTime(n, false)
 	times := result.Times()
-	t, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)
+	t, err := convertTimeToMysqlTime(now, 0, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}
@@ -775,7 +775,7 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		t, err := convertTimeToMysqlTime(now, int(ds[i]), types.ModeHalfEven)
+		t, err := convertTimeToMysqlTime(now, int(ds[i]), types.ModeHalfUp)
 		if err != nil {
 			return err
 		}
@@ -1090,7 +1090,7 @@ func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	i64s := result.Int64s()
 	durIs := dur.GoDurations()
 	var duration types.Duration
-	duration.Fsp = b.args[1].GetType().Decimal
+	duration.Fsp = b.args[1].GetType().GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1154,7 +1154,7 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 			result.SetNull(i, true)
 			continue
 		}
-		t.SetFsp(b.tp.Decimal)
+		t.SetFsp(b.tp.GetDecimal())
 		dur, err := t.ConvertToDuration()
 		if err != nil {
 			return err
@@ -1455,7 +1455,7 @@ func (b *builtinTimeToSecSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	fsp := b.args[0].GetType().Decimal
+	fsp := b.args[0].GetType().GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1501,7 +1501,7 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 	times := result.Times()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	hasNoZeroDateMode := b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()
-	fsp := b.tp.Decimal
+	fsp := b.tp.GetDecimal()
 
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
@@ -1633,7 +1633,7 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 				ts[i] = *new(types.MyDecimal)
 				continue
 			}
-			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
+			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.GetDecimal())
 			if err != nil {
 				return err
 			}
@@ -1954,7 +1954,7 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 			second = seconds % 60
 		}
 		secondDemical := float64(second) + demical
-		duration, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%s", negative, hour, minute, strconv.FormatFloat(secondDemical, 'f', -1, 64)), b.tp.Decimal)
+		duration, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%s", negative, hour, minute, strconv.FormatFloat(secondDemical, 'f', -1, 64)), b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2110,7 +2110,7 @@ func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.C
 	seconds := secondsBuf.Float64s()
 	durs := result.GoDurations()
 	result.MergeNulls(minutesBuf, secondsBuf)
-	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2180,7 +2180,7 @@ func (b *builtinFromUnixTime1ArgSig) vecEvalTime(input *chunk.Chunk, result *chu
 	result.MergeNulls(buf)
 	ts := result.Times()
 	ds := buf.Decimals()
-	fsp := b.tp.Decimal
+	fsp := b.tp.GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue

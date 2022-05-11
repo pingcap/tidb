@@ -251,7 +251,7 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 		if err != nil {
 			return errors.Trace(err)
 		}
-		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
@@ -306,11 +306,11 @@ func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string
 	}
 	colNameToType := make(map[string]byte, len(statsTbl.Columns))
 	for _, col := range stableColsStats(statsTbl.Columns) {
-		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.Tp})
+		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.GetType()})
 		if err != nil {
 			return errors.Trace(err)
 		}
-		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
@@ -447,13 +447,17 @@ func (e *ShowExec) fetchShowHistogramsInFlight() {
 	e.appendRow([]interface{}{statistics.HistogramNeededColumns.Length()})
 }
 
-func (e *ShowExec) fetchShowAnalyzeStatus() {
-	rows := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
+func (e *ShowExec) fetchShowAnalyzeStatus() error {
+	rows, err := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
+	if err != nil {
+		return err
+	}
 	for _, row := range rows {
 		for i := range row {
 			e.result.AppendDatum(i, &row[i])
 		}
 	}
+	return nil
 }
 
 func (e *ShowExec) fetchShowColumnStatsUsage() error {
