@@ -178,6 +178,7 @@ type baseSingleGroupJoinOrderSolver struct {
 	joinTypes    []JoinType
 }
 
+// deriveStatsAndGenerateJRNodeGroup used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
 func (s *baseSingleGroupJoinOrderSolver) deriveStatsAndGenerateJRNodeGroup(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) error {
 	s.curJoinGroup = make([]*jrNode, 0, len(joinNodePlans))
 	for _, node := range joinNodePlans {
@@ -204,6 +205,7 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) 
 	return cost
 }
 
+// checkConnection used to check whether two nodes have equal conditions or not.
 func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan LogicalPlan) (leftNode, rightNode LogicalPlan, usedEdges []*expression.ScalarFunction, joinType JoinType) {
 	joinType = InnerJoin
 	leftNode, rightNode = leftPlan, rightPlan
@@ -227,6 +229,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 	return
 }
 
+// makeJoin build join tree for the nodes which have equal conditions to connect them.
 func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPlan, eqEdges []*expression.ScalarFunction, joinType JoinType) (LogicalPlan, []expression.Expression) {
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
@@ -247,6 +250,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 	return s.newJoinWithEdges(leftPlan, rightPlan, eqEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds
 }
 
+// makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
 func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) LogicalPlan {
 	resultJoinGroup := make([]LogicalPlan, 0, (len(cartesianJoinGroup)+1)/2)
 	for len(cartesianJoinGroup) > 1 {
