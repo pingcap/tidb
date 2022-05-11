@@ -2929,6 +2929,25 @@ func TestAnalyzeJob(t *testing.T) {
 	}
 }
 
+func TestInsertAnalyzeJobWithLongInstance(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("delete from mysql.analyze_jobs")
+	job := &statistics.AnalyzeJob{
+		DBName:        "test",
+		TableName:     "t",
+		PartitionName: "",
+		JobInfo:       "table all columns with 256 buckets, 500 topn, 1 samplerate",
+	}
+	h := dom.StatsHandle()
+	instance := "xxxtidb-tidb-0.xxxtidb-tidb-peer.xxxx-xx-1234-xxx-123456-1-321.xyz:4000"
+	require.NoError(t, h.InsertAnalyzeJob(job, instance, 1))
+	rows := tk.MustQuery("show analyze status").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, instance, rows[0][9])
+}
+
 func TestShowAanalyzeStatusJobInfo(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
