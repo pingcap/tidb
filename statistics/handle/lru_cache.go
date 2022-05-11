@@ -189,10 +189,8 @@ func (s *statsInnerCache) Del(tblID int64) {
 // Cost implements statsCacheInner
 func (s *statsInnerCache) Cost() int64 {
 	s.RLock()
-	c := s.lru.trackingCost
-	s.RUnlock()
-	costGauge.Set(float64(c))
-	return c
+	defer s.RUnlock()
+	return s.lru.trackingCost
 }
 
 func (s *statsInnerCache) TotalCost() int64 {
@@ -273,6 +271,11 @@ func (s *statsInnerCache) SetCapacity(c int64) {
 	s.Lock()
 	defer s.Unlock()
 	s.lru.setCapacity(c)
+}
+
+// EnableQuota implements statsCacheInner
+func (s *statsInnerCache) EnableQuota() bool {
+	return true
 }
 
 func (s *statsInnerCache) onEvict(tblID int64) {
