@@ -26,7 +26,7 @@ import (
 )
 
 func TestFailStatementCommitInRetry(t *testing.T) {
-	store, clean := createStorage(t)
+	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
 	tk := createTestKit(t, store)
@@ -47,7 +47,7 @@ func TestFailStatementCommitInRetry(t *testing.T) {
 }
 
 func TestGetTSFailDirtyState(t *testing.T) {
-	store, clean := createStorage(t)
+	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
 	tk := createTestKit(t, store)
@@ -77,7 +77,7 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/mockGetTSErrorInRetry"))
 	}()
 
-	store, clean := createStorage(t)
+	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
 	tk := createTestKit(t, store)
@@ -95,7 +95,7 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 func TestKillFlagInBackoff(t *testing.T) {
 	// This test checks the `killed` flag is passed down to the backoffer through
 	// session.KVVars.
-	store, clean := createStorage(t)
+	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
 	tk := createTestKit(t, store)
@@ -113,7 +113,7 @@ func TestKillFlagInBackoff(t *testing.T) {
 }
 
 func TestClusterTableSendError(t *testing.T) {
-	store, clean := createStorage(t)
+	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
 	tk := createTestKit(t, store)
@@ -125,7 +125,7 @@ func TestClusterTableSendError(t *testing.T) {
 }
 
 func TestAutoCommitNeedNotLinearizability(t *testing.T) {
-	store, clean := createStorage(t)
+	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
 	tk := createTestKit(t, store)
