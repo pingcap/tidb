@@ -2516,13 +2516,19 @@ func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyz
 	}
 }
 
-func prepareV2AnalyzeJob(e *AnalyzeColumnsExec, sampleRate float64, retry bool) {
+func prepareV2AnalyzeJob(e *AnalyzeColumnsExec, newSampleRate float64, retry bool) {
 	if e != nil {
-		e.job.JobInfo = describeV2AnalyzeJobInfo(e.ctx.GetSessionVars().InRestrictedSQL, retry, e.V2Options.ColumnList, e.V2Options.RawOpts, sampleRate)
+		opts := e.opts
+		cols := e.colsInfo
+		if e.V2Options != nil {
+			opts = e.V2Options.FilledOpts
+			cols = e.V2Options.ColumnList
+		}
+		e.job.JobInfo = describeV2AnalyzeJobInfo(e.ctx.GetSessionVars().InRestrictedSQL, retry, cols, opts, newSampleRate)
 	}
 }
 
-func describeV2AnalyzeJobInfo(autoAnalyze bool, retry bool, cols []*model.ColumnInfo, opts map[ast.AnalyzeOptionType]uint64, sampleRate float64) string {
+func describeV2AnalyzeJobInfo(autoAnalyze bool, retry bool, cols []*model.ColumnInfo, opts map[ast.AnalyzeOptionType]uint64, newSampleRate float64) string {
 	var b strings.Builder
 	if retry {
 		b.WriteString("retry ")
@@ -2531,7 +2537,7 @@ func describeV2AnalyzeJobInfo(autoAnalyze bool, retry bool, cols []*model.Column
 		b.WriteString("auto ")
 	}
 	b.WriteString("analyze table")
-	if cols != nil && len(cols) > 0 {
+	if len(cols) > 0 {
 		if cols[len(cols)-1].ID == model.ExtraHandleID {
 			cols = cols[:len(cols)-1]
 		}
@@ -2567,10 +2573,11 @@ func describeV2AnalyzeJobInfo(autoAnalyze bool, retry bool, cols []*model.Column
 		} else {
 			needComma = true
 		}
-		if sampleRate <= 0 {
-			sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
+		if newSampleRate <= 0 {
+			b.WriteString(fmt.Sprintf("%v samplerate", math.Float64frombits(opts[ast.AnalyzeOptSampleRate])))
+		} else {
+			b.WriteString(fmt.Sprintf("%v samplerate", newSampleRate))
 		}
-		b.WriteString(fmt.Sprintf("%v samplerate", sampleRate))
 	}
 	return b.String()
 }
