@@ -412,9 +412,9 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 
 func analyzeColumnsPushdownWithRetry(e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	analyzeResult := analyzeColumnsPushdown(e)
-	// do not retry if succeed / not oom error / not auto-analyze / samplerate not set
+	// do not retry if succeed / not oom error / not auto-analyze / not v2 / samplerate not set
 	if analyzeResult.Err == nil || analyzeResult.Err != errAnalyzeOOM ||
-		!e.ctx.GetSessionVars().InRestrictedSQL ||
+		!e.ctx.GetSessionVars().InRestrictedSQL || e.StatsVersion != statistics.Version2 ||
 		e.analyzePB.ColReq == nil || *e.analyzePB.ColReq.SampleRate <= 0 {
 		return analyzeResult
 	}
@@ -438,7 +438,6 @@ func analyzeColumnsPushdownWithRetry(e *AnalyzeColumnsExec) *statistics.AnalyzeR
 		return analyzeResult
 	}
 	*e.analyzePB.ColReq.SampleRate = newSampleRate
-	// only statistics.Version2 will throw oom error and retry
 	prepareV2AnalyzeJobInfo(e, true)
 	AddNewAnalyzeJob(e.ctx, e.job)
 	StartAnalyzeJob(e.ctx, e.job)
@@ -2534,7 +2533,6 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec, retry bool) {
 	cols := e.colsInfo
 	if e.V2Options != nil {
 		opts = e.V2Options.FilledOpts
-		cols = e.V2Options.ColumnList
 	}
 	sampleRate := *e.analyzePB.ColReq.SampleRate
 	var b strings.Builder
