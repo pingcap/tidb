@@ -126,6 +126,20 @@ func createMockStoreAndDomainAndSetup(t *testing.T) (kv.Storage, *domain.Domain,
 		require.NoError(t, err)
 
 		return store, dom, func() {
+			tk := testkit.NewTestKit(t, store)
+			r := tk.MustQuery("show full tables")
+			for _, tb := range r.Rows() {
+				tableName := tb[0]
+				tableType := tb[1]
+				switch tableType {
+				case "VIEW":
+					tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+				case "BASE TABLE":
+					tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+				default:
+					panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
+				}
+			}
 			dom.Close()
 			require.NoError(t, store.Close())
 		}
