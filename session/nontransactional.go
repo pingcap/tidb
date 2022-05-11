@@ -118,11 +118,13 @@ func setMemTracker(se Session) *memory.Tracker {
 	case config.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: se.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		memTracker.SetActionOnExceed(action)
 	case config.OOMActionLog:
 		fallthrough
 	default:
 		action := &memory.LogOnExceed{ConnID: se.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		memTracker.SetActionOnExceed(action)
 	}
 	memTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 	return memTracker
