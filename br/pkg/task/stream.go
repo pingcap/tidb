@@ -78,6 +78,8 @@ var (
 
 	// rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 	rawKVBatchCount = 64
+
+	streamShiftDuration = time.Hour
 )
 
 var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error{
@@ -798,6 +800,7 @@ func RunStreamStatus(
 	return ctl.PrintStatusOfTask(ctx, cfg.TaskName)
 }
 
+// RunStreamStatus truncates the log that belong to (0, until-ts)
 func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	console := glue.GetConsole(g)
 	em := color.New(color.Bold).SprintFunc()
@@ -849,7 +852,8 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	fileCount := 0
 	minTS := oracle.GoTimeToTS(time.Now())
-	metas.IterateFilesFullyBefore(cfg.Until, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+	shiftUntilTS := ShiftTS(cfg.Until)
+	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
 		if d.MaxTs < minTS {
 			minTS = d.MaxTs
 		}
@@ -864,7 +868,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return nil
 	}
 
-	removed := metas.RemoveDataBefore(cfg.Until)
+	removed := metas.RemoveDataBefore(shiftUntilTS)
 
 	console.Print("Removing metadata... ")
 	if !cfg.DryRun {
@@ -888,6 +892,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	return nil
 }
 
+// RunStreamRestore restores stream log.
 func RunStreamRestore(
 	c context.Context,
 	g glue.Glue,
@@ -981,7 +986,7 @@ func restoreStream(
 	if cfg.RestoreTS == 0 || cfg.RestoreTS == math.MaxUint64 {
 		cfg.RestoreTS = currentTS
 	}
-	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS)
+	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, ShiftTS(cfg.StartTS))
 	client.SetCurrentTS(currentTS)
 
 	// read meta by given ts.
@@ -995,7 +1000,7 @@ func restoreStream(
 	}
 
 	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.StartTS, cfg.RestoreTS)
+	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1360,4 +1365,18 @@ func newRawBatchClient(
 	}
 
 	return restore.NewRawKVBatchClient(rawkvClient, rawKVBatchCount), nil
+}
+
+// ShiftTS gets a smaller shiftTS than startTS.
+// It has a safe duration between shiftTS and startTS for trasaction.
+func ShiftTS(startTS uint64) uint64 {
+	physical := oracle.ExtractPhysical(startTS)
+	logical := oracle.ExtractLogical(startTS)
+
+	shiftPhysical := physical - streamShiftDuration.Milliseconds()
+	if shiftPhysical < 0 {
+		return 0
+	} else {
+		return oracle.ComposeTS(shiftPhysical, logical)
+	}
 }
