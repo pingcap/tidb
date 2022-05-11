@@ -74,6 +74,9 @@ const (
 	// HintBCJ indicates applying broadcast join by force.
 	HintBCJ = "broadcast_join"
 
+	// HintStraightJoin causes TiDB to join tables in the order in which they appear in the FROM clause.
+	HintStraightJoin = "straight_join"
+
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
 	// HintINLJ is hint enforce index nested loop join.
