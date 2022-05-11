@@ -5431,12 +5431,21 @@ func TestHistoryReadInTxn(t *testing.T) {
 				tk.MustQuery("select * from his_t0").Check(testkit.Rows("1 10"))
 				tk.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 10"))
 
-				// When tidb_snapshot is set, select ... for update should not be effected
+				// When tidb_snapshot is set, write statements should not be allowed
 				if isolation != "none" && isolation != "optimistic" {
-					err := tk.ExecToErr("select * from his_t0 for update")
-					require.Errorf(t, err, "can not execute write statement when 'tidb_snapshot' is set")
-					err = tk.ExecToErr("select * from his_t0 where id=1 for update")
-					require.Errorf(t, err, "can not execute write statement when 'tidb_snapshot' is set")
+					notAllowedSQLs := []string{
+						"insert into his_t0 values(5, 1)",
+						"delete from his_t0 where id=1",
+						"update his_t0 set v=v+1",
+						"select * from his_t0 for update",
+						"select * from his_t0 where id=1 for update",
+						"create table his_t2(id int)",
+					}
+
+					for _, sql := range notAllowedSQLs {
+						err := tk.ExecToErr(sql)
+						require.Errorf(t, err, "can not execute write statement when 'tidb_snapshot' is set")
+					}
 				}
 
 				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
