@@ -66,7 +66,6 @@ func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 		}
 	}
 	if oldRoot != newRoot || !sameOperators {
-		fmt.Println(">>>>>>>> ", oldRoot, newRoot)
 		t.Fatalf("run %v failed, info: %v, expected \n%v\n, but got \n%v\n", q, info, oldPlan, newPlan)
 	}
 }
