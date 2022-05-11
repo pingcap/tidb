@@ -1594,6 +1594,12 @@ func (b *executorBuilder) getReadTS() (uint64, error) {
 		return b.snapshotTS, nil
 	}
 
+	if snapshotTS := b.ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		b.snapshotTS = snapshotTS
+		b.snapshotTSCached = true
+		return snapshotTS, nil
+	}
+
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		if err := b.refreshForUpdateTSForRC(); err != nil {
 			return 0, err
@@ -1606,20 +1612,17 @@ func (b *executorBuilder) getReadTS() (uint64, error) {
 		return b.snapshotTS, nil
 	}
 
-	snapshotTS := b.ctx.GetSessionVars().SnapshotTS
-	if snapshotTS == 0 {
-		txn, err := b.ctx.Txn(true)
-		if err != nil {
-			return 0, err
-		}
-		snapshotTS = txn.StartTS()
+	txn, err := b.ctx.Txn(true)
+	if err != nil {
+		return 0, err
 	}
-	b.snapshotTS = snapshotTS
+
+	b.snapshotTS = txn.StartTS()
 	if b.snapshotTS == 0 {
 		return 0, errors.Trace(ErrGetStartTS)
 	}
 	b.snapshotTSCached = true
-	return snapshotTS, nil
+	return b.snapshotTS, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
