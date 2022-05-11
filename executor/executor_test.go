@@ -5413,7 +5413,7 @@ func TestHistoryReadInTxn(t *testing.T) {
 	}
 
 	for _, isolation := range []string{
-		"none", // not start an explict txn
+		"none", // not start an explicit txn
 		"optimistic",
 		"REPEATABLE-READ",
 		"READ-COMMITTED",
