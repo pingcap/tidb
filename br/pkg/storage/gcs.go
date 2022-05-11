@@ -202,6 +202,8 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		// which can not be reuse in other API(Open/Read) directly.
 		// so we use TrimPrefix to filter Prefix for next Open/Read.
 		path := strings.TrimPrefix(attrs.Name, s.gcs.Prefix)
+		// trim the prefix '/' to ensure that the path returned is consistent with the local storage
+		path = strings.TrimPrefix(path, "/")
 		if err = fn(path, attrs.Size); err != nil {
 			return errors.Trace(err)
 		}
