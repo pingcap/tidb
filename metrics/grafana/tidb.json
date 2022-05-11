@@ -11649,7 +11649,7 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:149",
+              "$$hashKey": "object:90",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -11658,7 +11658,7 @@
               "show": true
             },
             {
-              "$$hashKey": "object:150",
+              "$$hashKey": "object:91",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -11729,20 +11729,19 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_statistics_stats_cache_lru_val{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",type=\"track\"}",
+              "expr": "tidb_statistics_stats_cache_lru_val{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"track\"}",
               "format": "time_series",
-              "hide": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "track",
+              "legendFormat": "track-{{instance}}",
               "refId": "A"
             },
             {
               "exemplar": true,
-              "expr": "tidb_statistics_stats_cache_lru_val{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",type=\"capacity\"}",
+              "expr": "tidb_statistics_stats_cache_lru_val{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"capacity\"}",
               "hide": true,
               "interval": "",
-              "legendFormat": "capacity",
+              "legendFormat": "capacity--{{instance}}",
               "refId": "B"
             }
           ],
