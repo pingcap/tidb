@@ -127,6 +127,7 @@ func createMockStoreAndDomainAndSetup(t *testing.T) (kv.Storage, *domain.Domain,
 
 		return store, dom, func() {
 			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
 			r := tk.MustQuery("show full tables")
 			for _, tb := range r.Rows() {
 				tableName := tb[0]
