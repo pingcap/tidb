@@ -278,6 +278,17 @@ func TestDAGPlanTopN(t *testing.T) {
 	}
 }
 
+func assertSameHints(t *testing.T, expected, actual []*ast.TableOptimizerHint) {
+	var expectedStr, actualStr []string
+	for _, h := range expected {
+		expectedStr = append(expectedStr, hint.RestoreTableOptimizerHint(h))
+	}
+	for _, h := range actual {
+		actualStr = append(actualStr, hint.RestoreTableOptimizerHint(h))
+	}
+	require.ElementsMatch(t, expectedStr, actualStr)
+}
+
 func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -312,7 +323,14 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), fmt.Sprintf("input: %s", tt))
+		hints := core.GenHintsFromPhysicalPlan(p)
+
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), fmt.Sprintf("input: %s", tt))
 	}
 }
 
@@ -852,8 +870,14 @@ func TestJoinHints(t *testing.T) {
 			require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
 			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
 		}
+		hints := core.GenHintsFromPhysicalPlan(p)
 
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), comment)
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 	}
 }
 
@@ -1268,7 +1292,14 @@ func TestIndexHint(t *testing.T) {
 		} else {
 			require.Len(t, warnings, 0, comment)
 		}
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), comment)
+		hints := core.GenHintsFromPhysicalPlan(p)
+
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 	}
 }
 
@@ -1315,7 +1346,14 @@ func TestIndexMergeHint(t *testing.T) {
 		} else {
 			require.Len(t, warnings, 0, comment)
 		}
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), comment)
+		hints := core.GenHintsFromPhysicalPlan(p)
+
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 	}
 }
 
@@ -1351,7 +1389,14 @@ func TestQueryBlockHint(t *testing.T) {
 			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		require.Equal(t, output[i].Plan, core.ToString(p), comment)
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), comment)
+		hints := core.GenHintsFromPhysicalPlan(p)
+
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 	}
 }
 
@@ -1391,7 +1436,14 @@ func TestInlineProjection(t *testing.T) {
 			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		require.Equal(t, output[i].Plan, core.ToString(p), comment)
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), comment)
+		hints := core.GenHintsFromPhysicalPlan(p)
+
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 	}
 }
 

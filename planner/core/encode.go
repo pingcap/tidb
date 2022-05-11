@@ -38,11 +38,8 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	if flat.InExecute {
 		return ""
 	}
-	selectPlan := flat.Main.GetSelectPlan()
-	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
-		return ""
-	}
 	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+		selectPlan := flat.Main.GetSelectPlan()
 		for _, op := range selectPlan {
 			op.EstRows = float64(val.(int))
 		}

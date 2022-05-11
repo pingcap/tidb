@@ -40,12 +40,15 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 		return nil
 	}
 	for _, op := range selectPlan {
+		if !op.IsRoot {
+			continue
+		}
 		p := op.Origin.(PhysicalPlan)
 		hints = genHintsFromSingle(p, nodeTp, hints)
 	}
 	for _, cte := range flat.CTEs {
 		for i, op := range cte {
-			if i == 0 {
+			if i == 0 || !op.IsRoot {
 				continue
 			}
 			p := op.Origin.(PhysicalPlan)

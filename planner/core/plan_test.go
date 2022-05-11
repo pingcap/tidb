@@ -77,12 +77,13 @@ func TestPreferRangeScan(t *testing.T) {
 		require.NotNil(t, info)
 		p, ok := info.Plan.(core.Plan)
 		require.True(t, ok)
-		normalized, _ := core.NormalizePlan(p)
+		normalized, digest := core.NormalizePlan(p)
 
 		// test the new normalization code
 		flat := core.FlattenPhysicalPlan(p)
-		newNormalized, _ := core.NormalizeFlatPlan(flat)
+		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
 		require.Equal(t, normalized, newNormalized)
+		require.Equal(t, digest, newDigest)
 
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
@@ -120,12 +121,13 @@ func TestNormalizedPlan(t *testing.T) {
 		require.NotNil(t, info)
 		p, ok := info.Plan.(core.Plan)
 		require.True(t, ok)
-		normalized, _ := core.NormalizePlan(p)
+		normalized, digest := core.NormalizePlan(p)
 
 		// test the new normalization code
 		flat := core.FlattenPhysicalPlan(p)
-		newNormalized, _ := core.NormalizeFlatPlan(flat)
+		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
 		require.Equal(t, normalized, newNormalized)
+		require.Equal(t, digest, newDigest)
 
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
@@ -218,9 +220,26 @@ func TestEncodeDecodePlan(t *testing.T) {
 	require.True(t, strings.Contains(planTree, "time"))
 	require.True(t, strings.Contains(planTree, "loops"))
 
-	tk.MustExec("insert into t1 values (1,1,1);")
+	tk.MustExec("prepare stmt from \"select max(a) from t1 where a > ?\";")
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a;")
+	planTree = getPlanTree()
+
+	tk.MustExec("insert into t1 values (1,1,1), (2,2,2);")
 	planTree = getPlanTree()
 	require.True(t, strings.Contains(planTree, "Insert"))
+	require.True(t, strings.Contains(planTree, "time"))
+	require.True(t, strings.Contains(planTree, "loops"))
+
+	tk.MustExec("update t1 set b = 3 where c = 1;")
+	planTree = getPlanTree()
+	require.True(t, strings.Contains(planTree, "Update"))
+	require.True(t, strings.Contains(planTree, "time"))
+	require.True(t, strings.Contains(planTree, "loops"))
+
+	tk.MustExec("delete from t1 where b = 3;")
+	planTree = getPlanTree()
+	require.True(t, strings.Contains(planTree, "Delete"))
 	require.True(t, strings.Contains(planTree, "time"))
 	require.True(t, strings.Contains(planTree, "loops"))
 
