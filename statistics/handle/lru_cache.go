@@ -16,6 +16,7 @@ package handle
 
 import (
 	"container/list"
+	"math"
 	"sync"
 
 	"github.com/pingcap/tidb/statistics"
@@ -46,6 +47,9 @@ type innerItemLruCache struct {
 }
 
 func newInnerLruCache(c int64) *innerItemLruCache {
+	if c < 1 {
+		c = math.MaxInt64
+	}
 	return &innerItemLruCache{
 		capacity: c,
 		cache:    list.New(),
@@ -63,6 +67,13 @@ type lruCacheItem struct {
 type lruMapElement struct {
 	tbl         *statistics.Table
 	tblMemUsage *statistics.TableMemoryUsage
+}
+
+func (l *lruMapElement) copy() *lruMapElement {
+	return &lruMapElement{
+		tbl:         l.tbl,
+		tblMemUsage: l.tblMemUsage,
+	}
 }
 
 // GetByQuery implements statsCacheInner
@@ -230,17 +241,6 @@ func (s *statsInnerCache) FreshMemUsage() {
 	}
 }
 
-// FreshTableCost implements statsCacheInner
-func (s *statsInnerCache) FreshTableCost(tblID int64) {
-	s.Lock()
-	defer s.Unlock()
-	element, exist := s.elements[tblID]
-	if !exist {
-		return
-	}
-	s.freshTableCost(tblID, element)
-}
-
 // Copy implements statsCacheInner
 func (s *statsInnerCache) Copy() statsCacheInner {
 	s.RLock()
@@ -248,10 +248,17 @@ func (s *statsInnerCache) Copy() statsCacheInner {
 	newCache := newStatsLruCache(s.lru.capacity)
 	newCache.lru = s.lru.copy()
 	for tblID, element := range s.elements {
-		newCache.elements[tblID] = element
+		newCache.elements[tblID] = element.copy()
 	}
 	newCache.lru.onEvict = newCache.onEvict
 	return newCache
+}
+
+// SetCapacity implements statsCacheInner
+func (s *statsInnerCache) SetCapacity(c int64) {
+	s.Lock()
+	defer s.Unlock()
+	s.lru.setCapacity(c)
 }
 
 func (s *statsInnerCache) onEvict(tblID int64) {
@@ -367,4 +374,12 @@ func (c *innerItemLruCache) copy() *innerItemLruCache {
 		curr = curr.Prev()
 	}
 	return newLRU
+}
+
+func (c *innerItemLruCache) setCapacity(capacity int64) {
+	if capacity < 1 {
+		capacity = math.MaxInt64
+	}
+	c.capacity = capacity
+	c.evictIfNeeded()
 }
