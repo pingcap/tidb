@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -375,10 +374,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 	var task *analyzeTask
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultsCh <- &statistics.AnalyzeResults{
 				Err: getAnalyzePanicErr(r),
@@ -1175,10 +1171,7 @@ type analyzeIndexNDVTotalResult struct {
 func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult) {
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("analyze ndv for special index panicked", zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("analyze ndv for special index panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			totalResultCh <- analyzeIndexNDVTotalResult{
 				err: getAnalyzePanicErr(r),
@@ -1235,10 +1228,7 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resu
 	var task *analyzeTask
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultsCh <- &statistics.AnalyzeResults{
 				Err: getAnalyzePanicErr(r),
@@ -1337,10 +1327,7 @@ type samplingMergeResult struct {
 func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, isClosedChanThread bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- &samplingMergeResult{err: getAnalyzePanicErr(r)}
 		}
@@ -1401,10 +1388,7 @@ type samplingBuildTask struct {
 func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- getAnalyzePanicErr(r)
 		}
