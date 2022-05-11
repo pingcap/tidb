@@ -402,9 +402,9 @@ func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawA
 	return nil
 }
 
-func (w *worker) GetDDLReorgHandle(job *model.Job, t *meta.Meta) (*meta.Element, kv.Key, kv.Key, int64, error) {
+func GetDDLReorgHandle(job *model.Job, t *meta.Meta, sess sessionctx.Context) (*meta.Element, kv.Key, kv.Key, int64, error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		return GetDDLReorgHandle(job, w.sessForJob)
+		return GetConcurrentDDLReorgHandle(job, sess)
 	}
 	return t.GetDDLReorgHandle(job)
 }

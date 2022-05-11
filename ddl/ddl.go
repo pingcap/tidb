@@ -1321,7 +1321,7 @@ func GetDDLInfoFromTable(txn kv.Transaction, sess sessionctx.Context) (*Info, er
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = GetDDLReorgHandle(jobs[0], sess)
+	_, info.ReorgHandle, _, _, err = GetConcurrentDDLReorgHandle(jobs[0], sess)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -1332,8 +1332,8 @@ func GetDDLInfoFromTable(txn kv.Transaction, sess sessionctx.Context) (*Info, er
 	return info, nil
 }
 
-// GetDDLReorgHandle get ddl reorg handle.
-func GetDDLReorgHandle(job *model.Job, sess sessionctx.Context) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+// GetConcurrentDDLReorgHandle get ddl reorg handle.
+func GetConcurrentDDLReorgHandle(job *model.Job, sess sessionctx.Context) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
 	sql := fmt.Sprintf("select curr_ele_id, curr_ele_type from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {

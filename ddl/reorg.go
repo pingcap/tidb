@@ -641,7 +641,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		})
 
 		var err error
-		element, start, end, pid, err = wk.GetDDLReorgHandle(job, t)
+		element, start, end, pid, err = GetDDLReorgHandle(job, t, wk.sessForJob)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -699,7 +699,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 		element = elements[0]
 	} else {
 		var err error
-		element, start, end, pid, err = wk.GetDDLReorgHandle(job, t)
+		element, start, end, pid, err = GetDDLReorgHandle(job, t, wk.sessForJob)
 
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.

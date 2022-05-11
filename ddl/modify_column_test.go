@@ -124,12 +124,8 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		var e *meta.Element
 		var start, end kv.Key
 		var physicalID int64
-		if variable.AllowConcurrencyDDL.Load() {
-			internalTk := testkit.NewTestKit(t, store)
-			e, start, end, physicalID, err = ddl.GetDDLReorgHandle(currJob, internalTk.Session())
-		} else {
-			e, start, end, physicalID, err = m.GetDDLReorgHandle(currJob)
-		}
+		internalTk := testkit.NewTestKit(t, store)
+		e, start, end, physicalID, err = ddl.GetDDLReorgHandle(currJob, m, internalTk.Session())
 
 		require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 		require.Nil(t, e)

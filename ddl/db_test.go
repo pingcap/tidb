@@ -641,11 +641,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	var element *meta.Element
 	var start, end kv.Key
 	var physicalID int64
-	if variable.AllowConcurrencyDDL.Load() {
-		element, start, end, physicalID, err = ddl.GetDDLReorgHandle(currJob, testkit.NewTestKit(t, store).Session())
-	} else {
-		element, start, end, physicalID, err = m.GetDDLReorgHandle(currJob)
-	}
+	element, start, end, physicalID, err = ddl.GetDDLReorgHandle(currJob, m, testkit.NewTestKit(t, store).Session())
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)
