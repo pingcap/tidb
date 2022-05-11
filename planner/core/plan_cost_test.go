@@ -410,6 +410,31 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 	}
 }
 
+func TestNewCostInterfaceTiFlash2(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (id int, value decimal(6,3))`)
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec(" set @@tidb_allow_mpp=1;")
+	checkCost(t, tk, "select * from t join ( select count(*), id from t group by id) as A on A.id = t.id", "")
+}
+
 func TestNewCostInterfaceRandGen(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
