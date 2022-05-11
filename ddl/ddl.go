@@ -1287,7 +1287,7 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 }
 
 // GetDDLInfoFromTable returns DDL information for new ddl framework.
-func GetDDLInfoFromTable(txn kv.Transaction, sess sessionctx.Context) (*Info, error) {
+func GetDDLInfoFromTable(txn kv.Transaction, sess *session) (*Info, error) {
 	info := &Info{}
 	info.Jobs = make([]*model.Job, 0, 2)
 	jobs, err := getJobsBySQL(sess, "tidb_ddl_job", "not reorg order by job_id limit 1")
@@ -1327,42 +1327,35 @@ func GetDDLInfoFromTable(txn kv.Transaction, sess sessionctx.Context) (*Info, er
 }
 
 // GetConcurrentDDLReorgHandle get ddl reorg handle.
-func GetConcurrentDDLReorgHandle(job *model.Job, sess sessionctx.Context) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+func GetConcurrentDDLReorgHandle(job *model.Job, sess *session) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+	var id int64
+	var tp []byte
 	sql := fmt.Sprintf("select curr_ele_id, curr_ele_type from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+	err = sess.execute(context.Background(), sql, func(rows []chunk.Row) error {
+		if len(rows) == 0 {
+			return meta.ErrDDLReorgElementNotExist
+		}
+		id = rows[0].GetInt64(0)
+		tp = rows[0].GetBytes(1)
+		return nil
+	})
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
-	var rows []chunk.Row
-	rows, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
-	rs.Close()
-	if err != nil {
-		return nil, nil, nil, 0, err
-	}
-	if len(rows) == 0 {
-		return nil, nil, nil, 0, meta.ErrDDLReorgElementNotExist
-	}
-	id := rows[0].GetInt64(0)
-	tp := rows[0].GetBytes(1)
 	sql = fmt.Sprintf("select start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d", job.ID, id)
-	rs, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-	if err != nil {
-		return nil, nil, nil, 0, err
-	}
-	var rows2 []chunk.Row
-	rows2, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
-	rs.Close()
-	if err != nil || len(rows2) == 0 {
-		return nil, nil, nil, 0, err
-	}
+	err = sess.execute(context.Background(), sql, func(rows []chunk.Row) error {
+		if len(rows) == 0 {
+			return nil
+		}
+		startKey = rows[0].GetBytes(0)
+		endKey = rows[0].GetBytes(1)
+		physicalTableID = rows[0].GetInt64(2)
+		return nil
+	})
 	element = &meta.Element{
 		ID:      id,
 		TypeKey: tp,
 	}
-	startKey = rows2[0].GetBytes(0)
-	endKey = rows2[0].GetBytes(1)
-	physicalTableID = rows2[0].GetInt64(2)
-
 	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
 	// update them to table's in this case.
 	if physicalTableID == 0 {
@@ -1384,7 +1377,7 @@ func GetConcurrentDDLReorgHandle(job *model.Job, sess sessionctx.Context) (eleme
 // The maximum count of history jobs is num.
 func GetHistoryDDLJobs(sess sessionctx.Context, txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
-	return GetLastNHistoryDDLJobs(sess, t, maxNumJobs)
+	return GetLastNHistoryDDLJobs(newSession(sess), t, maxNumJobs)
 }
 
 func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
@@ -1474,7 +1467,7 @@ func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]
 }
 
 // GetLastNHistoryDDLJobs get last n history ddl jobs.
-func GetLastNHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
+func GetLastNHistoryDDLJobs(sess *session, m *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		return getJobsBySQL(sess, "tidb_ddl_history", "1 order by job_seq desc limit "+strconv.Itoa(maxNumJobs))
 	}
@@ -1489,7 +1482,7 @@ func GetLastNHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta, maxNumJobs in
 func GetLastHistoryDDLJobsIterator(sess sessionctx.Context, m *meta.Meta) (meta.LastJobIterator, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		return &ConcurrentDDLLastJobIterator{
-			sess:   sess,
+			sess:   newSession(sess),
 			offset: 0,
 		}, nil
 	}
@@ -1498,7 +1491,7 @@ func GetLastHistoryDDLJobsIterator(sess sessionctx.Context, m *meta.Meta) (meta.
 
 // ConcurrentDDLLastJobIterator is the iterator for gets latest history.
 type ConcurrentDDLLastJobIterator struct {
-	sess   sessionctx.Context
+	sess   *session
 	offset uint64
 }
 

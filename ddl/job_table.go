@@ -328,8 +328,13 @@ func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawA
 	return nil
 }
 
-// GetDDLReorgHandle gets the latest processed DDL reorganize position.
-func GetDDLReorgHandle(job *model.Job, t *meta.Meta, sess sessionctx.Context) (*meta.Element, kv.Key, kv.Key, int64, error) {
+// GetDDLReorgHandleForTest gets the latest processed DDL reorganize position. It is only used for test.
+func GetDDLReorgHandleForTest(job *model.Job, t *meta.Meta, sess sessionctx.Context) (*meta.Element, kv.Key, kv.Key, int64, error) {
+	return detDDLReorgHandle(job, t, newSession(sess))
+}
+
+// detDDLReorgHandle gets the latest processed DDL reorganize position.
+func detDDLReorgHandle(job *model.Job, t *meta.Meta, sess *session) (*meta.Element, kv.Key, kv.Key, int64, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		return GetConcurrentDDLReorgHandle(job, sess)
 	}
@@ -352,28 +357,13 @@ func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element
 
 func (w *worker) UpdateDDLReorgHandle(t *meta.Meta, job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	if variable.AllowConcurrencyDDL.Load() {
-		sess, err := w.sessPool.get()
-		if err != nil {
-			logutil.BgLogger().Error("[ddl] fail to get sessPool", zap.Error(err))
-			return err
-		}
-		defer w.sessPool.put(sess)
-		if _, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin"); err != nil {
-			logutil.BgLogger().Error("[ddl] fail to begin", zap.Error(err))
-		}
-		defer func() {
-			if _, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "commit"); err != nil {
-				logutil.BgLogger().Error("[ddl] fail to begin", zap.Error(err))
-			}
-		}()
 		sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
-		_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
+		err := w.sess.execute(context.Background(), sql)
 		if err != nil {
 			return err
 		}
 		sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key, end_key, physical_id) values (%d, %d, %s, %s, %d)", job.ID, element.ID, wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
-		_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-		return err
+		return w.sess.execute(context.Background(), sql)
 	}
 	return t.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
 }
@@ -460,9 +450,9 @@ func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) 
 	return getDDLJobs(t)
 }
 
-func getJobsBySQL(sess sessionctx.Context, tbl, condition string) ([]*model.Job, error) {
+func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 	jobs := make([]*model.Job, 0, 16)
-	err := newSession(sess).execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), func(rows []chunk.Row) error {
+	err := sess.execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), func(rows []chunk.Row) error {
 		for _, row := range rows {
 			jobBinary := row.GetBytes(0)
 			job := model.Job{}

@@ -125,7 +125,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		var start, end kv.Key
 		var physicalID int64
 		internalTk := testkit.NewTestKit(t, store)
-		e, start, end, physicalID, err = ddl.GetDDLReorgHandle(currJob, m, internalTk.Session())
+		e, start, end, physicalID, err = ddl.GetDDLReorgHandleForTest(currJob, m, internalTk.Session())
 
 		require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 		require.Nil(t, e)

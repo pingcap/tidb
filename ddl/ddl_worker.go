@@ -425,7 +425,7 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 // GetHistoryJobByID return history ddl by id.
 func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		jobs, err := getJobsBySQL(sess, "tidb_ddl_history", fmt.Sprintf("job_id = %d", id))
+		jobs, err := getJobsBySQL(newSession(sess), "tidb_ddl_history", fmt.Sprintf("job_id = %d", id))
 		if err != nil || len(jobs) == 0 {
 			return nil, errors.Trace(err)
 		}
@@ -447,7 +447,7 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 // GetAllHistoryDDLJobs get all the done ddl jobs.
 func GetAllHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta) ([]*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		return getJobsBySQL(sess, "tidb_ddl_history", "1")
+		return getJobsBySQL(newSession(sess), "tidb_ddl_history", "1")
 	}
 
 	return m.GetAllHistoryDDLJobs()

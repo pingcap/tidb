@@ -15,11 +15,8 @@
 package ddl
 
 import (
-	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 )
 
 var (
@@ -49,21 +46,21 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
-	se, err := d.sessPool.get()
+	sess, err := d.sessPool.get()
 	if err != nil {
 		return nil, err
 	}
+	se := newSession(sess)
 	defer func() {
-		_ = se.CommitTxn(context.Background())
-		d.sessPool.put(se)
+		_ = se.commit()
+		d.sessPool.put(se.session())
 	}()
 
-	err = sessiontxn.NewTxn(context.Background(), se)
+	err = se.begin()
 	if err != nil {
 		return nil, err
 	}
-	se.GetSessionVars().SetInTxn(true)
-	txn, err := se.Txn(true)
+	txn, err := se.txn()
 	if err != nil {
 		return nil, err
 	}
