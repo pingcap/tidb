@@ -103,7 +103,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
 	for _, task := range e.tasks {
-		prepareV2AnalyzeJob(task.colExec, -1, false)
+		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.ctx, task.job)
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
@@ -437,7 +437,8 @@ func analyzeColumnsPushdownWithRetry(e *AnalyzeColumnsExec) *statistics.AnalyzeR
 		return analyzeResult
 	}
 	*e.analyzePB.ColReq.SampleRate = newSampleRate
-	prepareV2AnalyzeJob(e, newSampleRate, true)
+	// only statistics.Version2 will throw oom error and retry
+	prepareV2AnalyzeJobInfo(e, true)
 	AddNewAnalyzeJob(e.ctx, e.job)
 	StartAnalyzeJob(e.ctx, e.job)
 	return analyzeColumnsPushdown(e)
@@ -2516,31 +2517,29 @@ func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyz
 	}
 }
 
-func prepareV2AnalyzeJob(e *AnalyzeColumnsExec, newSampleRate float64, retry bool) {
-	if e != nil {
-		opts := e.opts
-		cols := e.colsInfo
-		if e.V2Options != nil {
-			opts = e.V2Options.FilledOpts
-			cols = e.V2Options.ColumnList
-		}
-		e.job.JobInfo = describeV2AnalyzeJobInfo(e.ctx.GetSessionVars().InRestrictedSQL, retry, cols, opts, newSampleRate)
+func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec, retry bool) {
+	if e == nil || e.StatsVersion != statistics.Version2 {
+		return
 	}
-}
-
-func describeV2AnalyzeJobInfo(autoAnalyze bool, retry bool, cols []*model.ColumnInfo, opts map[ast.AnalyzeOptionType]uint64, newSampleRate float64) string {
+	opts := e.opts
+	cols := e.colsInfo
+	if e.V2Options != nil {
+		opts = e.V2Options.FilledOpts
+		cols = e.V2Options.ColumnList
+	}
+	sampleRate := *e.analyzePB.ColReq.SampleRate
 	var b strings.Builder
 	if retry {
 		b.WriteString("retry ")
 	}
-	if autoAnalyze {
+	if e.ctx.GetSessionVars().InRestrictedSQL {
 		b.WriteString("auto ")
 	}
 	b.WriteString("analyze table")
-	if len(cols) > 0 {
-		if cols[len(cols)-1].ID == model.ExtraHandleID {
-			cols = cols[:len(cols)-1]
-		}
+	if len(cols) > 0 && cols[len(cols)-1].ID == model.ExtraHandleID {
+		cols = cols[:len(cols)-1]
+	}
+	if len(cols) < len(e.tableInfo.Columns) {
 		b.WriteString(" columns ")
 		for i, col := range cols {
 			if i > 0 {
@@ -2573,13 +2572,9 @@ func describeV2AnalyzeJobInfo(autoAnalyze bool, retry bool, cols []*model.Column
 		} else {
 			needComma = true
 		}
-		if newSampleRate <= 0 {
-			b.WriteString(fmt.Sprintf("%v samplerate", math.Float64frombits(opts[ast.AnalyzeOptSampleRate])))
-		} else {
-			b.WriteString(fmt.Sprintf("%v samplerate", newSampleRate))
-		}
+		b.WriteString(fmt.Sprintf("%v samplerate", sampleRate))
 	}
-	return b.String()
+	e.job.JobInfo = b.String()
 }
 
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup
