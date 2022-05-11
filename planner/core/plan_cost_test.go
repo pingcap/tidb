@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
@@ -882,4 +883,64 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 	for _, q := range queries {
 		checkCost(t, tk, q, "")
 	}
+}
+
+func TestTrueCardCost(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key, b int, key(b))`)
+
+	checkPlanCost := func(sql string, expected, expectedTrueCard []string) {
+		tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
+		rs := tk.MustQuery(`explain analyze format=verbose ` + sql).Rows()
+		var tmp []string
+		for _, r := range rs {
+			prefix := strings.Join([]string{r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[4].(string)}, " ") // op, est_rows, cost, act_rows, task
+			tmp = append(tmp, prefix)
+		}
+		require.Equal(t, tmp, expected)
+
+		tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
+		rs = tk.MustQuery(`explain analyze format=true_card_cost ` + sql).Rows()
+		tmp = tmp[:0]
+		for _, r := range rs {
+			prefix := strings.Join([]string{r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[4].(string)}, " ") // op, est_rows, cost, act_rows, task
+			tmp = append(tmp, prefix)
+		}
+		require.Equal(t, tmp, expectedTrueCard)
+	}
+
+	checkPlanCost(`select sum(a), b*2 from t use index(b) group by b order by sum(a) limit 10`,
+		[]string{"Projection_8 10.00 133771.82 0 root",
+			"└─Projection_9 10.00 133747.82 0 root",
+			"  └─TopN_12 10.00 133723.82 0 root",
+			"    └─HashAgg_23 8000.00 53997.53 0 root",
+			"      └─IndexReader_24 8000.00 48668.53 0 root",
+			"        └─HashAgg_17 8000.00 0.00 0 cop[tikv]",
+			"          └─IndexFullScan_22 10000.00 570000.00 0 cop[tikv]"},
+		[]string{"Projection_8 10.00 70.34 0 root",
+			"└─Projection_9 10.00 52.34 0 root",
+			"  └─TopN_12 10.00 34.34 0 root",
+			"    └─HashAgg_23 8000.00 34.33 0 root",
+			"      └─IndexReader_24 8000.00 1.33 0 root",
+			"        └─HashAgg_17 8000.00 0.00 0 cop[tikv]",
+			"          └─IndexFullScan_22 10000.00 0.00 0 cop[tikv]"})
+
+	tk.MustExec(`insert into t values (1, 1), (2, 2), (3, 3)`)
+	checkPlanCost(`select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b`,
+		[]string{"IndexJoin_11 12487.50 265579.50 3 root",
+			"├─IndexReader_31(Build) 9990.00 48785.83 3 root",
+			"│ └─IndexFullScan_30 9990.00 569430.00 3 cop[tikv]",
+			"└─IndexReader_10(Probe) 1.25 7.69 3 root",
+			"  └─Selection_9 1.25 0.00 3 cop[tikv]",
+			"    └─IndexRangeScan_8 1.25 0.00 3 cop[tikv]"},
+		[]string{"IndexJoin_11 12487.50 102.08 3 root",
+			"├─IndexReader_31(Build) 9990.00 15.98 3 root",
+			"│ └─IndexFullScan_30 9990.00 171.00 3 cop[tikv]",
+			"└─IndexReader_10(Probe) 1.25 16.58 3 root",
+			"  └─Selection_9 1.25 180.00 3 cop[tikv]",
+			"    └─IndexRangeScan_8 1.25 171.00 3 cop[tikv]"})
 }
