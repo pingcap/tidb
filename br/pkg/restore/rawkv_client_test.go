@@ -16,7 +16,6 @@ import (
 	"github.com/tikv/client-go/v2/rawkv"
 
 	"github.com/pingcap/tidb/util/codec"
-
 )
 
 // fakeRawkvClient is a mock for rawkv.client
@@ -101,7 +100,7 @@ func TestRawKVBatchClientDuplicated(t *testing.T) {
 	rawkvBatchClient.SetColumnFamily("default")
 
 	kvs := []kv.Entry{
-		{Key: codec.EncodeUintDesc([]byte("key1"), 1) ,Value: []byte("v1")},
+		{Key: codec.EncodeUintDesc([]byte("key1"), 1), Value: []byte("v1")},
 		{Key: codec.EncodeUintDesc([]byte("key1"), 2), Value: []byte("v2")},
 		{Key: codec.EncodeUintDesc([]byte("key3"), 3), Value: []byte("v3")},
 		{Key: codec.EncodeUintDesc([]byte("key4"), 4), Value: []byte("v4")},
@@ -138,4 +137,3 @@ func TestRawKVBatchClientDuplicated(t *testing.T) {
 	})
 	require.Equal(t, expectedKvs, fakeRawkvClient.kvs)
 }
-
