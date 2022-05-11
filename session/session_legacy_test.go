@@ -25,6 +25,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -52,6 +53,8 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"google.golang.org/grpc"
 )
 
 var withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
@@ -83,6 +86,63 @@ type testSessionSuite3 struct {
 
 type testSessionSerialSuite struct {
 	testSessionSuiteBase
+}
+
+func clearTiKVStorage(store kv.Storage) error {
+	txn, err := store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	iter, err := txn.Iter(nil, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for iter.Valid() {
+		if err := txn.Delete(iter.Key()); err != nil {
+			return errors.Trace(err)
+		}
+		if err := iter.Next(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return txn.Commit(context.Background())
+}
+
+func clearEtcdStorage(ebd kv.EtcdBackend) error {
+	endpoints, err := ebd.EtcdAddrs()
+	if err != nil {
+		return err
+	}
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:        endpoints,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithBackoffMaxDelay(time.Second * 3),
+		},
+		TLS: ebd.TLSConfig(),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cli.Close()
+
+	resp, err := cli.Get(context.Background(), "/tidb", clientv3.WithPrefix())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, kv := range resp.Kvs {
+		if kv.Lease != 0 {
+			if _, err := cli.Revoke(context.Background(), clientv3.LeaseID(kv.Lease)); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {

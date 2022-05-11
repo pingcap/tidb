@@ -15,7 +15,7 @@
 // This file contains tests about binlog which need running with real TiKV.
 // Only tests under /session will be run with real TiKV, so we put them here.
 
-package session_test
+package realtikvtest
 
 import (
 	"context"

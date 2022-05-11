@@ -15,7 +15,7 @@
 // This file contains tests about backup restore (br) which need running with real TiKV.
 // Only tests under /session will be run with real TiKV, so we put them here instead of /br.
 
-package session_test
+package realtikvtest
 
 import (
 	"os"
@@ -28,7 +28,7 @@ import (
 )
 
 func TestBackupAndRestore(t *testing.T) {
-	if !*withTiKV {
+	if !*withRealTiKV {
 		t.Skip("only run BR SQL integration test with tikv store")
 	}
 
