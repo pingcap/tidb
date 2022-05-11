@@ -402,6 +402,7 @@ func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawA
 	return nil
 }
 
+// GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func GetDDLReorgHandle(job *model.Job, t *meta.Meta, sess sessionctx.Context) (*meta.Element, kv.Key, kv.Key, int64, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		return GetConcurrentDDLReorgHandle(job, sess)
