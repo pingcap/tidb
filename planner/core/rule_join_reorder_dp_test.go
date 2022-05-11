@@ -32,6 +32,7 @@ type mockLogicalJoin struct {
 	logicalSchemaProducer
 	involvedNodeSet int
 	statsMap        map[int]*property.StatsInfo
+	JoinType        JoinType
 }
 
 func (mj mockLogicalJoin) init(ctx sessionctx.Context) *mockLogicalJoin {
@@ -46,8 +47,8 @@ func (mj *mockLogicalJoin) recursiveDeriveStats(_ [][]*expression.Column) (*prop
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
 
-func newMockJoin(ctx sessionctx.Context, statsMap map[int]*property.StatsInfo) func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _ []expression.Expression) LogicalPlan {
-	return func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _ []expression.Expression) LogicalPlan {
+func newMockJoin(ctx sessionctx.Context, statsMap map[int]*property.StatsInfo) func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) LogicalPlan {
+	return func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) LogicalPlan {
 		retJoin := mockLogicalJoin{}.init(ctx)
 		retJoin.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
 		retJoin.statsMap = statsMap
@@ -62,6 +63,7 @@ func newMockJoin(ctx sessionctx.Context, statsMap map[int]*property.StatsInfo) f
 			retJoin.involvedNodeSet |= 1 << uint(rChild.ID())
 		}
 		retJoin.SetChildren(lChild, rChild)
+		retJoin.JoinType = joinType
 		return retJoin
 	}
 }

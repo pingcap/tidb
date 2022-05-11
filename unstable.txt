@@ -1,5 +1,11 @@
-server TestTopSQLCPUProfile
+ddl TestSchema
+ddl TestModifyColumn
 ddl TestModifyColumnTypeWhenInterception
-executor TestIn
+util/watcher TestWatcher
+executor TestSlowQuery
+server TestGetSchemaStorage
+executor TestClusterTableSlowQuery
+executor TestIndexJoin31494
 executor TestDefaultValForAnalyze
-
+executor TestIn
+expression TestGetLock

@@ -21,36 +21,53 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/tracing"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
-// InnerJoins to construct a join group. This join group is further used to
+// Joins to construct a join group. This join group is further used to
 // construct a new join order based on a reorder algorithm.
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
-// results in a join group {a, b, LeftJoin(c, d)}.
-func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) {
+// results in a join group {a, b, c, d}.
+func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
+	otherConds []expression.Expression, joinTypes []JoinType) {
 	join, isJoin := p.(*LogicalJoin)
-	if !isJoin || join.preferJoinType > uint(0) || join.JoinType != InnerJoin || join.StraightJoin {
-		return []LogicalPlan{p}, nil, nil
+	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
+		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
+		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
+		return []LogicalPlan{p}, nil, nil, nil
+	}
+	if join.JoinType != RightOuterJoin {
+		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes := extractJoinGroup(join.children[0])
+		group = append(group, lhsGroup...)
+		eqEdges = append(eqEdges, lhsEqualConds...)
+		otherConds = append(otherConds, lhsOtherConds...)
+		joinTypes = append(joinTypes, lhsJoinTypes...)
+	} else {
+		group = append(group, join.children[0])
 	}
 
-	lhsGroup, lhsEqualConds, lhsOtherConds := extractJoinGroup(join.children[0])
-	rhsGroup, rhsEqualConds, rhsOtherConds := extractJoinGroup(join.children[1])
+	if join.JoinType != LeftOuterJoin {
+		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes := extractJoinGroup(join.children[1])
+		group = append(group, rhsGroup...)
+		eqEdges = append(eqEdges, rhsEqualConds...)
+		otherConds = append(otherConds, rhsOtherConds...)
+		joinTypes = append(joinTypes, rhsJoinTypes...)
+	} else {
+		group = append(group, join.children[1])
+	}
 
-	group = append(group, lhsGroup...)
-	group = append(group, rhsGroup...)
 	eqEdges = append(eqEdges, join.EqualConditions...)
-	eqEdges = append(eqEdges, lhsEqualConds...)
-	eqEdges = append(eqEdges, rhsEqualConds...)
 	otherConds = append(otherConds, join.OtherConditions...)
-	otherConds = append(otherConds, lhsOtherConds...)
-	otherConds = append(otherConds, rhsOtherConds...)
-	return group, eqEdges, otherConds
+	otherConds = append(otherConds, join.LeftConditions...)
+	otherConds = append(otherConds, join.RightConditions...)
+	for range join.EqualConditions {
+		joinTypes = append(joinTypes, join.JoinType)
+	}
+	return group, eqEdges, otherConds, joinTypes
 }
 
 type joinReOrderSolver struct {
@@ -73,7 +90,8 @@ func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	var err error
-	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
+
+	curJoinGroup, eqEdges, otherConds, joinTypes := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
@@ -81,29 +99,33 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				return nil, err
 			}
 		}
-		originalSchema := p.Schema()
-
 		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
 			ctx:        ctx,
 			otherConds: otherConds,
-			eqEdges:    eqEdges,
 		}
-		err = baseGroupSolver.deriveStatsAndGenerateJRNodeGroup(curJoinGroup, tracer)
-		if err != nil {
-			return nil, err
-		}
+		originalSchema := p.Schema()
 
-		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
+		// Not support outer join reorder when using the DP algorithm
+		isSupportDP := true
+		for _, joinType := range joinTypes {
+			if joinType != InnerJoin {
+				isSupportDP = false
+				break
+			}
+		}
+		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
+				eqEdges:                        eqEdges,
+				joinTypes:                      joinTypes,
 			}
-			p, err = groupSolver.solve(tracer)
+			p, err = groupSolver.solve(curJoinGroup, tracer)
 		} else {
 			dpSolver := &joinReorderDPSolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
 			dpSolver.newJoin = dpSolver.newJoinWithEdges
-			p, err = dpSolver.solve(curJoinGroup, tracer)
+			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges), tracer)
 		}
 		if err != nil {
 			return nil, err
@@ -146,24 +168,6 @@ type baseSingleGroupJoinOrderSolver struct {
 	ctx          sessionctx.Context
 	curJoinGroup []*jrNode
 	otherConds   []expression.Expression
-	eqEdges      []*expression.ScalarFunction
-}
-
-func (s *baseSingleGroupJoinOrderSolver) deriveStatsAndGenerateJRNodeGroup(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) error {
-	s.curJoinGroup = make([]*jrNode, 0, len(joinNodePlans))
-	for _, node := range joinNodePlans {
-		_, err := node.recursiveDeriveStats(nil)
-		if err != nil {
-			return err
-		}
-		cost := s.baseNodeCumCost(node)
-		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			p:       node,
-			cumCost: cost,
-		})
-		tracer.appendLogicalJoinCost(node, cost)
-	}
-	return nil
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
@@ -173,31 +177,6 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) 
 		cost += s.baseNodeCumCost(child)
 	}
 	return cost
-}
-
-func (s *baseSingleGroupJoinOrderSolver) checkConnection(lChild, rChild LogicalPlan) (usedEdges []*expression.ScalarFunction) {
-	for _, edge := range s.eqEdges {
-		lCol := edge.GetArgs()[0].(*expression.Column)
-		rCol := edge.GetArgs()[1].(*expression.Column)
-		if lChild.Schema().Contains(lCol) && rChild.Schema().Contains(rCol) {
-			usedEdges = append(usedEdges, edge)
-		} else if rChild.Schema().Contains(lCol) && lChild.Schema().Contains(rCol) {
-			newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
-			usedEdges = append(usedEdges, newSf)
-		}
-	}
-	return
-}
-
-func (s *baseSingleGroupJoinOrderSolver) makeJoin(lChild, rChild LogicalPlan, eqEdges []*expression.ScalarFunction) (LogicalPlan, []expression.Expression) {
-	remainOtherConds := make([]expression.Expression, len(s.otherConds))
-	copy(remainOtherConds, s.otherConds)
-	var otherConds []expression.Expression
-	mergedSchema := expression.MergeSchema(lChild.Schema(), rChild.Schema())
-	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
-		return expression.ExprFromSchema(expr, mergedSchema)
-	})
-	return s.newJoinWithEdges(lChild, rChild, eqEdges, otherConds), remainOtherConds
 }
 
 // makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
@@ -210,8 +189,14 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 				resultJoinGroup = append(resultJoinGroup, cartesianJoinGroup[i])
 				break
 			}
-			newJoin, remainOtherConds := s.makeJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil)
-			s.otherConds = remainOtherConds
+			newJoin := s.newCartesianJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1])
+			for i := len(s.otherConds) - 1; i >= 0; i-- {
+				cols := expression.ExtractColumns(s.otherConds[i])
+				if newJoin.schema.ColumnsIndices(cols) != nil {
+					newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
+					s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
+				}
+			}
 			resultJoinGroup = append(resultJoinGroup, newJoin)
 		}
 		cartesianJoinGroup, resultJoinGroup = resultJoinGroup, cartesianJoinGroup
@@ -233,10 +218,14 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 	return join
 }
 
-func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) LogicalPlan {
+func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild LogicalPlan,
+	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType) LogicalPlan {
 	newJoin := s.newCartesianJoin(lChild, rChild)
 	newJoin.EqualConditions = eqEdges
 	newJoin.OtherConditions = otherConds
+	newJoin.LeftConditions = leftConds
+	newJoin.RightConditions = rightConds
+	newJoin.JoinType = joinType
 	return newJoin
 }
 

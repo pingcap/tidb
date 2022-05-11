@@ -106,7 +106,7 @@ func decodeFieldTypeFromLattice(tup Tuple) *types.FieldType {
 		flags |= mysql.NoDefaultValueFlag
 	}
 
-	return types.NewFieldTypeBuilderP().SetType(lst[fieldTypeTupleIndexTp].(byte)).SetFlen(lst[fieldTypeTupleIndexFlen].(int)).SetDecimal(lst[fieldTypeTupleIndexDec].(int)).SetFlag(flags).SetCharset(lst[fieldTypeTupleIndexCharset].(string)).SetCollate(lst[fieldTypeTupleIndexCollate].(string)).SetElems(lst[fieldTypeTupleIndexElems].([]string)).BuildP()
+	return types.NewFieldTypeBuilder().SetType(lst[fieldTypeTupleIndexTp].(byte)).SetFlen(lst[fieldTypeTupleIndexFlen].(int)).SetDecimal(lst[fieldTypeTupleIndexDec].(int)).SetFlag(flags).SetCharset(lst[fieldTypeTupleIndexCharset].(string)).SetCollate(lst[fieldTypeTupleIndexCollate].(string)).SetElems(lst[fieldTypeTupleIndexElems].([]string)).BuildP()
 }
 
 type typ struct{ Tuple }
