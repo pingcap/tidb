@@ -45,6 +45,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const defaultNewAllocIDCnt = 100000
+
 type TableRestore struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
@@ -56,6 +58,8 @@ type TableRestore struct {
 	logger    log.Logger
 
 	ignoreColumns map[string]struct{}
+	rowIDLock     sync.Mutex
+	curMaxRowID   int64
 }
 
 func NewTableRestore(
@@ -98,6 +102,9 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 			timestamp = int64(v.(int))
 		})
 		for _, chunk := range chunks {
+			if chunk.Chunk.RowIDMax > tr.curMaxRowID {
+				tr.curMaxRowID = chunk.Chunk.RowIDMax
+			}
 			engine, found := cp.Engines[chunk.EngineID]
 			if !found {
 				engine = &checkpoints.EngineCheckpoint{
@@ -493,7 +500,7 @@ func (tr *TableRestore) restoreEngine(
 		// 	2. sql -> kvs
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
-		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
+		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo, tr)
 		if err != nil {
 			setError(err)
 			break
@@ -1011,4 +1018,12 @@ func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) 
 	}
 
 	return threshold
+}
+
+func (tr *TableRestore) allocateRowIDs() (int64, int64) {
+	tr.rowIDLock.Lock()
+	defer tr.rowIDLock.Unlock()
+	newBase := tr.curMaxRowID + 1
+	tr.curMaxRowID += defaultNewAllocIDCnt
+	return newBase, tr.curMaxRowID
 }

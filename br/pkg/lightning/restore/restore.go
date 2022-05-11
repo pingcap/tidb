@@ -2028,9 +2028,13 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 }
 
 type chunkRestore struct {
-	parser mydump.Parser
-	index  int
-	chunk  *checkpoints.ChunkCheckpoint
+	parser           mydump.Parser
+	index            int
+	chunk            *checkpoints.ChunkCheckpoint
+	originalRowIDMax int64
+	curRowIDBase     int64
+	curRowIDMax      int64
+	tableRestore     *TableRestore
 }
 
 func newChunkRestore(
@@ -2041,6 +2045,7 @@ func newChunkRestore(
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
 	tableInfo *checkpoints.TidbTableInfo,
+	tableRestore *TableRestore,
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
@@ -2087,9 +2092,11 @@ func newChunkRestore(
 	}
 
 	return &chunkRestore{
-		parser: parser,
-		index:  index,
-		chunk:  chunk,
+		parser:           parser,
+		index:            index,
+		chunk:            chunk,
+		originalRowIDMax: chunk.Chunk.RowIDMax,
+		tableRestore:     tableRestore,
 	}, nil
 }
 
@@ -2140,6 +2147,17 @@ type deliveredKVs struct {
 type deliverResult struct {
 	totalDur time.Duration
 	err      error
+}
+
+func (cr *chunkRestore) adjustRowID(rowID *int64) {
+	if *rowID > cr.originalRowIDMax {
+		if cr.curRowIDBase >= cr.curRowIDMax {
+			// reallocate rowID
+			cr.curRowIDBase, cr.curRowIDMax = cr.tableRestore.allocateRowIDs()
+		}
+		*rowID = cr.curRowIDBase
+		cr.curRowIDBase++
+	}
 }
 
 //nolint:nakedret // TODO: refactor
@@ -2422,6 +2440,8 @@ func (cr *chunkRestore) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			// sql -> kv
+			cr.adjustRowID(&lastRow.RowID)
+			rowID = lastRow.RowID
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 

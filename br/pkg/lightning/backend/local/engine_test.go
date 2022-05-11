@@ -28,7 +28,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 )
 
 func TestIngestSSTWithClosedEngine(t *testing.T) {
@@ -82,4 +84,76 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 			path: sstPath,
 		},
 	}), errorEngineClosed)
+}
+
+func TestAutoSplitSST(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/MockFlushWriter", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/MockFlushWriter"))
+	}()
+	var err error
+	dir := os.TempDir()
+	w := &Writer{
+		engine: &Engine{
+			sstDir:     dir,
+			keyAdapter: noopKeyAdapter{},
+		},
+		isKVSorted:         true,
+		isWriteBatchSorted: true,
+	}
+	w.engine.closed.Store(false)
+	w.writer, err = w.createSSTWriter()
+	require.Nil(t, err)
+	kvs := []common.KvPair{
+		{
+			Key:   []byte("1"),
+			Val:   []byte("val1"),
+			RowID: 1,
+		},
+		{
+			Key:   []byte("2"),
+			Val:   []byte("val1"),
+			RowID: 2,
+		},
+	}
+	prevWriter := w.writer
+	err = w.appendRowsSorted(kvs)
+	require.Nil(t, err)
+	require.True(t, prevWriter == w.writer)
+	kvs = []common.KvPair{
+		{
+			Key:   []byte("10"),
+			Val:   []byte("val10"),
+			RowID: 10,
+		},
+		{
+			Key:   []byte("11"),
+			Val:   []byte("val11"),
+			RowID: 11,
+		},
+	}
+	err = w.appendRowsSorted(kvs)
+	require.Nil(t, err)
+	require.False(t, prevWriter == w.writer) // id leap, should flush and create
+	prevWriter = w.writer
+	kvs = []common.KvPair{
+		{
+			Key:   []byte("12"),
+			Val:   []byte("val12"),
+			RowID: 10,
+		},
+		{
+			Key:   []byte("13"),
+			Val:   []byte("val13"),
+			RowID: 11,
+		},
+		{
+			Key:   []byte("15"),
+			Val:   []byte("val15"),
+			RowID: 15,
+		},
+	}
+	err = w.appendRowsSorted(kvs)
+	require.Nil(t, err)
+	require.False(t, prevWriter == w.writer) // id leap, should flush and create
 }

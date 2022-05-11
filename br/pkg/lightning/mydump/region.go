@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
@@ -297,6 +298,10 @@ func makeSourceFileRegion(
 			RowIDMax:     fi.FileMeta.FileSize / divisor,
 		},
 	}
+	failpoint.Inject("MockInaccurateRowID", func() {
+		// only allocates 5 rows but contains 10 rows
+		tableRegion.Chunk.RowIDMax = 5
+	})
 
 	if tableRegion.Size() > tableRegionSizeWarningThreshold {
 		log.L().Warn(

@@ -542,3 +542,16 @@ func (kvs *KvPairs) Clear() Rows {
 	kvs.pairs = kvs.pairs[:0]
 	return kvs
 }
+
+func (kvs *KvPairs) GetRowIDToKv() map[int64][]*common.KvPair {
+	res := make(map[int64][]*common.KvPair, 0)
+	for i, p := range kvs.pairs {
+		if _, ok := res[p.RowID]; !ok {
+			res[p.RowID] = make([]*common.KvPair, 0)
+			res[p.RowID] = append(res[p.RowID], &kvs.pairs[i])
+		} else {
+			res[p.RowID] = append(res[p.RowID], &kvs.pairs[i])
+		}
+	}
+	return res
+}
