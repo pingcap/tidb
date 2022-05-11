@@ -27,7 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TODO move this test to BR integration tests.
 func TestBackupAndRestore(t *testing.T) {
 	if !*withTiKV {
 		t.Skip("only run BR SQL integration test with tikv store")
