@@ -926,7 +926,15 @@ func TestModifyInvalidColumnData(t *testing.T) {
 	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("alter table t modify column a varchar(19) charset utf8", errno.ErrTruncatedWrongValueForField)
 
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(20), b varchar(20), c varchar(20)) charset = latin1")
+	tk.MustExec("insert into t values (0x3F, 0x3F, 0x90)")
+	tk.MustGetErrCode("alter table t convert to charset utf8", errno.ErrTruncatedWrongValueForField)
+
 	tk.MustExec("set sql_mode=''")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(20)) charset = latin1")
+	tk.MustExec("insert into t values (0x90)")
 	tk.MustExec("alter table t convert to charset utf8")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1366 Incorrect string value '\\x90' for column 'a'"))
 	tk.MustQuery("select hex(a) from t").Check(testkit.Rows("90"))

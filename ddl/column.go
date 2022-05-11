@@ -1547,8 +1547,9 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 				if err != nil {
 					return errors.Trace(err)
 				}
-				taskCtx.addedCount++
 			}
+
+			taskCtx.addedCount++
 			if len(rowRecord.warning) != 0 {
 				for _, warn := range rowRecord.warning {
 					if _, ok := warningsCountMap[warn.ID()]; ok {
@@ -1605,7 +1606,7 @@ func (w *worker) doCheckColumns(d *ddlCtx, t *meta.Meta, job *model.Job, dbInfo 
 			return false, errors.Trace(err)
 		}
 		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-			logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+			logutil.BgLogger().Warn("[ddl] do checkColumns failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))
 		}
 		job.State = model.JobStateCancelled
