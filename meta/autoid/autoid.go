@@ -733,8 +733,8 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 	// CalcNeededBatchSize calculates the total batch size needed.
 	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
-	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
-	if math.MaxInt64-alloc.base <= n1 {
+	// overflow
+	if alloc.base > 0 && alloc.base+n1 < 0 {
 		return 0, 0, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for allocN, skip it.
@@ -822,8 +822,8 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 	// CalcNeededBatchSize calculates the total batch size needed.
 	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
-	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
-	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {
+	// overflow
+	if uint64(alloc.base)+uint64(n1) < uint64(n1) {
 		return 0, 0, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for alloc, skip it.

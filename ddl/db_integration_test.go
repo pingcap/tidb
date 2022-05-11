@@ -2804,8 +2804,33 @@ func TestAutoIncrementOverflow(t *testing.T) {
 	tk.MustGetErrCode("alter table test1 auto_increment=9223372036854775807;", errno.ErrAutoIncrementOverflow)
 	tk.MustGetErrCode("alter table test1 auto_increment=9223372036854775803;", errno.ErrAutoIncrementOverflow)
 	tk.MustExec("insert into test1(b) values (4);")
-	tk.MustQuery("select a, b from test1;").Check(testkit.Rows("9223372036854775800 1",
+	tk.MustQuery("select a, b from test1 order by a;").Check(testkit.Rows("9223372036854775800 1",
 		"9223372036854775801 2", "9223372036854775802 3", "9223372036854775803 4"))
+
+	tk.MustExec("drop table if exists test1;")
+	tk.MustExec("create table test1( a bigint(20) unsigned auto_increment, b int, primary key(a));")
+	tk.MustExec("alter table test1 auto_increment=18446744073709551610;")
+	tk.MustExec("insert into test1(b) values (1),(2),(3);")
+	tk.MustGetErrCode("alter table test1 auto_increment=18446744073709551615;", errno.ErrAutoIncrementOverflow)
+	tk.MustExec("insert into test1(b) values (4);")
+	tk.MustQuery("select a, b from test1 order by a;").Check(testkit.Rows("18446744073709551610 1",
+		"18446744073709551611 2", "18446744073709551612 3", "18446744073709551613 4"))
+
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test( a bigint(20) auto_increment, b int, primary key(a));")
+	tk.MustExec("insert into test values(1,2),(9223372036854775806,3);")
+	tk.MustExec("insert into test(b) values(100);")
+	tk.MustGetErrCode("insert into test(b) values(101);", errno.ErrAutoincReadFailed)
+	tk.MustQuery("select a, b from test order by a;").Check(testkit.Rows("1 2",
+		"9223372036854775806 3", "9223372036854775807 100"))
+
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test( a bigint(20) unsigned auto_increment, b int, primary key(a));")
+	tk.MustExec("insert into test values(1,2),(18446744073709551614,3);")
+	tk.MustExec("insert into test(b) values(100);")
+	tk.MustGetErrCode("insert into test(b) values(101);", errno.ErrAutoincReadFailed)
+	tk.MustQuery("select a, b from test order by a;").Check(testkit.Rows("1 2",
+		"18446744073709551614 3", "18446744073709551615 100"))
 }
 
 func TestAutoIncrementForce(t *testing.T) {

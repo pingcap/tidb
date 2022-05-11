@@ -1058,7 +1058,7 @@ error = '''
 
 ["ddl:8143"]
 error = '''
-AUTO_INCREMENT has reached the maximum value limitation (9223372036854775807)
+AUTO_INCREMENT has reached the maximum value limitation
 '''
 
 ["ddl:8200"]
