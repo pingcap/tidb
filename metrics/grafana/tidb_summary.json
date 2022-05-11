@@ -1792,7 +1792,7 @@
             "multi": false,
             "name": "instance",
             "options": [ ],
-            "query": "label_values(process_start_time_seconds{k8s_cluster=\"$k8s_cluster\", job=\"tidb\"}, instance)",
+            "query": "label_values(tidb_server_connections{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}, instance)",
             "refresh": 1,
             "regex": "",
             "sort": 1,

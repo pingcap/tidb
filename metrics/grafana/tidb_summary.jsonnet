@@ -76,7 +76,7 @@ local newDash = dashboard.new(
     label='Instance',
     multi=false,
     name='instance',
-    query='label_values(process_start_time_seconds{k8s_cluster="$k8s_cluster", job="tidb"}, instance)',
+    query='label_values(tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}, instance)',
     refresh='load',
     regex='',
     sort=1,
