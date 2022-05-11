@@ -1041,7 +1041,6 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 // it will be recovered and log the panic error.
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run(ctx context.Context) {
-	const size = 4096
 	defer func() {
 		r := recover()
 		if r != nil {
