@@ -2011,7 +2011,7 @@ const (
 	SlowLogPlan = "Plan"
 	// SlowLogPlanDigest is used to record the query plan digest.
 	SlowLogPlanDigest = "Plan_digest"
-	// SlowLogVisualPlan XXX
+	// SlowLogVisualPlan is used to record the visual plan.
 	SlowLogVisualPlan = "Visual_plan"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"

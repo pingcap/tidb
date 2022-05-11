@@ -67,26 +67,18 @@ func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
 // FlatOperator is a simplified operator.
 // It contains a reference to the original operator and some usually needed information.
 type FlatOperator struct {
-	// A reference to the original operator. It will be useful when the information below is insufficient.
+	// A reference to the original operator.
 	Origin Plan
 
-	// ID, position and classification
 	TextTreeExplainID string
-	Depth             uint64
+	Depth             uint32
 	DriverSide        DriverSide
 	IsRoot            bool
 	StoreType         kv.StoreType
 	// ReqType is only meaningful when IsRoot is false.
 	ReqType ReadReqType
 
-	// Basic operator information
-	StatsInfoAvailable bool
-	// EstRows is only meaningful when StatsInfoAvailable is true.
-	EstRows float64
-
 	IsPhysicalPlan bool
-	// EstCost is only meaningful when IsPhysicalPlan is true.
-	EstCost float64
 }
 
 // DriverSide indicates the operator's location from its parent.
@@ -123,7 +115,7 @@ func (d DriverSide) String() string {
 }
 
 type operatorCtx struct {
-	depth       uint64
+	depth       uint32
 	driverSide  DriverSide
 	isRoot      bool
 	storeType   kv.StoreType
@@ -178,16 +170,8 @@ func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperato
 		Depth:             info.depth,
 	}
 
-	if si := p.statsInfo(); si != nil {
-		res.StatsInfoAvailable = true
-		res.EstRows = si.RowCount
-	} else {
-		res.StatsInfoAvailable = false
-	}
-
-	if pp, ok := p.(PhysicalPlan); ok {
+	if _, ok := p.(PhysicalPlan); ok {
 		res.IsPhysicalPlan = true
-		res.EstCost = pp.Cost()
 	}
 	return res
 }

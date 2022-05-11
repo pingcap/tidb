@@ -32,30 +32,24 @@ import (
 
 // FlatPhysicalOperatorForTest contains fields of FlatOperator that is needed for tests.
 type FlatPhysicalOperatorForTest struct {
-	TextTreeExplainID  string
-	Depth              uint64
-	DriverSide         core.DriverSide
-	IsRoot             bool
-	StoreType          kv.StoreType
-	ReqType            core.ReadReqType
-	StatsInfoAvailable bool
-	EstRows            float64
-	IsPhysicalPlan     bool
-	EstCost            float64
+	TextTreeExplainID string
+	Depth             uint32
+	DriverSide        core.DriverSide
+	IsRoot            bool
+	StoreType         kv.StoreType
+	ReqType           core.ReadReqType
+	IsPhysicalPlan    bool
 }
 
 func simplifyFlatPhysicalOperator(e *core.FlatOperator) *FlatPhysicalOperatorForTest {
 	return &FlatPhysicalOperatorForTest{
-		TextTreeExplainID:  e.TextTreeExplainID,
-		Depth:              e.Depth,
-		DriverSide:         e.DriverSide,
-		IsRoot:             e.IsRoot,
-		StoreType:          e.StoreType,
-		ReqType:            e.ReqType,
-		StatsInfoAvailable: e.StatsInfoAvailable,
-		EstRows:            e.EstRows,
-		IsPhysicalPlan:     e.IsPhysicalPlan,
-		EstCost:            e.EstCost,
+		TextTreeExplainID: e.TextTreeExplainID,
+		Depth:             e.Depth,
+		DriverSide:        e.DriverSide,
+		IsRoot:            e.IsRoot,
+		StoreType:         e.StoreType,
+		ReqType:           e.ReqType,
+		IsPhysicalPlan:    e.IsPhysicalPlan,
 	}
 }
 

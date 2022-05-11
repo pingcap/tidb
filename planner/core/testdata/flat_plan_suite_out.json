@@ -12,10 +12,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 10000,
-            "IsPhysicalPlan": true,
-            "EstCost": 184001.33333333334
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "└─TableFullScan_4",
@@ -24,10 +21,7 @@
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 10000,
-            "IsPhysicalPlan": true,
-            "EstCost": 1785000
+            "IsPhysicalPlan": true
           }
         ],
         "CTEs": null
@@ -42,10 +36,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 1,
-            "IsPhysicalPlan": true,
-            "EstCost": 120121313.66766667
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "└─Projection_34",
@@ -54,10 +45,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 100000000,
-            "IsPhysicalPlan": true,
-            "EstCost": 0
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "  └─HashJoin_10",
@@ -66,10 +54,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 100000000,
-            "IsPhysicalPlan": true,
-            "EstCost": 60121280.666666664
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "    ├─IndexReader_17(Build)",
@@ -78,10 +63,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 10000,
-            "IsPhysicalPlan": true,
-            "EstCost": 47834.666666666664
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "    │ └─IndexFullScan_16",
@@ -90,10 +72,7 @@
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 10000,
-            "IsPhysicalPlan": true,
-            "EstCost": 555000
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "    └─TableReader_27(Probe)",
@@ -102,10 +81,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 10000,
-            "IsPhysicalPlan": true,
-            "EstCost": 43418
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "      └─TableFullScan_26",
@@ -114,10 +90,7 @@
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 10000,
-            "IsPhysicalPlan": true,
-            "EstCost": 570000
+            "IsPhysicalPlan": true
           }
         ],
         "CTEs": null
@@ -132,10 +105,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 3333.3333333333335,
-            "IsPhysicalPlan": true,
-            "EstCost": 17963.77777777778
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "└─IndexReader_6",
@@ -144,10 +114,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 3333.3333333333335,
-            "IsPhysicalPlan": true,
-            "EstCost": 15945.77777777778
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "  └─IndexRangeScan_5",
@@ -156,10 +123,7 @@
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 3333.3333333333335,
-            "IsPhysicalPlan": true,
-            "EstCost": 185000
+            "IsPhysicalPlan": true
           }
         ],
         "CTEs": null
@@ -174,10 +138,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 3333.3333333333335,
-            "IsPhysicalPlan": true,
-            "EstCost": 126630.44444444445
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "└─TableReader_7",
@@ -186,10 +147,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 3333.3333333333335,
-            "IsPhysicalPlan": true,
-            "EstCost": 124612.44444444445
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "  └─Selection_6",
@@ -198,10 +156,7 @@
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 3333.3333333333335,
-            "IsPhysicalPlan": true,
-            "EstCost": 1815000
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "    └─TableFullScan_5",
@@ -210,10 +165,7 @@
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 10000,
-            "IsPhysicalPlan": true,
-            "EstCost": 1785000
+            "IsPhysicalPlan": true
           }
         ],
         "CTEs": null
@@ -228,10 +180,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 8000,
-            "IsPhysicalPlan": true,
-            "EstCost": 321729.7333333334
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "├─Selection_30(Build)",
@@ -240,10 +189,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 6400,
-            "IsPhysicalPlan": true,
-            "EstCost": 189852.6666666667
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "│ └─CTEFullScan_31",
@@ -252,10 +198,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 8000,
-            "IsPhysicalPlan": true,
-            "EstCost": 0
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "└─Selection_32(Probe)",
@@ -264,10 +207,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 6400,
-            "IsPhysicalPlan": true,
-            "EstCost": 107852.66666666666
+            "IsPhysicalPlan": true
           },
           {
             "TextTreeExplainID": "  └─CTEFullScan_33",
@@ -276,10 +216,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 8000,
-            "IsPhysicalPlan": true,
-            "EstCost": 0
+            "IsPhysicalPlan": true
           }
         ],
         "CTEs": [
@@ -291,10 +228,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 8000,
-              "IsPhysicalPlan": true,
-              "EstCost": 0
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "└─Selection_13(Seed Part)",
@@ -303,10 +237,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 8000,
-              "IsPhysicalPlan": true,
-              "EstCost": 165852.6666666667
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "  └─TableReader_16",
@@ -315,10 +246,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 10000,
-              "IsPhysicalPlan": true,
-              "EstCost": 129834.66666666667
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "    └─TableFullScan_15",
@@ -327,10 +255,7 @@
               "IsRoot": false,
               "StoreType": 0,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 10000,
-              "IsPhysicalPlan": true,
-              "EstCost": 1785000
+              "IsPhysicalPlan": true
             }
           ],
           [
@@ -341,10 +266,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 8000,
-              "IsPhysicalPlan": true,
-              "EstCost": 0
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "└─Selection_18(Seed Part)",
@@ -353,10 +275,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 8000,
-              "IsPhysicalPlan": true,
-              "EstCost": 83852.66666666666
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "  └─IndexReader_23",
@@ -365,10 +284,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 10000,
-              "IsPhysicalPlan": true,
-              "EstCost": 47834.666666666664
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "    └─IndexFullScan_22",
@@ -377,10 +293,7 @@
               "IsRoot": false,
               "StoreType": 0,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 10000,
-              "IsPhysicalPlan": true,
-              "EstCost": 555000
+              "IsPhysicalPlan": true
             }
           ]
         ]
@@ -395,10 +308,7 @@
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "StatsInfoAvailable": true,
-            "EstRows": 1.8,
-            "IsPhysicalPlan": true,
-            "EstCost": 0
+            "IsPhysicalPlan": true
           }
         ],
         "CTEs": [
@@ -410,10 +320,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 1.8,
-              "IsPhysicalPlan": true,
-              "EstCost": 0
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "├─Projection_11(Seed Part)",
@@ -422,10 +329,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 1,
-              "IsPhysicalPlan": true,
-              "EstCost": 18.6
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "│ └─TableDual_12",
@@ -434,10 +338,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 1,
-              "IsPhysicalPlan": true,
-              "EstCost": 0
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "└─Projection_13(Recursive Part)",
@@ -446,10 +347,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 0.8,
-              "IsPhysicalPlan": true,
-              "EstCost": 21.48
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "  └─Selection_14",
@@ -458,10 +356,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 0.8,
-              "IsPhysicalPlan": true,
-              "EstCost": 3
+              "IsPhysicalPlan": true
             },
             {
               "TextTreeExplainID": "    └─CTETable_15",
@@ -470,10 +365,7 @@
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "StatsInfoAvailable": true,
-              "EstRows": 1,
-              "IsPhysicalPlan": true,
-              "EstCost": 0
+              "IsPhysicalPlan": true
             }
           ]
         ]

@@ -41,7 +41,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
 		selectPlan := flat.Main.GetSelectPlan()
 		for _, op := range selectPlan {
-			op.EstRows = float64(val.(int))
+			op.Origin.statsInfo().RowCount = float64(val.(int))
 		}
 	})
 	var buf bytes.Buffer
@@ -55,11 +55,15 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
 		p := op.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
+		var estRows float64
+		if statsInfo := p.statsInfo(); statsInfo != nil {
+			estRows = statsInfo.RowCount
+		}
 		plancodec.EncodePlanNode(
 			int(op.Depth),
 			op.Origin.ID(),
 			op.Origin.TP(),
-			op.EstRows,
+			estRows,
 			taskTypeInfo,
 			op.Origin.ExplainInfo(),
 			actRows,
@@ -84,11 +88,15 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 			taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
 			p := op.Origin
 			actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
+			var estRows float64
+			if statsInfo := p.statsInfo(); statsInfo != nil {
+				estRows = statsInfo.RowCount
+			}
 			plancodec.EncodePlanNode(
 				int(op.Depth),
 				id,
 				tp,
-				op.EstRows,
+				estRows,
 				taskTypeInfo,
 				op.Origin.ExplainInfo(),
 				actRows,
@@ -247,7 +255,7 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
 		p := op.Origin.(PhysicalPlan)
 		plancodec.NormalizePlanNode(
-			int(op.Depth-uint64(depthOffset)),
+			int(op.Depth-uint32(depthOffset)),
 			op.Origin.TP(),
 			taskTypeInfo,
 			p.ExplainNormalizedInfo(),

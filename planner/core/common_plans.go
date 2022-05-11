@@ -1384,10 +1384,15 @@ func visualOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *t
 
 func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *tipb.VisualOperator) {
 	out.Name = op.Origin.ExplainID().String()
-	out.Cost = op.EstCost
-	out.EstRows = op.EstRows
 	out.RunAt = op.StoreType.Name()
 	rootStats, copStats, _, _ := getRuntimeInfo(explainCtx, op.Origin, nil)
+	if statsInfo := op.Origin.statsInfo(); statsInfo != nil {
+		out.EstRows = statsInfo.RowCount
+	}
+	if op.IsPhysicalPlan {
+		p := op.Origin.(PhysicalPlan)
+		out.Cost = p.Cost()
+	}
 	// Get TimeUs
 	if rootStats != nil {
 		if basicStats := rootStats.MergeBasicStats(); basicStats != nil {
