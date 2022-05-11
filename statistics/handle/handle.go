@@ -260,9 +260,6 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	tables := make([]*statistics.Table, 0, len(rows))
-	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		version := row.GetUint64(0)
 		physicalID := row.GetInt64(1)
@@ -274,7 +271,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		h.mu.Unlock()
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
-			deletedTableIDs = append(deletedTableIDs, physicalID)
+			oldCache.Del(physicalID)
 			continue
 		}
 		tableInfo := table.Meta()
@@ -288,7 +285,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 			continue
 		}
 		if tbl == nil {
-			deletedTableIDs = append(deletedTableIDs, physicalID)
+			oldCache.Del(physicalID)
 			continue
 		}
 		tbl.Version = version
@@ -296,9 +293,9 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		tables = append(tables, tbl)
+		oldCache.Put(physicalID, tbl)
 	}
-	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
+	h.updateStatsCache(oldCache.update(nil, nil, lastVersion, opts...))
 	return nil
 }
 
@@ -2059,4 +2056,17 @@ func WithTableStatsByQuery() TableStatsOpt {
 	return func(option *tableStatsOption) {
 		option.byQuery = true
 	}
+}
+
+// SetStatsCacheCapacity sets capacity
+func (h *Handle) SetStatsCacheCapacity(c int64) {
+	if h == nil {
+		return
+	}
+	v := h.statsCache.Load()
+	if v == nil {
+		return
+	}
+	sc := v.(statsCache)
+	sc.SetCapacity(c)
 }
