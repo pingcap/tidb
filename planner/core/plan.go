@@ -19,7 +19,6 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -319,7 +319,7 @@ type PhysicalPlan interface {
 	Plan
 
 	// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-	GetPlanCost(taskType property.TaskType) (float64, error)
+	GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error)
 
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
