@@ -432,6 +432,7 @@ func TestNewCostInterfaceTiFlash2(t *testing.T) {
 	}
 
 	tk.MustExec(" set @@tidb_allow_mpp=1;")
+	tk.Session().GetSessionVars().DEBUG = true
 	checkCost(t, tk, "select * from t join ( select count(*), id from t group by id) as A on A.id = t.id", "")
 }
 

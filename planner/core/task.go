@@ -1754,6 +1754,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				})
 			}
 		}
+		mpp.addCost(partialAgg.(*PhysicalHashAgg).GetCost(inputRows, false, true, 0))
 		partialAgg.SetCost(mpp.cost())
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
@@ -1762,7 +1763,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		attachPlan2Task(finalAgg, newMpp)
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows, false, true, 0))
+		newMpp.addCost(finalAgg.(*PhysicalHashAgg).GetCost(newMpp.count(), false, true, 0))
 		finalAgg.SetCost(newMpp.cost())
 		if proj != nil {
 			attachPlan2Task(proj, newMpp)
