@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/maps"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -95,9 +96,7 @@ func (is IntSet) Equals(target IntSet) bool {
 
 func (is *IntSet) CopyFrom(target IntSet) {
 	*is = NewIntSetWithCap(len(target))
-	for k, v := range target {
-		(*is)[k] = v
-	}
+	maps.Copy(*is, target)
 }
 
 func (is IntSet) SortedArray() []int {

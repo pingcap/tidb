@@ -46,6 +46,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 var (
@@ -486,10 +487,7 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 	} else {
 		s.procKeys = append(s.procKeys, 0)
 	}
-
-	for k, v := range copStats.BackoffSleep {
-		s.backoffSleep[k] += v
-	}
+	maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
@@ -512,9 +510,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	}
 	newRs.totalProcessTime += s.totalProcessTime
 	newRs.totalWaitTime += s.totalWaitTime
-	for k, v := range s.rpcStat.Stats {
-		newRs.rpcStat.Stats[k] = v
-	}
+	maps.Copy(newRs.rpcStat.Stats, s.rpcStat.Stats)
 	return &newRs
 }
 
