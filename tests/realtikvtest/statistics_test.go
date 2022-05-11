@@ -50,8 +50,6 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tk.MustExec("insert into t values('aaAAaaaAAAabbc'), ('AaAaAaAaAaAbBC'), ('AAAaabbBBbbb'), ('AAAaabbBBbbbccc'), ('aaa'), ('Aa'), ('A'), ('ab')")
 	tk.MustExec("insert into t values('b'), ('bBb'), ('Bb'), ('bA'), ('BBBB'), ('BBBBBDDDDDdd'), ('bbbbBBBBbbBBR'), ('BBbbBBbbBBbbBBRRR')")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-
 	tk.MustExec("set @@session.tidb_analyze_version=1")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 
