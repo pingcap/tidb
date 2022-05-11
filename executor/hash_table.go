@@ -221,6 +221,7 @@ func (c *hashRowContainer) Len() uint64 {
 }
 
 func (c *hashRowContainer) Close() error {
+	defer func() { c.memTracker.Consume(-c.memTracker.BytesConsumed()) }()
 	return c.rowContainer.Close()
 }
 
