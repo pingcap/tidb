@@ -638,8 +638,6 @@ const (
 	// When set to false, a non-transactional DML returns when it meets the first error.
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
 	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
-
-	TiDBGenerateVisualPlan = "tidb_generate_visual_plan"
 )
 
 // TiDB vars that have only global scope
@@ -679,6 +677,8 @@ const (
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
+	// TiDBGenerateVisualPlan indicates whether visual plan should be generated in slow log and statements summary.
+	TiDBGenerateVisualPlan = "tidb_generate_visual_plan"
 )
 
 // TiDB intentional limits
