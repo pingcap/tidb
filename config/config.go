@@ -930,7 +930,7 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.history-size":          {},
 	"mem-quota-query":                    {},
 	"query-log-max-len":                  {},
-	"committer-concurrency":              {},
+	"performance.committer-concurrency":  {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
