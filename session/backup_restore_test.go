@@ -33,7 +33,7 @@ func TestBackupAndRestore(t *testing.T) {
 		t.Skip("only run BR SQL integration test with tikv store")
 	}
 
-	store, clean := createStorage(t)
+	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
 	cfg := config.GetGlobalConfig()

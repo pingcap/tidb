@@ -27,7 +27,7 @@ import (
 )
 
 func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
-	store, dom, clean := createStorageAndDomain(t)
+	store, dom, clean := createMockStoreAndDomainAndSetup(t)
 	defer clean()
 	defer func() {
 		tk := testkit.NewTestKit(t, store)
