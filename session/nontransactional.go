@@ -304,9 +304,9 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	rs, err := se.ExecuteStmt(ctx, options.stmt.DeleteStmt)
 
 	// collect errors
-	failpoint.Inject("splitDeleteError", func(val failpoint.Value) {
+	failpoint.Inject("batchDeleteError", func(val failpoint.Value) {
 		if val.(bool) {
-			err = errors.New("injected split delete error")
+			err = errors.New("injected batch delete error")
 		}
 	})
 	if err != nil {
