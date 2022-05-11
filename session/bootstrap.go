@@ -411,7 +411,7 @@ const (
 		end_time TIMESTAMP,
 		state ENUM('pending', 'running', 'finished', 'failed') NOT NULL,
 		fail_reason TEXT,
-		instance CHAR(64) NOT NULL comment 'address of the TiDB instance executing the analyze job',
+		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the analyze job',
 		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
 		PRIMARY KEY (id),
 		KEY (update_time)

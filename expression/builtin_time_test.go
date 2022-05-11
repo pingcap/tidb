@@ -2286,7 +2286,7 @@ func TestMakeTime(t *testing.T) {
 	}
 
 	// MAKETIME(CAST(-1 AS UNSIGNED),0,0);
-	tp1 := types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
+	tp1 := types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 	f := BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err := f.Eval(chunk.Row{})
 	require.NoError(t, err)
