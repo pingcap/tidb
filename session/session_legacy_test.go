@@ -67,7 +67,6 @@ type testSessionSuiteBase struct {
 	cluster testutils.Cluster
 	store   kv.Storage
 	dom     *domain.Domain
-	pdAddr  string
 }
 
 type testSessionSuite struct {
@@ -90,12 +89,11 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	if *withTiKV {
-		s.pdAddr = "127.0.0.1:2379"
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", s.pdAddr))
+		store, err := d.Open("tikv://127.0.0.1:2379?disableGC=true")
 		c.Assert(err, IsNil)
 		err = clearTiKVStorage(store)
 		c.Assert(err, IsNil)
