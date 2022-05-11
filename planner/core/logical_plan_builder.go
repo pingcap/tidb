@@ -677,9 +677,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	// Add join reorder flag regardless of inner join or outer join.
-	if !b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
-		b.optFlag = b.optFlag | flagJoinReOrder
-	}
+	b.optFlag = b.optFlag | flagJoinReOrder
 
 	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left)
 	if err != nil {
