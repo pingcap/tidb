@@ -355,15 +355,15 @@ func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element
 	return t.UpdateDDLReorgStartHandle(job, element, startKey)
 }
 
-func (w *worker) UpdateDDLReorgHandle(t *meta.Meta, job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+func UpdateDDLReorgHandle(t *meta.Meta, sess *session, job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	if variable.AllowConcurrencyDDL.Load() {
 		sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
-		err := w.sess.execute(context.Background(), sql)
+		err := sess.execute(context.Background(), sql)
 		if err != nil {
 			return err
 		}
 		sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key, end_key, physical_id) values (%d, %d, %s, %s, %d)", job.ID, element.ID, wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
-		return w.sess.execute(context.Background(), sql)
+		return sess.execute(context.Background(), sql)
 	}
 	return t.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
 }
