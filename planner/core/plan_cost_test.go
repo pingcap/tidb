@@ -44,7 +44,7 @@ func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 	idx := skipPostOptimizedProjection(rs)
 	oldRoot := fmt.Sprintf("%v", rs[idx])
 	oldPlan := ""
-	var oldOperators []string
+	oldOperators := make([]string, 0, len(rs))
 	for _, r := range rs {
 		oldPlan = oldPlan + fmt.Sprintf("%v\n", r)
 		oldOperators = append(oldOperators, r[0].(string))
@@ -53,7 +53,7 @@ func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 	rs = tk.MustQuery("explain format=verbose " + q).Rows()
 	newRoot := fmt.Sprintf("%v", rs[idx])
 	newPlan := ""
-	var newOperators []string
+	newOperators := make([]string, 0, len(rs))
 	for _, r := range rs {
 		newPlan = newPlan + fmt.Sprintf("%v\n", r)
 		newOperators = append(newOperators, r[0].(string))
