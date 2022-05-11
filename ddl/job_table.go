@@ -402,13 +402,11 @@ func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawA
 	return nil
 }
 
-func (w *worker) GetDDLReorgHandle(element *meta.Element, start kv.Key, end kv.Key, pid int64, err error, job *model.Job, t *meta.Meta) (*meta.Element, kv.Key, kv.Key, int64, error) {
+func (w *worker) GetDDLReorgHandle(job *model.Job, t *meta.Meta) (*meta.Element, kv.Key, kv.Key, int64, error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		element, start, end, pid, err = GetDDLReorgHandle(job, w.sessForJob)
-	} else {
-		element, start, end, pid, err = t.GetDDLReorgHandle(job)
+		return GetDDLReorgHandle(job, w.sessForJob)
 	}
-	return element, start, end, pid, err
+	return t.GetDDLReorgHandle(job)
 }
 
 func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element *meta.Element, startKey kv.Key) error {

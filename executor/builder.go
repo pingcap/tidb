@@ -2317,6 +2317,10 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	if !ok || idx.Len() == 0 || idx.LastAnalyzePos.IsNull() {
 		return analyzeTask
 	}
+	// If idx got evicted previously, we directly use IndexPushDown task as incremental analyze task will cause inaccuracy
+	if idx.IsEvicted() {
+		return analyzeTask
+	}
 	var oldHist *statistics.Histogram
 	if statistics.IsAnalyzed(idx.Flag) {
 		exec := analyzeTask.idxExec
