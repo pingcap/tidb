@@ -23,7 +23,6 @@ import (
 )
 
 var (
-	columnMemoryUsage            = int64(4)
 	indexMemoryUsage             = int64(4)
 	columnTotalMemoryUsage       = statistics.EmptyHistogramSize + 4
 	indexTotalMemoryUsage        = statistics.EmptyHistogramSize + 4
@@ -186,26 +185,6 @@ func TestLRUFreshMemUsage(t *testing.T) {
 	require.Equal(t, lru.Cost(), 6*indexMemoryUsage)
 	mockTableAppendIndex(t1)
 	lru.FreshMemUsage()
-	require.Equal(t, lru.TotalCost(), 7*columnTotalMemoryUsage+7*indexTotalMemoryUsage)
-	require.Equal(t, lru.Cost(), 7*indexMemoryUsage)
-}
-
-func TestLRUFreshTableMemUsage(t *testing.T) {
-	lru := newStatsLruCache(1000)
-	t1 := newMockStatisticsTable(1, 1)
-	t2 := newMockStatisticsTable(2, 2)
-	t3 := newMockStatisticsTable(3, 3)
-	lru.Put(int64(1), t1)
-	lru.Put(int64(2), t2)
-	lru.Put(int64(3), t3)
-	require.Equal(t, lru.TotalCost(), 6*columnTotalMemoryUsage+6*indexTotalMemoryUsage)
-	require.Equal(t, lru.Cost(), 6*columnMemoryUsage)
-	mockTableAppendColumn(t1)
-	lru.FreshTableCost(int64(1))
-	require.Equal(t, lru.TotalCost(), 7*columnTotalMemoryUsage+6*indexTotalMemoryUsage)
-	require.Equal(t, lru.Cost(), 6*indexMemoryUsage)
-	mockTableAppendIndex(t1)
-	lru.FreshTableCost(int64(1))
 	require.Equal(t, lru.TotalCost(), 7*columnTotalMemoryUsage+7*indexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 7*indexMemoryUsage)
 }

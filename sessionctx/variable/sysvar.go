@@ -683,6 +683,16 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableBatchDML.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBStatsCacheMemQuota, Value: strconv.Itoa(DefTiDBStatsCacheMemQuota),
+		MinValue: 0, MaxValue: MaxTiDBStatsCacheMemQuota, Type: TypeInt,
+		GetGlobal: func(vars *SessionVars) (string, error) {
+			return strconv.FormatInt(StatsCacheMemQuota.Load(), 10), nil
+		}, SetGlobal: func(vars *SessionVars, s string) error {
+			v := TidbOptInt64(s, DefTiDBStatsCacheMemQuota)
+			StatsCacheMemQuota.Store(v)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(DefTiDBQueryLogMaxLen), Type: TypeInt, MinValue: 0, MaxValue: 1073741824, SetGlobal: func(s *SessionVars, val string) error {
 		QueryLogMaxLen.Store(int32(TidbOptInt64(val, DefTiDBQueryLogMaxLen)))
 		return nil
