@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -2411,8 +2412,16 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	if job == nil {
 		return
 	}
+	var instance string
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
+		instance = "unknown"
+	} else {
+		instance = fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	}
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
-	err := statsHandle.InsertAnalyzeJob(job, ctx.GetSessionVars().ConnectionID)
+	err = statsHandle.InsertAnalyzeJob(job, instance, ctx.GetSessionVars().ConnectionID)
 	if err != nil {
 		logutil.BgLogger().Error("failed to insert analyze job", zap.Error(err))
 	}
