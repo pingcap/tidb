@@ -3,7 +3,9 @@
 package restore_test
 
 import (
+	"bytes"
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -12,6 +14,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/rawkv"
+
+	"github.com/pingcap/tidb/util/codec"
+
 )
 
 // fakeRawkvClient is a mock for rawkv.client
@@ -34,7 +39,7 @@ func (f *fakeRawkvClient) BatchPut(
 ) error {
 	if len(keys) != len(values) {
 		return errors.Annotate(berrors.ErrInvalidArgument,
-			"the lenth of keys don't equal the length of values")
+			"the length of keys don't equal the length of values")
 	}
 
 	for i := 0; i < len(keys); i++ {
@@ -60,26 +65,77 @@ func TestRawKVBatchClient(t *testing.T) {
 	rawkvBatchClient.SetColumnFamily("default")
 
 	kvs := []kv.Entry{
-		{Key: []byte("key1"), Value: []byte("v1")},
-		{Key: []byte("key2"), Value: []byte("v2")},
-		{Key: []byte("key3"), Value: []byte("v3")},
-		{Key: []byte("key4"), Value: []byte("v4")},
-		{Key: []byte("key5"), Value: []byte("v5")},
+		{Key: codec.EncodeUintDesc([]byte("key1"), 1), Value: []byte("v1")},
+		{Key: codec.EncodeUintDesc([]byte("key2"), 2), Value: []byte("v2")},
+		{Key: codec.EncodeUintDesc([]byte("key3"), 3), Value: []byte("v3")},
+		{Key: codec.EncodeUintDesc([]byte("key4"), 4), Value: []byte("v4")},
+		{Key: codec.EncodeUintDesc([]byte("key5"), 5), Value: []byte("v5")},
 	}
 
 	for i := 0; i < batchCount; i++ {
-		require.Equal(t, len(fakeRawkvClient.kvs), 0)
+		require.Equal(t, 0, len(fakeRawkvClient.kvs))
 		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value)
 		require.Nil(t, err)
 	}
-	require.Equal(t, len(fakeRawkvClient.kvs), batchCount)
+	require.Equal(t, batchCount, len(fakeRawkvClient.kvs))
 
 	for i := batchCount; i < len(kvs); i++ {
 		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value)
 		require.Nil(t, err)
 	}
-	require.Equal(t, len(fakeRawkvClient.kvs), batchCount)
+	require.Equal(t, batchCount, len(fakeRawkvClient.kvs))
 	err := rawkvBatchClient.PutRest(context.TODO())
 	require.Nil(t, err)
+	sort.Slice(fakeRawkvClient.kvs, func(i, j int) bool {
+		return bytes.Compare(fakeRawkvClient.kvs[i].Key, fakeRawkvClient.kvs[j].Key) < 0
+	})
 	require.Equal(t, kvs, fakeRawkvClient.kvs)
 }
+
+func TestRawKVBatchClientDuplicated(t *testing.T) {
+	fakeRawkvClient := newFakeRawkvClient()
+	batchCount := 3
+	rawkvBatchClient := restore.NewRawKVBatchClient(fakeRawkvClient, batchCount)
+	defer rawkvBatchClient.Close()
+
+	rawkvBatchClient.SetColumnFamily("default")
+
+	kvs := []kv.Entry{
+		{Key: codec.EncodeUintDesc([]byte("key1"), 1) ,Value: []byte("v1")},
+		{Key: codec.EncodeUintDesc([]byte("key1"), 2), Value: []byte("v2")},
+		{Key: codec.EncodeUintDesc([]byte("key3"), 3), Value: []byte("v3")},
+		{Key: codec.EncodeUintDesc([]byte("key4"), 4), Value: []byte("v4")},
+		{Key: codec.EncodeUintDesc([]byte("key4"), 5), Value: []byte("v5")},
+	}
+
+	expectedKvs := []kv.Entry{
+		// we keep the large ts entry, and we only make sure there is no duplicated entry in a batch.
+		// which is 3. so the duplicated key4 not in a batch will have two versions finally.
+		{Key: codec.EncodeUintDesc([]byte("key1"), 2), Value: []byte("v2")},
+		{Key: codec.EncodeUintDesc([]byte("key3"), 3), Value: []byte("v3")},
+		{Key: codec.EncodeUintDesc([]byte("key4"), 5), Value: []byte("v5")},
+		{Key: codec.EncodeUintDesc([]byte("key4"), 4), Value: []byte("v4")},
+	}
+
+	for i := 0; i < batchCount; i++ {
+		require.Equal(t, 0, len(fakeRawkvClient.kvs))
+		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value)
+		require.Nil(t, err)
+	}
+	// There only two different keys which doesn't send to kv.
+	require.Equal(t, 0, len(fakeRawkvClient.kvs))
+
+	for i := batchCount; i < 5; i++ {
+		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value)
+		require.Nil(t, err)
+		require.Equal(t, batchCount, len(fakeRawkvClient.kvs))
+	}
+
+	err := rawkvBatchClient.PutRest(context.TODO())
+	require.Nil(t, err)
+	sort.Slice(fakeRawkvClient.kvs, func(i, j int) bool {
+		return bytes.Compare(fakeRawkvClient.kvs[i].Key, fakeRawkvClient.kvs[j].Key) < 0
+	})
+	require.Equal(t, expectedKvs, fakeRawkvClient.kvs)
+}
+

@@ -4,7 +4,6 @@ package restore
 
 import (
 	"context"
-	"reflect"
 	"time"
 	"unsafe"
 
@@ -31,16 +30,6 @@ func NewRawkvClient(ctx context.Context, pdAddrs []string, security config.Secur
 		security,
 		pd.WithCustomTimeoutOption(10*time.Second),
 		pd.WithMaxErrorRetry(5))
-}
-
-func string2Bytes(s string) []byte {
-	sh := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	bh := reflect.SliceHeader{
-		Data: sh.Data,
-		Len:  sh.Len,
-		Cap:  sh.Len,
-	}
-	return *(*[]byte)(unsafe.Pointer(&bh))
 }
 
 func bytes2String(b []byte) string {
@@ -98,13 +87,11 @@ func (c *RawKVBatchClient) Put(ctx context.Context, key, value []byte) error {
 	if v, ok := c.kvs[sk]; ok {
 		if v.ts < ts {
 			c.kvs[sk] = KVPair{ts, key, value}
-			c.size++
 		}
 	} else {
 		c.kvs[sk] = KVPair{ts, key, value}
 		c.size++
 	}
-	c.size++
 
 	if c.size >= c.cap {
 		keys := make([][]byte, 0, len(c.kvs))
