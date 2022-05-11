@@ -450,15 +450,6 @@ func matchOldPrefix(key []byte, rewriteRules *RewriteRules) *import_sstpb.Rewrit
 	return nil
 }
 
-func SplitKeyTS(key []byte) ([]byte, uint64, error) {
-	if len(key) < 8 {
-		return nil, 0, errors.Annotatef(berrors.ErrInvalidArgument,
-			"the length of key is smaller than 8, key:%s", redact.Key(key))
-	}
-	_, ts, err := codec.DecodeUintDesc(key[len(key)-8:])
-	return key[:len(key)-8], ts, err
-}
-
 func GetKeyTS(key []byte) (uint64, error) {
 	if len(key) < 8 {
 		return 0, errors.Annotatef(berrors.ErrInvalidArgument,

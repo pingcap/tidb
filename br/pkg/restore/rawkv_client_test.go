@@ -73,13 +73,13 @@ func TestRawKVBatchClient(t *testing.T) {
 
 	for i := 0; i < batchCount; i++ {
 		require.Equal(t, 0, len(fakeRawkvClient.kvs))
-		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value)
+		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value, uint64(i+1))
 		require.Nil(t, err)
 	}
 	require.Equal(t, batchCount, len(fakeRawkvClient.kvs))
 
 	for i := batchCount; i < len(kvs); i++ {
-		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value)
+		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value, uint64(i+1))
 		require.Nil(t, err)
 	}
 	require.Equal(t, batchCount, len(fakeRawkvClient.kvs))
@@ -118,14 +118,14 @@ func TestRawKVBatchClientDuplicated(t *testing.T) {
 
 	for i := 0; i < batchCount; i++ {
 		require.Equal(t, 0, len(fakeRawkvClient.kvs))
-		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value)
+		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value, uint64(i+1))
 		require.Nil(t, err)
 	}
 	// There only two different keys which doesn't send to kv.
 	require.Equal(t, 0, len(fakeRawkvClient.kvs))
 
 	for i := batchCount; i < 5; i++ {
-		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value)
+		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value, uint64(i+1))
 		require.Nil(t, err)
 		require.Equal(t, batchCount, len(fakeRawkvClient.kvs))
 	}

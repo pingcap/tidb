@@ -1871,7 +1871,7 @@ func (rc *Client) RestoreMetaKVFile(
 		log.Debug("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
 			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
 
-		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value); err != nil {
+		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, ts); err != nil {
 			return errors.Trace(err)
 		}
 	}

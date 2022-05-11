@@ -73,19 +73,15 @@ func (c *RawKVBatchClient) SetColumnFamily(columnFamily string) {
 }
 
 // Put puts (key, value) into buffer justly, wait for batch write if the buffer is full.
-func (c *RawKVBatchClient) Put(ctx context.Context, key, value []byte) error {
-	k, ts, err := SplitKeyTS(key)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+func (c *RawKVBatchClient) Put(ctx context.Context, key, value []byte, originTs uint64) error {
+	k := TruncateTS(key)
 	sk := hack.String(k)
 	if v, ok := c.kvs[sk]; ok {
-		if v.ts < ts {
-			c.kvs[sk] = KVPair{ts, key, value}
+		if v.ts < originTs {
+			c.kvs[sk] = KVPair{originTs, key, value}
 		}
 	} else {
-		c.kvs[sk] = KVPair{ts, key, value}
+		c.kvs[sk] = KVPair{originTs, key, value}
 		c.size++
 	}
 
