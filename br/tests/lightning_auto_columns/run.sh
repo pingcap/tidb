@@ -16,23 +16,23 @@
 
 set -eux
 
-run_sql 'DROP DATABASE IF EXISTS issue34208;'
+run_sql 'DROP DATABASE IF EXISTS lightning_auto_cols;'
 run_lightning
 
-run_sql "SELECT CONCAT_WS(':', id, c) AS row_data FROM issue34208.t_auto_incr;"
+run_sql "SELECT CONCAT_WS(':', id, c) AS row_data FROM lightning_auto_cols.t_auto_incr;"
 check_contains "row_data: 1:normal_pk_01"
 check_contains "row_data: 2:null_pk_02"
 check_contains "row_data: 3:null_pk_03"
 check_contains "row_data: 4:normal_pk_04"
-run_sql "SELECT COUNT(*) AS row_count FROM issue34208.t_auto_incr;"
+run_sql "SELECT COUNT(*) AS row_count FROM lightning_auto_cols.t_auto_incr;"
 check_contains "row_count: 4"
 
-run_sql "SELECT CONCAT_WS(':', id, c) AS row_data FROM issue34208.t_auto_random;"
+run_sql "SELECT CONCAT_WS(':', id, c) AS row_data FROM lightning_auto_cols.t_auto_random;"
 check_contains "row_data: 1:normal_pk_01"
 check_contains ":null_pk_02"
 check_not_contains "row_data: 0:null_pk_02"
 check_contains ":null_pk_03"
 check_not_contains "row_data: 0:null_pk_03"
 check_contains "row_data: 4:normal_pk_04"
-run_sql "SELECT COUNT(*) AS row_count FROM issue34208.t_auto_random;"
+run_sql "SELECT COUNT(*) AS row_count FROM lightning_auto_cols.t_auto_random;"
 check_contains "row_count: 4"

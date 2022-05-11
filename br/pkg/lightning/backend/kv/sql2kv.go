@@ -384,7 +384,6 @@ func (kvcodec *tableKVEncoder) Encode(
 		}
 	}
 
-	// the table has an extra auto-generated row-ID column
 	if common.TableHasAutoRowID(meta) {
 		rowValue := rowID
 		j := columnPermutation[len(cols)]
@@ -449,9 +448,8 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 	tblMeta := kvcodec.tbl.Meta()
 	cols := kvcodec.tbl.Cols()
 
-	if colIndex < 0 || colIndex >= len(cols) {
-		return value, errors.New("invalid column index to get actual datum")
-	}
+	// Since this method is only called when iterating the columns in the `Encode()` method,
+	// we can assume that the `colIndex` always have a valid input
 	col := cols[colIndex]
 
 	isBadNullValue := false
