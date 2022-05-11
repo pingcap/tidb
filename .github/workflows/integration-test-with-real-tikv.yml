@@ -35,7 +35,7 @@ jobs:
           go test ./tests/pessimistictest -v -with-real-tikv -timeout 20m
 
   realtikv-test:
-    runs-on: [self-hosted, X64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
