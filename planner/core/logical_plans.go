@@ -1865,6 +1865,8 @@ type LogicalCTE struct {
 	cteAsName      model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
+	//code by dyp
+	CTEHints CTEHintInfo
 }
 
 // LogicalCTETable is for CTE table
