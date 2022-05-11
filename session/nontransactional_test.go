@@ -439,13 +439,3 @@ func TestNonTransactionalDeleteShardOnUnsupportedTypes(t *testing.T) {
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("1"))
 }
-func TestNonTransactionalDeleteCTE(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, v int, key(id))")
-	tk.MustExec("insert into t values (1, 2), (2, 3), (3, 1)")
-	tk.MustExec("with t1 as (select v from t) delete from t where id in (select * from t1)")
-	tk.MustQuery("select * from t").Check(testkit.Rows(""))
-}
