@@ -789,7 +789,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
 			proj.SetSchema(t.originSchema)
 			proj.SetChildren(p)
-			newTask.addCost(proj.GetCost(newTask.count()))
+			newTask.addCost(proj.GetCost(p.StatsCount()))
 			proj.SetCost(newTask.cost())
 			newTask.p = proj
 		} else {
