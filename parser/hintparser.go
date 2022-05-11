@@ -69,6 +69,7 @@ const (
 	hintJoinPrefix            = 57353
 	hintJoinSuffix            = 57354
 	hintLimitToCop            = 57400
+	hintCTEInline             = 57449
 	hintLooseScan             = 57413
 	hintMB                    = 57409
 	hintMRR                   = 57365
@@ -232,6 +233,7 @@ var (
 		57415: 109, // $default (0x)
 		57345: 110, // error (0x)
 		57348: 111, // hintInvalid (0x)
+		57449: 112,  // hintCTEInline (121x)
 	}
 
 	yyhintSymNames = []string{
@@ -347,6 +349,7 @@ var (
 		"$default",
 		"error",
 		"hintInvalid",
+		"HintCTEInline",
 	}
 
 	yyhintReductions = []struct{ xsym, components int }{
