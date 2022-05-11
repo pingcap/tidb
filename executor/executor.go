@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -1655,10 +1654,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("resultPuller panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
 			result.err = errors.Errorf("%v", r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)
