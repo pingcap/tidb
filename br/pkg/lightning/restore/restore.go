@@ -2028,9 +2028,12 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 }
 
 type chunkRestore struct {
-	parser mydump.Parser
-	index  int
-	chunk  *checkpoints.ChunkCheckpoint
+	parser           mydump.Parser
+	index            int
+	chunk            *checkpoints.ChunkCheckpoint
+	originalRowIDMax int64
+	curRowIDBase     int64
+	curRowIDMax      int64
 }
 
 func newChunkRestore(
@@ -2087,9 +2090,10 @@ func newChunkRestore(
 	}
 
 	return &chunkRestore{
-		parser: parser,
-		index:  index,
-		chunk:  chunk,
+		parser:           parser,
+		index:            index,
+		chunk:            chunk,
+		originalRowIDMax: chunk.Chunk.RowIDMax,
 	}, nil
 }
 
@@ -2142,6 +2146,42 @@ type deliverResult struct {
 	err      error
 }
 
+func (cr *chunkRestore) adjustLocalRowID(rawData *deliveredKVs, t *TableRestore) {
+	data := rawData.kvs.(*kv.KvPairs)
+	curRowIDs := data.GetRowIDs()
+	illegalIdx := -1
+	for i := range curRowIDs {
+		if curRowIDs[i] > cr.originalRowIDMax {
+			illegalIdx = i
+			break
+		}
+	}
+	if illegalIdx >= 0 {
+		if illegalIdx > 0 {
+			rawData.rowID = curRowIDs[illegalIdx-1] // final legal ID
+		}
+		if curRowIDs[illegalIdx] > cr.curRowIDMax {
+			// need to reallocate
+			cr.curRowIDBase, cr.curRowIDMax = t.allocateRowIDs()
+		}
+		// set new rowIDs
+		for i := illegalIdx; i < len(curRowIDs); i++ {
+			data.SetRowID(i, cr.curRowIDBase) // set new rowID
+			cr.curRowIDBase++
+			if cr.curRowIDBase > cr.curRowIDMax {
+				// need to reallocate
+				cr.curRowIDBase, cr.curRowIDMax = t.allocateRowIDs()
+			}
+		}
+	}
+}
+
+func (cr *chunkRestore) adjustRowID(rawData *deliveredKVs, t *TableRestore) {
+	if _, ok := rawData.kvs.(*kv.KvPairs); ok {
+		cr.adjustLocalRowID(rawData, t)
+	}
+}
+
 //nolint:nakedret // TODO: refactor
 func (cr *chunkRestore) deliverLoop(
 	ctx context.Context,
@@ -2182,6 +2222,7 @@ func (cr *chunkRestore) deliverLoop(
 					break populate
 				}
 				for _, p := range kvPacket {
+					cr.adjustRowID(&p, t)
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 					columns = p.columns
 					currOffset = p.offset
