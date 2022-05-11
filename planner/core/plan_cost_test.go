@@ -30,17 +30,28 @@ func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 	rs := tk.MustQuery("explain format=verbose " + q).Rows()
 	oldRoot := fmt.Sprintf("%v", rs[0])
 	oldPlan := ""
+	var oldOperators []string
 	for _, r := range rs {
 		oldPlan = oldPlan + fmt.Sprintf("%v\n", r)
+		oldOperators = append(oldOperators, r[0].(string))
 	}
 	tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
 	rs = tk.MustQuery("explain format=verbose " + q).Rows()
 	newRoot := fmt.Sprintf("%v", rs[0])
 	newPlan := ""
+	var newOperators []string
 	for _, r := range rs {
 		newPlan = newPlan + fmt.Sprintf("%v\n", r)
+		newOperators = append(newOperators, r[0].(string))
 	}
-	if oldRoot != newRoot {
+	sameOperators := len(oldOperators) == len(newOperators)
+	for i := range newOperators {
+		if oldOperators[i] != newOperators[i] {
+			sameOperators = false
+			break
+		}
+	}
+	if oldRoot != newRoot || !sameOperators {
 		t.Fatalf("run %v failed, info: %v, expected \n%v\n, but got \n%v\n", q, info, oldPlan, newPlan)
 	}
 }
