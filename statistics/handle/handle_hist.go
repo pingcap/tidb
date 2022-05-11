@@ -15,7 +15,6 @@
 package handle
 
 import (
-	"runtime"
 	"sync"
 	"time"
 
@@ -171,10 +170,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededColumnTask, readerCtx *StatsReade
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("stats loading panicked", zap.Any("error", r), zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("stats loading panicked", zap.Any("error", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
 	}()
@@ -352,10 +348,7 @@ func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededColumnTask, task *Nee
 func (h *Handle) writeToResultChan(resultCh chan model.TableColumnID, rs model.TableColumnID) {
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
 	select {
