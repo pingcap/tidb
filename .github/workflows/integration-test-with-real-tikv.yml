@@ -54,4 +54,4 @@ jobs:
         run: |
           export log_level=error
           make failpoint-enable
-          go test ./tests/realtikvtest -v -with-real-tikv -timeout 30m
+          go test ./tests/realtikvtest -v -with-real-tikv -timeout 1h
