@@ -217,9 +217,10 @@ type ddl struct {
 	enableTiFlashPoll    *atomicutil.Bool
 
 	// used in the concurrency ddl.
-	ddlJobCh        chan struct{}
-	runningJobMap   map[int]struct{}
-	runningDDLMapMu sync.RWMutex
+	ddlJobCh            chan struct{}
+	runningJobMap       map[int]struct{}
+	runningDDLMapMu     sync.RWMutex
+	runningOrBlockedIDs []string
 }
 
 // waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
@@ -472,13 +473,15 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ddlCtx:            ddlCtx,
-		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
-		enableTiFlashPoll: atomicutil.NewBool(true),
-		ctx:               ctx,
-		ddlJobCh:          make(chan struct{}, 100),
-		runningJobMap:     make(map[int]struct{}),
+		ddlCtx:              ddlCtx,
+		limitJobCh:          make(chan *limitJobTask, batchAddingJobs),
+		enableTiFlashPoll:   atomicutil.NewBool(true),
+		ctx:                 ctx,
+		ddlJobCh:            make(chan struct{}, 100),
+		runningJobMap:       make(map[int]struct{}),
+		runningOrBlockedIDs: make([]string, 0, 16),
 	}
+	d.runningOrBlockedIDs = append(d.runningOrBlockedIDs, "0")
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	return d
@@ -1516,4 +1519,49 @@ func (c *ConcurrentDDLLastJobIterator) GetLastJobs(num int, _ []*model.Job) ([]*
 	}
 	c.offset += uint64(len(jobs))
 	return jobs, err
+}
+
+type session struct {
+	s sessionctx.Context
+}
+
+func newSession(s sessionctx.Context) *session {
+	return &session{s: s}
+}
+
+func (s *session) begin() error {
+	return s.execute(context.Background(), "begin")
+}
+
+func (s *session) commit() error {
+	return s.execute(context.Background(), "commit")
+}
+
+func (s *session) txn() (kv.Transaction, error) {
+	return s.s.Txn(true)
+}
+
+func (s *session) rollback() error {
+	return s.execute(context.Background(), "rollback")
+}
+
+func (s *session) execute(ctx context.Context, query string, fns ...func(rows []chunk.Row) error) error {
+	rs, err := s.s.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var rows []chunk.Row
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return errors.Trace(err)
+	}
+	if err = rs.Close(); err != nil {
+		return errors.Trace(err)
+	}
+	for _, f := range fns {
+		if err = f(rows); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return errors.Trace(err)
 }
