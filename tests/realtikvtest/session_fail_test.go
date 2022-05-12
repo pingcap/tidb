@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session_test
+package realtikvtest
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,9 @@ func TestFailStatementCommitInRetry(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
-	tk := createTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (id int)")
 
 	tk.MustExec("begin")
@@ -50,7 +53,9 @@ func TestGetTSFailDirtyState(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
-	tk := createTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (id int)")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockGetTSFail", "return"))
@@ -80,7 +85,9 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
-	tk := createTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (id int)")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`))
@@ -98,7 +105,9 @@ func TestKillFlagInBackoff(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
-	tk := createTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table kill_backoff (id int)")
 	// Inject 1 time timeout. If `Killed` is not successfully passed, it will retry and complete query.
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")->return("")`))
@@ -116,7 +125,9 @@ func TestClusterTableSendError(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
-	tk := createTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("requestTiDBStoreError")`))
 	defer failpoint.Disable("tikvclient/tikvStoreSendReqResult")
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
@@ -128,7 +139,9 @@ func TestAutoCommitNeedNotLinearizability(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
 
-	tk := createTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1;")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int)`)
