@@ -309,7 +309,7 @@ func NewRestoreControllerWithPauser(
 	var backend backend.Backend
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
-		backend = tidb.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate, errorMgr)
+		backend = tidb.NewTiDBBackend(db, cfg, errorMgr)
 	case config.BackendLocal:
 		var rLimit local.Rlim_t
 		rLimit, err = local.GetSystemRLimit()

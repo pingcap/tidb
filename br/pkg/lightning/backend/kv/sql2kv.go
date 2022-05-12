@@ -22,6 +22,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -366,6 +367,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		if err != nil {
 			return nil, logKVConvertFailed(logger, row, j, col.ToInfo(), err)
 		}
+		kvcodec.logColumnEncodeWarnings(logger, col, offset)
 
 		record = append(record, value)
 
@@ -425,6 +427,26 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 	kvcodec.recordCache = record[:0]
 	return kvPairs, nil
+}
+
+func (kvcodec *tableKVEncoder) logColumnEncodeWarnings(logger log.Logger, col *table.Column, offset int64) {
+	sc := kvcodec.se.GetSessionVars().StmtCtx
+	if sc.WarningCount() == 0 {
+		return
+	}
+	if logger.Core().Enabled(zap.WarnLevel) {
+		warnings := sc.TruncateWarnings(0)
+		var sb strings.Builder
+		// zap.Any cannot print w.Err, so we generate msg ourself
+		for i, w := range warnings {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(fmt.Sprintf("[%s, %s]", w.Level, w.Err.Error()))
+		}
+		logger.Warn("encode column", zap.Any("col", col), zap.Int64("offset", offset),
+			zap.String("warnings", sb.String()))
+	}
 }
 
 func isTableAutoRandom(tblMeta *model.TableInfo) bool {

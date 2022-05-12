@@ -63,7 +63,9 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
-	backend := tidb.NewTiDBBackend(db, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig()))
+	cfg := config.NewConfig()
+	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
+	backend := tidb.NewTiDBBackend(db, cfg, errormanager.New(nil, cfg))
 	return &mysqlSuite{dbHandle: db, mockDB: mock, backend: backend, tbl: tbl}
 }
 
@@ -140,7 +142,9 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	ctx := context.Background()
 	logger := log.L()
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.IgnoreOnDup, errormanager.New(nil, config.NewConfig()))
+	cfg := config.NewConfig()
+	cfg.TikvImporter.OnDuplicate = config.IgnoreOnDup
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, cfg, errormanager.New(nil, cfg))
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
@@ -186,7 +190,9 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 	ctx := context.Background()
 	logger := log.L()
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	cfg := config.NewConfig()
+	cfg.TikvImporter.OnDuplicate = config.ErrorOnDup
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, cfg, errormanager.New(nil, cfg))
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
@@ -228,7 +234,9 @@ func testStrictMode(t *testing.T) {
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	cfg := config.NewConfig()
+	cfg.TikvImporter.OnDuplicate = config.ErrorOnDup
+	bk := tidb.NewTiDBBackend(s.dbHandle, cfg, errormanager.New(nil, cfg))
 	encoder, err := bk.NewEncoder(tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
 	require.NoError(t, err)
 
@@ -267,7 +275,9 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 			AddRow("t", "id", "int(10)", "", "auto_increment"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	newConfig := config.NewConfig()
+	newConfig.TikvImporter.OnDuplicate = config.ErrorOnDup
+	bk := tidb.NewTiDBBackend(s.dbHandle, newConfig, errormanager.New(nil, newConfig))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
 	ft := types.FieldType{}
@@ -304,7 +314,9 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 			AddRow("test", "t", "id", int64(1)))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	newConfig := config.NewConfig()
+	newConfig.TikvImporter.OnDuplicate = config.ErrorOnDup
+	bk := tidb.NewTiDBBackend(s.dbHandle, newConfig, errormanager.New(nil, newConfig))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
 	ft := types.FieldType{}
@@ -341,7 +353,9 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 			AddRow("test", "t", "id", int64(1), "AUTO_INCREMENT"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	newConfig := config.NewConfig()
+	newConfig.TikvImporter.OnDuplicate = config.ErrorOnDup
+	bk := tidb.NewTiDBBackend(s.dbHandle, newConfig, errormanager.New(nil, newConfig))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
 	ft := types.FieldType{}
@@ -378,7 +392,9 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 			AddRow("test", "t", "id", int64(1), "AUTO_RANDOM"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	newConfig := config.NewConfig()
+	newConfig.TikvImporter.OnDuplicate = config.ErrorOnDup
+	bk := tidb.NewTiDBBackend(s.dbHandle, newConfig, errormanager.New(nil, newConfig))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
 	ft := types.FieldType{}
@@ -413,7 +429,9 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 		WillReturnError(nonRetryableError)
 
 	// disable error record, should not expect retry statements one by one.
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
+	cfg := config.NewConfig()
+	cfg.TikvImporter.OnDuplicate = config.ErrorOnDup
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, cfg,
 		errormanager.New(s.dbHandle, &config.Config{}),
 	)
 	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
@@ -473,7 +491,9 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 		WillReturnResult(driver.ResultNoRows)
 
 	// disable error record, should not expect retry statements one by one.
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
+	cfg := config.NewConfig()
+	cfg.TikvImporter.OnDuplicate = config.ErrorOnDup
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, cfg,
 		errormanager.New(s.dbHandle, &config.Config{
 			App: config.Lightning{
 				TaskInfoSchemaName: "tidb_lightning_errors",
@@ -527,8 +547,9 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
 		WillReturnError(nonRetryableError)
-
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
+	cfg := config.NewConfig()
+	cfg.TikvImporter.OnDuplicate = config.ErrorOnDup
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, cfg,
 		errormanager.New(s.dbHandle, &config.Config{
 			App: config.Lightning{
 				TaskInfoSchemaName: "tidb_lightning_errors",

@@ -1,0 +1,11 @@
+[mydumper.csv]
+separator = ';'
+delimiter = ''
+header = false
+not-null = false
+null = '\N'
+backslash-escape = true
+trim-last-separator = false
+
+[tidb]
+sql-mode="ONLY_FULL_GROUP_BY,NO_AUTO_CREATE_USER"

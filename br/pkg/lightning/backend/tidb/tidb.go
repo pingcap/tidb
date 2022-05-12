@@ -93,6 +93,7 @@ type tidbEncoder struct {
 type tidbBackend struct {
 	db          *sql.DB
 	onDuplicate string
+	sqlMode     mysql.SQLMode
 	errorMgr    *errormanager.ErrorManager
 }
 
@@ -100,14 +101,20 @@ type tidbBackend struct {
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewTiDBBackend(db *sql.DB, onDuplicate string, errorMgr *errormanager.ErrorManager) backend.Backend {
+func NewTiDBBackend(db *sql.DB, cfg *config.Config, errorMgr *errormanager.ErrorManager) backend.Backend {
+	onDuplicate := cfg.TikvImporter.OnDuplicate
 	switch onDuplicate {
 	case config.ReplaceOnDup, config.IgnoreOnDup, config.ErrorOnDup:
 	default:
 		log.L().Warn("unsupported action on duplicate, overwrite with `replace`")
 		onDuplicate = config.ReplaceOnDup
 	}
-	return backend.MakeBackend(&tidbBackend{db: db, onDuplicate: onDuplicate, errorMgr: errorMgr})
+	return backend.MakeBackend(&tidbBackend{
+		db:          db,
+		onDuplicate: onDuplicate,
+		sqlMode:     cfg.TiDB.SQLMode,
+		errorMgr:    errorMgr,
+	})
 }
 
 func (row tidbRow) Size() uint64 {
@@ -548,14 +555,14 @@ func (be *tidbBackend) buildStmt(tableName string, columnNames []string) *string
 }
 
 func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tableName string, batch bool) error {
-	for _, stmtTask := range stmtTasks {
+	for _, task := range stmtTasks {
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
-			stmt := stmtTask.stmt
+			stmt := task.stmt
 			_, err := be.db.ExecContext(ctx, stmt)
 			if err != nil {
 				if !common.IsContextCanceledError(err) {
 					log.L().Error("execute statement failed",
-						zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
+						zap.Array("rows", task.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
 				}
 				// It's batch mode, just return the error.
 				if batch {
@@ -565,13 +572,19 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
 					continue
 				}
-				firstRow := stmtTask.rows[0]
+				firstRow := task.rows[0]
 				err = be.errorMgr.RecordTypeError(ctx, log.L(), tableName, firstRow.path, firstRow.offset, firstRow.insertStmt, err)
 				if err == nil {
 					// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 					break
 				}
 				return errors.Trace(err)
+			}
+			// when user choose non-strict sql-mode and doesn't IgnoreOnDup, log sql execute warnings
+			// if user choose IgnoreOnDup, we are using INSERT IGNORE INTO which may generate a lot of warnings
+			// about duplicate key, in this case we don't log warnings.
+			if !be.sqlMode.HasStrictMode() && be.onDuplicate != config.IgnoreOnDup {
+				be.logSqlWarnings(ctx, &task, tableName)
 			}
 			// No error, continue the next stmtTask.
 			break
@@ -709,6 +722,37 @@ func (be *tidbBackend) LocalWriter(
 	_ uuid.UUID,
 ) (backend.EngineWriter, error) {
 	return &Writer{be: be}, nil
+}
+
+func (be *tidbBackend) logSqlWarnings(ctx context.Context, task *stmtTask, tableName string) {
+	if !log.L().Core().Enabled(zap.WarnLevel) {
+		return
+	}
+	rows, err := be.db.QueryContext(ctx, "show warnings")
+	if err != nil { // nolint:errorlint
+		log.L().Warn("failed to show warnings", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	var sb strings.Builder
+	for rows.Next() {
+		var level, code, message string
+		err = rows.Scan(&level, &code, &message)
+		if err != nil { // nolint:errorlint
+			log.L().Warn("failed to scan", zap.Error(err))
+			return
+		}
+		sb.WriteString(fmt.Sprintf("[%s, %s, %s], ", level, code, message))
+	}
+	if err = rows.Err(); err != nil { // nolint:errorlint
+		log.L().Warn("failed to show warnings", zap.Error(err))
+		return
+	}
+	firstRow := task.rows[0]
+	log.L().Warn("sql execute warnings",
+		zap.String("table", tableName), zap.String("path", firstRow.path),
+		zap.Int64("offset", firstRow.offset), zap.String("warnings", sb.String()))
 }
 
 type Writer struct {

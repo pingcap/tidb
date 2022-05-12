@@ -356,7 +356,9 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
-	realBackend := tidb.NewTiDBBackend(nil, "replace", nil)
+	cfg := config.NewConfig()
+	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
+	realBackend := tidb.NewTiDBBackend(nil, cfg, nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()

@@ -417,7 +417,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errorMgr).NewEncoder(
+	cfg.TikvImporter.OnDuplicate = config.ReplaceOnDup
+	kvEncoder, err := tidb.NewTiDBBackend(nil, cfg, errorMgr).NewEncoder(
 		s.tr.encTable,
 		&kv.SessionOptions{
 			SQLMode:   s.cfg.TiDB.SQLMode,
@@ -511,7 +512,9 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig())).NewEncoder(
+	newConfig := config.NewConfig()
+	newConfig.TikvImporter.OnDuplicate = config.ReplaceOnDup
+	kvEncoder, err := tidb.NewTiDBBackend(nil, newConfig, errormanager.New(nil, newConfig)).NewEncoder(
 		s.tr.encTable,
 		&kv.SessionOptions{
 			SQLMode:   s.cfg.TiDB.SQLMode,
