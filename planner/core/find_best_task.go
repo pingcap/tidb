@@ -290,6 +290,9 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
 func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
+	if curTask.invalid() {
+		return false, nil
+	}
 	if ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
 		curCost, err := getTaskPlanCost(curTask)
 		if err != nil {
