@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"runtime"
 	"runtime/trace"
 	"sort"
 	"strings"
@@ -846,10 +845,7 @@ func (w *indexWorker) syncErr(err error) {
 func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := errors.Errorf("%v", r)
 			w.syncErr(err4Panic)
 			if err != nil {
@@ -1021,10 +1017,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	var ok bool
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			task.doneCh <- errors.Errorf("%v", r)
 		}
 	}()
