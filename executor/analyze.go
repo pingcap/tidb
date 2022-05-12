@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -778,9 +779,11 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		defer wg.Wait()
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
-			colExec.memTracker.Consume(-colExec.memTracker.BytesConsumed())
+			ReleaseMemory(colExec.memTracker, colExec.memTracker.BytesConsumed())
+			TryGCIfNeeded(true)
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
+		TryGCIfNeeded(true)
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
 		colGroupResult := &statistics.AnalyzeResult{
 			Hist:    hists[cLen:],
@@ -1052,6 +1055,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	mergeWorkerPanicCnt := 0
 	for mergeWorkerPanicCnt < statsConcurrency {
+		TryGCIfNeeded(false)
 		mergeResult, ok := <-mergeResultCh
 		if !ok {
 			break
@@ -1066,10 +1070,16 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		oldRootCollectorSize := rootRowCollector.Base().MemSize
 		rootRowCollector.MergeCollector(mergeResult.collector)
 		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
+		ReleaseMemory(e.memTracker, oldRootCollectorSize+mergeResult.collector.Base().MemSize-rootRowCollector.Base().MemSize)
 	}
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
+
+	logutil.BgLogger().Info("memory:", zap.Int64("rootCollector", rootRowCollector.Base().MemSize))
+	memStats := &runtime.MemStats{}
+	runtime.ReadMemStats(memStats)
+	logutil.BgLogger().Info("memory:", zap.Uint64("heapInUse", memStats.HeapInuse))
 
 	// handling virtual columns
 	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
@@ -1165,6 +1175,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	close(buildTaskChan)
 	panicCnt := 0
 	for panicCnt < statsConcurrency {
+		TryGCIfNeeded(false)
 		err1, ok := <-buildResultChan
 		if !ok {
 			break
@@ -1194,7 +1205,11 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			totalSampleCollectorSize += sampleCollector.MemSize
 		}
 	}
-	e.memTracker.Consume(-rootRowCollector.Base().MemSize - totalSampleCollectorSize)
+	logutil.BgLogger().Info("memory:", zap.Int64("sampleCollectors", totalSampleCollectorSize))
+	memStats = &runtime.MemStats{}
+	runtime.ReadMemStats(memStats)
+	logutil.BgLogger().Info("memory:", zap.Uint64("heapInUse", memStats.HeapInuse))
+	ReleaseMemory(e.memTracker, rootRowCollector.Base().MemSize+totalSampleCollectorSize)
 	return
 }
 
@@ -1408,7 +1423,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		retCollector.MergeCollector(subCollector)
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
-		e.memTracker.Consume(newRetCollectorSize - dataSize - colRespSize - oldRetCollectorSize - subCollectorSize)
+		ReleaseMemory(e.memTracker, dataSize+colRespSize+oldRetCollectorSize+subCollectorSize-newRetCollectorSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }

@@ -677,6 +677,8 @@ const (
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
+	// TiDBGCTriggerForTrackTest indicates the memory size to trigger GC in code for track test.
+	TiDBGCTriggerForTrackTest = "tidb_gc_trigger_for_track_test"
 )
 
 // TiDB intentional limits
@@ -854,6 +856,7 @@ const (
 	DefTiDBQueryLogMaxLen                        = 4096
 	DefTiDBBatchDMLIgnoreError                   = false
 	DefTiDBMemQuotaAnalyze                       = -1
+	DefTiDBGCTriggerForTrackTest                 = -1
 )
 
 // Process global variables.
@@ -891,6 +894,7 @@ var (
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	GCTriggerForTrackTest                 = atomic.NewInt64(DefTiDBGCTriggerForTrackTest)
 )
 
 var (
