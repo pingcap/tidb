@@ -874,6 +874,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
 		// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
 		dbt.MustExec("set global tidb_txn_total_size_limit = 10240")
+		defer dbt.MustExec("set global tidb_txn_total_size_limit = default")
 		dbt.MustExec("set @@tidb_dml_batch_size = 3")
 		dbt.MustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		dbt.MustExec("create view v1 as select 1")

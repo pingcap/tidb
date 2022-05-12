@@ -938,6 +938,7 @@ func TestBatchInsertDelete(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_txn_total_size_limit = 5500")
+	defer tk.MustExec("set global tidb_txn_total_size_limit = default")
 	tk.MustExec("drop table if exists batch_insert")
 	tk.MustExec("create table batch_insert (c int)")
 	tk.MustExec("drop table if exists batch_insert_on_duplicate")
