@@ -246,7 +246,7 @@ func (rc *Client) GetSupportPolicy() bool {
 
 // GetTruncateSafepoint read the truncate checkpoint from the storage bind to the client.
 func (rc *Client) GetTruncateSafepoint(ctx context.Context) (uint64, error) {
-	ts, err := GetTruncateSafepoint(ctx, rc.storage)
+	ts, err := GetTSFromFile(ctx, rc.storage, TruncateSafePointFileName)
 	if err != nil {
 		log.Warn("failed to get truncate safepoint, using 0", logutil.ShortError(err))
 	}
@@ -1974,14 +1974,14 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 func (rc *Client) SaveSchemas(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
-	logStartTS uint64,
+	logMinTS uint64,
 	restoreTS uint64,
 ) error {
 	metaFileName := metautil.CreateMetaFileName(restoreTS)
 	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
-		m.StartVersion = logStartTS
+		m.StartVersion = logMinTS
 	})
 
 	schemas := sr.TidyOldSchemas()

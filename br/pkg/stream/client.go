@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"math"
 	"strconv"
 	"strings"
 
@@ -268,6 +269,23 @@ func (t *Task) MinNextBackupTS(ctx context.Context, store uint64) (uint64, error
 	}
 	nextBackupTS := binary.BigEndian.Uint64(kv.Value)
 	return nextBackupTS, nil
+}
+
+// GetGlobalCheckPointTS gets the global checkpoint timestamp according to log task.
+func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
+	checkPointMap, err := t.NextBackupTSList(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	var checkPointTS uint64 = math.MaxUint64
+	for _, nextTS := range checkPointMap {
+		if nextTS < checkPointTS {
+			checkPointTS = nextTS
+		}
+	}
+
+	return checkPointTS, nil
 }
 
 // Step forwards the progress (next_backup_ts) of some region.
