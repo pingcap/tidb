@@ -25,7 +25,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -47,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 )
@@ -72,6 +73,9 @@ const (
 	TiDBBroadCastJoin = "tidb_bcj"
 	// HintBCJ indicates applying broadcast join by force.
 	HintBCJ = "broadcast_join"
+
+	// HintStraightJoin causes TiDB to join tables in the order in which they appear in the FROM clause.
+	HintStraightJoin = "straight_join"
 
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
@@ -465,13 +469,13 @@ func (p *LogicalJoin) ExtractOnCondition(
 				}
 				if leftCol != nil && rightCol != nil {
 					if deriveLeft {
-						if isNullRejected(ctx, leftSchema, expr) && !mysql.HasNotNullFlag(leftCol.RetType.Flag) {
+						if isNullRejected(ctx, leftSchema, expr) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
 					if deriveRight {
-						if isNullRejected(ctx, rightSchema, expr) && !mysql.HasNotNullFlag(rightCol.RetType.Flag) {
+						if isNullRejected(ctx, rightSchema, expr) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, rightCol)
 							rightCond = append(rightCond, notNullExpr)
 						}
@@ -659,7 +663,7 @@ func resetNotNullFlag(schema *expression.Schema, start, end int) {
 	for i := start; i < end; i++ {
 		col := *schema.Columns[i]
 		newFieldType := *col.RetType
-		newFieldType.Flag &= ^mysql.NotNullFlag
+		newFieldType.DelFlag(mysql.NotNullFlag)
 		col.RetType = &newFieldType
 		schema.Columns[i] = &col
 	}
@@ -1018,12 +1022,11 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	// check expr field types.
 	for i, expr := range cnfExpres {
 		if expr.GetType().EvalType() == types.ETString {
-			tp := &types.FieldType{
-				Tp:      mysql.TypeDouble,
-				Flag:    expr.GetType().Flag,
-				Flen:    mysql.MaxRealWidth,
-				Decimal: types.UnspecifiedLength,
-			}
+			tp := &types.FieldType{}
+			tp.SetType(mysql.TypeDouble)
+			tp.SetFlag(expr.GetType().GetFlag())
+			tp.SetFlen(mysql.MaxRealWidth)
+			tp.SetDecimal(types.UnspecifiedLength)
 			types.SetBinChsClnFlag(tp)
 			cnfExpres[i] = expression.TryPushCastIntoControlFunctionForHybridType(b.ctx, expr, tp)
 		}
@@ -1098,7 +1101,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Contex
 	case types.KindInt64:
 		// See #9683
 		// TRUE or FALSE can be a int64
-		if mysql.HasIsBooleanFlag(valueExpr.Type.Flag) {
+		if mysql.HasIsBooleanFlag(valueExpr.Type.GetFlag()) {
 			if i := valueExpr.GetValue().(int64); i == 0 {
 				return model.NewCIStr("FALSE"), nil
 			}
@@ -1463,28 +1466,28 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 // Note that unionJoinFieldType doesn't handle charset and collation, caller need to handle it by itself.
 func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	// We ignore the pure NULL type.
-	if a.Tp == mysql.TypeNull {
+	if a.GetType() == mysql.TypeNull {
 		return b
-	} else if b.Tp == mysql.TypeNull {
+	} else if b.GetType() == mysql.TypeNull {
 		return a
 	}
-	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
+	resultTp := types.NewFieldType(types.MergeFieldType(a.GetType(), b.GetType()))
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
-	if resultTp.Tp == mysql.TypeNewDecimal {
+	if resultTp.GetType() == mysql.TypeNewDecimal {
 		// The decimal result type will be unsigned only when all the decimals to be united are unsigned.
-		resultTp.Flag &= b.Flag & mysql.UnsignedFlag
+		resultTp.AndFlag(b.GetFlag() & mysql.UnsignedFlag)
 	} else {
 		// Non-decimal results will be unsigned when a,b both unsigned.
 		// ref1: https://dev.mysql.com/doc/refman/5.7/en/union.html#union-result-set
 		// ref2: https://github.com/pingcap/tidb/issues/24953
-		resultTp.Flag |= (a.Flag & mysql.UnsignedFlag) & (b.Flag & mysql.UnsignedFlag)
+		resultTp.AddFlag((a.GetFlag() & mysql.UnsignedFlag) & (b.GetFlag() & mysql.UnsignedFlag))
 	}
-	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
-	// `Flen - Decimal` is the fraction before '.'
-	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+	resultTp.SetDecimal(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+	// `flen - decimal` is the fraction before '.'
+	resultTp.SetFlen(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
 	types.TryToFixFlenOfDatetime(resultTp)
-	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
-		resultTp.Flen = mysql.MaxIntWidth
+	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.GetFlen() < mysql.MaxIntWidth {
+		resultTp.SetFlen(mysql.MaxIntWidth)
 	}
 	expression.SetBinFlagOrBinStr(b, resultTp)
 	return resultTp
@@ -1508,7 +1511,8 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 		if err != nil || collation.Coer == expression.CoercibilityNone {
 			return collate.ErrIllegalMixCollation.GenWithStackByArgs("UNION")
 		}
-		resultTp.Charset, resultTp.Collate = collation.Charset, collation.Collation
+		resultTp.SetCharset(collation.Charset)
+		resultTp.SetCollate(collation.Collation)
 		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
@@ -1647,7 +1651,7 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 		if err != nil {
 			return nil, err
 		}
-		if leftCol.RetType.Tp != rightCol.RetType.Tp {
+		if leftCol.RetType.GetType() != rightCol.RetType.GetType() {
 			joinPlan.OtherConditions = append(joinPlan.OtherConditions, eqCond)
 		} else {
 			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
@@ -2927,7 +2931,7 @@ func checkColFuncDepend(
 		// if all columns of some unique/pri indexes are determined, all columns left are check-passed.
 		for _, indexCol := range index.Columns {
 			iColInfo := tblInfo.Columns[indexCol.Offset]
-			if !mysql.HasNotNullFlag(iColInfo.Flag) {
+			if !mysql.HasNotNullFlag(iColInfo.GetFlag()) {
 				funcDepend = false
 				break
 			}
@@ -2965,7 +2969,7 @@ func checkColFuncDepend(
 	primaryFuncDepend := true
 	hasPrimaryField := false
 	for _, colInfo := range tblInfo.Columns {
-		if !mysql.HasPriKeyFlag(colInfo.Flag) {
+		if !mysql.HasPriKeyFlag(colInfo.GetFlag()) {
 			continue
 		}
 		hasPrimaryField = true
@@ -3994,7 +3998,7 @@ func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
 
 func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.Flag = mysql.NotNullFlag | mysql.PriKeyFlag
+	tp.SetFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
 	return &expression.Column{
 		RetType:  tp,
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -4055,9 +4059,9 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 	var statsTbl *statistics.Table
 	if pid == tblInfo.ID || ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo)
+		statsTbl = statsHandle.GetTableStats(tblInfo, handle.WithTableStatsByQuery())
 	} else {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, handle.WithTableStatsByQuery())
 	}
 
 	// 2. table row count from statistics is zero.
@@ -4514,7 +4518,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		if ds.tableInfo.PKIsHandle {
 			keyCols := fd.NewFastIntSet()
 			for _, col := range ds.TblCols {
-				if mysql.HasPriKeyFlag(col.RetType.Flag) {
+				if mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 					keyCols.Insert(int(col.UniqueID))
 				}
 			}
@@ -4552,7 +4556,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 				// unique(char_column(10)), will also guarantee the prefix to be
 				// the unique which means the while column is unique too.
 				refCol := ds.tableInfo.Columns[idxCol.Offset]
-				if !mysql.HasNotNullFlag(refCol.Flag) {
+				if !mysql.HasNotNullFlag(refCol.GetFlag()) {
 					allColIsNotNull = false
 				}
 				keyCols.Insert(int(ds.TblCols[idxCol.Offset].UniqueID))
@@ -4608,7 +4612,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 				}
 				fds.AddStrictFunctionalDependency(determinant, dependencies)
 			}
-			if mysql.HasNotNullFlag(col.RetType.Flag) {
+			if mysql.HasNotNullFlag(col.RetType.GetFlag()) {
 				notNullCols.Insert(int(col.UniqueID))
 			}
 		}
@@ -4671,7 +4675,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			ID:       col.ID,
 			RetType:  &col.FieldType,
 		}
-		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) {
 			handleCols = &IntHandleCols{col: newCol}
 		}
 		schema.Append(newCol)
@@ -4693,9 +4697,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	}.Init(b.ctx, b.getSelectOffset())
 	p.SetSchema(schema)
 	p.names = names
-	for i, col := range tableInfo.Columns {
-		p.Columns[i] = col
-	}
+	copy(p.Columns, tableInfo.Columns)
 
 	// Some memory tables can receive some predicates
 	switch dbName.L {
@@ -5199,7 +5201,7 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 			}
 			if flags[i] >= 0 {
 				update = true
-				if mysql.HasPriKeyFlag(col.Flag) {
+				if mysql.HasPriKeyFlag(col.GetFlag()) {
 					updatePK = true
 				}
 				for _, partColName := range partitionColumnNames {
@@ -5791,7 +5793,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 			return nil, nil, err
 		}
 		p = np
-		if it.GetType().Tp == mysql.TypeNull {
+		if it.GetType().GetType() == mysql.TypeNull {
 			continue
 		}
 		if col, ok := it.(*expression.Column); ok {
@@ -6160,7 +6162,7 @@ func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *a
 	if len(orderByItems) != 1 {
 		return ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
-	orderItemType := orderByItems[0].Col.RetType.Tp
+	orderItemType := orderByItems[0].Col.RetType.GetType()
 	isNumeric, isTemporal := types.IsTypeNumeric(orderItemType), types.IsTypeTemporal(orderItemType)
 	if !isNumeric && !isTemporal {
 		return ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
@@ -6913,7 +6915,7 @@ func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVar
 	for _, col := range res.Columns {
 		col.RetType = col.RetType.Clone()
 		col.UniqueID = svar.AllocPlanColumnID()
-		col.RetType.Flag &= ^mysql.NotNullFlag
+		col.RetType.DelFlag(mysql.NotNullFlag)
 	}
 	return res
 }

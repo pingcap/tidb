@@ -69,6 +69,7 @@ const (
 	hintJoinOrder             = 57352
 	hintJoinPrefix            = 57353
 	hintJoinSuffix            = 57354
+	hintLeading               = 57403
 	hintLimitToCop            = 57400
 	hintLooseScan             = 57414
 	hintMB                    = 57410
@@ -102,6 +103,7 @@ const (
 	hintSetVar                = 57374
 	hintSingleAtIdentifier    = 57349
 	hintSkipScan              = 57369
+	hintStraightJoin          = 57402
 	hintStreamAgg             = 57391
 	hintStringLit             = 57350
 	hintSwapJoinInputs        = 57392
@@ -256,6 +258,7 @@ var (
 		"hintJoinOrder",
 		"hintJoinPrefix",
 		"hintJoinSuffix",
+		"hintLeading",
 		"hintLimitToCop",
 		"hintMaxExecutionTime",
 		"hintMemoryQuota",
@@ -282,6 +285,7 @@ var (
 		"hintSetVar",
 		"hintSkipScan",
 		"hintSMJoin",
+		"hintStraightJoin",
 		"hintStreamAgg",
 		"hintSwapJoinInputs",
 		"hintTimeRange",

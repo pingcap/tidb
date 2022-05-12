@@ -31,7 +31,7 @@ func TestNewValuesFunc(t *testing.T) {
 	ctx := createContext(t)
 	res := NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	require.Equal(t, "values", res.FuncName.O)
-	require.Equal(t, mysql.TypeLonglong, res.RetType.Tp)
+	require.Equal(t, mysql.TypeLonglong, res.RetType.GetType())
 	_, ok := res.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
 }
@@ -95,11 +95,11 @@ func TestConstant(t *testing.T) {
 func TestIsBinaryLiteral(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeEnum)}
 	require.False(t, IsBinaryLiteral(col))
-	col.RetType.Tp = mysql.TypeSet
+	col.RetType.SetType(mysql.TypeSet)
 	require.False(t, IsBinaryLiteral(col))
-	col.RetType.Tp = mysql.TypeBit
+	col.RetType.SetType(mysql.TypeBit)
 	require.False(t, IsBinaryLiteral(col))
-	col.RetType.Tp = mysql.TypeDuration
+	col.RetType.SetType(mysql.TypeDuration)
 	require.False(t, IsBinaryLiteral(col))
 
 	con := &Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum([]byte{byte(0), byte(1)})}
@@ -192,9 +192,13 @@ func (builder *testTableBuilder) build() *model.TableInfo {
 	for i, colName := range builder.columnNames {
 		tp := builder.tps[i]
 		fieldType := types.NewFieldType(tp)
-		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
-		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
-		fieldType.Flag = builder.flags[i]
+		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.SetFlen(flen)
+		fieldType.SetDecimal(decimal)
+		charset, collate := types.DefaultCharsetForType(tp)
+		fieldType.SetCharset(charset)
+		fieldType.SetCollate(collate)
+		fieldType.SetFlag(builder.flags[i])
 		ti.Columns = append(ti.Columns, &model.ColumnInfo{
 			ID:        int64(i + 1),
 			Name:      model.NewCIStr(colName),

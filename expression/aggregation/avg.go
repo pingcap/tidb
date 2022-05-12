@@ -15,12 +15,12 @@
 package aggregation
 
 import (
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type avgFunction struct {
@@ -82,7 +82,7 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 		to := new(types.MyDecimal)
 		err := types.DecimalDiv(x, y, to, types.DivFracIncr)
 		terror.Log(err)
-		frac := af.RetTp.Decimal
+		frac := af.RetTp.GetDecimal()
 		if frac == -1 {
 			frac = mysql.MaxDecimalScale
 		}

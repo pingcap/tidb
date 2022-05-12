@@ -18,7 +18,6 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -146,13 +146,14 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
 				Count:      nullCount + topnCount,
-				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
 		}
+		cache.Put(tblID, table)
 	}
 }
 
@@ -179,7 +180,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache
 }
 
 func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
-	affectedIndexes := make(map[int64]*statistics.Index)
+	affectedIndexes := make(map[*statistics.Index]struct{})
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
@@ -192,12 +193,12 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 		if idx.TopN == nil {
 			idx.TopN = statistics.NewTopN(32)
 		}
-		affectedIndexes[row.GetInt64(1)] = idx
+		affectedIndexes[idx] = struct{}{}
 		data := make([]byte, len(row.GetBytes(2)))
 		copy(data, row.GetBytes(2))
 		idx.TopN.AppendTopN(data, row.GetUint64(3))
 	}
-	for _, idx := range affectedIndexes {
+	for idx := range affectedIndexes {
 		idx.TopN.Sort()
 	}
 }
@@ -294,7 +295,7 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 				continue
 			}
 			column.Count += row.GetInt64(3)
-			if !mysql.HasPriKeyFlag(column.Info.Flag) {
+			if !mysql.HasPriKeyFlag(column.Info.GetFlag()) {
 				continue
 			}
 			hist = &column.Histogram
@@ -363,7 +364,7 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 	}
 	lastVersion := uint64(0)
 	for _, table := range cache.Values() {
-		lastVersion = mathutil.MaxUint64(lastVersion, table.Version)
+		lastVersion = mathutil.Max(lastVersion, table.Version)
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
 				idx.Buckets[i].Count += idx.Buckets[i-1].Count

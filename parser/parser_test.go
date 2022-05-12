@@ -228,7 +228,7 @@ func TestSimple(t *testing.T) {
 	ct, ok := st.(*ast.CreateTableStmt)
 	require.True(t, ok)
 	for _, col := range ct.Cols {
-		require.Equal(t, uint(0), col.Tp.Flag&mysql.UnsignedFlag)
+		require.Equal(t, uint(0), col.Tp.GetFlag()&mysql.UnsignedFlag)
 	}
 
 	// for issue #4006
@@ -4834,6 +4834,10 @@ func TestExplain(t *testing.T) {
 		{"DESC SCHE.TABL COLUM", true, "DESC `SCHE`.`TABL` `COLUM`"},
 		{"DESCRIBE SCHE.TABL COLUM", true, "DESC `SCHE`.`TABL` `COLUM`"},
 		{"EXPLAIN ANALYZE SELECT 1", true, "EXPLAIN ANALYZE SELECT 1"},
+		{"EXPLAIN ANALYZE format=VERBOSE SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'VERBOSE' SELECT 1"},
+		{"EXPLAIN ANALYZE format=TRUE_CARD_COST SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'TRUE_CARD_COST' SELECT 1"},
+		{"EXPLAIN ANALYZE format='VERBOSE' SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'VERBOSE' SELECT 1"},
+		{"EXPLAIN ANALYZE format='TRUE_CARD_COST' SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'TRUE_CARD_COST' SELECT 1"},
 		{"EXPLAIN FORMAT = 'dot' SELECT 1", true, "EXPLAIN FORMAT = 'dot' SELECT 1"},
 		{"EXPLAIN FORMAT = DOT SELECT 1", true, "EXPLAIN FORMAT = 'DOT' SELECT 1"},
 		{"EXPLAIN FORMAT = 'row' SELECT 1", true, "EXPLAIN FORMAT = 'row' SELECT 1"},
@@ -5209,9 +5213,9 @@ func TestDDLStatements(t *testing.T) {
 	stmts, _, err := p.Parse(createTableStr, "", "")
 	require.NoError(t, err)
 	stmt := stmts[0].(*ast.CreateTableStmt)
-	require.True(t, mysql.HasBinaryFlag(stmt.Cols[0].Tp.Flag))
+	require.True(t, mysql.HasBinaryFlag(stmt.Cols[0].Tp.GetFlag()))
 	for _, colDef := range stmt.Cols[1:] {
-		require.False(t, mysql.HasBinaryFlag(colDef.Tp.Flag))
+		require.False(t, mysql.HasBinaryFlag(colDef.Tp.GetFlag()))
 	}
 	for _, tblOpt := range stmt.Options {
 		switch tblOpt.Tp {
@@ -5229,9 +5233,9 @@ func TestDDLStatements(t *testing.T) {
 	require.NoError(t, err)
 	stmt = stmts[0].(*ast.CreateTableStmt)
 	for _, colDef := range stmt.Cols {
-		require.Equal(t, charset.CharsetBin, colDef.Tp.Charset)
-		require.Equal(t, charset.CollationBin, colDef.Tp.Collate)
-		require.True(t, mysql.HasBinaryFlag(colDef.Tp.Flag))
+		require.Equal(t, charset.CharsetBin, colDef.Tp.GetCharset())
+		require.Equal(t, charset.CollationBin, colDef.Tp.GetCollate())
+		require.True(t, mysql.HasBinaryFlag(colDef.Tp.GetFlag()))
 	}
 	// Test set collate for all column types
 	createTableStr = `CREATE TABLE t (
@@ -5973,6 +5977,32 @@ func TestCharset(t *testing.T) {
 	require.NotNil(t, st.(*ast.AlterDatabaseStmt))
 }
 
+func TestUnderscoreCharset(t *testing.T) {
+	p := parser.New()
+	tests := []struct {
+		cs        string
+		parseFail bool
+		unSupport bool
+	}{
+		{"utf8", false, false},
+		{"gbk", false, true},
+		{"ujis", false, true},
+		{"gbk1", true, true},
+		{"ujisx", true, true},
+	}
+	for _, tt := range tests {
+		sql := fmt.Sprintf("select hex(_%s '3F')", tt.cs)
+		_, err := p.ParseOneStmt(sql, "", "")
+		if tt.parseFail {
+			require.EqualError(t, err, fmt.Sprintf("line 1 column %d near \"'3F')\" ", len(tt.cs)+17))
+		} else if tt.unSupport {
+			require.EqualError(t, err, ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", tt.cs).Error())
+		} else {
+			require.NoError(t, err)
+		}
+	}
+}
+
 func TestFulltextSearch(t *testing.T) {
 	p := parser.New()
 
@@ -6078,8 +6108,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 			}
 		}
 		for _, col := range node.Cols {
-			col.Tp.Charset = strings.ToUpper(col.Tp.Charset)
-			col.Tp.Collate = strings.ToUpper(col.Tp.Collate)
+			col.Tp.SetCharset(strings.ToUpper(col.Tp.GetCharset()))
+			col.Tp.SetCollate(strings.ToUpper(col.Tp.GetCollate()))
 
 			for i, option := range col.Options {
 				if option.Tp == 0 && option.Expr == nil && option.Stored == false && option.Refer == nil {
@@ -6683,18 +6713,18 @@ func TestCharsetIntroducer(t *testing.T) {
 
 func TestNonTransactionalDelete(t *testing.T) {
 	cases := []testCase{
-		{"split on c limit 10 delete from t where c = 10", true,
-			"SPLIT ON `c` LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
-		{"split on c limit 10 dry run delete from t where c = 10", true,
-			"SPLIT ON `c` LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
-		{"split on c limit 10 dry run query delete from t where c = 10", true,
-			"SPLIT ON `c` LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
-		{"split limit 10 delete from t where c = 10", true,
-			"SPLIT LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
-		{"split limit 10 dry run delete from t where c = 10", true,
-			"SPLIT LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
-		{"split limit 10 dry run query delete from t where c = 10", true,
-			"SPLIT LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
+		{"batch on c limit 10 delete from t where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
+		{"batch on c limit 10 dry run delete from t where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
+		{"batch on c limit 10 dry run query delete from t where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
+		{"batch limit 10 delete from t where c = 10", true,
+			"BATCH LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
+		{"batch limit 10 dry run delete from t where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
+		{"batch limit 10 dry run query delete from t where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
 	}
 
 	RunTest(t, cases, false)

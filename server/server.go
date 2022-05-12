@@ -350,7 +350,6 @@ func setTxnScope() {
 // Export config-related metrics
 func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
-	metrics.ConfigStatus.WithLabelValues("mem-quota-query").Set(float64(s.cfg.MemQuotaQuery))
 	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
 }
 
@@ -837,6 +836,14 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 		}
 	}
 	return tsList
+}
+
+// InternalSessionExists is used for test
+func (s *Server) InternalSessionExists(se interface{}) bool {
+	s.sessionMapMutex.Lock()
+	_, ok := s.internalSessions[se]
+	s.sessionMapMutex.Unlock()
+	return ok
 }
 
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,
