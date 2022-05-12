@@ -460,7 +460,8 @@ func TestNewCostInterfaceTiFlash2(t *testing.T) {
 		}
 	}
 
-	tk.MustExec(" set @@tidb_allow_mpp=1;")
+	tk.MustExec(" set @@tidb_allow_mpp=1")
+	tk.MustExec("set session tidb_opt_projection_push_down=1")
 	tk.Session().GetSessionVars().DEBUG = true
 	checkCost(t, tk, "select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b", "")
 }
