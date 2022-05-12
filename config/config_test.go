@@ -220,6 +220,7 @@ deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
 enable-forwarding = true
+[performance]
 tcp-no-delay = false
 [tikv-client]
 commit-timeout="41s"
