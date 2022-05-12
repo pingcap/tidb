@@ -59,6 +59,13 @@ func defineGCSFlags(flags *pflag.FlagSet) {
 	flags.String(gcsCredentialsFile, "", "(experimental) Set the GCS credentials file path")
 }
 
+func hiddenGCSFlags(flags *pflag.FlagSet) {
+	_ = flags.MarkHidden(gcsEndpointOption)
+	_ = flags.MarkHidden(gcsStorageClassOption)
+	_ = flags.MarkHidden(gcsPredefinedACL)
+	_ = flags.MarkHidden(gcsCredentialsFile)
+}
+
 func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	options.Endpoint, err = flags.GetString(gcsEndpointOption)
@@ -178,6 +185,9 @@ func (s *gcsStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
 	if opt == nil {
 		opt = &WalkOption{}
+	}
+	if len(opt.ObjPrefix) != 0 {
+		return errors.New("gcs storage not support ObjPrefix for now")
 	}
 
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
