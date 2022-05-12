@@ -925,17 +925,9 @@ func TestTiDBMemQuotaQuery(t *testing.T) {
 		require.Equal(t, val, "33554432")
 		require.NoError(t, err)
 
-		// out of range
-		newVal = 129 * 1024 * 1024 * 1024
-		expected := 128 * 1024 * 1024 * 1024
-		val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
-		// expected to truncate
-		require.Equal(t, val, fmt.Sprintf("%d", expected))
-		require.NoError(t, err)
-
 		// min value out of range
-		newVal = 10
-		expected = 128
+		newVal = -2
+		expected := -1
 		val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
 		// expected to truncate
 		require.Equal(t, val, fmt.Sprintf("%d", expected))

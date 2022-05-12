@@ -2071,7 +2071,7 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().GetType() == mysql.TypeJSON && !mysql.HasParseToJSONFlag(expr.GetType().GetFlag()) {
 		return expr
 	}
-	tp := types.NewFieldTypeBuilderP().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(12582912).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
+	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(12582912).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
 	return BuildCastFunction(ctx, expr, tp)
 }
 

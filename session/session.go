@@ -219,8 +219,8 @@ type session struct {
 	sessionManager util.SessionManager
 
 	statsCollector *handle.SessionStatsCollector
-	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
-	ddlOwnerChecker owner.DDLOwnerChecker
+	// ddlOwnerManager is used in `select tidb_is_ddl_owner()` statement;
+	ddlOwnerManager owner.Manager
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables map[int64]model.TableLockTpInfo
 
@@ -306,9 +306,9 @@ func (s *session) ReleaseAllTableLocks() {
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 }
 
-// DDLOwnerChecker returns s.ddlOwnerChecker.
-func (s *session) DDLOwnerChecker() owner.DDLOwnerChecker {
-	return s.ddlOwnerChecker
+// IsDDLOwner checks whether this session is DDL owner.
+func (s *session) IsDDLOwner() bool {
+	return s.ddlOwnerManager.IsOwner()
 }
 
 func (s *session) cleanRetryInfo() {
@@ -1711,12 +1711,13 @@ func ExecRestrictedStmt4Test(ctx context.Context, s Session,
 // only set and clean session with execOption
 func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, func(), error) {
 	var err error
+	orgSnapshotInfoSchema, orgSnapshotTS := s.sessionVars.SnapshotInfoschema, s.sessionVars.SnapshotTS
 	if execOption.SnapshotTS != 0 {
-		s.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
-		if err != nil {
+		if err = s.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
 			return nil, nil, err
 		}
-		if err := s.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+		s.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
+		if err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1736,7 +1737,8 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		if err := s.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
-		s.sessionVars.SnapshotInfoschema = nil
+		s.sessionVars.SnapshotInfoschema = orgSnapshotInfoSchema
+		s.sessionVars.SnapshotTS = orgSnapshotTS
 		s.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
@@ -1761,11 +1763,11 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	}
 
 	if execOption.SnapshotTS != 0 {
-		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
-		if err != nil {
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
 			return nil, nil, err
 		}
-		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
+		if err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1786,6 +1788,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
 		se.sessionVars.SnapshotInfoschema = nil
+		se.sessionVars.SnapshotTS = 0
 		if !execOption.IgnoreWarning {
 			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
 				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -2987,7 +2990,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s := &session{
 		store:           store,
 		sessionVars:     variable.NewSessionVars(),
-		ddlOwnerChecker: dom.DDL().OwnerManager(),
+		ddlOwnerManager: dom.DDL().OwnerManager(),
 		client:          store.GetClient(),
 		mppClient:       store.GetMPPClient(),
 		stmtStats:       stmtstats.CreateStatementStats(),

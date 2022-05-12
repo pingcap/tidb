@@ -126,7 +126,7 @@ func clearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
 func createMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
 	// set it to 5 seconds for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
-	transaction.PrewriteMaxBackoff = 500
+	transaction.PrewriteMaxBackoff.Store(500)
 
 	var store kv.Storage
 	var dom *domain.Domain
@@ -156,9 +156,9 @@ func createMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption
 	}
 
 	return store, func() {
-		transaction.PrewriteMaxBackoff = 20000
 		dom.Close()
 		require.NoError(t, store.Close())
+		transaction.PrewriteMaxBackoff.Store(20000)
 	}
 }
 
