@@ -577,7 +577,7 @@ NullaryHintName:
 |	"STREAM_AGG"
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"
-|   "CTE_INLINE"
+|	"CTE_INLINE"
 |	"NO_INDEX_MERGE"
 |	"READ_CONSISTENT_REPLICA"
 |	"IGNORE_PLAN_CACHE"
@@ -622,7 +622,7 @@ Identifier:
 /* TiDB hint names */
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"
-|   "CTE_INLINE"
+|	"CTE_INLINE"
 |	"IGNORE_PLAN_CACHE"
 |	"HASH_AGG"
 |	"IGNORE_INDEX"
