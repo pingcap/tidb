@@ -10,20 +10,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
-
-type fakePDClient struct {
-	pd.Client
-	stores []*metapb.Store
-}
-
-func (c fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
-	return append([]*metapb.Store{}, c.stores...), nil
-}
 
 func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel", "return(true)")
@@ -56,8 +47,8 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 		},
 	}
 
-	fpdc := fakePDClient{
-		stores: stores,
+	fpdc := utils.FakePDClient{
+		Stores: stores,
 	}
 
 	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
@@ -96,8 +87,8 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 		},
 	}
 
-	fpdc := fakePDClient{
-		stores: stores,
+	fpdc := utils.FakePDClient{
+		Stores: stores,
 	}
 
 	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
@@ -151,8 +142,8 @@ func TestCheckStoresAlive(t *testing.T) {
 		},
 	}
 
-	fpdc := fakePDClient{
-		stores: stores,
+	fpdc := utils.FakePDClient{
+		Stores: stores,
 	}
 
 	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
@@ -240,7 +231,7 @@ func TestGetAllTiKVStores(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		pdClient := fakePDClient{stores: testCase.stores}
+		pdClient := utils.FakePDClient{Stores: testCase.stores}
 		stores, err := GetAllTiKVStores(context.Background(), pdClient, testCase.storeBehavior)
 		if len(testCase.expectedError) != 0 {
 			require.Error(t, err)
