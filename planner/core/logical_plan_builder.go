@@ -4137,7 +4137,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			if hint := b.TableHints(); hint != nil {
 				lp.CTEHints = hint.CTEHints
 			}
-			if lp.CTEHints.preferInlineToCTE == true {
+			if lp.CTEHints.preferInlineToCTE {
 				saveCte := b.outerCTEs[i:]
 				b.outerCTEs = b.outerCTEs[:i]
 				defer func() {
