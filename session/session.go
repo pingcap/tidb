@@ -3429,7 +3429,6 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	vars := s.GetSessionVars()
 	var is infoschema.InfoSchema
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
-		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
 		is = snap
 	} else if vars.TxnCtx != nil && vars.InTxn() {
 		if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
