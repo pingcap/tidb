@@ -2401,7 +2401,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, err
 		}
-		if ok { // fallback to preparedStmtExec if we cannot get a valid point select plan in cachedPlanExec
+		if ok { // fallback to preparedStmtExec if we cannot get a valid point select plan in cachedPointPlanExec
 			return rs, nil
 		}
 	}
