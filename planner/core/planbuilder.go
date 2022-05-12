@@ -97,15 +97,13 @@ type tableHintInfo struct {
 	indexMergeHintList  []indexHintInfo
 	timeRangeHint       ast.HintTimeRange
 	limitHints          limitHintInfo
-	//code by dyp
-	CTEHints CTEHintInfo
+	CTEHints            CTEHintInfo
 }
 
 type limitHintInfo struct {
 	preferLimitToCop bool
 }
 
-//code by dyp
 type CTEHintInfo struct {
 	preferInlineToCTE bool
 }

@@ -112,7 +112,6 @@ const (
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
 	//HintCTEInline is a hint which can switch turning inline or materializing for the CTE.
-	//code by dyp
 	HintCTEInline = "cte_inline"
 )
 
@@ -3614,7 +3613,6 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		case HintLimitToCop:
 			limitHints.preferLimitToCop = true
 		//make CTEHints struct
-		//code by dyp
 		case HintCTEInline:
 			CTEHints.preferInlineToCTE = true
 		default:
@@ -4135,10 +4133,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			lp := LogicalCTE{cteAsName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat, isOuterMostCTE: !b.buildingCTE}.Init(b.ctx, b.getSelectOffset())
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
-			// 这里设置logical cte ，有设置的ctehints参数，判断是否是递归cte来通过hint选择
 			//make cteinline is ture, that will use merge way to run
-			//by dyp
-			// if hint is inline
 			if hint := b.TableHints(); hint != nil {
 				lp.CTEHints = hint.CTEHints
 			}
@@ -4173,8 +4168,6 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 	return nil, nil
 }
 
-// build CTE_inline
-//code by dyp
 func (b *PlanBuilder) buildDataSourceFromCTEInline(ctx context.Context, cte *ast.CommonTableExpression) (LogicalPlan, error) {
 	p, err := b.buildResultSetNode(ctx, cte.Query.Query)
 	if err != nil {
