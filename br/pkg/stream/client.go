@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"math"
 	"strconv"
 	"strings"
 
@@ -278,14 +277,16 @@ func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
 		return 0, errors.Trace(err)
 	}
 
-	var checkPointTS uint64 = math.MaxUint64
-	for _, nextTS := range checkPointMap {
-		if nextTS < checkPointTS {
-			checkPointTS = nextTS
+	initialized := false
+	checkpoint := t.Info.StartTs
+	for _, ts := range checkPointMap {
+		if !initialized || ts < checkpoint {
+			initialized = true
+			checkpoint = ts
 		}
 	}
 
-	return checkPointTS, nil
+	return checkpoint, nil
 }
 
 // Step forwards the progress (next_backup_ts) of some region.

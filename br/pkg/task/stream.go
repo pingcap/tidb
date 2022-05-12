@@ -69,6 +69,7 @@ var (
 	StreamResume   = "log resume"
 	StreamStatus   = "log status"
 	StreamTruncate = "log truncate"
+	StreamCheck    = "log check"
 
 	skipSummaryCommandList = map[string]struct{}{
 		StreamStatus:   {},
@@ -88,6 +89,7 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamResume:   RunStreamResume,
 	StreamStatus:   RunStreamStatus,
 	StreamTruncate: RunStreamTruncate,
+	StreamCheck:    RunStreamCheck,
 }
 
 // StreamConfig specifies the configure about backup stream
@@ -584,6 +586,37 @@ func RunStreamStart(
 	return nil
 }
 
+func RunStreamCheck(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(
+			"task.RunStreamCheckLog",
+			opentracing.ChildOf(span.Context()),
+		)
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	logMinTS, logMaxTS, err := getLogRange(ctx, &cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	summary.Log(cmdName, zap.Uint64("log-min-ts", logMinTS),
+		zap.String("log-min-date", oracle.GetTimeFromTS(logMinTS).String()),
+		zap.Uint64("log-max-ts", logMaxTS),
+		zap.String("log-max-date", oracle.GetTimeFromTS(logMaxTS).String()),
+	)
+	return nil
+}
+
 // RunStreamStop specifies stoping a stream task
 func RunStreamStop(
 	c context.Context,
@@ -734,8 +767,8 @@ func RunStreamResume(
 	}
 	err = utils.CheckGCSafePoint(ctx, streamMgr.mgr.GetPDClient(), globalCheckPointTS)
 	if err != nil {
-		return errors.Annotatef(err,
-			"the global checkpoint ts: %v has been gc. ", globalCheckPointTS)
+		return errors.Annotatef(err, "the global checkpoint ts: %v(%s) has been gc. ",
+			globalCheckPointTS, oracle.GetTimeFromTS(globalCheckPointTS))
 	}
 
 	err = cli.ResumeTask(ctx, cfg.TaskName)
@@ -919,25 +952,9 @@ func RunStreamRestore(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	logMinTS, logMaxTS, err := getLogStartTS(ctx, cfg)
+	logMinTS, logMaxTS, err := getLogRange(ctx, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	currentTS, err := mgr.GetTS(ctx)
-	if err != nil {
-		mgr.Close()
-		return errors.Trace(err)
-	}
-	mgr.Close()
-
-	if logMaxTS == 0 {
-		logMaxTS = currentTS
 	}
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = logMaxTS
@@ -972,7 +989,7 @@ func RunStreamRestore(
 		cfg.Config.Storage = logStorage
 	}
 	// restore log.
-	if err := restoreStream(ctx, g, cfg, logMinTS, logMaxTS, currentTS); err != nil {
+	if err := restoreStream(ctx, g, cfg, logMinTS, logMaxTS); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -983,7 +1000,7 @@ func restoreStream(
 	c context.Context,
 	g glue.Glue,
 	cfg *RestoreConfig,
-	logMinTS, logMaxTS, currentTS uint64,
+	logMinTS, logMaxTS uint64,
 ) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
@@ -1003,6 +1020,10 @@ func restoreStream(
 	}
 	defer client.Close()
 
+	currentTS, err := client.GetTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, ShiftTS(cfg.StartTS))
 	client.SetCurrentTS(currentTS)
 
@@ -1133,7 +1154,7 @@ func checkLogRange(restoreFrom, restoreTo, logMinTS, logMaxTS uint64) error {
 			restoreFrom, oracle.GetTimeFromTS(restoreFrom),
 			restoreTo, oracle.GetTimeFromTS(restoreTo),
 			logMinTS, oracle.GetTimeFromTS(logMinTS),
-			logMinTS, oracle.GetTimeFromTS(logMaxTS),
+			logMaxTS, oracle.GetTimeFromTS(logMaxTS),
 		)
 	}
 	return nil
@@ -1154,16 +1175,17 @@ func countIndices(ts map[int64]*metautil.Table) int64 {
 	return result
 }
 
-// get the start-ts of starting log backup.
-func getLogStartTS(
+// getLogRange gets the log-min-ts and log-max-ts of starting log backup.
+func getLogRange(
 	ctx context.Context,
-	cfg *RestoreConfig,
+	cfg *Config,
 ) (uint64, uint64, error) {
-	_, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
+	_, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
+	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -1172,20 +1194,28 @@ func getLogStartTS(
 	if err = backupMeta.Unmarshal(metaData); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
 	logStartTS := backupMeta.GetStartVersion()
+
+	// truncateTS: get log truncate ts from TruncateSafePointFileName.
 	// If truncateTS equals 0, which represents the stream log has never been truncated.
 	truncateTS, err := restore.GetTSFromFile(ctx, s, restore.TruncateSafePointFileName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
 	logMinTS := mathutil.Max(logStartTS, truncateTS)
 
-	// If logMaxTS equals 0, which represents the log task has not been stop.
+	// get log global checkpoint ts from GlobalCheckpointFileName.
+	// If globalCheckpointTS equals 0, which represents the log task has not been stop.
 	logMaxTS, err := restore.GetTSFromFile(ctx, s, restore.GlobalCheckpointFileName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
+	}
+
+	// get max global resolved ts from metas.
+	if logMaxTS == 0 {
+		if logMaxTS, err = getGlobalResolvedTS(ctx, s); err != nil {
+			return 0, 0, errors.Trace(err)
+		}
 	}
 
 	return logMinTS, logMaxTS, nil
@@ -1214,13 +1244,33 @@ func getFullBakcupTS(
 	return backupmeta.GetEndVersion(), nil
 }
 
-// nolint: unused, deadcode
-func getGlobalCheckpointTS(ms []*backuppb.Metadata) uint64 {
+func getGlobalResolvedTS(
+	ctx context.Context,
+	s storage.ExternalStorage,
+) (uint64, error) {
 	storeMap := make(map[int64]uint64)
-	for _, m := range ms {
-		if resolveTS, exist := storeMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
-			storeMap[m.StoreId] = m.ResolvedTs
+
+	opt := &storage.WalkOption{SubDir: restore.GetStreamBackupMetaPrefix()}
+	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
+		if strings.Contains(path, restore.GetStreamBackupMetaPrefix()) {
+			m := &backuppb.Metadata{}
+			b, err := s.ReadFile(ctx, path)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = m.Unmarshal(b)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if resolveTS, exist := storeMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
+				storeMap[m.StoreId] = m.ResolvedTs
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
 
 	var globalCheckpointTS uint64 = 0
@@ -1230,7 +1280,7 @@ func getGlobalCheckpointTS(ms []*backuppb.Metadata) uint64 {
 		}
 	}
 
-	return globalCheckpointTS
+	return globalCheckpointTS, nil
 }
 
 func initFullBackupTables(
