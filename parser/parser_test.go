@@ -4194,7 +4194,7 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "limit_to_cop", hints[1].HintName.L)
 
 	// Test CTE_INLINE
-	stmt, _, err = p.Parse("with cte(x) as (select /*+ CTE_INLINE(), cte_inline() */ * from t1) select * from cte;", "", "")
+	stmt, _, err = p.Parse("with cte(x) as (select * from t1) select /*+ CTE_INLINE(), cte_inline() */ * from cte;", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
