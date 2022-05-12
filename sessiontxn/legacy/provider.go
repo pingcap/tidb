@@ -72,11 +72,13 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 	switch tp {
 	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
 		txnCtx := sessVars.TxnCtx
-		if tp != sessiontxn.EnterNewTxnWithBeginStmt || txnCtx.History != nil || txnCtx.IsStaleness {
+		if tp != sessiontxn.EnterNewTxnWithBeginStmt || txnCtx.History != nil || txnCtx.IsStaleness || sessVars.SnapshotTS > 0 {
 			// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 			// need to call NewTxn, which commits the existing transaction and begins a new one.
 			// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
 			// always create a new transaction.
+			// If the variable `tidb_snapshot` is set, we should always create a new transaction because the current txn may be
+			// initialized with snapshot ts.
 			if err := p.Sctx.NewTxn(ctx); err != nil {
 				return err
 			}

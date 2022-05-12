@@ -21,6 +21,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/tracing"
@@ -102,7 +103,10 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
 			ctx:        ctx,
 			otherConds: otherConds,
+			eqEdges:    eqEdges,
+			joinTypes:  joinTypes,
 		}
+
 		originalSchema := p.Schema()
 
 		// Not support outer join reorder when using the DP algorithm
@@ -116,8 +120,6 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
-				eqEdges:                        eqEdges,
-				joinTypes:                      joinTypes,
 			}
 			p, err = groupSolver.solve(curJoinGroup, tracer)
 		} else {
@@ -125,7 +127,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
 			dpSolver.newJoin = dpSolver.newJoinWithEdges
-			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges), tracer)
+			p, err = dpSolver.solve(curJoinGroup, tracer)
 		}
 		if err != nil {
 			return nil, err
@@ -168,6 +170,26 @@ type baseSingleGroupJoinOrderSolver struct {
 	ctx          sessionctx.Context
 	curJoinGroup []*jrNode
 	otherConds   []expression.Expression
+	eqEdges      []*expression.ScalarFunction
+	joinTypes    []JoinType
+}
+
+// generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
+func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) ([]*jrNode, error) {
+	joinGroup := make([]*jrNode, 0, len(joinNodePlans))
+	for _, node := range joinNodePlans {
+		_, err := node.recursiveDeriveStats(nil)
+		if err != nil {
+			return nil, err
+		}
+		cost := s.baseNodeCumCost(node)
+		joinGroup = append(joinGroup, &jrNode{
+			p:       node,
+			cumCost: cost,
+		})
+		tracer.appendLogicalJoinCost(node, cost)
+	}
+	return joinGroup, nil
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
@@ -177,6 +199,51 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) 
 		cost += s.baseNodeCumCost(child)
 	}
 	return cost
+}
+
+// checkConnection used to check whether two nodes have equal conditions or not.
+func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan LogicalPlan) (leftNode, rightNode LogicalPlan, usedEdges []*expression.ScalarFunction, joinType JoinType) {
+	joinType = InnerJoin
+	leftNode, rightNode = leftPlan, rightPlan
+	for idx, edge := range s.eqEdges {
+		lCol := edge.GetArgs()[0].(*expression.Column)
+		rCol := edge.GetArgs()[1].(*expression.Column)
+		if leftPlan.Schema().Contains(lCol) && rightPlan.Schema().Contains(rCol) {
+			joinType = s.joinTypes[idx]
+			usedEdges = append(usedEdges, edge)
+		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
+			joinType = s.joinTypes[idx]
+			if joinType != InnerJoin {
+				rightNode, leftNode = leftPlan, rightPlan
+				usedEdges = append(usedEdges, edge)
+			} else {
+				newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+				usedEdges = append(usedEdges, newSf)
+			}
+		}
+	}
+	return
+}
+
+// makeJoin build join tree for the nodes which have equal conditions to connect them.
+func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPlan, eqEdges []*expression.ScalarFunction, joinType JoinType) (LogicalPlan, []expression.Expression) {
+	remainOtherConds := make([]expression.Expression, len(s.otherConds))
+	copy(remainOtherConds, s.otherConds)
+	var otherConds []expression.Expression
+	var leftConds []expression.Expression
+	var rightConds []expression.Expression
+	mergedSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
+
+	remainOtherConds, leftConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		return expression.ExprFromSchema(expr, leftPlan.Schema()) && !expression.ExprFromSchema(expr, rightPlan.Schema())
+	})
+	remainOtherConds, rightConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		return expression.ExprFromSchema(expr, rightPlan.Schema()) && !expression.ExprFromSchema(expr, leftPlan.Schema())
+	})
+	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		return expression.ExprFromSchema(expr, mergedSchema)
+	})
+	return s.newJoinWithEdges(leftPlan, rightPlan, eqEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds
 }
 
 // makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
