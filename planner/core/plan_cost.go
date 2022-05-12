@@ -433,9 +433,6 @@ func (p *PhysicalIndexJoin) GetPlanCost(taskType property.TaskType, costFlag uin
 	}
 	outerCnt := getCardinality(outerChild, costFlag)
 	innerCnt := getCardinality(innerChild, costFlag)
-	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) && outerCnt > 0 {
-		innerCnt /= outerCnt // the meaning of innerCnt is the number of rows to read corresponding to one single row from the outer side
-	}
 	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil
@@ -517,9 +514,6 @@ func (p *PhysicalIndexHashJoin) GetPlanCost(taskType property.TaskType, costFlag
 	}
 	outerCnt := getCardinality(outerChild, costFlag)
 	innerCnt := getCardinality(innerChild, costFlag)
-	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) && outerCnt > 0 {
-		innerCnt /= outerCnt // the meaning of innerCnt is the number of rows to read corresponding to one single row from the outer side
-	}
 	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil
@@ -603,9 +597,6 @@ func (p *PhysicalIndexMergeJoin) GetPlanCost(taskType property.TaskType, costFla
 	}
 	outerCnt := getCardinality(outerChild, costFlag)
 	innerCnt := getCardinality(innerChild, costFlag)
-	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) && outerCnt > 0 {
-		innerCnt /= outerCnt // the meaning of innerCnt is the number of rows to read corresponding to one single row from the outer side
-	}
 	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil
@@ -654,9 +645,6 @@ func (p *PhysicalApply) GetPlanCost(taskType property.TaskType, costFlag uint64)
 	}
 	outerCnt := getCardinality(outerChild, costFlag)
 	innerCnt := getCardinality(innerChild, costFlag)
-	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) && outerCnt > 0 {
-		innerCnt /= outerCnt // the meaning of innerCnt is the number of rows to read corresponding to one single row from the outer side
-	}
 	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil

@@ -928,19 +928,4 @@ func TestTrueCardCost(t *testing.T) {
 			"      └─IndexReader_24 8000.00 1.33 0 root",
 			"        └─HashAgg_17 8000.00 0.00 0 cop[tikv]",
 			"          └─IndexFullScan_22 10000.00 0.00 0 cop[tikv]"})
-
-	tk.MustExec(`insert into t values (1, 1), (2, 2), (3, 3)`)
-	checkPlanCost(`select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b`,
-		[]string{"IndexJoin_11 12487.50 265579.50 3 root",
-			"├─IndexReader_31(Build) 9990.00 48785.83 3 root",
-			"│ └─IndexFullScan_30 9990.00 569430.00 3 cop[tikv]",
-			"└─IndexReader_10(Probe) 1.25 7.69 3 root",
-			"  └─Selection_9 1.25 0.00 3 cop[tikv]",
-			"    └─IndexRangeScan_8 1.25 0.00 3 cop[tikv]"},
-		[]string{"IndexJoin_11 12487.50 102.08 3 root",
-			"├─IndexReader_31(Build) 9990.00 15.98 3 root",
-			"│ └─IndexFullScan_30 9990.00 171.00 3 cop[tikv]",
-			"└─IndexReader_10(Probe) 1.25 16.58 3 root",
-			"  └─Selection_9 1.25 180.00 3 cop[tikv]",
-			"    └─IndexRangeScan_8 1.25 171.00 3 cop[tikv]"})
 }
