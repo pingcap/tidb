@@ -3634,7 +3634,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		// If there are more leading hints, all leading hints will be invalid.
 		leadingJoinOrder = leadingJoinOrder[:0]
 		// Append warning if there are invalid index names.
-		errMsg := fmt.Sprintf("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
+		errMsg := "We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{

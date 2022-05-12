@@ -134,9 +134,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			}
 			var errMsg string
 			if len(leadingJoinGroup) != len(hintInfo.leadingJoinOrder) {
-				errMsg = fmt.Sprint("leading hint is inapplicable, check if the leading hint table is valid")
+				errMsg = "leading hint is inapplicable, check if the leading hint table is valid"
 			} else if joinGroupNum <= ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
-				errMsg = fmt.Sprint("leading hint is inapplicable for the DP join reorder algorithm")
+				errMsg = "leading hint is inapplicable for the DP join reorder algorithm"
 			}
 			if len(errMsg) > 0 {
 				curJoinGroup = append(curJoinGroup, leadingJoinGroup...)
