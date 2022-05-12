@@ -41,11 +41,11 @@ import (
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+	SetTiflashMaxThreadsInContext(ctx, sctx)
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
-
 	encodeType := tipb.EncodeType_TypeDefault
 	if canUseChunkRPC(sctx) {
 		encodeType = tipb.EncodeType_TypeChunk
@@ -101,8 +101,8 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo,
 	}
 
-	if kvReq.StoreType == kv.TiFlash && sctx.GetSessionVars().TiFlashMaxThreads != -1 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashThreads, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxThreads, 10))
+	if kvReq.StoreType == kv.TiFlash {
+		SetTiflashMaxThreadsInContext(ctx, sctx)
 	}
 
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
@@ -147,6 +147,13 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		storeType:  kvReq.StoreType,
 		paging:     kvReq.Paging,
 	}, nil
+}
+
+func SetTiflashMaxThreadsInContext(ctx context.Context, sctx sessionctx.Context) context.Context {
+	if sctx.GetSessionVars().TiFlashMaxThreads != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashThreads, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxThreads, 10))
+	}
+	return ctx
 }
 
 // SelectWithRuntimeStats sends a DAG request, returns SelectResult.
