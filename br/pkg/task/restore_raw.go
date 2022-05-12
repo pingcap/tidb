@@ -4,11 +4,11 @@ package task
 
 import (
 	"context"
-	"github.com/pingcap/tidb/br/pkg/conn"
 	"net/http"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
