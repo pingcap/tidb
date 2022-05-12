@@ -55,3 +55,18 @@ func TestStraightJoinHint(t *testing.T) {
 	tk.MustExec("create table t4(a int, b int, key(a));")
 	runJoinReorderTestData(t, tk, "TestStraightJoinHint")
 }
+
+func TestLeadingJoinHint(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	runJoinReorderTestData(t, tk, "TestLeadingJoinHint")
+}
