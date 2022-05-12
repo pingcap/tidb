@@ -857,7 +857,7 @@ const (
 	MaxTiDBStatsCacheMemQuota                    = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                        = 4096
 	DefTiDBTxnTotalSizeLimit                     = 100 * 1024 * 1024
-	DefTiDBTxnEntrySizeLimit                     = 10485760
+	DefTiDBTxnEntrySizeLimit                     = 6 * 1024 * 1024
 	DefTiDBBatchDMLIgnoreError                   = false
 	DefTiDBMemQuotaAnalyze                       = -1
 )
