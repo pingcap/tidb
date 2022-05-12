@@ -728,6 +728,9 @@ func (be *tidbBackend) logSqlWarnings(ctx context.Context, task *stmtTask, table
 	if !log.L().Core().Enabled(zap.WarnLevel) {
 		return
 	}
+	// go-mysql-driver doesn't give us a way to check whether the sql has warnings or not,
+	// so we have to query it ourselves.
+	// see https://github.com/go-sql-driver/mysql/blob/ad9fa14acdcf7d0533e7fbe58728f3d216213ade/packets.go#L629
 	rows, err := be.db.QueryContext(ctx, "show warnings")
 	if err != nil { // nolint:errorlint
 		log.L().Warn("failed to show warnings", zap.Error(err))
@@ -736,6 +739,7 @@ func (be *tidbBackend) logSqlWarnings(ctx context.Context, task *stmtTask, table
 	defer rows.Close()
 
 	var sb strings.Builder
+	var count int
 	for rows.Next() {
 		var level, code, message string
 		err = rows.Scan(&level, &code, &message)
@@ -744,15 +748,18 @@ func (be *tidbBackend) logSqlWarnings(ctx context.Context, task *stmtTask, table
 			return
 		}
 		sb.WriteString(fmt.Sprintf("[%s, %s, %s], ", level, code, message))
+		count++
 	}
 	if err = rows.Err(); err != nil { // nolint:errorlint
 		log.L().Warn("failed to show warnings", zap.Error(err))
 		return
 	}
-	firstRow := task.rows[0]
-	log.L().Warn("sql execute warnings",
-		zap.String("table", tableName), zap.String("path", firstRow.path),
-		zap.Int64("offset", firstRow.offset), zap.String("warnings", sb.String()))
+	if count > 0 {
+		firstRow := task.rows[0]
+		log.L().Warn("sql execute warnings",
+			zap.String("table", tableName), zap.String("path", firstRow.path),
+			zap.Int64("offset", firstRow.offset), zap.String("warnings", sb.String()))
+	}
 }
 
 type Writer struct {
