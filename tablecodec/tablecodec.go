@@ -82,6 +82,11 @@ func TablePrefix() []byte {
 	return tablePrefix
 }
 
+// MetaPrefix returns meta prefix 'm'.
+func MetaPrefix() []byte {
+	return metaPrefix
+}
+
 // EncodeRowKey encodes the table id and record handle into a kv.Key
 func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 	buf := make([]byte, 0, prefixLen+len(encodedHandle))
@@ -192,6 +197,16 @@ func DecodeValuesBytesToStrings(b []byte) ([]string, error) {
 		b = remain
 	}
 	return datumValues, nil
+}
+
+// EncodeMetaKey encodes the key and field into meta key.
+func EncodeMetaKey(key []byte, field []byte) kv.Key {
+	ek := make([]byte, 0, len(metaPrefix)+codec.EncodedBytesLength(len(key))+8+codec.EncodedBytesLength(len(field)))
+	ek = append(ek, metaPrefix...)
+	ek = codec.EncodeBytes(ek, key)
+	ek = codec.EncodeUint(ek, uint64(structure.HashData))
+	ek = codec.EncodeBytes(ek, field)
+	return ek
 }
 
 // DecodeMetaKey decodes the key and get the meta key and meta field.
@@ -948,12 +963,28 @@ func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
 	return key
 }
 
-// EncodeTablePrefix encodes table prefix with table ID.
+// EncodeTablePrefix encodes the table prefix to generate a key
 func EncodeTablePrefix(tableID int64) kv.Key {
-	var key kv.Key
+	key := make([]byte, 0, tablePrefixLength+idLen)
 	key = append(key, tablePrefix...)
 	key = codec.EncodeInt(key, tableID)
 	return key
+}
+
+// EncodeTablePrefixSeekKey encodes the table prefix and encodecValue into a kv.Key.
+// It used for seek justly.
+func EncodeTablePrefixSeekKey(tableID int64, encodecValue []byte) kv.Key {
+	key := make([]byte, 0, tablePrefixLength+idLen+len(encodecValue))
+	key = appendTablePrefix(key, tableID)
+	key = append(key, encodecValue...)
+	return key
+}
+
+// appendTablePrefix appends table prefix "t[tableID]" into buf.
+func appendTablePrefix(buf []byte, tableID int64) []byte {
+	buf = append(buf, tablePrefix...)
+	buf = codec.EncodeInt(buf, tableID)
+	return buf
 }
 
 // appendTableRecordPrefix appends table record prefix  "t[tableID]_r".

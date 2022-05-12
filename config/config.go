@@ -924,8 +924,8 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.history-size":          {},
 	"mem-quota-query":                    {},
 	"query-log-max-len":                  {},
-	"txn-total-size-limit":               {},
-	"txn-entry-size-limit":               {},
+	"performance.txn-total-size-limit":   {},
+	"performance.txn-entry-size-limit":   {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

@@ -979,8 +979,8 @@ func TestTiDBTxnTotalSizeLimit(t *testing.T) {
 	require.NoError(t, err)
 
 	// min value out of range
-	newVal = 1024
-	expected = 10485760
+	newVal = 1022
+	expected = 1024
 	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
 	// expected to set to min value
 	require.Equal(t, fmt.Sprintf("%d", expected), val)
@@ -1004,8 +1004,8 @@ func TestTiDBTxnEntrySizeLimit(t *testing.T) {
 	require.NoError(t, err)
 
 	// min value out of range
-	newVal = 1024
-	expected = 10485760
+	newVal = 1022
+	expected = 1024
 	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
 	// expected to set to min value
 	require.Equal(t, fmt.Sprintf("%d", expected), val)

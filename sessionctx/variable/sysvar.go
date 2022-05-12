@@ -410,13 +410,13 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL scope  */
-	{Scope: ScopeGlobal, Name: TiDBTxnEntrySizeLimit, Value: strconv.FormatInt(DefTiDBTxnEntrySizeLimit, 10), Type: TypeInt, MinValue: 10485760, MaxValue: 125829120, GetGlobal: func(sv *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBTxnEntrySizeLimit, Value: strconv.FormatInt(DefTiDBTxnEntrySizeLimit, 10), Type: TypeInt, MinValue: 1 << 10, MaxValue: 120 << 20, GetGlobal: func(sv *SessionVars) (string, error) {
 		return strconv.FormatUint(kv.TxnEntrySizeLimit.Load(), 10), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		kv.TxnEntrySizeLimit.Store(uint64(TidbOptInt64(val, DefTiDBTxnEntrySizeLimit)))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBTxnTotalSizeLimit, Value: strconv.FormatInt(DefTiDBTxnTotalSizeLimit, 10), Type: TypeInt, MinValue: 10485760, MaxValue: 1099511627776, GetGlobal: func(sv *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBTxnTotalSizeLimit, Value: strconv.FormatInt(DefTiDBTxnTotalSizeLimit, 10), Type: TypeInt, MinValue: 1 << 10, MaxValue: 1 << 40, GetGlobal: func(sv *SessionVars) (string, error) {
 		return strconv.FormatUint(kv.TxnTotalSizeLimit.Load(), 10), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		kv.TxnTotalSizeLimit.Store(uint64(TidbOptInt64(val, DefTiDBTxnTotalSizeLimit)))

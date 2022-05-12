@@ -935,16 +935,9 @@ func TestCartesianProduct(t *testing.T) {
 func TestBatchInsertDelete(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
-	originLimit := kv.TxnTotalSizeLimit.Load()
-	defer func() {
-		kv.TxnTotalSizeLimit.Store(originLimit)
-	}()
-	// Set the limitation to a small value, make it easier to reach the limitation.
-	kv.TxnTotalSizeLimit.Store(5500)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_txn_total_size_limit = 5500")
 	tk.MustExec("drop table if exists batch_insert")
 	tk.MustExec("create table batch_insert (c int)")
 	tk.MustExec("drop table if exists batch_insert_on_duplicate")
