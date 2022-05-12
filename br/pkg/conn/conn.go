@@ -470,7 +470,7 @@ func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
 }
 
 // GetMergeRegionSizeAndCount returns the tikv config `coprocessor.region-split-size` and `coprocessor.region-split-key`.
-func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context) (uint64, uint64, error) {
+func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64, error) {
 	regionSplitSize := DefaultMergeRegionSizeBytes
 	regionSplitKeys := DefaultMergeRegionKeyCount
 	type coprocessor struct {
@@ -481,7 +481,7 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context) (uint64, uint64,
 	type config struct {
 		Cop coprocessor `json:"coprocessor"`
 	}
-	err := mgr.GetConfigFromTiKV(ctx, http.DefaultClient, func(resp *http.Response) error {
+	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
 		c := &config{}
 		e := json.NewDecoder(resp.Body).Decode(c)
 		if e != nil {
@@ -492,7 +492,7 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context) (uint64, uint64,
 			return e
 		}
 		urs := uint64(rs)
-		if urs < regionSplitSize || c.Cop.RegionSplitKeys < regionSplitKeys {
+		if regionSplitSize == DefaultMergeRegionSizeBytes || urs < regionSplitSize {
 			regionSplitSize = urs
 			regionSplitKeys = c.Cop.RegionSplitKeys
 		}
@@ -504,6 +504,7 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context) (uint64, uint64,
 	return regionSplitSize, regionSplitKeys, nil
 }
 
+// GetConfigFromTiKV get configs from all alive tikv stores.
 func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func(*http.Response) error) error {
 	allStores, err := GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), SkipTiFlash)
 	if err != nil {
@@ -514,6 +515,7 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 	if mgr.GetTLSConfig() != nil {
 		httpPrefix = "https://"
 	}
+
 	for _, store := range allStores {
 		if store.State != metapb.StoreState_Up {
 			continue

@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"time"
 
@@ -405,7 +406,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		mergeRegionCount == conn.DefaultMergeRegionKeyCount {
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
-		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx)
+		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, http.DefaultClient)
 		if err != nil {
 			return errors.Trace(err)
 		}
