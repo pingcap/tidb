@@ -4181,7 +4181,7 @@ func (b *PlanBuilder) buildDataSourceFromCTEInline(ctx context.Context, cte *ast
 
 	if len(cte.ColNameList) > 0 {
 		if len(cte.ColNameList) != len(p.OutputNames()) {
-			return nil, errors.New("CTE columns length is not consistent.")
+			return nil, errors.New("CTE columns length is not consistent")
 		}
 		for i, n := range cte.ColNameList {
 			outPutNames[i].ColName = n

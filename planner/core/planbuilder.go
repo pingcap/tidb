@@ -104,8 +104,8 @@ type limitHintInfo struct {
 	preferLimitToCop bool
 }
 
+//one bool flag for cte
 type CTEHintInfo struct {
-	//one bool flag for cte
 	preferInlineToCTE bool
 }
 
