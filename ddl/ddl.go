@@ -1541,6 +1541,10 @@ func (s *session) rollback() {
 	s.s.RollbackTxn(context.Background())
 }
 
+func (s *session) reset() {
+	s.s.StmtRollback()
+}
+
 func (s *session) execute(ctx context.Context, query string, fns ...func(rows []chunk.Row) error) error {
 	rs, err := s.s.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
 	if err != nil {
