@@ -69,12 +69,11 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		}
 		if noExpand {
 			return []LogicalPlan{p}, nil, nil, nil
-		} else {
-			group = append(group, lhsGroup...)
-			eqEdges = append(eqEdges, lhsEqualConds...)
-			otherConds = append(otherConds, lhsOtherConds...)
-			joinTypes = append(joinTypes, lhsJoinTypes...)
 		}
+		group = append(group, lhsGroup...)
+		eqEdges = append(eqEdges, lhsEqualConds...)
+		otherConds = append(otherConds, lhsOtherConds...)
+		joinTypes = append(joinTypes, lhsJoinTypes...)
 	} else {
 		group = append(group, join.children[0])
 	}
@@ -104,12 +103,11 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		}
 		if noExpand {
 			return []LogicalPlan{p}, nil, nil, nil
-		} else {
-			group = append(group, rhsGroup...)
-			eqEdges = append(eqEdges, rhsEqualConds...)
-			otherConds = append(otherConds, rhsOtherConds...)
-			joinTypes = append(joinTypes, rhsJoinTypes...)
 		}
+		group = append(group, rhsGroup...)
+		eqEdges = append(eqEdges, rhsEqualConds...)
+		otherConds = append(otherConds, rhsOtherConds...)
+		joinTypes = append(joinTypes, rhsJoinTypes...)
 	} else {
 		group = append(group, join.children[1])
 	}
