@@ -19,13 +19,10 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
 )
 
 type joinReorderGreedySolver struct {
 	*baseSingleGroupJoinOrderSolver
-	eqEdges   []*expression.ScalarFunction
-	joinTypes []JoinType
 }
 
 // solve reorders the join nodes in the group based on a greedy algorithm.
@@ -43,19 +40,11 @@ type joinReorderGreedySolver struct {
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
-	for _, node := range joinNodePlans {
-		_, err := node.recursiveDeriveStats(nil)
-		if err != nil {
-			return nil, err
-		}
-		cost := s.baseNodeCumCost(node)
-		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			p:       node,
-			cumCost: cost,
-		})
-		tracer.appendLogicalJoinCost(node, cost)
+	var err error
+	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans, tracer)
+	if err != nil {
+		return nil, err
 	}
-
 	// Sort plans by cost
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
@@ -114,43 +103,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 }
 
 func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan LogicalPlan) (LogicalPlan, []expression.Expression) {
-	var usedEdges []*expression.ScalarFunction
-	remainOtherConds := make([]expression.Expression, len(s.otherConds))
-	copy(remainOtherConds, s.otherConds)
-	joinType := InnerJoin
-	for idx, edge := range s.eqEdges {
-		lCol := edge.GetArgs()[0].(*expression.Column)
-		rCol := edge.GetArgs()[1].(*expression.Column)
-		if leftPlan.Schema().Contains(lCol) && rightPlan.Schema().Contains(rCol) {
-			joinType = s.joinTypes[idx]
-			usedEdges = append(usedEdges, edge)
-		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
-			joinType = s.joinTypes[idx]
-			if joinType != InnerJoin {
-				rightPlan, leftPlan = leftPlan, rightPlan
-				usedEdges = append(usedEdges, edge)
-			} else {
-				newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
-				usedEdges = append(usedEdges, newSf)
-			}
-		}
-	}
+	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
 	if len(usedEdges) == 0 {
 		return nil, nil
 	}
-	var otherConds []expression.Expression
-	var leftConds []expression.Expression
-	var rightConds []expression.Expression
-	mergedSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
-
-	remainOtherConds, leftConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
-		return expression.ExprFromSchema(expr, leftPlan.Schema()) && !expression.ExprFromSchema(expr, rightPlan.Schema())
-	})
-	remainOtherConds, rightConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
-		return expression.ExprFromSchema(expr, rightPlan.Schema()) && !expression.ExprFromSchema(expr, leftPlan.Schema())
-	})
-	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
-		return expression.ExprFromSchema(expr, mergedSchema)
-	})
-	return s.newJoinWithEdges(leftPlan, rightPlan, usedEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds
+	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType)
 }
