@@ -153,6 +153,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
 		}
+		cache.Put(tblID, table)
 	}
 }
 

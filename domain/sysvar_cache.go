@@ -149,6 +149,9 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 				if err != nil {
 					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
 				}
+				if sv.Name == variable.TiDBStatsCacheMemQuota {
+					do.SetStatsCacheCapacity(variable.StatsCacheMemQuota.Load())
+				}
 			}
 		}
 
@@ -200,4 +203,10 @@ func (do *Domain) SetPDClientDynamicOption(option pd.DynamicOption, val interfac
 		return nil
 	}
 	return pdClient.UpdateOption(option, val)
+}
+
+// SetStatsCacheCapacity sets statsCache cap
+func (do *Domain) SetStatsCacheCapacity(c int64) {
+	do.StatsHandle().SetStatsCacheCapacity(c)
+	logutil.BgLogger().Info("update stats cache capacity successfully", zap.Int64("capacity", c))
 }
