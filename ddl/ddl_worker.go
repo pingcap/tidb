@@ -599,7 +599,7 @@ func (w *worker) AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bo
 		if err != nil {
 			return err
 		}
-		err = w.sess.execute(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_history(job_id, job_meta, job_seq) values (%d, 0x%x, %d)", job.ID, b, job.SeqNum))
+		_, err = w.sess.execute(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_history(job_id, job_meta, job_seq) values (%d, 0x%x, %d)", job.ID, b, job.SeqNum))
 		return errors.Trace(err)
 	}
 

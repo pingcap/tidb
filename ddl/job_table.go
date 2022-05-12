@@ -76,27 +76,27 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 	if tp == reorg {
 		not = ""
 	}
-	var job *model.Job
 	sql := fmt.Sprintf(getJob, not, strings.Join(d.runningOrBlockedIDs, ","))
-	err := sess.execute(context.Background(), sql, func(rows []chunk.Row) error {
-		for _, row := range rows {
-			jobBinary := row.GetBytes(0)
-			runJob := &model.Job{}
-			err := runJob.Decode(jobBinary)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			b, err := filter(runJob)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if b {
-				job = runJob
-			}
+	rows, err := sess.execute(context.Background(), sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		runJob := model.Job{}
+		err := runJob.Decode(jobBinary)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		return nil
-	})
-	return job, errors.Trace(err)
+		b, err := filter(&runJob)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if b {
+			return &runJob, nil
+		}
+	}
+	return nil, nil
 }
 
 func (d *ddl) resetRunningIDs() {
@@ -114,12 +114,8 @@ func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 }
 
 func (d *ddl) checkJobIsRunnable(sess *session, sql string) (bool, error) {
-	var canRun bool
-	err := sess.execute(context.Background(), sql, func(rows []chunk.Row) error {
-		canRun = len(rows) == 0
-		return nil
-	})
-	return canRun, err
+	rows, err := sess.execute(context.Background(), sql)
+	return len(rows) == 0, err
 }
 
 func (d *ddl) getReorgJob(sess *session) (*model.Job, error) {
@@ -295,7 +291,7 @@ func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 	}
 	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	defer d.sessPool.put(sess)
-	err = newSession(sess).execute(context.Background(), addDDLJobSQL+sql)
+	_, err = newSession(sess).execute(context.Background(), addDDLJobSQL+sql)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] add job to mysql.tidb_ddl_job table", zap.Error(err))
 	}
@@ -304,7 +300,8 @@ func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
-	return w.sess.execute(context.Background(), sql)
+	_, err := w.sess.execute(context.Background(), sql)
+	return err
 }
 
 const updateConcurrencyDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = 0x%x where job_id = %d"
@@ -320,7 +317,7 @@ func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawA
 	}
 	log.Warn("update ddl job", zap.String("job", job.String()))
 	sql := fmt.Sprintf(updateConcurrencyDDLJobSQL, b, job.ID)
-	err = newSession(sctx).execute(context.Background(), sql)
+	_, err = newSession(sctx).execute(context.Background(), sql)
 	if err != nil {
 		logutil.BgLogger().Error("update meet error", zap.Error(err))
 		return err
@@ -345,12 +342,12 @@ func detDDLReorgHandle(job *model.Job, t *meta.Meta, sess *session) (*meta.Eleme
 func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element *meta.Element, startKey kv.Key) error {
 	if variable.AllowConcurrencyDDL.Load() {
 		sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
-		err := w.sess.execute(context.Background(), sql)
+		_, err := w.sess.execute(context.Background(), sql)
 		if err != nil {
 			return err
 		}
 		sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key) values (%d, %d, %s)", job.ID, element.ID, wrapKey2String(startKey))
-		err = w.sess.execute(context.Background(), sql)
+		_, err = w.sess.execute(context.Background(), sql)
 		return err
 	}
 	return t.UpdateDDLReorgStartHandle(job, element, startKey)
@@ -360,12 +357,13 @@ func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element
 func UpdateDDLReorgHandle(t *meta.Meta, sess *session, job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	if variable.AllowConcurrencyDDL.Load() {
 		sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
-		err := sess.execute(context.Background(), sql)
+		_, err := sess.execute(context.Background(), sql)
 		if err != nil {
 			return err
 		}
 		sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key, end_key, physical_id) values (%d, %d, %s, %s, %d)", job.ID, element.ID, wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
-		return sess.execute(context.Background(), sql)
+		_, err = sess.execute(context.Background(), sql)
+		return err
 	}
 	return t.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
 }
@@ -376,7 +374,7 @@ func (w *worker) RemoveDDLReorgHandle(t *meta.Meta, job *model.Job, elements []*
 			return nil
 		}
 		sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-		err := w.sess.execute(context.Background(), sql)
+		_, err := w.sess.execute(context.Background(), sql)
 		if err != nil {
 			return err
 		}
@@ -453,21 +451,19 @@ func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) 
 }
 
 func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
-	jobs := make([]*model.Job, 0, 16)
-	err := sess.execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), func(rows []chunk.Row) error {
-		for _, row := range rows {
-			jobBinary := row.GetBytes(0)
-			job := model.Job{}
-			err := job.Decode(jobBinary)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			jobs = append(jobs, &job)
-		}
-		return nil
-	})
+	rows, err := sess.execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition))
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	jobs := make([]*model.Job, 0, 16)
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		job := model.Job{}
+		err := job.Decode(jobBinary)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, &job)
 	}
 	return jobs, nil
 }

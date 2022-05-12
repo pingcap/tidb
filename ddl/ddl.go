@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/sessiontxn"
 	"math"
 	"sort"
 	"strconv"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
@@ -627,11 +627,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // GetHistoryDDLCount the count of done ddl jobs.
 func (d *ddl) GetHistoryDDLCount() (count uint64, err error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		err = newSession(d.sessForAddDDL).execute(context.Background(), "select count(1) from mysql.tidb_ddl_history", func(rows []chunk.Row) error {
-			count = rows[0].GetUint64(0)
-			return nil
-		})
-		return
+		rows, err := newSession(d.sessForAddDDL).execute(context.Background(), "select count(1) from mysql.tidb_ddl_history")
+		if err != nil {
+			return 0, err
+		}
+		return rows[0].GetUint64(0), nil
 	}
 
 	err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -1332,34 +1332,28 @@ func GetConcurrentDDLReorgHandle(job *model.Job, sess *session) (element *meta.E
 	var id int64
 	var tp []byte
 	sql := fmt.Sprintf("select curr_ele_id, curr_ele_type from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	err = sess.execute(context.Background(), sql, func(rows []chunk.Row) error {
-		if len(rows) == 0 {
-			return meta.ErrDDLReorgElementNotExist
-		}
-		id = rows[0].GetInt64(0)
-		tp = rows[0].GetBytes(1)
-		return nil
-	})
+	rows, err := sess.execute(context.Background(), sql)
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
-	sql = fmt.Sprintf("select start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d", job.ID, id)
-	err = sess.execute(context.Background(), sql, func(rows []chunk.Row) error {
-		if len(rows) == 0 {
-			return nil
-		}
-		startKey = rows[0].GetBytes(0)
-		endKey = rows[0].GetBytes(1)
-		physicalTableID = rows[0].GetInt64(2)
-		return nil
-	})
-	if err != nil {
-		return nil, nil, nil, 0, err
+	if len(rows) == 0 {
+		return nil, nil, nil, 0, meta.ErrDDLReorgElementNotExist
 	}
+	id = rows[0].GetInt64(0)
+	tp = rows[0].GetBytes(1)
 	element = &meta.Element{
 		ID:      id,
 		TypeKey: tp,
 	}
+	sql = fmt.Sprintf("select start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d", job.ID, id)
+	rows, err = sess.execute(context.Background(), sql)
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+
+	startKey = rows[0].GetBytes(0)
+	endKey = rows[0].GetBytes(1)
+	physicalTableID = rows[0].GetInt64(2)
 	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
 	// update them to table's in this case.
 	if physicalTableID == 0 {
@@ -1545,28 +1539,23 @@ func (s *session) reset() {
 	s.s.StmtRollback()
 }
 
-func (s *session) execute(ctx context.Context, query string, fns ...func(rows []chunk.Row) error) error {
+func (s *session) execute(ctx context.Context, query string) ([]chunk.Row, error) {
 	rs, err := s.s.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	if rs == nil {
-		return nil
+		return nil, nil
 	}
 	var rows []chunk.Row
 	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if err = rs.Close(); err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	for _, f := range fns {
-		if err = f(rows); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return errors.Trace(err)
+	return rows, nil
 }
 
 func (s *session) session() sessionctx.Context {
