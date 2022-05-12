@@ -355,6 +355,7 @@ func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element
 	return t.UpdateDDLReorgStartHandle(job, element, startKey)
 }
 
+// UpdateDDLReorgHandle is to update meta of ddl reorg
 func UpdateDDLReorgHandle(t *meta.Meta, sess *session, job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	if variable.AllowConcurrencyDDL.Load() {
 		sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
