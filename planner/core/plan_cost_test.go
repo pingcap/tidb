@@ -444,7 +444,7 @@ func TestNewCostInterfaceTiFlash2(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t (id int, value decimal(6,3))`)
+	tk.MustExec(`create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)))`)
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -462,7 +462,7 @@ func TestNewCostInterfaceTiFlash2(t *testing.T) {
 
 	tk.MustExec(" set @@tidb_allow_mpp=1;")
 	tk.Session().GetSessionVars().DEBUG = true
-	checkCost(t, tk, "select * from t join ( select count(*), id from t group by id) as A on A.id = t.id", "")
+	checkCost(t, tk, "select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b", "")
 }
 
 func TestNewCostInterfaceRandGen(t *testing.T) {
