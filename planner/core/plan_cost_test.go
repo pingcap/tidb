@@ -49,6 +49,9 @@ func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 		oldPlan = oldPlan + fmt.Sprintf("%v\n", r)
 		oldOperators = append(oldOperators, r[0].(string))
 	}
+
+	fmt.Println("================================================================= ")
+
 	tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
 	rs = tk.MustQuery("explain format=verbose " + q).Rows()
 	newRoot := fmt.Sprintf("%v", rs[idx])
@@ -65,6 +68,13 @@ func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 			break
 		}
 	}
+
+	//fmt.Println("================================= old =================================")
+	//fmt.Println(oldPlan)
+	//fmt.Println("================================= new =================================")
+	//fmt.Println(newPlan)
+	//fmt.Println("================================= end =================================")
+
 	if oldRoot != newRoot || !sameOperators {
 		t.Fatalf("run %v failed, info: %v, expected \n%v\n, but got \n%v\n", q, info, oldPlan, newPlan)
 	}
@@ -460,8 +470,10 @@ func TestNewCostInterfaceTiFlash2(t *testing.T) {
 		}
 	}
 
-	tk.MustExec(" set @@tidb_allow_mpp=1")
+	//tk.MustExec(" set @@tidb_allow_mpp=1")
+	//tk.MustExec(`set @@session.tidb_enforce_mpp=1`)
 	tk.MustExec("set session tidb_opt_projection_push_down=1")
+	//tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.Session().GetSessionVars().DEBUG = true
 	checkCost(t, tk, "select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b", "")
 }
