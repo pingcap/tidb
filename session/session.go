@@ -2287,7 +2287,6 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		}
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
-		err = errors.Errorf("invalid cached plan type %T", execPlan)
 		prepared.CachedPlan = nil
 		return nil, false, nil
 	}
@@ -2402,7 +2401,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, err
 		}
-		if ok {
+		if ok { // fallback to preparedStmtExec if we cannot get a valid point select plan in cachedPlanExec
 			return rs, nil
 		}
 	}
