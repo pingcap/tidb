@@ -1814,6 +1814,9 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 			joins = append(joins, mppJoins...)
 		}
 	}
+	if p.ctx.GetSessionVars().DEBUG {
+		return joins[:1], true, nil
+	}
 	if prop.IsFlashProp() {
 		return joins, true, nil
 	}
