@@ -2376,6 +2376,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		}
 	} else if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
+		is = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
