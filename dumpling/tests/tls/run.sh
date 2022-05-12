@@ -27,3 +27,18 @@ run_dumpling --ca "$DUMPLING_TEST_DIR/ca.pem" --cert "$DUMPLING_TEST_DIR/dumplin
 file_should_exist "$DUMPLING_OUTPUT_DIR/tls-schema-create.sql"
 file_should_exist "$DUMPLING_OUTPUT_DIR/tls.t-schema.sql"
 file_should_exist "$DUMPLING_OUTPUT_DIR/tls.t.000000000.sql"
+
+# test only use ssl-ca without clent key and cert
+export DUMPLING_TEST_USER=root
+run_sql 'drop user if exists only_ca;'
+run_sql "create user only_ca require SSL;"
+run_sql 'grant all on tls.* to only_ca;'
+export DUMPLING_TEST_USER=only_ca
+
+rm -rf $DUMPLING_OUTPUT_DIR
+mkdir $DUMPLING_OUTPUT_DIR
+run_dumpling --ca "$DUMPLING_TEST_DIR/ca.pem" --consistency none
+
+file_should_exist "$DUMPLING_OUTPUT_DIR/tls-schema-create.sql"
+file_should_exist "$DUMPLING_OUTPUT_DIR/tls.t-schema.sql"
+file_should_exist "$DUMPLING_OUTPUT_DIR/tls.t.000000000.sql"
