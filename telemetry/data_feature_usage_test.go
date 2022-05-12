@@ -217,7 +217,7 @@ func TestNonTransactionalUsage(t *testing.T) {
 	require.Equal(t, int64(0), usage.NonTransactionalUsage.DeleteCount)
 
 	tk.MustExec("create table t(a int);")
-	tk.MustExec("split limit 1 delete from t")
+	tk.MustExec("batch limit 1 delete from t")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.NonTransactionalUsage.DeleteCount)

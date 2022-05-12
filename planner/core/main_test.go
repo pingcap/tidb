@@ -46,6 +46,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
+	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
@@ -78,6 +79,10 @@ func GetStatsSuiteData() testdata.TestData {
 
 func GetOrderedResultModeSuiteData() testdata.TestData {
 	return testDataMap["ordered_result_mode_suite"]
+}
+
+func GetJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["join_reorder_suite"]
 }
 
 func GetPointGetPlanData() testdata.TestData {
