@@ -316,7 +316,6 @@ func (p *PdController) getClusterVersionWith(ctx context.Context, get pdHTTPRequ
 	return "", errors.Trace(err)
 }
 
-
 // GetRegionCount returns the region count in the specified range.
 func (p *PdController) GetRegionCount(ctx context.Context, startKey, endKey []byte) (int, error) {
 	return p.getRegionCountWith(ctx, pdRequest, startKey, endKey)

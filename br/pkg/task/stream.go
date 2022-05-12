@@ -418,7 +418,7 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 
 	supportBackupStream := true
 	hasTiKV := false
-	err := s.mgr.GetConfigFromTiKV(ctx, s.httpCli, func(resp*http.Response) error {
+	err := s.mgr.GetConfigFromTiKV(ctx, s.httpCli, func(resp *http.Response) error {
 		hasTiKV = true
 		c := &config{}
 		e := json.NewDecoder(resp.Body).Decode(c)

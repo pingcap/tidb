@@ -16,7 +16,6 @@ import (
 )
 
 const (
-
 	writeCFName   = "write"
 	defaultCFName = "default"
 )
