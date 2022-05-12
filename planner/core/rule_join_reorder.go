@@ -47,17 +47,12 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes := extractJoinGroup(join.children[0])
 		logutil.BgLogger().Warn("extract join group", zap.String("lhs group", fmt.Sprintf("%v", lhsGroup)))
 		noExpand := false
+		// If the filters of the outer join is related with multiple leaves of the outer join. We don't reorder it for now.
 		if join.JoinType == LeftOuterJoin {
 			extractedCols := make([]*expression.Column, 0, 8)
 			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
 			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.LeftConditions, nil)
 			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
-			logutil.BgLogger().Warn("extract join group",
-				zap.String("extracted columns", fmt.Sprintf("%v", extractedCols)),
-				zap.String("eq cond", fmt.Sprintf("%v", join.EqualConditions)),
-				zap.String("eq cond", fmt.Sprintf("%v", join.LeftConditions)),
-				zap.String("eq cond", fmt.Sprintf("%v", join.OtherConditions)),
-			)
 			affectedGroups := 0
 			for i := range lhsGroup {
 				for _, col := range extractedCols {
@@ -87,6 +82,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	if join.JoinType != LeftOuterJoin {
 		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes := extractJoinGroup(join.children[1])
 		noExpand := false
+		// If the filters of the outer join is related with multiple leaves of the outer join. We don't reorder it for now.
 		if join.JoinType == RightOuterJoin {
 			extractedCols := make([]*expression.Column, 0, 8)
 			expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
