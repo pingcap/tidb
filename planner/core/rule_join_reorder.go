@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
@@ -43,20 +45,75 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	}
 	if join.JoinType != RightOuterJoin {
 		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes := extractJoinGroup(join.children[0])
-		group = append(group, lhsGroup...)
-		eqEdges = append(eqEdges, lhsEqualConds...)
-		otherConds = append(otherConds, lhsOtherConds...)
-		joinTypes = append(joinTypes, lhsJoinTypes...)
+		logutil.BgLogger().Warn("extract join group", zap.String("lhs group", fmt.Sprintf("%v", lhsGroup)))
+		noExpand := false
+		if join.JoinType == LeftOuterJoin {
+			extractedCols := make([]*expression.Column, 0, 8)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.LeftConditions, nil)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
+			logutil.BgLogger().Warn("extract join group",
+				zap.String("extracted columns", fmt.Sprintf("%v", extractedCols)),
+				zap.String("eq cond", fmt.Sprintf("%v", join.EqualConditions)),
+				zap.String("eq cond", fmt.Sprintf("%v", join.LeftConditions)),
+				zap.String("eq cond", fmt.Sprintf("%v", join.OtherConditions)),
+			)
+			affectedGroups := 0
+			for i := range lhsGroup {
+				for _, col := range extractedCols {
+					if lhsGroup[i].Schema().Contains(col) {
+						affectedGroups++
+						break
+					}
+				}
+				if affectedGroups > 1 {
+					noExpand = true
+					break
+				}
+			}
+		}
+		if noExpand {
+			return []LogicalPlan{p}, nil, nil, nil
+		} else {
+			group = append(group, lhsGroup...)
+			eqEdges = append(eqEdges, lhsEqualConds...)
+			otherConds = append(otherConds, lhsOtherConds...)
+			joinTypes = append(joinTypes, lhsJoinTypes...)
+		}
 	} else {
 		group = append(group, join.children[0])
 	}
 
 	if join.JoinType != LeftOuterJoin {
 		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes := extractJoinGroup(join.children[1])
-		group = append(group, rhsGroup...)
-		eqEdges = append(eqEdges, rhsEqualConds...)
-		otherConds = append(otherConds, rhsOtherConds...)
-		joinTypes = append(joinTypes, rhsJoinTypes...)
+		noExpand := false
+		if join.JoinType == RightOuterJoin {
+			extractedCols := make([]*expression.Column, 0, 8)
+			expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
+			expression.ExtractColumnsFromExpressions(extractedCols, join.RightConditions, nil)
+			expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
+			affectedGroups := 0
+			for i := range rhsGroup {
+				for _, col := range extractedCols {
+					if rhsGroup[i].Schema().Contains(col) {
+						affectedGroups++
+						break
+					}
+				}
+				if affectedGroups > 1 {
+					noExpand = true
+					break
+				}
+			}
+		}
+		if noExpand {
+			return []LogicalPlan{p}, nil, nil, nil
+		} else {
+			group = append(group, rhsGroup...)
+			eqEdges = append(eqEdges, rhsEqualConds...)
+			otherConds = append(otherConds, rhsOtherConds...)
+			joinTypes = append(joinTypes, rhsJoinTypes...)
+		}
 	} else {
 		group = append(group, join.children[1])
 	}
