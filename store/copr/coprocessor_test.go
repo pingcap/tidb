@@ -353,21 +353,17 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	// check edge
 	// region:    n  ----------------------  x
 	// buckets:   n  --  q  --  r  --  t  -- x
-	// ranges:    n  -- q q -- r r -- t t -- x
-	// tasks:     n  --  q
-	//                   q  --  r
-	//						    r  --  t
-	//								   t  -- x
+	// ranges:    n    ----    r r   ----    x
+	// tasks:     n      --     r
+	//						    r     --     x
 	expectedTaskRanges = [][]string{
-		{"n", "q"},
-		{"q", "r"},
-		{"r", "t"},
-		{"t", "x"},
+		{"n", "r"},
+		{"r", "x"},
 	}
-	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'q'}, {'r'}, {'t'}, {'x'}}, regionIDs[1])
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'r'}, {'r'}, {'x'}}, regionIDs[1])
 	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("n", "q", "q", "r", "r", "t", "t", "x"), req, nil)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("n", "r", "r", "x"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, len(expectedTaskRanges))
 	for i, task := range tasks {
