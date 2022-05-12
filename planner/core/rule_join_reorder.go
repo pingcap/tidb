@@ -156,6 +156,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				baseGroupSolver.leadingJoinGroup = leadingJoin
 			}
 		}
+
 		originalSchema := p.Schema()
 
 		// Not support outer join reorder when using the DP algorithm

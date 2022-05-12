@@ -27,6 +27,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -44,13 +45,11 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -59,10 +58,10 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 )
 
@@ -79,7 +78,6 @@ type testSessionSuiteBase struct {
 	cluster testutils.Cluster
 	store   kv.Storage
 	dom     *domain.Domain
-	pdAddr  string
 }
 
 type testSessionSuite struct {
@@ -98,16 +96,72 @@ type testSessionSerialSuite struct {
 	testSessionSuiteBase
 }
 
+func clearTiKVStorage(store kv.Storage) error {
+	txn, err := store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	iter, err := txn.Iter(nil, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for iter.Valid() {
+		if err := txn.Delete(iter.Key()); err != nil {
+			return errors.Trace(err)
+		}
+		if err := iter.Next(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return txn.Commit(context.Background())
+}
+
+func clearEtcdStorage(ebd kv.EtcdBackend) error {
+	endpoints, err := ebd.EtcdAddrs()
+	if err != nil {
+		return err
+	}
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:        endpoints,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithBackoffMaxDelay(time.Second * 3),
+		},
+		TLS: ebd.TLSConfig(),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cli.Close()
+
+	resp, err := cli.Get(context.Background(), "/tidb", clientv3.WithPrefix())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, kv := range resp.Kvs {
+		if kv.Lease != 0 {
+			if _, err := cli.Revoke(context.Background(), clientv3.LeaseID(kv.Lease)); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	if *withTiKV {
-		s.pdAddr = "127.0.0.1:2379"
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", s.pdAddr))
+		store, err := d.Open("tikv://127.0.0.1:2379?disableGC=true")
 		c.Assert(err, IsNil)
 		err = clearTiKVStorage(store)
 		c.Assert(err, IsNil)
@@ -153,56 +207,6 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
 		}
 	}
-}
-
-type mockBinlogPump struct {
-}
-
-var _ binlog.PumpClient = &mockBinlogPump{}
-
-func (p *mockBinlogPump) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
-	return &binlog.WriteBinlogResp{}, nil
-}
-
-type mockPumpPullBinlogsClient struct {
-	grpc.ClientStream
-}
-
-func (m mockPumpPullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
-	return nil, nil
-}
-
-func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
-	return mockPumpPullBinlogsClient{mockcopr.MockGRPCClientStream()}, nil
-}
-
-func (s *testSessionSuite) TestForCoverage(c *C) {
-	// Just for test coverage.
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
-	tk.MustExec("insert t values ()")
-	tk.MustExec("insert t values ()")
-	tk.MustExec("insert t values ()")
-
-	// Normal request will not cover txn.Seek.
-	tk.MustExec("admin check table t")
-
-	// Cover dirty table operations in StateTxn.
-	tk.Se.GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&mockBinlogPump{})
-	tk.MustExec("begin")
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert t values ()")
-	tk.MustExec("delete from t where id = 2")
-	tk.MustExec("update t set v = 5 where id = 2")
-	tk.MustExec("insert t values ()")
-	tk.MustExec("rollback")
-
-	c.Check(tk.Se.SetCollation(mysql.DefaultCollationID), IsNil)
-
-	tk.MustExec("show processlist")
-	_, err := tk.Se.FieldList("t")
-	c.Check(err, IsNil)
 }
 
 func (s *testSessionSuite2) TestErrorRollback(c *C) {

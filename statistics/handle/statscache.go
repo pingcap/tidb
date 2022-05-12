@@ -38,6 +38,7 @@ type statsCacheInner interface {
 	FreshMemUsage()
 	Copy() statsCacheInner
 	SetCapacity(int64)
+	EnableQuota() bool
 }
 
 func newStatsCache() statsCache {
@@ -245,4 +246,10 @@ func (m *mapCache) Copy() statsCacheInner {
 	return newM
 }
 
+// SetCapacity implements statsCacheInner
 func (m *mapCache) SetCapacity(int64) {}
+
+// EnableQuota implements statsCacheInner
+func (m *mapCache) EnableQuota() bool {
+	return false
+}
