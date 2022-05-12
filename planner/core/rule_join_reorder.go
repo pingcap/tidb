@@ -18,15 +18,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/tracing"
+	"go.uber.org/zap"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
