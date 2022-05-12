@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
@@ -36,7 +35,6 @@ import (
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	registerHook()
-	domain.RunAutoAnalyze = false
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionLog
 	})

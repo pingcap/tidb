@@ -1291,9 +1291,6 @@ func (do *Domain) SetStatsUpdating(val bool) {
 	}
 }
 
-// RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
-var RunAutoAnalyze = true
-
 // LoadAndUpdateStatsLoop loads and updates stats info.
 func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
 	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
@@ -1328,7 +1325,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	do.SetStatsUpdating(true)
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
-	if RunAutoAnalyze {
+	if variable.RunAutoAnalyze.Load() {
 		do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
 	}
 	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })

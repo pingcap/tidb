@@ -604,7 +604,6 @@ func setGlobalVars() {
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
-	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
 	statistics.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)

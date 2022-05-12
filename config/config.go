@@ -592,7 +592,6 @@ type Performance struct {
 	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
 	ProjectionPushDown   bool   `toml:"projection-push-down" json:"projection-push-down"`
@@ -809,7 +808,6 @@ var defaultConf = Config{
 		TCPNoDelay:            true,
 		CrossJoin:             true,
 		StatsLease:            "3s",
-		RunAutoAnalyze:        true,
 		StmtCountLimit:        5000,
 		FeedbackProbability:   0.0,
 		QueryFeedbackLimit:    512,
@@ -932,6 +930,7 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.history-size":          {},
 	"mem-quota-query":                    {},
 	"query-log-max-len":                  {},
+	"performance.run-auto-analyze":       {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
