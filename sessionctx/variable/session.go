@@ -1036,6 +1036,9 @@ type SessionVars struct {
 	RcReadCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
+	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
+	// When set to false, returns immediately when it meets the first error.
+	NonTransactionalIgnoreError bool
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
@@ -1458,6 +1461,7 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 
 // SetUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
+	varName = strings.ToLower(varName)
 	if len(collation) > 0 {
 		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	} else {

@@ -681,12 +681,31 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBStatsCacheMemQuota, Value: strconv.Itoa(DefTiDBStatsCacheMemQuota),
+		MinValue: 0, MaxValue: MaxTiDBStatsCacheMemQuota, Type: TypeInt,
+		GetGlobal: func(vars *SessionVars) (string, error) {
+			return strconv.FormatInt(StatsCacheMemQuota.Load(), 10), nil
+		}, SetGlobal: func(vars *SessionVars, s string) error {
+			v := TidbOptInt64(s, DefTiDBStatsCacheMemQuota)
+			StatsCacheMemQuota.Store(v)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(DefTiDBQueryLogMaxLen), Type: TypeInt, MinValue: 0, MaxValue: 1073741824, SetGlobal: func(s *SessionVars, val string) error {
 		QueryLogMaxLen.Store(int32(TidbOptInt64(val, DefTiDBQueryLogMaxLen)))
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return fmt.Sprint(QueryLogMaxLen.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBMemQuotaAnalyze, Value: strconv.Itoa(DefTiDBMemQuotaAnalyze), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatInt(GetMemQuotaAnalyze(), 10), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			SetMemQuotaAnalyze(TidbOptInt64(val, DefTiDBMemQuotaAnalyze))
+			return nil
+		},
+	},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
@@ -1438,10 +1457,23 @@ var defaultSysVars = []*SysVar{
 		s.RemoveOrderbyInSubquery = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMemQuotaQuery, Value: strconv.Itoa(DefTiDBMemQuotaQuery), Type: TypeInt, MinValue: 128, MaxValue: 128 << 30, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMemQuotaQuery, Value: strconv.Itoa(DefTiDBMemQuotaQuery), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MemQuotaQuery = TidbOptInt64(val, DefTiDBMemQuotaQuery)
 		return nil
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		intVal := TidbOptInt64(normalizedValue, DefTiDBMemQuotaQuery)
+		if intVal > 0 && intVal < 128 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBMemQuotaQuery, originalValue))
+			normalizedValue = "128"
+		}
+		return normalizedValue, nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonTransactionalIgnoreError, Value: BoolToOnOff(DefTiDBBatchDMLIgnoreError), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.NonTransactionalIgnoreError = TiDBOptOn(val)
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

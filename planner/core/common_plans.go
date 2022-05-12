@@ -303,6 +303,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		// schema version like prepared plan cache key
 		prepared.CachedPlan = nil
 		preparedObj.Executor = nil
+		preparedObj.ColumnInfos = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -1503,14 +1504,14 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
-		if e.Format == types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose {
 			row = append(row, estCost)
 		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
-		if e.Format == types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose {
 			row = append(row, estCost)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)
@@ -1535,7 +1536,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
 		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			planCost, _ := pp.GetPlanCost(property.RootTaskType)
+			planCost, _ := pp.GetPlanCost(property.RootTaskType, 0)
 			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 		} else {
 			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
