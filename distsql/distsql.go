@@ -41,7 +41,7 @@ import (
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-	SetTiflashMaxThreadsInContext(ctx, sctx)
+	ctx = SetTiflashMaxThreadsInContext(ctx, sctx)
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -102,7 +102,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}
 
 	if kvReq.StoreType == kv.TiFlash {
-		SetTiflashMaxThreadsInContext(ctx, sctx)
+		ctx = SetTiflashMaxThreadsInContext(ctx, sctx)
 	}
 
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
