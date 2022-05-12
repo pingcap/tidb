@@ -115,7 +115,6 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 			res = append(res, &LocationKeyRanges{l.Location, taskRanges})
 			ranges = ranges.Slice(i, ranges.Len())
 		}
-
 	}
 	return res
 }
