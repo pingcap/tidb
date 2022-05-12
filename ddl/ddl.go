@@ -1193,7 +1193,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 }
 
 // CancelConcurrencyJobs cancels the DDL jobs that are in the concurrent state.
-func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error) {
+func CancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) {
 	failpoint.Inject("mockCancelConcurencyDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock commit error"))
@@ -1205,7 +1205,8 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 	var getJobSQL string
 	var jobSet = make(map[int64]int) // jobID -> error index
 
-	_, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "BEGIN")
+	sess := newSession(se)
+	err := sess.begin()
 	if err != nil {
 		return nil, err
 	}
@@ -1220,18 +1221,7 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 		}
 		getJobSQL = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id in (%s) order by job_id", strings.Join(idsStr, ", "))
 	}
-	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), getJobSQL)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err = rs.Close()
-		if err != nil {
-			logutil.BgLogger().Error("close result set error", zap.Error(err))
-		}
-	}()
-	var rows []chunk.Row
-	rows, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
+	rows, err := sess.execute(context.Background(), getJobSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -1277,7 +1267,7 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 			errs[i] = errors.Trace(err)
 		}
 	}
-	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "COMMIT")
+	err = sess.commit()
 	if err != nil {
 		return nil, err
 	}

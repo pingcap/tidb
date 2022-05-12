@@ -307,17 +307,17 @@ func (w *worker) deleteDDLJob(job *model.Job) error {
 const updateConcurrencyDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = 0x%x where job_id = %d"
 
 func (w *worker) updateConcurrencyDDLJob(job *model.Job, updateRawArgs bool) error {
-	return updateConcurrencyDDLJob(w.sess.session(), job, updateRawArgs)
+	return updateConcurrencyDDLJob(w.sess, job, updateRawArgs)
 }
 
-func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawArgs bool) error {
+func updateConcurrencyDDLJob(sctx *session, job *model.Job, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
 	}
 	log.Warn("update ddl job", zap.String("job", job.String()))
 	sql := fmt.Sprintf(updateConcurrencyDDLJobSQL, b, job.ID)
-	_, err = newSession(sctx).execute(context.Background(), sql)
+	_, err = sctx.execute(context.Background(), sql)
 	if err != nil {
 		logutil.BgLogger().Error("update meet error", zap.Error(err))
 		return err
