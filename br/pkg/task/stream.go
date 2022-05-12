@@ -915,8 +915,7 @@ func RunStreamRestore(
 		}
 		if cfg.StartTS < logStartTS {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
-				"it has gap between full backup ts:%d(%s) and log backup ts:%d(%s). "+
-					"you can \"restore full\" and \"restore point\" separately",
+				"it has gap between full backup ts:%d(%s) and log backup ts:%d(%s). ",
 				cfg.StartTS, oracle.GetTimeFromTS(cfg.StartTS),
 				logStartTS, oracle.GetTimeFromTS(logStartTS))
 		}

@@ -24,7 +24,8 @@ type StreamMetadataSet struct {
 func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
 	ms.metadata = map[string]*backuppb.Metadata{}
 	ms.writeback = map[string]*backuppb.Metadata{}
-	return s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: streamBackupMetaPrefix}, func(path string, size int64) error {
+	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
+	return s.WalkDir(ctx, opt, func(path string, size int64) error {
 		// Maybe load them lazily for preventing out of memory?
 		bs, err := s.ReadFile(ctx, path)
 		if err != nil {

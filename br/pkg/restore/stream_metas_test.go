@@ -6,12 +6,16 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func fakeDataFiles(s storage.ExternalStorage, base, item int) (result []*backuppb.DataFileInfo) {
@@ -29,13 +33,12 @@ func fakeDataFiles(s storage.ExternalStorage, base, item int) (result []*backupp
 	return
 }
 
-func fakeStreamBackup(s storage.ExternalStorage) {
+func fakeStreamBackup(s storage.ExternalStorage) error {
 	ctx := context.Background()
 	base := 0
 	for i := 0; i < 6; i++ {
 		dfs := fakeDataFiles(s, base, 4)
 		base += 4
-		name := fmt.Sprintf("v1_backupmeta_%04d.meta", i)
 		meta := &backuppb.Metadata{
 			Files:   dfs,
 			StoreId: int64(i%3 + 1),
@@ -44,16 +47,27 @@ func fakeStreamBackup(s storage.ExternalStorage) {
 		if err != nil {
 			panic("failed to marshal test meta")
 		}
-		s.WriteFile(ctx, name, bs)
+		name := fmt.Sprintf("%s/%04d.meta", restore.GetStreamBackupMetaPrefix(), i)
+		if err = s.WriteFile(ctx, name, bs); err != nil {
+			return errors.Trace(err)
+		}
+
+		log.Info("create file", zap.String("filename", name))
 	}
+	return nil
 }
 
 func TestTruncateLog(t *testing.T) {
 	ctx := context.Background()
-	l, err := storage.NewLocalStorage(t.TempDir())
+	tmpdir := t.TempDir()
+	backupMetaDir := filepath.Join(tmpdir, restore.GetStreamBackupMetaPrefix())
+	_, err := storage.NewLocalStorage(backupMetaDir)
 	require.NoError(t, err)
 
-	fakeStreamBackup(l)
+	l, err := storage.NewLocalStorage(tmpdir)
+	require.NoError(t, err)
+
+	require.NoError(t, fakeStreamBackup(l))
 
 	s := restore.StreamMetadataSet{}
 	require.NoError(t, s.LoadFrom(ctx, l))
@@ -79,8 +93,8 @@ func TestTruncateLog(t *testing.T) {
 		return false
 	}
 	require.NoError(t, s.DoWriteBack(ctx, l))
-	require.ElementsMatch(t, deletedFiles, []string{"v1_backupmeta_0000.meta", "v1_backupmeta_0001.meta", "v1_backupmeta_0002.meta"})
-	require.ElementsMatch(t, modifiedFiles, []string{"v1_backupmeta_0003.meta"})
+	require.ElementsMatch(t, deletedFiles, []string{"v1/backupmeta/0000.meta", "v1/backupmeta/0001.meta", "v1/backupmeta/0002.meta"})
+	require.ElementsMatch(t, modifiedFiles, []string{"v1/backupmeta/0003.meta"})
 
 	require.NoError(t, s.LoadFrom(ctx, l))
 	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
@@ -89,7 +103,7 @@ func TestTruncateLog(t *testing.T) {
 	})
 
 	l.WalkDir(ctx, &storage.WalkOption{
-		ObjPrefix: "v1_backupmeta",
+		SubDir: restore.GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
 		require.NotContains(t, deletedFiles, s)
 		return nil
