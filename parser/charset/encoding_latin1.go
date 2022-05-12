@@ -15,6 +15,7 @@ package charset
 
 import (
 	"bytes"
+
 	"github.com/pingcap/failpoint"
 	"golang.org/x/text/encoding"
 )
