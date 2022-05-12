@@ -950,3 +950,10 @@ func TestCheckAndAdjustForLocalBackend(t *testing.T) {
 	cfg.TikvImporter.SortedKVDir = base
 	require.NoError(t, cfg.CheckAndAdjustForLocalBackend())
 }
+
+func TestDefaultSqlMode(t *testing.T) {
+	cfg := config.NewConfig()
+	mode, err := mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
+	require.NoError(t, err)
+	require.True(t, mode.HasStrictMode())
+}

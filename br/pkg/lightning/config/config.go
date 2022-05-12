@@ -667,7 +667,7 @@ func NewConfig() *Config {
 			Host:                       "127.0.0.1",
 			User:                       "root",
 			StatusPort:                 10080,
-			StrSQLMode:                 "ONLY_FULL_GROUP_BY,NO_AUTO_CREATE_USER",
+			StrSQLMode:                 "ONLY_FULL_GROUP_BY,NO_AUTO_CREATE_USER,STRICT_TRANS_TABLES",
 			MaxAllowedPacket:           defaultMaxAllowedPacket,
 			BuildStatsConcurrency:      defaultBuildStatsConcurrency,
 			DistSQLScanConcurrency:     defaultDistSQLScanConcurrency,
