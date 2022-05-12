@@ -105,6 +105,7 @@ type limitHintInfo struct {
 }
 
 type CTEHintInfo struct {
+	//one bool flag for cte
 	preferInlineToCTE bool
 }
 
