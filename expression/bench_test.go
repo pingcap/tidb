@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -445,8 +445,8 @@ func (g *rangeDurationGener) gen() interface{} {
 	if g.randGen.Float64() < g.nullRation {
 		return nil
 	}
-	tm := (math.Abs(g.randGen.Int63n(12))*3600 + math.Abs(g.randGen.Int63n(60))*60 + math.Abs(g.randGen.Int63n(60))) * 1000
-	tu := (tm + math.Abs(g.randGen.Int63n(1000))) * 1000
+	tm := (mathutil.Abs(g.randGen.Int63n(12))*3600 + mathutil.Abs(g.randGen.Int63n(60))*60 + mathutil.Abs(g.randGen.Int63n(60))) * 1000
+	tu := (tm + mathutil.Abs(g.randGen.Int63n(1000))) * 1000
 	return types.Duration{
 		Duration: time.Duration(tu * 1000)}
 }
@@ -1468,7 +1468,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					i++
 				}
 			default:
-				t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+				t.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 			}
 
 			// check warnings
@@ -1510,7 +1510,7 @@ func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCas
 					require.True(t, (0 <= v) && (v < 1))
 				}
 			default:
-				t.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+				t.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 			}
 		}
 	}
@@ -1613,7 +1613,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 						}
 					}
 				default:
-					b.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+					b.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 				}
 			})
 			b.Run(baseFuncName+"-NonVecBuiltinFunc", func(b *testing.B) {
@@ -1726,7 +1726,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 						}
 					}
 				default:
-					b.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+					b.Fatalf("evalType=%v is not supported", testCase.retEvalType)
 				}
 			})
 		}
