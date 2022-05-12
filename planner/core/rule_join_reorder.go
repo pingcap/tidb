@@ -23,10 +23,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/tracing"
-	"go.uber.org/zap"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
@@ -45,7 +43,6 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	}
 	if join.JoinType != RightOuterJoin {
 		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes := extractJoinGroup(join.children[0])
-		logutil.BgLogger().Warn("extract join group", zap.String("lhs group", fmt.Sprintf("%v", lhsGroup)))
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join. We don't reorder it for now.
 		if join.JoinType == LeftOuterJoin {
