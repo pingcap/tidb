@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1092,7 +1091,7 @@ func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
 	c.triggered = true
 	c.cancelErr = kv.RunInNewTxn(context.Background(), c.store, false,
 		func(ctx context.Context, txn kv.Transaction) error {
-			errs, err := admin.CancelJobs(txn, []int64{job.ID})
+			errs, err := ddl.CancelJobs(txn, []int64{job.ID})
 			if errs[0] != nil {
 				return errs[0]
 			}
