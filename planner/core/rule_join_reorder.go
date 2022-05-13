@@ -68,7 +68,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			}
 		}
 		if noExpand {
-			return []LogicalPlan{p}, nil, nil, nil
+			return []LogicalPlan{p}, nil, nil, nil, nil
 		}
 		group = append(group, lhsGroup...)
 		eqEdges = append(eqEdges, lhsEqualConds...)
@@ -105,7 +105,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			}
 		}
 		if noExpand {
-			return []LogicalPlan{p}, nil, nil, nil
+			return []LogicalPlan{p}, nil, nil, nil, nil
 		}
 		group = append(group, rhsGroup...)
 		eqEdges = append(eqEdges, rhsEqualConds...)
