@@ -2371,7 +2371,7 @@ type NonTransactionalDeleteStmt struct {
 
 // Restore implements Node interface.
 func (n *NonTransactionalDeleteStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("SPLIT ")
+	ctx.WriteKeyWord("BATCH ")
 	if n.ShardColumn != nil {
 		ctx.WriteKeyWord("ON ")
 		if err := n.ShardColumn.Restore(ctx); err != nil {

@@ -24,7 +24,6 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -181,9 +180,7 @@ func (s *ddlSuite) teardown(t *testing.T) {
 	go func() {
 		select {
 		case <-time.After(100 * time.Second):
-			buf := make([]byte, 2<<20)
-			size := runtime.Stack(buf, true)
-			log.Error("testing timeout", zap.ByteString("buf", buf[:size]))
+			log.Error("testing timeout", zap.Stack("stack"))
 		case <-quitCh:
 		}
 	}()
