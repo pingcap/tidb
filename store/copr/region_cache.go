@@ -77,8 +77,8 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 	loc := l.Location
 	res := []*LocationKeyRanges{}
 	for ranges.Len() > 0 {
-		// ranges must be in loc.region, so the bucket returned by loc.LocateBucketV2 is guaranteed to be not nil
-		bucket := loc.LocateBucketV2(ranges.At(0).StartKey)
+		// ranges must be in loc.region, so the bucket returned by loc.LocateBucket is guaranteed to be not nil
+		bucket := loc.LocateBucket(ranges.At(0).StartKey)
 
 		// Iterate to the first range that is not complete in the bucket.
 		var r kv.KeyRange
