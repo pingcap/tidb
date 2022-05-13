@@ -14,7 +14,9 @@
 
 package kv
 
-import "github.com/pingcap/tipb/go-tipb"
+import (
+	"github.com/pingcap/tipb/go-tipb"
+)
 
 // RequestTypeSupportedChecker is used to check expression can be pushed down.
 type RequestTypeSupportedChecker struct{}
@@ -37,6 +39,10 @@ func (d RequestTypeSupportedChecker) IsRequestTypeSupported(reqType, subType int
 	return false
 }
 
+// TODO: deprecate this function, because:
+// 1. we have more than one storage engine available for push-down.
+// 2. we'd better do an accurate push-down check at the planner stage, instead of here.
+// currently, we do aggregation push-down check in `CheckAggCanPushCop`.
 func (d RequestTypeSupportedChecker) supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
@@ -47,6 +53,10 @@ func (d RequestTypeSupportedChecker) supportExpr(exprType tipb.ExprType) bool {
 	// NOTE: tipb.ExprType_GroupConcat is only supported by TiFlash, So checking it for TiKV case outside.
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg,
 		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr, tipb.ExprType_ApproxCountDistinct, tipb.ExprType_GroupConcat:
+		return true
+	// window functions.
+	case tipb.ExprType_RowNumber, tipb.ExprType_Rank, tipb.ExprType_DenseRank, tipb.ExprType_CumeDist, tipb.ExprType_PercentRank,
+		tipb.ExprType_Ntile, tipb.ExprType_Lead, tipb.ExprType_Lag, tipb.ExprType_FirstValue, tipb.ExprType_LastValue, tipb.ExprType_NthValue:
 		return true
 	case ReqSubTypeDesc:
 		return true
