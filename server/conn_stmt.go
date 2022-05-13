@@ -51,15 +51,14 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
 )
 
 func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
@@ -200,13 +199,18 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
-	if retryable && err != nil && cc.ctx.GetSessionVars().IsRcCheckTsRetryable(err) {
-		logutil.Logger(ctx).Info("RC read using start_ts has failed, retry RC read",
-			zap.String("sql", cc.ctx.GetSessionVars().StmtCtx.OriginalSQL))
-		cc.ctx.GetSessionVars().RetryInfo.Retrying = true
-		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
-		cc.ctx.GetSessionVars().RetryInfo.Retrying = false
-		return err
+	if err != nil {
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+		if txnErr != nil {
+			return txnErr
+		}
+
+		if retryable && action == sessiontxn.StmtActionRetryReady {
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+			return err
+		}
 	}
 	_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 	if allowTiFlashFallback && err != nil && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {

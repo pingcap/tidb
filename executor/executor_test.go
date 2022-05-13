@@ -30,6 +30,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -60,11 +61,11 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -5357,6 +5358,131 @@ func TestHistoryRead(t *testing.T) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
 
+func TestHistoryReadInTxn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+    ON DUPLICATE KEY
+    UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("drop table if exists his_t0, his_t1")
+	tk.MustExec("create table his_t0(id int primary key, v int)")
+	tk.MustExec("insert into his_t0 values(1, 10)")
+
+	time.Sleep(time.Millisecond)
+	tk.MustExec("set @a=now(6)")
+	time.Sleep(time.Millisecond)
+	tk.MustExec("create table his_t1(id int primary key, v int)")
+	tk.MustExec("update his_t0 set v=v+1")
+	time.Sleep(time.Millisecond)
+	tk.MustExec("set tidb_snapshot=now(6)")
+	ts2 := tk.Session().GetSessionVars().SnapshotTS
+	tk.MustExec("set tidb_snapshot=''")
+	time.Sleep(time.Millisecond)
+	tk.MustExec("update his_t0 set v=v+1")
+	tk.MustExec("insert into his_t1 values(10, 100)")
+
+	init := func(isolation string, setSnapshotBeforeTxn bool) {
+		if isolation == "none" {
+			tk.MustExec("set @@tidb_snapshot=@a")
+			return
+		}
+
+		if setSnapshotBeforeTxn {
+			tk.MustExec("set @@tidb_snapshot=@a")
+		}
+
+		if isolation == "optimistic" {
+			tk.MustExec("begin optimistic")
+		} else {
+			tk.MustExec(fmt.Sprintf("set @@tx_isolation='%s'", isolation))
+			tk.MustExec("begin pessimistic")
+		}
+
+		if !setSnapshotBeforeTxn {
+			tk.MustExec("set @@tidb_snapshot=@a")
+		}
+	}
+
+	for _, isolation := range []string{
+		"none", // not start an explicit txn
+		"optimistic",
+		"REPEATABLE-READ",
+		"READ-COMMITTED",
+	} {
+		for _, setSnapshotBeforeTxn := range []bool{false, true} {
+			t.Run(fmt.Sprintf("[%s] setSnapshotBeforeTxn[%v]", isolation, setSnapshotBeforeTxn), func(t *testing.T) {
+				tk.MustExec("rollback")
+				tk.MustExec("set @@tidb_snapshot=''")
+
+				init(isolation, setSnapshotBeforeTxn)
+				// When tidb_snapshot is set, should use the snapshot info schema
+				tk.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0"))
+
+				// When tidb_snapshot is set, select should use select ts
+				tk.MustQuery("select * from his_t0").Check(testkit.Rows("1 10"))
+				tk.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 10"))
+
+				// When tidb_snapshot is set, write statements should not be allowed
+				if isolation != "none" && isolation != "optimistic" {
+					notAllowedSQLs := []string{
+						"insert into his_t0 values(5, 1)",
+						"delete from his_t0 where id=1",
+						"update his_t0 set v=v+1",
+						"select * from his_t0 for update",
+						"select * from his_t0 where id=1 for update",
+						"create table his_t2(id int)",
+					}
+
+					for _, sql := range notAllowedSQLs {
+						err := tk.ExecToErr(sql)
+						require.Errorf(t, err, "can not execute write statement when 'tidb_snapshot' is set")
+					}
+				}
+
+				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
+				// See issue: https://github.com/pingcap/tidb/issues/34529
+				exec := tk.Session().(sqlexec.RestrictedSQLExecutor)
+				rows, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
+				require.NoError(t, err)
+				require.Equal(t, 1, len(rows))
+				require.Equal(t, int64(1), rows[0].GetInt64(0))
+				require.Equal(t, int64(11), rows[0].GetInt64(1))
+				tk.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 10"))
+				tk.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0"))
+
+				// CLEAR
+				tk.MustExec("set @@tidb_snapshot=''")
+
+				// When tidb_snapshot is not set, should use the transaction's info schema
+				tk.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0", "his_t1"))
+
+				// When tidb_snapshot is not set, select should use the transaction's ts
+				tk.MustQuery("select * from his_t0").Check(testkit.Rows("1 12"))
+				tk.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 12"))
+				tk.MustQuery("select * from his_t1").Check(testkit.Rows("10 100"))
+				tk.MustQuery("select * from his_t1 where id=10").Check(testkit.Rows("10 100"))
+
+				// When tidb_snapshot is not set, select ... for update should not be effected
+				tk.MustQuery("select * from his_t0 for update").Check(testkit.Rows("1 12"))
+				tk.MustQuery("select * from his_t0 where id=1 for update").Check(testkit.Rows("1 12"))
+				tk.MustQuery("select * from his_t1 for update").Check(testkit.Rows("10 100"))
+				tk.MustQuery("select * from his_t1 where id=10 for update").Check(testkit.Rows("10 100"))
+
+				tk.MustExec("rollback")
+			})
+		}
+	}
+}
+
 func TestCurrentTimestampValueSelection(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -5532,7 +5658,7 @@ func TestAdmin(t *testing.T) {
 	require.Equal(t, 6, row.Len())
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	ddlInfo, err := admin.GetDDLInfo(txn)
+	ddlInfo, err := ddl.GetDDLInfo(txn)
 	require.NoError(t, err)
 	require.Equal(t, ddlInfo.SchemaVer, row.GetInt64(0))
 	// TODO: Pass this test.
@@ -5560,7 +5686,7 @@ func TestAdmin(t *testing.T) {
 	require.Equal(t, 12, row.Len())
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
 	require.Greater(t, len(historyJobs), 1)
 	require.Greater(t, len(row.GetString(1)), 0)
 	require.NoError(t, err)
@@ -5585,7 +5711,7 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJobs, err = admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	historyJobs, err = ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
 	require.NoError(t, err)
@@ -5649,7 +5775,7 @@ func TestAdmin(t *testing.T) {
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err = admin.GetHistoryDDLJobs(txn, 20)
+	historyJobs, err = ddl.GetHistoryDDLJobs(txn, 20)
 	require.NoError(t, err)
 
 	// Split region for history ddl job queues.
@@ -5658,7 +5784,7 @@ func TestAdmin(t *testing.T) {
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
 	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
-	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
+	historyJobs2, err := ddl.GetHistoryDDLJobs(txn, 20)
 	require.NoError(t, err)
 	require.Equal(t, historyJobs2, historyJobs)
 }
