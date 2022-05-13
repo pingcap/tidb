@@ -1897,7 +1897,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
-	if err := sessiontxn.GetTxnManager(s).OnStmtStart(ctx); err != nil {
+	if err := s.onTxnManagerStmtStartOrRetry(ctx); err != nil {
 		return nil, err
 	}
 
@@ -1953,6 +1953,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	}
 	return recordSet, nil
+}
+
+func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context) error {
+	if s.sessionVars.RetryInfo.Retrying {
+		return sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
+	}
+	return sessiontxn.GetTxnManager(s).OnStmtStart(ctx)
 }
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
@@ -2166,7 +2173,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
-	if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx); err != nil {
+	if err = s.onTxnManagerStmtStartOrRetry(ctx); err != nil {
 		return
 	}
 
@@ -2389,7 +2396,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
 
-	if err = txnManager.OnStmtStart(ctx); err != nil {
+	if err = s.onTxnManagerStmtStartOrRetry(ctx); err != nil {
 		return nil, err
 	}
 
