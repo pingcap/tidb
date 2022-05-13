@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"math"
 	"net/http"
 	"sort"
@@ -29,7 +28,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
@@ -411,11 +409,6 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 
 // checkRequirements will check some requirements before stream starts.
 func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
-	allStores, err := conn.GetAllTiKVStoresWithRetry(ctx, s.mgr.GetPDClient(), conn.SkipTiFlash)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
 	type backupStream struct {
 		EnableStreaming bool `json:"enable"`
 	}
@@ -423,41 +416,20 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 		BackupStream backupStream `json:"log-backup"`
 	}
 
-	httpPrefix := "http://"
-	if s.mgr.GetTLSConfig() != nil {
-		httpPrefix = "https://"
-	}
 	supportBackupStream := true
 	hasTiKV := false
-	for _, store := range allStores {
-		if store.State != metapb.StoreState_Up {
-			continue
-		}
+	err := s.mgr.GetConfigFromTiKV(ctx, s.httpCli, func(resp *http.Response) error {
 		hasTiKV = true
-		// we need make sure every available store support backup-stream otherwise we might lose data.
-		// so check every store's config
-		addr := fmt.Sprintf("%s/config", store.GetStatusAddress())
-		if !strings.HasPrefix(addr, "http") {
-			addr = httpPrefix + addr
+		c := &config{}
+		e := json.NewDecoder(resp.Body).Decode(c)
+		if e != nil {
+			return e
 		}
-		err = utils.WithRetry(ctx, func() error {
-			resp, e := s.httpCli.Get(addr)
-			if e != nil {
-				return e
-			}
-			c := &config{}
-			e = json.NewDecoder(resp.Body).Decode(c)
-			if e != nil {
-				return e
-			}
-			supportBackupStream = supportBackupStream && c.BackupStream.EnableStreaming
-			_ = resp.Body.Close()
-			return nil
-		}, utils.NewPDReqBackoffer())
-		if err != nil {
-			// if one store failed, break and return error
-			break
-		}
+		supportBackupStream = supportBackupStream && c.BackupStream.EnableStreaming
+		return nil
+	})
+	if err != nil {
+		return false, errors.Trace(err)
 	}
 	return hasTiKV && supportBackupStream, err
 }

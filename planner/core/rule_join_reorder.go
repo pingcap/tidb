@@ -43,6 +43,30 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	}
 	if join.JoinType != RightOuterJoin {
 		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes := extractJoinGroup(join.children[0])
+		noExpand := false
+		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
+		if join.JoinType == LeftOuterJoin {
+			extractedCols := make([]*expression.Column, 0, 8)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.LeftConditions, nil)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
+			affectedGroups := 0
+			for i := range lhsGroup {
+				for _, col := range extractedCols {
+					if lhsGroup[i].Schema().Contains(col) {
+						affectedGroups++
+						break
+					}
+				}
+				if affectedGroups > 1 {
+					noExpand = true
+					break
+				}
+			}
+		}
+		if noExpand {
+			return []LogicalPlan{p}, nil, nil, nil
+		}
 		group = append(group, lhsGroup...)
 		eqEdges = append(eqEdges, lhsEqualConds...)
 		otherConds = append(otherConds, lhsOtherConds...)
@@ -53,6 +77,30 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 
 	if join.JoinType != LeftOuterJoin {
 		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes := extractJoinGroup(join.children[1])
+		noExpand := false
+		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
+		if join.JoinType == RightOuterJoin {
+			extractedCols := make([]*expression.Column, 0, 8)
+			expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
+			expression.ExtractColumnsFromExpressions(extractedCols, join.RightConditions, nil)
+			expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
+			affectedGroups := 0
+			for i := range rhsGroup {
+				for _, col := range extractedCols {
+					if rhsGroup[i].Schema().Contains(col) {
+						affectedGroups++
+						break
+					}
+				}
+				if affectedGroups > 1 {
+					noExpand = true
+					break
+				}
+			}
+		}
+		if noExpand {
+			return []LogicalPlan{p}, nil, nil, nil
+		}
 		group = append(group, rhsGroup...)
 		eqEdges = append(eqEdges, rhsEqualConds...)
 		otherConds = append(otherConds, rhsOtherConds...)
