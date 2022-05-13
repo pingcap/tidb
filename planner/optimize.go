@@ -554,7 +554,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -580,6 +580,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
+		case "straight_join":
+			hintOffs[hint.HintName.L] = i
+			straightJoinHintCnt++
 		case "set_var":
 			setVarHint := hint.HintData.(ast.HintSetVar)
 
@@ -654,6 +657,14 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warns = append(warns, warn)
 		}
 		stmtHints.NoIndexMergeHint = true
+	}
+	// Handle straight_join
+	if straightJoinHintCnt != 0 {
+		if straightJoinHintCnt > 1 {
+			warn := errors.New("STRAIGHT_JOIN() is defined more than once, only the last definition takes effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.StraightJoinOrder = true
 	}
 	// Handle READ_CONSISTENT_REPLICA
 	if readReplicaHintCnt != 0 {

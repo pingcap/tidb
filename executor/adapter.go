@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -54,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -377,7 +377,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
 		if n, ok := val.(int); ok && staleread.IsStmtStaleness(a.Ctx) {
 			txnManager := sessiontxn.GetTxnManager(a.Ctx)
-			ts, err := txnManager.GetReadTS()
+			ts, err := txnManager.GetStmtReadTS()
 			if err != nil {
 				panic(err)
 			}
@@ -490,10 +490,10 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// `rs.Close` in `handleStmt`
 		if sc != nil && rs == nil {
 			if sc.MemTracker != nil {
-				sc.MemTracker.DetachFromGlobalTracker()
+				sc.MemTracker.Detach()
 			}
 			if sc.DiskTracker != nil {
-				sc.DiskTracker.DetachFromGlobalTracker()
+				sc.DiskTracker.Detach()
 			}
 		}
 	}()
@@ -592,6 +592,10 @@ func (c *chunkRowRecordSet) Close() error {
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
+	if snapshotTS := a.Ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
+	}
+
 	for {
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
 		e, err = a.handlePessimisticLockError(ctx, err)
@@ -929,9 +933,12 @@ func (a *ExecStmt) logAudit() {
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
 func FormatSQL(sql string) stringutil.StringerFunc {
 	return func() string {
-		cfg := config.GetGlobalConfig()
 		length := len(sql)
-		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
+		maxQueryLen := variable.QueryLogMaxLen.Load()
+		if maxQueryLen <= 0 {
+			return QueryReplacer.Replace(sql) // no limit
+		}
+		if int32(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
 		return QueryReplacer.Replace(sql)
@@ -1006,10 +1013,10 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
 	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 		if stmtCtx.DiskTracker != nil {
-			stmtCtx.DiskTracker.DetachFromGlobalTracker()
+			stmtCtx.DiskTracker.Detach()
 		}
 		if stmtCtx.MemTracker != nil {
-			stmtCtx.MemTracker.DetachFromGlobalTracker()
+			stmtCtx.MemTracker.Detach()
 		}
 	}
 }
@@ -1020,8 +1027,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
-	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	enable := cfg.Log.EnableSlowLog.Load()
+	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
+	enable := cfg.Instance.EnableSlowLog.Load()
 	// if the level is Debug, or trace is enabled, print slow logs anyway
 	force := level <= zapcore.DebugLevel || trace.IsEnabled()
 	if (!enable || costTime < threshold) && !force {
@@ -1162,7 +1169,7 @@ func GetResultRowsCount(sctx sessionctx.Context, p plannercore.Plan) int64 {
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
 func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 	cfg := config.GetGlobalConfig()
-	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
+	if atomic.LoadUint32(&cfg.Instance.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
 	planTree, _ := getEncodedPlan(sctx, p, false)

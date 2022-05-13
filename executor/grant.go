@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -118,7 +119,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	// Commit the old transaction, like DDL.
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		return err
 	}
 	defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()

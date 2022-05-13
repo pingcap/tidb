@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -227,7 +226,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 		var qLen int
 		for {
 			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err1 := admin.GetDDLJobs(txn)
+				jobs, err1 := ddl.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
 				}
@@ -256,7 +255,7 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 		var qLen int
 		for {
 			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err3 := admin.GetDDLJobs(txn)
+				jobs, err3 := ddl.GetDDLJobs(txn)
 				if err3 != nil {
 					return err3
 				}

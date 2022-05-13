@@ -25,13 +25,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	utilMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -1043,7 +1042,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			// The behavior same as MySQL.
 			seed = 0
 		}
-		sig = &builtinRandSig{bt, utilMath.NewWithSeed(seed)}
+		sig = &builtinRandSig{bt, mathutil.NewWithSeed(seed)}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
 		sig = &builtinRandWithSeedFirstGenSig{bt}
@@ -1054,7 +1053,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinRandSig struct {
 	baseBuiltinFunc
-	mysqlRng *utilMath.MysqlRng
+	mysqlRng *mathutil.MysqlRng
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
@@ -1090,11 +1089,11 @@ func (b *builtinRandWithSeedFirstGenSig) evalReal(row chunk.Row) (float64, bool,
 	// b.args[0] is promised to be a non-constant(such as a column name) in
 	// builtinRandWithSeedFirstGenSig, the seed is initialized with the value for each
 	// invocation of RAND().
-	var rng *utilMath.MysqlRng
+	var rng *mathutil.MysqlRng
 	if !isNull {
-		rng = utilMath.NewWithSeed(seed)
+		rng = mathutil.NewWithSeed(seed)
 	} else {
-		rng = utilMath.NewWithSeed(0)
+		rng = mathutil.NewWithSeed(0)
 	}
 	return rng.Gen(), false, nil
 }

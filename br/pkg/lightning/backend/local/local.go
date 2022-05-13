@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mathutil"
 	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -324,7 +325,7 @@ func NewLocalBackend(
 		dupeConcurrency:   rangeConcurrency * 2,
 		batchWriteKVPairs: cfg.TikvImporter.SendKVPairs,
 		checkpointEnabled: cfg.Checkpoint.Enable,
-		maxOpenFiles:      utils.MaxInt(maxOpenFiles, openFilesLowerThreshold),
+		maxOpenFiles:      mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
@@ -1105,7 +1106,7 @@ WriteAndIngest:
 			err = local.writeAndIngestPairs(ctx, engine, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
-				if !utils.IsRetryableError(err) {
+				if !common.IsRetryableError(err) {
 					return err
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -1152,7 +1153,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if !utils.IsRetryableError(err) {
+			if !common.IsRetryableError(err) {
 				return err
 			}
 
@@ -1171,7 +1172,7 @@ loopWrite:
 
 		for i := 0; i < len(metas); i += batch {
 			start := i * batch
-			end := utils.MinInt((i+1)*batch, len(metas))
+			end := mathutil.Min((i+1)*batch, len(metas))
 			ingestMetas := metas[start:end]
 			errCnt := 0
 			for errCnt < maxRetryTimes {
@@ -1293,7 +1294,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				if err == nil || common.IsContextCanceledError(err) {
 					return
 				}
-				if !utils.IsRetryableError(err) {
+				if !common.IsRetryableError(err) {
 					break
 				}
 				log.L().Warn("write and ingest by range failed",
@@ -1761,7 +1762,7 @@ func (local *local) isIngestRetryable(
 		// Thus directly retry ingest may cause TiKV panic. So always return retryWrite here to avoid
 		// this issue.
 		// See: https://github.com/tikv/tikv/issues/9496
-		return retryWrite, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+		return retryWrite, newRegion, common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
@@ -1791,7 +1792,7 @@ func (local *local) isIngestRetryable(
 		if newRegion != nil {
 			retryTy = retryWrite
 		}
-		return retryTy, newRegion, errors.Errorf("epoch not match: %s", errPb.GetMessage())
+		return retryTy, newRegion, common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
 		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
 		newRegion, err = getRegion()
@@ -1799,6 +1800,10 @@ func (local *local) isIngestRetryable(
 			return retryNone, nil, errors.Trace(err)
 		}
 		return retryWrite, newRegion, errors.New(errPb.GetMessage())
+	case errPb.ServerIsBusy != nil:
+		return retryNone, nil, common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
+	case errPb.RegionNotFound != nil:
+		return retryNone, nil, common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
 	}
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }

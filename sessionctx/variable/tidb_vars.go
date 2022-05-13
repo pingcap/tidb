@@ -186,9 +186,6 @@ const (
 	// TiDBEnableSlowLog enables TiDB to log slow queries.
 	TiDBEnableSlowLog = "tidb_enable_slow_log"
 
-	// TiDBQueryLogMaxLen is used to set the max length of the query in the log.
-	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
-
 	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
 	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 
@@ -633,6 +630,14 @@ const (
 
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
+
+	// TiDBQueryLogMaxLen is used to set the max length of the query in the log.
+	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
+
+	// TiDBNonTransactionalIgnoreError is used to ignore error in non-transactional DMLs.
+	// When set to false, a non-transactional DML returns when it meets the first error.
+	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
+	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
 )
 
 // TiDB vars that have only global scope
@@ -668,6 +673,10 @@ const (
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
 	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
+	// TiDBStatsCacheMemQuota records stats cache quota
+	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
+	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
+	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 )
 
 // TiDB intentional limits
@@ -840,12 +849,18 @@ const (
 	DefTiDBGCMaxWaitTime                         = 24 * 60 * 60
 	DefMaxAllowedPacket                   uint64 = 67108864
 	DefTiDBMemQuotaQuery                         = 1073741824 // 1GB
+	DefTiDBStatsCacheMemQuota                    = 0
+	MaxTiDBStatsCacheMemQuota                    = 1024 * 1024 * 1024 * 1024 // 1TB
+	DefTiDBQueryLogMaxLen                        = 4096
+	DefTiDBBatchDMLIgnoreError                   = false
+	DefTiDBMemQuotaAnalyze                       = -1
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog           = atomic.NewBool(false)
 	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen              = atomic.NewInt32(DefTiDBQueryLogMaxLen)
 	EnablePProfSQLCPU           = atomic.NewBool(false)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
@@ -856,13 +871,13 @@ var (
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold            uint32 = DefTiDBDDLSlowOprThreshold
+	DDLSlowOprThreshold                   = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                         = int32(DefTiDBForcePriority)
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
 	DefExecutorConcurrency                = 5
-	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
+	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
@@ -875,4 +890,12 @@ var (
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
+	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+)
+
+var (
+	// SetMemQuotaAnalyze is the func registered by global/subglobal tracker to set memory quota.
+	SetMemQuotaAnalyze func(quota int64) = nil
+	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
+	GetMemQuotaAnalyze func() int64 = nil
 )
