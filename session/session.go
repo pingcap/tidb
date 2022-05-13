@@ -1711,12 +1711,13 @@ func ExecRestrictedStmt4Test(ctx context.Context, s Session,
 // only set and clean session with execOption
 func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, func(), error) {
 	var err error
+	orgSnapshotInfoSchema, orgSnapshotTS := s.sessionVars.SnapshotInfoschema, s.sessionVars.SnapshotTS
 	if execOption.SnapshotTS != 0 {
-		s.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
-		if err != nil {
+		if err = s.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
 			return nil, nil, err
 		}
-		if err := s.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+		s.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
+		if err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1736,7 +1737,8 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		if err := s.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
-		s.sessionVars.SnapshotInfoschema = nil
+		s.sessionVars.SnapshotInfoschema = orgSnapshotInfoSchema
+		s.sessionVars.SnapshotTS = orgSnapshotTS
 		s.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
@@ -1761,11 +1763,11 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	}
 
 	if execOption.SnapshotTS != 0 {
-		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
-		if err != nil {
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
 			return nil, nil, err
 		}
-		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
+		if err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1786,6 +1788,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
 		se.sessionVars.SnapshotInfoschema = nil
+		se.sessionVars.SnapshotTS = 0
 		if !execOption.IgnoreWarning {
 			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
 				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -2210,15 +2213,15 @@ func (s *session) preparedStmtExec(ctx context.Context,
 	return runStmt(ctx, s, st)
 }
 
-// cachedPlanExec short path currently ONLY for cached "point select plan" execution
-func (s *session) cachedPlanExec(ctx context.Context,
-	is infoschema.InfoSchema, stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, replicaReadScope string, args []types.Datum) (sqlexec.RecordSet, error) {
+// cachedPointPlanExec is a short path currently ONLY for cached "point select plan" execution
+func (s *session) cachedPointPlanExec(ctx context.Context,
+	is infoschema.InfoSchema, stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, replicaReadScope string, args []types.Datum) (sqlexec.RecordSet, bool, error) {
 
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	failpoint.Inject("assertTxnManagerInCachedPlanExec", func() {
@@ -2231,7 +2234,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	execAst.BinaryArgs = args
 	execPlan, err := planner.OptimizeExecStmt(ctx, s, execAst, is)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	stmtCtx := s.GetSessionVars().StmtCtx
@@ -2269,7 +2272,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 
 	// run ExecStmt
 	var resultSet sqlexec.RecordSet
-	switch prepared.CachedPlan.(type) {
+	switch execPlan.(type) {
 	case *plannercore.PointGetPlan:
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
@@ -2284,11 +2287,10 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		}
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
-		err = errors.Errorf("invalid cached plan type %T", prepared.CachedPlan)
 		prepared.CachedPlan = nil
-		return nil, err
+		return nil, false, nil
 	}
-	return resultSet, err
+	return resultSet, true, err
 }
 
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
@@ -2371,8 +2373,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, err
 		}
-	} else if preparedStmt.ForUpdateRead {
+	} else if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
+		is = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
@@ -2395,7 +2398,13 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 
 	if ok {
-		return s.cachedPlanExec(ctx, txnManager.GetTxnInfoSchema(), stmtID, preparedStmt, replicaReadScope, args)
+		rs, ok, err := s.cachedPointPlanExec(ctx, txnManager.GetTxnInfoSchema(), stmtID, preparedStmt, replicaReadScope, args)
+		if err != nil {
+			return nil, err
+		}
+		if ok { // fallback to preparedStmtExec if we cannot get a valid point select plan in cachedPointPlanExec
+			return rs, nil
+		}
 	}
 	return s.preparedStmtExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, replicaReadScope, args)
 }

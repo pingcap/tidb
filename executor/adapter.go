@@ -490,10 +490,10 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// `rs.Close` in `handleStmt`
 		if sc != nil && rs == nil {
 			if sc.MemTracker != nil {
-				sc.MemTracker.DetachFromGlobalTracker()
+				sc.MemTracker.Detach()
 			}
 			if sc.DiskTracker != nil {
-				sc.DiskTracker.DetachFromGlobalTracker()
+				sc.DiskTracker.Detach()
 			}
 		}
 	}()
@@ -592,6 +592,10 @@ func (c *chunkRowRecordSet) Close() error {
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
+	if snapshotTS := a.Ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
+	}
+
 	for {
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
 		e, err = a.handlePessimisticLockError(ctx, err)
@@ -837,7 +841,7 @@ type pessimisticTxn interface {
 	KeysNeedToLock() ([]kv.Key, error)
 }
 
-// buildExecutor build a executor from plan, prepared statement may need additional procedure.
+// buildExecutor build an executor from plan, prepared statement may need additional procedure.
 func (a *ExecStmt) buildExecutor() (Executor, error) {
 	ctx := a.Ctx
 	stmtCtx := ctx.GetSessionVars().StmtCtx
@@ -1009,10 +1013,10 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
 	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 		if stmtCtx.DiskTracker != nil {
-			stmtCtx.DiskTracker.DetachFromGlobalTracker()
+			stmtCtx.DiskTracker.Detach()
 		}
 		if stmtCtx.MemTracker != nil {
-			stmtCtx.MemTracker.DetachFromGlobalTracker()
+			stmtCtx.MemTracker.Detach()
 		}
 	}
 }
