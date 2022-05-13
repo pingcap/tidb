@@ -263,12 +263,12 @@
         "SQL": "explain format = 'brief' SELECT a, ROW_NUMBER() OVER (ORDER BY a) FROM t; -- 5. window unsupported",
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
-          "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─Window 10000.00 cop[tiflash]  row_number()->Column#7 over(order by test.t.a rows between current row and current row)",
-          "    └─Sort 10000.00 cop[tiflash]  test.t.a",
-          "      └─ExchangeReceiver 10000.00 cop[tiflash]  ",
-          "        └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "          └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(order by test.t.a rows between current row and current row)",
+          "    └─Sort 10000.00 mpp[tiflash]  test.t.a",
+          "      └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },

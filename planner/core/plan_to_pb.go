@@ -525,7 +525,7 @@ func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalSort) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	if !p.IsPartialSort {
-		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort.", p.basePlan.ExplainID())
+		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort", p.basePlan.ExplainID())
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx

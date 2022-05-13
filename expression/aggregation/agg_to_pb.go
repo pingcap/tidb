@@ -67,7 +67,7 @@ func (desc *baseFuncDesc) GetTiPBExpr(tryWindowDesc bool) (tp tipb.ExprType) {
 		tp = tipb.ExprType_StddevSamp
 	}
 
-	if tipb.ExprType(tp) != 0 || !tryWindowDesc {
+	if tp != tipb.ExprType_Null || !tryWindowDesc {
 		return
 	}
 

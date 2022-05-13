@@ -1622,6 +1622,7 @@ type WindowFrame struct {
 	End   *FrameBound
 }
 
+// Clone copies a window frame totally.
 func (wf *WindowFrame) Clone() *WindowFrame {
 	cloned := new(WindowFrame)
 	*cloned = *wf
@@ -1645,6 +1646,7 @@ type FrameBound struct {
 	CmpFuncs []expression.CompareFunc
 }
 
+// Clone copies a frame bound totally.
 func (fb *FrameBound) Clone() *FrameBound {
 	cloned := new(FrameBound)
 	*cloned = *fb
@@ -1653,10 +1655,7 @@ func (fb *FrameBound) Clone() *FrameBound {
 	for _, it := range fb.CalcFuncs {
 		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
 	}
-	cloned.CmpFuncs = make([]expression.CompareFunc, 0, len(fb.CmpFuncs))
-	for _, it := range fb.CmpFuncs {
-		cloned.CmpFuncs = append(cloned.CmpFuncs, it)
-	}
+	cloned.CmpFuncs = fb.CmpFuncs
 
 	return cloned
 }

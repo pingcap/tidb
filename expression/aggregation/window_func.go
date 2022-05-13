@@ -15,13 +15,13 @@
 package aggregation
 
 import (
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tipb/go-tipb"
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // WindowFuncDesc describes a window function signature, only used in planner.
@@ -119,6 +119,7 @@ func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowF
 	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(desc.RetTp)}
 }
 
+// CanPushDownToTiFlash control whether a window function desc can be push down to tiflash.
 func (s *WindowFuncDesc) CanPushDownToTiFlash() bool {
 	// window functions
 	switch s.Name {

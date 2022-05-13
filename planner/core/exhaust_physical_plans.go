@@ -2222,6 +2222,7 @@ func disableAggPushDownToCop(p LogicalPlan) {
 	}
 }
 
+// GetPartitionKeys gets partition keys for a logical window, it will assign column id for expressions.
 func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
 	partitionByCols := make([]*property.MPPPartitionColumn, 0, len(lw.GetPartitionByCols()))
 	for _, item := range lw.PartitionBy {
@@ -2317,12 +2318,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 	return []PhysicalPlan{window}
 }
 
-func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+func (lw *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	windows := make([]PhysicalPlan, 0, 2)
 
-	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
-	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
-		mppWindows := p.tryToGetMppWindows(prop)
+	canPushToTiFlash := lw.canPushToCop(kv.TiFlash)
+	if lw.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
+		mppWindows := lw.tryToGetMppWindows(prop)
 		windows = append(windows, mppWindows...)
 	}
 
@@ -2331,19 +2332,19 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		return windows, true, nil
 	}
 	var byItems []property.SortItem
-	byItems = append(byItems, p.PartitionBy...)
-	byItems = append(byItems, p.OrderBy...)
+	byItems = append(byItems, lw.PartitionBy...)
+	byItems = append(byItems, lw.OrderBy...)
 	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, CanAddEnforcer: true}
 	if !prop.IsPrefix(childProperty) {
 		return nil, true, nil
 	}
 	window := PhysicalWindow{
-		WindowFuncDescs: p.WindowFuncDescs,
-		PartitionBy:     p.PartitionBy,
-		OrderBy:         p.OrderBy,
-		Frame:           p.Frame,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
-	window.SetSchema(p.Schema())
+		WindowFuncDescs: lw.WindowFuncDescs,
+		PartitionBy:     lw.PartitionBy,
+		OrderBy:         lw.OrderBy,
+		Frame:           lw.Frame,
+	}.Init(lw.ctx, lw.stats.ScaleByExpectCnt(prop.ExpectedCnt), lw.blockOffset, childProperty)
+	window.SetSchema(lw.Schema())
 
 	windows = append(windows, window)
 	return windows, true, nil

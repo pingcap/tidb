@@ -204,31 +204,6 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	return nil
 }
 
-func updateBestTask(bestTask, curTask task, mppEnforced bool) task {
-	if bestTask.invalid() {
-		return curTask
-	}
-	if curTask.invalid() {
-		return bestTask
-	}
-
-	if mppEnforced {
-		_, bestIsMpp := bestTask.(*mppTask)
-		_, curIsMpp := curTask.(*mppTask)
-
-		if curIsMpp && !bestIsMpp {
-			return curTask
-		}
-		if !curIsMpp && bestIsMpp {
-			return bestTask
-		}
-	}
-	if curTask.cost() < bestTask.cost() {
-		bestTask = curTask
-	}
-	return bestTask
-}
-
 func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
