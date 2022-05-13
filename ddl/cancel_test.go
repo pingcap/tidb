@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
@@ -197,7 +198,7 @@ func cancelSuccess(rs *testkit.Result) bool {
 	return strings.Contains(rs.Rows()[0][1].(string), "success")
 }
 
-func TestCancel(t *testing.T) {
+func TestCancel11111(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -227,9 +228,16 @@ func TestCancel(t *testing.T) {
 	}
 
 	// Change some configurations.
-	ddl.ReorgWaitTimeout = 10 * time.Microsecond
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 8")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillSlow"))
+	}()
 	hook := &ddl.TestDDLCallback{Do: dom}
 	i := 0
 	cancel := false
