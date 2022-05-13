@@ -81,7 +81,7 @@ func TestErrorHandle(t *testing.T) {
 	require.Equal(t, sessiontxn.StmtActionNoIdea, action)
 	require.Nil(t, err)
 
-	// StmtErrAfterQuery: ErrWriteConflict should retry when RC read
+	// StmtErrAfterQuery: ErrWriteConflict should retry when RCCheckTS read
 	tk.MustExec("set @@tidb_rc_read_check_ts=1")
 	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
 	provider = newSimpleProvider(tk, do)
