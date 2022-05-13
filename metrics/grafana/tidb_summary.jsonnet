@@ -65,6 +65,23 @@ local newDash = dashboard.new(
     sort=1,
     tagValuesQuery='',
   )
+).addTemplate(
+  // Default template for tidb-cloud
+  template.new(
+    allValues='.*',
+    current=null,
+    datasource=myDS,
+    hide='',
+    includeAll=true,
+    label='Instance',
+    multi=false,
+    name='instance',
+    query='label_values(tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}, instance)',
+    refresh='load',
+    regex='',
+    sort=1,
+    tagValuesQuery='',
+  )
 );
 
 // Server row and its panels
@@ -78,7 +95,7 @@ local uptimeP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'time() - process_start_time_seconds{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}',
+    'time() - process_start_time_seconds{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
     legendFormat='{{instance}}',
   )
 );
@@ -93,7 +110,7 @@ local connectionP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}',
+    'tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
     legendFormat='{{instance}}',
   )
 )
@@ -113,7 +130,7 @@ local cpuP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'rate(process_cpu_seconds_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}[1m])',
+    'rate(process_cpu_seconds_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}[1m])',
     legendFormat='{{instance}}',
   )
 );
@@ -127,13 +144,13 @@ local memP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'process_resident_memory_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}',
+    'process_resident_memory_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
     legendFormat='process-{{instance}}',
   )
 )
 .addTarget(
   prometheus.target(
-    'go_memstats_heap_inuse_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}',
+    'go_memstats_heap_inuse_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
     legendFormat='HeapInuse-{{instance}}',
   )
 );
@@ -149,19 +166,19 @@ local durationP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.99, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type!="internal"}[1m])) by (le))',
+    'histogram_quantile(0.99, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type!="internal"}[1m])) by (le))',
     legendFormat='99',
   )
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.95, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type!="internal"}[1m])) by (le))',
+    'histogram_quantile(0.95, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type!="internal"}[1m])) by (le))',
     legendFormat='95',
   )
 )
 .addTarget(
   prometheus.target(
-    'sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type!="internal"}[30s])) / sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type!="internal"}[30s]))',
+    'sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type!="internal"}[30s])) / sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type!="internal"}[30s]))',
     legendFormat='avg',
   )
 );
@@ -175,7 +192,7 @@ local failedP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'sum(increase(tidb_server_execute_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (type, instance)',
+    'sum(increase(tidb_server_execute_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type, instance)',
     legendFormat='{{type}}-{{instance}}',
   )
 );
@@ -189,20 +206,20 @@ local cpsP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'sum(rate(tidb_server_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (result)',
+    'sum(rate(tidb_server_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (result)',
     legendFormat='query {{result}}',
   )
 )
 .addTarget(
   prometheus.target(
-    'sum(rate(tidb_server_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", result="OK"}[1m]  offset 1d))',
+    'sum(rate(tidb_server_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", result="OK"}[1m]  offset 1d))',
     legendFormat='yesterday',
     hide=true,
   )
 )
 .addTarget(
   prometheus.target(
-    'sum(tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}) * sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) / sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m]))',
+    'sum(tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) * sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) / sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m]))',
     legendFormat='ideal CPS',
     hide=true,
   )
@@ -217,7 +234,7 @@ local cpsByInstP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'sum(rate(tidb_server_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (instance)',
+    'sum(rate(tidb_server_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (instance)',
     legendFormat='{{instance}}',
   )
 );
@@ -231,13 +248,13 @@ local qpsP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'sum(rate(tidb_executor_statement_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (type)',
+    'sum(rate(tidb_executor_statement_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
     legendFormat='{{type}}',
   )
 )
 .addTarget(
   prometheus.target(
-    'sum(rate(tidb_executor_statement_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m]))',
+    'sum(rate(tidb_executor_statement_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
     legendFormat='total',
   )
 );
@@ -251,7 +268,7 @@ local cpsByCMDP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'sum(rate(tidb_server_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (type)',
+    'sum(rate(tidb_server_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
     legendFormat='{{type}}',
   )
 );
@@ -267,13 +284,13 @@ local parseP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.99, sum(rate(tidb_session_parse_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type="general"}[1m])) by (le))',
+    'histogram_quantile(0.99, sum(rate(tidb_session_parse_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="general"}[1m])) by (le))',
     legendFormat='99',
   )
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.95, sum(rate(tidb_session_parse_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type="general"}[1m])) by (le))',
+    'histogram_quantile(0.95, sum(rate(tidb_session_parse_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="general"}[1m])) by (le))',
     legendFormat='95',
   )
 );
@@ -287,13 +304,13 @@ local compileP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.99, sum(rate(tidb_session_compile_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type="general"}[1m])) by (le))',
+    'histogram_quantile(0.99, sum(rate(tidb_session_compile_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="general"}[1m])) by (le))',
     legendFormat='99',
   )
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.95, sum(rate(tidb_session_compile_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type="general"}[1m])) by (le))',
+    'histogram_quantile(0.95, sum(rate(tidb_session_compile_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="general"}[1m])) by (le))',
     legendFormat='95',
   )
 );
@@ -307,13 +324,13 @@ local exeP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.99, sum(rate(tidb_session_execute_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type="general"}[1m])) by (le))',
+    'histogram_quantile(0.99, sum(rate(tidb_session_execute_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="general"}[1m])) by (le))',
     legendFormat='99',
   )
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.95, sum(rate(tidb_session_execute_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type="general"}[1m])) by (le))',
+    'histogram_quantile(0.95, sum(rate(tidb_session_execute_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="general"}[1m])) by (le))',
     legendFormat='95',
   )
 );
@@ -327,7 +344,7 @@ local planCacheP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'sum(rate(tidb_server_plan_cache_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (type)',
+    'sum(rate(tidb_server_plan_cache_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
     legendFormat='{{type}}',
   )
 );
@@ -343,7 +360,7 @@ local tpsP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'sum(rate(tidb_session_transaction_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (type, txn_mode)',
+    'sum(rate(tidb_session_transaction_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type, txn_mode)',
     legendFormat='{{type}}-{{txn_mode}}',
   )
 );
@@ -357,19 +374,19 @@ local txnDurationP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.99, sum(rate(tidb_session_transaction_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type="general"}[1m])) by (le, txn_mode))',
+    'histogram_quantile(0.99, sum(rate(tidb_session_transaction_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="general"}[1m])) by (le, txn_mode))',
     legendFormat='99-{{txn_mode}}',
   )
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.95, sum(rate(tidb_session_transaction_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type="general"}[1m])) by (le, txn_mode))',
+    'histogram_quantile(0.95, sum(rate(tidb_session_transaction_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="general"}[1m])) by (le, txn_mode))',
     legendFormat='95-{{txn_mode}}',
   )
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(0.80, sum(rate(tidb_session_transaction_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", sql_type="general"}[1m])) by (le, txn_mode))',
+    'histogram_quantile(0.80, sum(rate(tidb_session_transaction_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="general"}[1m])) by (le, txn_mode))',
     legendFormat='80-{{txn_mode}}',
   )
 );
@@ -383,7 +400,7 @@ local maxTxnStmtP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(1, sum(rate(tidb_session_transaction_statement_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[30s])) by (le))',
+    'histogram_quantile(1, sum(rate(tidb_session_transaction_statement_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s])) by (le))',
     legendFormat='max',
   )
 );
@@ -397,7 +414,7 @@ local maxTxnRetryP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'histogram_quantile(1.0, sum(rate(tidb_session_retry_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[30s])) by (le))',
+    'histogram_quantile(1.0, sum(rate(tidb_session_retry_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s])) by (le))',
     legendFormat='max',
   )
 );

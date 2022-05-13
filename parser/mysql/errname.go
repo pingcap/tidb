@@ -178,7 +178,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrDelayedCantChangeLock:                    Message("Delayed insert thread couldn't get requested lock for table %-.192s", nil),
 	ErrTooManyDelayedThreads:                    Message("Too many delayed threads in use", nil),
 	ErrAbortingConnection:                       Message("Aborted connection %d to db: '%-.192s' user: '%-.48s' (%-.64s)", nil),
-	ErrNetPacketTooLarge:                        Message("Got a packet bigger than 'maxAllowedPacket' bytes", nil),
+	ErrNetPacketTooLarge:                        Message("Got a packet bigger than 'max_allowed_packet' bytes", nil),
 	ErrNetReadErrorFromPipe:                     Message("Got a read error from the connection pipe", nil),
 	ErrNetFcntl:                                 Message("Got an error from fcntl()", nil),
 	ErrNetPacketsOutOfOrder:                     Message("Got packets out of order", nil),

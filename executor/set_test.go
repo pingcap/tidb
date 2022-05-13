@@ -136,8 +136,8 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
 
-	tk.MustExec("set @@session.ddl_slow_threshold=12345")
-	tk.MustQuery("select @@session.ddl_slow_threshold").Check(testkit.Rows("12345"))
+	tk.MustExec("set @@global.ddl_slow_threshold=12345")
+	tk.MustQuery("select @@global.ddl_slow_threshold").Check(testkit.Rows("12345"))
 	require.Equal(t, uint32(12345), variable.DDLSlowOprThreshold)
 	tk.MustExec("set session ddl_slow_threshold=\"54321\"")
 	tk.MustQuery("show variables like 'ddl_slow_threshold'").Check(testkit.Rows("ddl_slow_threshold 54321"))
@@ -221,17 +221,16 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set @@tidb_pprof_sql_cpu = 1")
 	tk.MustExec("set @@tidb_pprof_sql_cpu = 0")
 
-	tk.MustExec(`set tidb_force_priority = "no_priority"`)
-	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
-	tk.MustExec(`set tidb_force_priority = "low_priority"`)
-	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("LOW_PRIORITY"))
-	tk.MustExec(`set tidb_force_priority = "high_priority"`)
-	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("HIGH_PRIORITY"))
-	tk.MustExec(`set tidb_force_priority = "delayed"`)
-	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
-	tk.MustExec(`set tidb_force_priority = "abc"`)
-	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
-	require.Error(t, tk.ExecToErr(`set global tidb_force_priority = ""`))
+	tk.MustExec(`set @@global.tidb_force_priority = "no_priority"`)
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
+	tk.MustExec(`set @@global.tidb_force_priority = "low_priority"`)
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("LOW_PRIORITY"))
+	tk.MustExec(`set @@global.tidb_force_priority = "high_priority"`)
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("HIGH_PRIORITY"))
+	tk.MustExec(`set @@global.tidb_force_priority = "delayed"`)
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
+	tk.MustExec(`set @@global.tidb_force_priority = "abc"`)
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
 
 	tk.MustExec("set tidb_constraint_check_in_place = 1")
 	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
@@ -594,6 +593,14 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_ignore_prepared_cache_close_stmt").Check(testkit.Rows("0"))
 	tk.MustQuery("show global variables like 'tidb_ignore_prepared_cache_close_stmt'").Check(testkit.Rows("tidb_ignore_prepared_cache_close_stmt OFF"))
 
+	// test for tidb_enable_new_cost_interface
+	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set global tidb_enable_new_cost_interface=1")
+	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("1"))
+	tk.MustQuery("show global variables like 'tidb_enable_new_cost_interface'").Check(testkit.Rows()) // hidden
+	tk.MustExec("set global tidb_enable_new_cost_interface=0")
+	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("0"))
+
 	// test for tidb_remove_orderby_in_subquery
 	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
 	tk.MustExec("set session tidb_remove_orderby_in_subquery=1")
@@ -601,6 +608,28 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
 	tk.MustExec("set global tidb_remove_orderby_in_subquery=1")
 	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1"))
+
+	// the value of max_allowed_packet should be a multiple of 1024
+	tk.MustExec("set @@global.max_allowed_packet=16385")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '16385'"))
+	result := tk.MustQuery("select @@global.max_allowed_packet;")
+	result.Check(testkit.Rows("16384"))
+	tk.MustExec("set @@global.max_allowed_packet=2047")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '2047'"))
+	result = tk.MustQuery("select @@global.max_allowed_packet;")
+	result.Check(testkit.Rows("1024"))
+	tk.MustExec("set @@global.max_allowed_packet=0")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '0'"))
+	result = tk.MustQuery("select @@global.max_allowed_packet;")
+	result.Check(testkit.Rows("1024"))
+
+	// test value of tidb_stats_cache_mem_quota
+	tk.MustQuery("select @@global.tidb_stats_cache_mem_quota").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_stats_cache_mem_quota = 200")
+	tk.MustQuery("select @@global.tidb_stats_cache_mem_quota").Check(testkit.Rows("200"))
+	// for read-only instance scoped system variables.
+	tk.MustGetErrCode("set @@global.plugin_load = ''", errno.ErrIncorrectGlobalLocalVar)
+	tk.MustGetErrCode("set @@global.plugin_dir = ''", errno.ErrIncorrectGlobalLocalVar)
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
@@ -897,6 +926,9 @@ func TestValidateSetVar(t *testing.T) {
 
 	err = tk.ExecToErr("set @@global.max_allowed_packet='hello'")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
+
+	err = tk.ExecToErr("set @@max_allowed_packet=default")
+	require.True(t, terror.ErrorEqual(err, variable.ErrReadOnly))
 
 	tk.MustExec("set @@global.max_connect_errors=18446744073709551615")
 
@@ -1308,27 +1340,15 @@ func TestEnableNoopFunctionsVar(t *testing.T) {
 	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
-	err := tk.ExecToErr(`select get_lock('lock1', 2);`)
-	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
-	err = tk.ExecToErr(`select release_lock('lock1');`)
-	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
-
 	// change session var to 1
 	tk.MustExec(`set tidb_enable_noop_functions=1;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("ON"))
 	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
-	tk.MustQuery(`select get_lock("lock", 10)`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select release_lock("lock")`).Check(testkit.Rows("1"))
 
 	// restore to 0
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
-
-	err = tk.ExecToErr(`select get_lock('lock2', 10);`)
-	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
-	err = tk.ExecToErr(`select release_lock('lock2');`)
-	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
 
 	// set test
 	require.Error(t, tk.ExecToErr(`set tidb_enable_noop_functions='abc'`))
@@ -1340,7 +1360,7 @@ func TestEnableNoopFunctionsVar(t *testing.T) {
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
-	err = tk.ExecToErr("SET SESSION tx_read_only = 1")
+	err := tk.ExecToErr("SET SESSION tx_read_only = 1")
 	require.True(t, terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("SET SESSION tx_read_only = 0")
@@ -1435,6 +1455,30 @@ func TestDefaultBehavior(t *testing.T) {
 	tk.MustExec("SET GLOBAL sql_mode = DEFAULT")
 }
 
+func TestTiDBReadOnly(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	// turn on tidb_restricted_read_only should turn on tidb_super_read_only
+	tk.MustExec("SET GLOBAL tidb_restricted_read_only = ON")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("1"))
+
+	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
+	err := tk.ExecToErr("SET GLOBAL tidb_super_read_only = OFF")
+	require.Error(t, err)
+	require.Equal(t, "can't turn off tidb_super_read_only when tidb_restricted_read_only is on", err.Error())
+
+	// turn off tidb_restricted_read_only won't affect tidb_super_read_only
+	tk.MustExec("SET GLOBAL tidb_restricted_read_only = OFF")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_restricted_read_only").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("1"))
+
+	// it is ok to turn off tidb_super_read_only now
+	tk.MustExec("SET GLOBAL tidb_super_read_only = OFF")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("0"))
+}
+
 func TestRemovedSysVars(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1513,7 +1557,7 @@ func TestSetClusterConfigJSONData(t *testing.T) {
 	var d types.MyDecimal
 	require.NoError(t, d.FromFloat64(123.456))
 	tyBool := types.NewFieldType(mysql.TypeTiny)
-	tyBool.Flag |= mysql.IsBooleanFlag
+	tyBool.AddFlag(mysql.IsBooleanFlag)
 	cases := []struct {
 		val    expression.Expression
 		result string
