@@ -253,6 +253,9 @@ type Config struct {
 
 	// EnableBatchDML, unused since bootstrap v90
 	EnableBatchDML bool `toml:"enable-batch-dml" json:"enable-batch-dml"`
+
+	// RunAutoAnalyze, unused since bootstrap v92
+	RunAutoAnalyze bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -936,7 +939,7 @@ var deprecatedConfig = map[string]struct{}{
 	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
 	"mem-quota-query":                    {},
 	"query-log-max-len":                  {},
-	"performance.run-auto-analyze":       {},
+	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
