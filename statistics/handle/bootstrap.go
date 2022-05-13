@@ -418,6 +418,14 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	}
 	cache.FreshMemUsage()
 	h.updateStatsCache(cache)
+	healthyChange := &statsHealthyChange{}
+	statsCache := h.statsCache.Load().(statsCache)
+	for _, tbl := range statsCache.Values() {
+		if healthy, ok := tbl.GetStatsHealthy(); ok {
+			healthyChange.add(healthy)
+		}
+	}
+	healthyChange.apply()
 	return nil
 }
 
