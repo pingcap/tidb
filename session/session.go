@@ -1793,6 +1793,40 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if !ok {
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
+<<<<<<< HEAD
+=======
+
+	var is infoschema.InfoSchema
+	var snapshotTS uint64
+	replicaReadScope := oracle.GlobalTxnScope
+
+	staleReadProcessor := staleread.NewStaleReadProcessor(s)
+	if err = staleReadProcessor.OnExecutePreparedStmt(preparedStmt.SnapshotTSEvaluator); err != nil {
+		return nil, err
+	}
+
+	txnManager := sessiontxn.GetTxnManager(s)
+	if staleReadProcessor.IsStaleness() {
+		snapshotTS = staleReadProcessor.GetStalenessReadTS()
+		is = staleReadProcessor.GetStalenessInfoSchema()
+		replicaReadScope = config.GetTxnScopeFromConfig()
+		err = txnManager.EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+			Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
+			Provider: staleread.NewStalenessTxnContextProvider(s, snapshotTS, is),
+		})
+
+		if err != nil {
+			return nil, err
+		}
+	} else if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
+		is = domain.GetDomain(s).InfoSchema()
+		is = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
+	} else {
+		is = s.GetInfoSchema().(infoschema.InfoSchema)
+	}
+
+	staleness := snapshotTS > 0
+>>>>>>> 0703a64f7... planner: plan cache always check scheme valid in RC isolation level (#34523)
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
 	if err != nil {

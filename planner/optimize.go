@@ -76,6 +76,46 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return ast.IsReadOnly(node)
 }
 
+<<<<<<< HEAD
+=======
+// GetExecuteForUpdateReadIS is used to check whether the statement is `execute` and target statement has a forUpdateRead flag.
+// If so, we will return the latest information schema.
+func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema {
+	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+		vars := sctx.GetSessionVars()
+		execID := execStmt.ExecID
+		if execStmt.Name != "" {
+			execID = vars.PreparedStmtNameToID[execStmt.Name]
+		}
+		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+			checkSchema := vars.IsIsolation(ast.ReadCommitted)
+			if !checkSchema {
+				preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
+				checkSchema = ok && preparedObj.ForUpdateRead
+			}
+			if checkSchema {
+				is := domain.GetDomain(sctx).InfoSchema()
+				return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
+			}
+		}
+	}
+	return nil
+}
+
+func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
+	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	if !useBinding || stmtNode == nil {
+		return nil, "", false
+	}
+	var err error
+	bindRecord, scope, err = getBindRecord(sctx, stmtNode)
+	if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
+		return nil, "", false
+	}
+	return bindRecord, scope, true
+}
+
+>>>>>>> 0703a64f7... planner: plan cache always check scheme valid in RC isolation level (#34523)
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
