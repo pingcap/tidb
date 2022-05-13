@@ -35,12 +35,50 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk1 := testkit.NewTestKitWithSession(t, store, se)
+	tk1.MustExec("drop database if exists ps_text")
+	defer tk1.MustExec("drop database if exists ps_text")
+	tk1.MustExec("create database ps_text")
+	tk1.MustExec("use ps_text")
+
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
+	require.NoError(t, err)
+	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*core.CachedPrepareStmt).PreparedAst.UseCache = false
+
+	ctx := context.Background()
+	// first time plan generated
+	_, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	require.NoError(t, err)
+
+	// using the generated plan but with different params
+	_, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(nil)})
+	require.NoError(t, err)
+}
 
 func TestPreparePointGetWithDML(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -2766,4 +2804,51 @@ func TestCachedTable(t *testing.T) {
 	tk.MustQuery("execute pointGet using @a").Check(testkit.Rows("1"))
 	require.True(t, lastReadFromCache(tk))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int primary key, c int, index ic (c))")
+	// prepare text protocol
+	tk1.MustExec("prepare s from 'select /*+use_index(t1, ic)*/ * from t1 where 1'")
+	// prepare binary protocol
+	stmtID, _, _, err := tk2.Session().PrepareStmt("select /*+use_index(t1, ic)*/ * from t1 where 1")
+	require.Nil(t, err)
+	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk2.MustExec("begin pessimistic")
+	tk1.MustQuery("execute s").Check(testkit.Rows())
+	rs, err := tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+	tk3.MustExec("alter table t1 drop index ic")
+	tk3.MustExec("insert into t1 values(1, 0)")
+
+	// The execution after schema changed should not hit plan cache.
+	// execute text protocol
+	tk1.MustQuery("execute s").Check(testkit.Rows("1 0"))
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// execute binary protocol
+	rs, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 0"))
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
