@@ -44,7 +44,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	if join.JoinType != RightOuterJoin {
 		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes := extractJoinGroup(join.children[0])
 		noExpand := false
-		// If the filters of the outer join is related with multiple leaves of the outer join. We don't reorder it for now.
+		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == LeftOuterJoin {
 			extractedCols := make([]*expression.Column, 0, 8)
 			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
