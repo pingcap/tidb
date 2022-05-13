@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/metrics"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -320,7 +320,6 @@ func updateConcurrencyDDLJob(sctx *session, job *model.Job, updateRawArgs bool) 
 	if err != nil {
 		return err
 	}
-	log.Warn("update ddl job", zap.String("job", job.String()))
 	sql := fmt.Sprintf(updateConcurrencyDDLJobSQL, b, job.ID)
 	_, err = sctx.execute(context.Background(), sql)
 	if err != nil {
