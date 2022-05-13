@@ -4,8 +4,13 @@ package conn
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -259,4 +264,132 @@ func TestGetConnOnCanceledContext(t *testing.T) {
 	_, err = mgr.ResetBackupClient(ctx, 42)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "context canceled")
+}
+
+func TestGetMergeRegionSizeAndCount(t *testing.T) {
+	cases := []struct {
+		stores          []*metapb.Store
+		content         []string
+		regionSplitSize uint64
+		regionSplitKeys uint64
+	}{
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tiflash",
+						},
+					},
+				},
+			},
+			content: []string{""},
+			// no tikv detected in this case
+			regionSplitSize: DefaultMergeRegionSizeBytes,
+			regionSplitKeys: DefaultMergeRegionKeyCount,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 1, \"region-split-size\": \"1MiB\"}}",
+			},
+			// one tikv detected in this case we are not update default size and keys because they are too small.
+			regionSplitSize: 1 * units.MiB,
+			regionSplitKeys: 1,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}}",
+			},
+			// one tikv detected in this case and we update with new size and keys.
+			regionSplitSize: 1 * units.GiB,
+			regionSplitKeys: 10000000,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+				{
+					Id:    2,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 12000000, \"region-split-size\": \"900MiB\"}}",
+			},
+			// two tikv detected in this case and we choose the small one.
+			regionSplitSize: 900 * units.MiB,
+			regionSplitKeys: 12000000,
+		},
+	}
+
+	ctx := context.Background()
+	for _, ca := range cases {
+		pdCli := utils.FakePDClient{Stores: ca.stores}
+		require.Equal(t, len(ca.content), len(ca.stores))
+		count := 0
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch strings.TrimSpace(r.URL.Path) {
+			case "/config":
+				_, _ = fmt.Fprint(w, ca.content[count])
+			default:
+				http.NotFoundHandler().ServeHTTP(w, r)
+			}
+			count++
+		}))
+
+		for _, s := range ca.stores {
+			s.StatusAddress = mockServer.URL
+		}
+
+		httpCli := mockServer.Client()
+		mgr := &Mgr{PdController: &pdutil.PdController{}}
+		mgr.PdController.SetPDClient(pdCli)
+		rs, rk, err := mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
+		require.NoError(t, err)
+		require.Equal(t, ca.regionSplitSize, rs)
+		require.Equal(t, ca.regionSplitKeys, rk)
+		mockServer.Close()
+	}
 }
