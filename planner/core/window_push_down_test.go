@@ -87,7 +87,6 @@ func TestWindowFunctionDescCanPushDown(t *testing.T) {
 	testWithData(t, tk, input, output)
 }
 
-
 func TestWindowPushDownPlans(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
