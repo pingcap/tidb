@@ -108,7 +108,7 @@ type TxnContextProvider interface {
 	OnStmtStart(ctx context.Context) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
-	// OnStmtRetry is the hook that should be called when a statement retry
+	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
 }
 
