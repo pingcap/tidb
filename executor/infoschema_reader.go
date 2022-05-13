@@ -682,12 +682,21 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 	var viewSchema *expression.Schema
 	var viewOutputNames types.NameSlice
 	if tbl.IsView() {
-		planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
-		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl)
-		if err != nil {
+		var viewLogicalPlan plannercore.Plan
+		// Build plan is not thread safe, there will be concurrency on sessionctx.
+		if err := runWithSystemSession(sctx, func(s sessionctx.Context) error {
+			planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
+			var err error
+			viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}); err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			return
 		}
+
 		viewSchema = viewLogicalPlan.Schema()
 		viewOutputNames = viewLogicalPlan.OutputNames()
 	}
