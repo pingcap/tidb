@@ -659,7 +659,7 @@ func TestSettersandGetters(t *testing.T) {
 			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
 				TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
 				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
-				TiDBEnableTelemetry, TiDBEnablePointGetCache:
+				TiDBEnableTelemetry, TiDBEnablePointGetCache, TiDBEnableAutoAnalyze:
 				continue
 			}
 			require.Nil(t, sv.SetSession)
