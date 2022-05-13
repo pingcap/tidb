@@ -16,11 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
-	"math"
-	"sort"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -42,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"math"
+	"sort"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -287,9 +284,6 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	planCounter := PlanCounterTp(sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
 		planCounter = -1
-	}
-	if strings.HasPrefix(sctx.GetSessionVars().StmtCtx.OriginalSQL, "select a") {
-		fmt.Println(1)
 	}
 	physical, cost, err := physicalOptimize(logic, &planCounter)
 	if err != nil {
