@@ -4,9 +4,11 @@ package task
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -71,6 +73,18 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	defer mgr.Close()
 
+	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
+	mergeRegionCount := cfg.MergeSmallRegionKeyCount
+	if mergeRegionSize == conn.DefaultMergeRegionSizeBytes &&
+		mergeRegionCount == conn.DefaultMergeRegionKeyCount {
+		// according to https://github.com/pingcap/tidb/issues/34167.
+		// we should get the real config from tikv to adapt the dynamic region.
+		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, http.DefaultClient)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	// sometimes we have pooled the connections.
 	// sending heartbeats in idle times is useful.
@@ -116,7 +130,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	summary.CollectInt("restore files", len(files))
 
 	ranges, _, err := restore.MergeFileRanges(
-		files, cfg.MergeSmallRegionKeyCount, cfg.MergeSmallRegionKeyCount)
+		files, mergeRegionSize, mergeRegionCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
