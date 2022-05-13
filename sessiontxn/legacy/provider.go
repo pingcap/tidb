@@ -133,13 +133,15 @@ func (p *SimpleTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.Stm
 	switch point {
 	case sessiontxn.StmtErrAfterQuery:
 		return p.handleAfterQueryError(err)
-	case sessiontxn.StmtErrAfterLock:
-		return p.handleAfterLockError(err)
+	case sessiontxn.StmtErrAfterPessimisticLock:
+		return p.handleAfterPessimisticLockError(err)
 	default:
 		return sessiontxn.NoIdea()
 	}
 }
 
+// handleAfterQueryError will be called when the handle point is `StmtErrAfterQuery`.
+// At this point the query will be retried from the beginning.
 func (p *SimpleTxnContextProvider) handleAfterQueryError(queryErr error) (sessiontxn.StmtErrorAction, error) {
 	if p.Sctx.GetSessionVars().IsRcCheckTsRetryable(queryErr) {
 		logutil.Logger(p.Ctx).Info("RC read with ts checking has failed, retry RC read",
@@ -149,7 +151,7 @@ func (p *SimpleTxnContextProvider) handleAfterQueryError(queryErr error) (sessio
 	return sessiontxn.NoIdea()
 }
 
-func (p *SimpleTxnContextProvider) handleAfterLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
+func (p *SimpleTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
 	sessVars := p.Sctx.GetSessionVars()
 	if sessVars.IsIsolation(ast.Serializable) {
 		return sessiontxn.ErrorAction(lockErr)

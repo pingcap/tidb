@@ -774,7 +774,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		}
 	}()
 
-	action, err := sessiontxn.GetTxnManager(a.Ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterLock, lockErr)
+	action, err := sessiontxn.GetTxnManager(a.Ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	if err != nil {
 		return nil, err
 	}

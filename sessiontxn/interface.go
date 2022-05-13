@@ -61,8 +61,8 @@ type StmtErrorHandlePoint int
 const (
 	// StmtErrAfterQuery means we are handling an error after the query failed
 	StmtErrAfterQuery StmtErrorHandlePoint = iota
-	// StmtErrAfterLock means we are handling an error after lock failed.
-	StmtErrAfterLock
+	// StmtErrAfterPessimisticLock means we are handling an error after pessimistic lock failed.
+	StmtErrAfterPessimisticLock
 )
 
 // StmtErrorAction is the next action advice when an error occurs when executing a statement
@@ -73,8 +73,8 @@ const (
 	StmtActionError StmtErrorAction = iota
 	// StmtActionRetryReady means the error is caused by this component, and it is ready for retry.
 	StmtActionRetryReady
-	// StmtActionNoIdea means the error is not caused by this component,
-	// and whether retry or not should be determined by other components.
+	// StmtActionNoIdea means the error is not caused by this component, and whether retry or not should be determined by other components.
+	// If the user do not know whether to retry or not, it is advised to return the original error.
 	StmtActionNoIdea
 )
 
