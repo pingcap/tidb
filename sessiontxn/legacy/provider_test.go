@@ -46,7 +46,7 @@ func TestErrorHandle(t *testing.T) {
 
 	// StmtErrAfterLock: ErrWriteConflict should retry and update forUpdateTS
 	lockErr = kv.ErrWriteConflict
-	action, err := provider.OnStmtError(sessiontxn.StmtErrAfterLock, lockErr)
+	action, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterLock, lockErr)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, action)
 	require.Nil(t, err)
 	expectedForUpdateTS += 1
@@ -54,14 +54,14 @@ func TestErrorHandle(t *testing.T) {
 
 	// StmtErrAfterLock: DeadLock that is not retryable will just return an error
 	lockErr = newDeadLockError(false)
-	action, err = provider.OnStmtError(sessiontxn.StmtErrAfterLock, lockErr)
+	action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterLock, lockErr)
 	require.Equal(t, sessiontxn.StmtActionError, action)
 	require.Equal(t, lockErr, err)
 	require.Equal(t, expectedForUpdateTS, getForUpdateTS(t, provider))
 
 	// StmtErrAfterLock: DeadLock that is retryable should retry and update forUpdateTS
 	lockErr = newDeadLockError(true)
-	action, err = provider.OnStmtError(sessiontxn.StmtErrAfterLock, lockErr)
+	action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterLock, lockErr)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, action)
 	require.Nil(t, err)
 	expectedForUpdateTS += 1
@@ -69,7 +69,7 @@ func TestErrorHandle(t *testing.T) {
 
 	// StmtErrAfterLock: other errors should only update forUpdateTS but not retry
 	lockErr = errors.New("other error")
-	action, err = provider.OnStmtError(sessiontxn.StmtErrAfterLock, lockErr)
+	action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterLock, lockErr)
 	require.Equal(t, sessiontxn.StmtActionError, action)
 	require.Equal(t, lockErr, err)
 	expectedForUpdateTS += 1
@@ -77,7 +77,7 @@ func TestErrorHandle(t *testing.T) {
 
 	// StmtErrAfterQuery: ErrWriteConflict should not retry when not RC read
 	lockErr = kv.ErrWriteConflict
-	action, err = provider.OnStmtError(sessiontxn.StmtErrAfterQuery, lockErr)
+	action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, lockErr)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, action)
 	require.Nil(t, err)
 
@@ -89,7 +89,7 @@ func TestErrorHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, executor.ResetContextOfStmt(tk.Session(), stmts[0]))
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	action, err = provider.OnStmtError(sessiontxn.StmtErrAfterQuery, lockErr)
+	action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, lockErr)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, action)
 	require.Nil(t, err)
 }

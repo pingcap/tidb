@@ -90,8 +90,8 @@ func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
 	return nil
 }
 
-// OnStmtError is the hook that should be called when a new statement get an error
-func (p *StalenessTxnContextProvider) OnStmtError(_ sessiontxn.StmtErrorHandlePoint, _ error) (sessiontxn.StmtErrorAction, error) {
+// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.StmtErrorHandlePoint, _ error) (sessiontxn.StmtErrorAction, error) {
 	return sessiontxn.NoIdea()
 }
 

@@ -97,12 +97,12 @@ func (m *txnManager) OnStmtStart(ctx context.Context) error {
 	return m.ctxProvider.OnStmtStart(ctx)
 }
 
-// OnStmtError is the hook that should be called when a new statement get an error
-func (m *txnManager) OnStmtError(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	if m.ctxProvider == nil {
 		return sessiontxn.NoIdea()
 	}
-	return m.ctxProvider.OnStmtError(point, err)
+	return m.ctxProvider.OnStmtErrorForNextAction(point, err)
 }
 
 // OnStmtRetry is the hook that should be called when a statement retry

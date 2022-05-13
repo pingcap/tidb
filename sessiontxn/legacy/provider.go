@@ -126,8 +126,8 @@ func (p *SimpleTxnContextProvider) OnStmtStart(ctx context.Context) error {
 	return nil
 }
 
-// OnStmtError is the hook that should be called when a new statement get an error
-func (p *SimpleTxnContextProvider) OnStmtError(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+func (p *SimpleTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
 	case sessiontxn.StmtErrAfterQuery:
 		return p.handleAfterQueryError(err)

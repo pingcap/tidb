@@ -106,8 +106,8 @@ type TxnContextProvider interface {
 	OnInitialize(ctx context.Context, enterNewTxnType EnterNewTxnType) error
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
-	// OnStmtError is the hook that should be called when a new statement get an error
-	OnStmtError(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
+	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
 }
@@ -127,9 +127,11 @@ type TxnManager interface {
 	EnterNewTxn(ctx context.Context, req *EnterNewTxnRequest) error
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
-	// OnStmtError is the hook that should be called when a new statement get an error
+	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+	// This method is not required to be called for every error in the statement,
+	// it is only required to be called for some errors handled in some specified points given by the parameter `point`.
 	// When the return error is not nil the return action is 'StmtActionError' and vice versa.
-	OnStmtError(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
+	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
 }

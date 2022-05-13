@@ -200,7 +200,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
 	if err != nil {
-		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtError(sessiontxn.StmtErrAfterQuery, err)
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
 		if txnErr != nil {
 			return txnErr
 		}
