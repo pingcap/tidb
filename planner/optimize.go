@@ -87,8 +87,19 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 			execID = vars.PreparedStmtNameToID[execStmt.Name]
 		}
 		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+<<<<<<< HEAD
 			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
 				return domain.GetDomain(sctx).InfoSchema()
+=======
+			checkSchema := vars.IsIsolation(ast.ReadCommitted)
+			if !checkSchema {
+				preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
+				checkSchema = ok && preparedObj.ForUpdateRead
+			}
+			if checkSchema {
+				is := domain.GetDomain(sctx).InfoSchema()
+				return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
+>>>>>>> 0703a64f7... planner: plan cache always check scheme valid in RC isolation level (#34523)
 			}
 		}
 	}
