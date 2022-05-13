@@ -24,6 +24,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -141,6 +142,9 @@ var (
 	// DeprecatedOptions indicates the config options existing in some other sections in config file.
 	// They should be moved to [instance] section.
 	DeprecatedOptions []InstanceConfigSection
+
+	// TikvConfigLock protects against concurrent tikv config refresh
+	TikvConfigLock sync.Mutex
 )
 
 // Config contains configuration options.
@@ -902,6 +906,8 @@ func GetGlobalConfig() *Config {
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
 	globalConf.Store(config)
+	TikvConfigLock.Lock()
+	defer TikvConfigLock.Unlock()
 	cfg := *config.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
 }
