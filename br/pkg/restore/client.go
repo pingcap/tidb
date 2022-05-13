@@ -1974,14 +1974,14 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 func (rc *Client) SaveSchemas(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
-	logMinTS uint64,
+	logStartTS uint64,
 	restoreTS uint64,
 ) error {
 	metaFileName := metautil.CreateMetaFileName(restoreTS)
 	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
-		m.StartVersion = logMinTS
+		m.StartVersion = logStartTS
 	})
 
 	schemas := sr.TidyOldSchemas()
