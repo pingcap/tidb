@@ -1,0 +1,33 @@
+[
+  {
+    "name": "TestStraightJoinHint",
+    "cases": [
+      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t2, t1, t3, t where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t3, t2, t1, t where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t3, t1, t, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ straight_join() */ * from t3 join t1 on t1.b=t3.b join t2 on t2.a=t1.a;",
+      "select /*+ straight_join() */ * from t3 join t2 on t2.b=t3.b join t1 on t2.a=t1.a;",
+      "select /*+ straight_join() */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ straight_join() */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from t1 join (t2 join t3 on t2.a=t3.a) on t1.a=t3.a;",
+      "select /*+ straight_join() */ * from t3 join (t1 join t2 on t1.a=t2.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from t2 join t1 on t1.a=t2.a join t3 on t2.b=t3.b;",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
+      "select /*+ straight_join() */ * from t2 join t3 on t3.a=t2.a join t1 on t2.a=t1.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t1.a=t4.a;",
+      "select /*+ straight_join() */ * from (t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t4.a;",
+      "select /*+ straight_join() */ * from (t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from ((select t3.a, t3.b from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join ((select t3.a, t3.b from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join ((select t3.a, t3.b from t1, t3, t2, t where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join ((select t3.a, t3.b from t3, t2, t1, t where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) on t1.a=t4.a;",
+      "select /*+ straight_join() */ * from ((select t3.a, t3.b from t1, t2, t, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t4.a;",
+      "select /*+ straight_join() */ * from ((select t3.a, t3.b from t2, t1, t, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from ((select t3.a, t3.b from t3, t2, t1, t where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;"
+    ]
+  }
+]

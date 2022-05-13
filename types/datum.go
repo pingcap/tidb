@@ -72,6 +72,10 @@ type Datum struct {
 	x         interface{} // x hold all other types.
 }
 
+// EmptyDatumSize is the size of empty datum.
+// 72 = 1 + 1 (byte) + 2 (uint16) + 4 (uint32) + 8 (int64) + 16 (string) + 24 ([]byte) + 16 (interface{})
+const EmptyDatumSize = int64(unsafe.Sizeof(Datum{}))
+
 // Clone create a deep copy of the Datum.
 func (d *Datum) Clone() *Datum {
 	ret := new(Datum)
@@ -1996,6 +2000,12 @@ func (d *Datum) ToMysqlJSON() (j json.BinaryJSON, err error) {
 	}
 	j = json.CreateBinary(in)
 	return
+}
+
+// MemUsage gets the memory usage of datum.
+func (d *Datum) MemUsage() (sum int64) {
+	// d.x is not considered now since MemUsage is now only used by analyze samples which is bytesDatum
+	return EmptyDatumSize + int64(cap(d.b)) + int64(len(d.collation))
 }
 
 func invalidConv(d *Datum, tp byte) (Datum, error) {
