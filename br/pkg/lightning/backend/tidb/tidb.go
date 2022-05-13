@@ -555,7 +555,8 @@ func (be *tidbBackend) buildStmt(tableName string, columnNames []string) *string
 }
 
 func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tableName string, batch bool) error {
-	for _, task := range stmtTasks {
+	for taskIdx := range stmtTasks {
+		task := &stmtTasks[taskIdx]
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
 			stmt := task.stmt
 			_, err := be.db.ExecContext(ctx, stmt)
@@ -584,7 +585,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 			// if user choose IgnoreOnDup, we are using INSERT IGNORE INTO which may generate a lot of warnings
 			// about duplicate key, in this case we don't log warnings.
 			if !be.sqlMode.HasStrictMode() && be.onDuplicate != config.IgnoreOnDup {
-				be.logSqlWarnings(ctx, &task, tableName)
+				be.logSqlWarnings(ctx, task, tableName)
 			}
 			// No error, continue the next stmtTask.
 			break
