@@ -130,9 +130,6 @@ type S3BackendOptions struct {
 
 // Apply apply s3 options on backuppb.S3.
 func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
-	if options.Region == "" {
-		options.Region = defaultRegion
-	}
 	if options.Endpoint != "" {
 		u, err := url.Parse(options.Endpoint)
 		if err != nil {
@@ -246,8 +243,12 @@ func NewS3Storage( // revive:disable-line:flag-parameter
 func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storage, error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
-		WithS3ForcePathStyle(qs.ForcePathStyle).
-		WithRegion(qs.Region)
+		WithS3ForcePathStyle(qs.ForcePathStyle)
+	if qs.Region == "" {
+		awsConfig.WithRegion(defaultRegion)
+	} else {
+		awsConfig.WithRegion(qs.Region)
+	}
 	request.WithRetryer(awsConfig, defaultS3Retryer())
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
@@ -301,16 +302,18 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	}
 
 	if qs.Region != region {
-		log.Warn("bucket region from input is not equal to bucket region from s3",
-			zap.String("input bucket region", qs.Region),
-			zap.String("real s3 bucket region", region))
+		if qs.Region != "" {
+			return nil, errors.Trace(fmt.Errorf("s3 bucket and region are not matched, bucket=%s, input region=%s, real region=%s",
+				qs.Bucket, qs.Region, region))
+		}
 
 		qs.Region = region
-		awsConfig.WithRegion(region)
-		c = s3.New(ses, awsConfig)
-	} else {
-		log.Info("succeed to get bucket region from s3", zap.String("bucket region", region))
+		if region != defaultRegion {
+			awsConfig.WithRegion(region)
+			c = s3.New(ses, awsConfig)
+		}
 	}
+	log.Info("succeed to get bucket region from s3", zap.String("bucket region", region))
 
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"

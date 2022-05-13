@@ -158,7 +158,7 @@ func TestApplyUpdate(t *testing.T) {
 				Endpoint: "",
 			},
 			s3: &backuppb.S3{
-				Region: "us-east-1",
+				Region: "",
 				Bucket: "bucket",
 				Prefix: "prefix",
 			},
@@ -180,7 +180,7 @@ func TestApplyUpdate(t *testing.T) {
 				Endpoint: "https://s3.us-west-2",
 			},
 			s3: &backuppb.S3{
-				Region:   "us-east-1",
+				Region:   "",
 				Endpoint: "https://s3.us-west-2",
 				Bucket:   "bucket",
 				Prefix:   "prefix",
@@ -192,7 +192,7 @@ func TestApplyUpdate(t *testing.T) {
 				Endpoint: "http://s3.us-west-2",
 			},
 			s3: &backuppb.S3{
-				Region:   "us-east-1",
+				Region:   "",
 				Endpoint: "http://s3.us-west-2",
 				Bucket:   "bucket",
 				Prefix:   "prefix",
@@ -330,7 +330,7 @@ func TestS3Storage(t *testing.T) {
 				Bucket:   "bucket",
 				Prefix:   "prefix",
 			},
-			errReturn:      false,
+			errReturn:      true,
 			sendCredential: true,
 		},
 		{
