@@ -203,9 +203,7 @@ type baseSingleGroupJoinOrderSolver struct {
 func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *tableHintInfo) (bool, []LogicalPlan) {
 	var leadingJoinGroup []LogicalPlan
 	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
-	for i := range curJoinGroup {
-		leftJoinGroup[i] = curJoinGroup[i]
-	}
+	copy(leftJoinGroup, curJoinGroup)
 	for _, hintTbl := range hintInfo.leadingJoinOrder {
 		for i, joinGroup := range leftJoinGroup {
 			tableAlias := extractTableAlias(joinGroup, joinGroup.SelectBlockOffset())
