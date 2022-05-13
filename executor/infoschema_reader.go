@@ -678,7 +678,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 }
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	var viewSchema *expression.Schema
 	var viewOutputNames types.NameSlice
 	if tbl.IsView() {
