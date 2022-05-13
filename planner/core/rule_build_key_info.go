@@ -226,8 +226,30 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
+<<<<<<< HEAD
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath {
+=======
+	var latestIndexes map[int64]*model.IndexInfo
+	var changed bool
+	var err error
+	check := ds.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+	check = check && ds.ctx.GetSessionVars().ConnectionID > 0
+	// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
+	if check {
+		latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
+		if err != nil {
+			return
+		}
+	}
+	for _, index := range ds.table.Meta().Indices {
+		if ds.isForUpdateRead && changed {
+			latestIndex, ok := latestIndexes[index.ID]
+			if !ok || latestIndex.State != model.StatePublic {
+				continue
+			}
+		} else if index.State != model.StatePublic {
+>>>>>>> 0703a64f7... planner: plan cache always check scheme valid in RC isolation level (#34523)
 			continue
 		}
 		if newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
