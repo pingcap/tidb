@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -200,7 +201,7 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull {
 		return 0, false, errUserLockWrongName.GenWithStackByArgs("NULL")
 	}
-	if lockName == "" || len(lockName) > 64 {
+	if lockName == "" || utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
 	}
 	maxTimeout := int64(variable.GetSysVar(variable.InnodbLockWaitTimeout).MaxValue)
@@ -223,7 +224,7 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	// Lock names are case insensitive. Because we can't rely on collations
 	// being enabled on the internal table, we have to lower it.
 	lockName = strings.ToLower(lockName)
-	if len(lockName) > 64 {
+	if utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("get_lock")
 	}
 	err = b.ctx.GetAdvisoryLock(lockName, timeout)
@@ -281,13 +282,13 @@ func (b *builtinReleaseLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull {
 		return 0, false, errUserLockWrongName.GenWithStackByArgs("NULL")
 	}
-	if lockName == "" || len(lockName) > 64 {
+	if lockName == "" || utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
 	}
 	// Lock names are case insensitive. Because we can't rely on collations
 	// being enabled on the internal table, we have to lower it.
 	lockName = strings.ToLower(lockName)
-	if len(lockName) > 64 {
+	if utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("release_lock")
 	}
 	released := int64(0)

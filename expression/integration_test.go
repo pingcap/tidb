@@ -326,6 +326,11 @@ func TestGetLock(t *testing.T) {
 	terr = errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
 
+	// len should be based on character length, not byte length
+	// accented a character = 66 bytes but only 33 chars
+	tk.MustQuery("SELECT get_lock(REPEAT(unhex('C3A4'), 33), 10)")
+	tk.MustQuery("SELECT release_lock(REPEAT(unhex('C3A4'), 33))")
+
 	// Floating point timeout.
 	tk.MustQuery("SELECT get_lock('nnn', 1.2)").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT release_lock('nnn')").Check(testkit.Rows("1"))
