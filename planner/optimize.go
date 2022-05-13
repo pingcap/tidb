@@ -89,7 +89,12 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 			execID = vars.PreparedStmtNameToID[execStmt.Name]
 		}
 		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+			checkSchema := vars.IsIsolation(ast.ReadCommitted)
+			if !checkSchema {
+				preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
+				checkSchema = ok && preparedObj.ForUpdateRead
+			}
+			if checkSchema {
 				is := domain.GetDomain(sctx).InfoSchema()
 				return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
 			}
