@@ -623,6 +623,10 @@ func TestSetVar(t *testing.T) {
 	result = tk.MustQuery("select @@global.max_allowed_packet;")
 	result.Check(testkit.Rows("1024"))
 
+	// test value of tidb_stats_cache_mem_quota
+	tk.MustQuery("select @@global.tidb_stats_cache_mem_quota").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_stats_cache_mem_quota = 200")
+	tk.MustQuery("select @@global.tidb_stats_cache_mem_quota").Check(testkit.Rows("200"))
 	// for read-only instance scoped system variables.
 	tk.MustGetErrCode("set @@global.plugin_load = ''", errno.ErrIncorrectGlobalLocalVar)
 	tk.MustGetErrCode("set @@global.plugin_dir = ''", errno.ErrIncorrectGlobalLocalVar)

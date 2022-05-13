@@ -151,9 +151,24 @@ error = '''
 failed to update PD
 '''
 
+["BR:PiTR:ErrInvalidTaskInfo"]
+error = '''
+task info is invalid
+'''
+
+["BR:PiTR:ErrMalformedMetadata"]
+error = '''
+malformed metadata
+'''
+
 ["BR:PiTR:ErrPiTRInvalidCDCLogFormat"]
 error = '''
 invalid cdc log format
+'''
+
+["BR:PiTR:ErrTaskNotFound"]
+error = '''
+task not found
 '''
 
 ["BR:Restore:ErrRestoreChecksumMismatch"]
@@ -224,6 +239,11 @@ failed to write and ingest
 ["BR:Restore:ErrUnsupportedSysTable"]
 error = '''
 the system table isn't supported for restoring yet
+'''
+
+["BR:Stream:ErrStreamLogTaskExist"]
+error = '''
+stream task already exists
 '''
 
 ["Lighting:Restore:ErrChecksumMismatch"]
@@ -1604,6 +1624,11 @@ Table '%-.192s' already exists
 ["meta:1146"]
 error = '''
 Table '%-.192s.%-.192s' doesn't exist
+'''
+
+["meta:1300"]
+error = '''
+Invalid %s character string: '%.64s'
 '''
 
 ["meta:8235"]
