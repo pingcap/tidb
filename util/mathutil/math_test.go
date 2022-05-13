@@ -71,3 +71,11 @@ func TestMaxMin(t *testing.T) {
 	require.Equal(t, "xy", Max("ab", "xy"))
 	require.Equal(t, "ab", Max("ab", "ab"))
 }
+
+func TestClamp(t *testing.T) {
+	require.Equal(t, 3, Clamp(100, 1, 3))
+	require.Equal(t, 2.0, Clamp(float64(2), 1.0, 3.0))
+	require.Equal(t, float32(1.0), Clamp(float32(0), 1.0, 3.0))
+	require.Equal(t, 1, Clamp(0, 1, 1))
+	require.Equal(t, 1, Clamp(100, 1, 1))
+}
