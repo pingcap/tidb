@@ -41,12 +41,12 @@
       "set @@tidb_enforce_mpp=1",
       "explain select *, row_number() over () from (select count(distinct empid) from employee) t",
       "explain select *, row_number() over () from (select count(empid) from employee group by deptid) t",
-      "explain select *, row_number() over (partition by deptid) from (select count(distinct empid) from employee) t",
-      "explain select *, row_number() over (partition by deptid) from (select count(empid) from employee group by deptid) t",
+      "explain select *, row_number() over (partition by a) from (select count(distinct empid) a from employee) t",
+      "explain select *, row_number() over (partition by deptid) from (select count(empid), deptid from employee group by deptid) t",
       "explain select count(distinct empid) from (select *, row_number() over () from employee) t",
       "explain select count(distinct empid) from (select *, row_number() over (partition by deptid) from employee) t",
-      "explain select count(empid) from (select *, row_number() a over () from employee) t group by a",
-      "explain select count(empid) from (select *, row_number() a over (partition by deptid) from employee) t group by a"
+      "explain select count(empid) from (select *, row_number() over () a from employee) t group by a",
+      "explain select count(empid) from (select *, row_number() over (partition by deptid) a from employee) t group by a"
     ]
   }
 ]

@@ -349,33 +349,99 @@
         "Warn": null
       },
       {
-        "SQL": "explain select *, row_number() over (partition by deptid) from (select count(distinct empid) from employee) t",
-        "Plan": null,
+        "SQL": "explain select *, row_number() over (partition by a) from (select count(distinct empid) a from employee) t",
+        "Plan": [
+          "TableReader_45 1.00 root  data:ExchangeSender_44",
+          "└─ExchangeSender_44 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_43 1.00 mpp[tiflash]  row_number()->Column#7 over(partition by Column#5 rows between current row and current row)",
+          "    └─Sort_20 1.00 mpp[tiflash]  Column#5",
+          "      └─ExchangeReceiver_19 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender_18 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#5, collate: binary]",
+          "          └─Projection_14 1.00 mpp[tiflash]  Column#5",
+          "            └─HashAgg_15 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#5",
+          "              └─ExchangeReceiver_17 1.00 mpp[tiflash]  ",
+          "                └─ExchangeSender_16 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "                  └─HashAgg_12 1.00 mpp[tiflash]  group by:test.employee.empid, ",
+          "                    └─TableFullScan_13 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
         "Warn": null
       },
       {
-        "SQL": "",
-        "Plan": null,
+        "SQL": "explain select *, row_number() over (partition by deptid) from (select count(empid), deptid from employee group by deptid) t",
+        "Plan": [
+          "TableReader_61 8000.00 root  data:ExchangeSender_60",
+          "└─ExchangeSender_60 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_59 8000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row)",
+          "    └─Sort_18 8000.00 mpp[tiflash]  test.employee.deptid",
+          "      └─Projection_17 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
+          "        └─HashAgg_12 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#5, funcs:firstrow(test.employee.deptid)->test.employee.deptid",
+          "          └─ExchangeReceiver_16 10000.00 mpp[tiflash]  ",
+          "            └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "              └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
         "Warn": null
       },
       {
-        "SQL": "",
-        "Plan": null,
+        "SQL": "explain select count(distinct empid) from (select *, row_number() over () from employee) t",
+        "Plan": [
+          "TableReader_35 1.00 root  data:ExchangeSender_34",
+          "└─ExchangeSender_34 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_33 1.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg_32 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#7",
+          "      └─Window_24 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
+          "        └─ExchangeReceiver_17 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─TableFullScan_15 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
         "Warn": null
       },
       {
-        "SQL": "",
-        "Plan": null,
+        "SQL": "explain select count(distinct empid) from (select *, row_number() over (partition by deptid) from employee) t",
+        "Plan": [
+          "TableReader_45 1.00 root  data:ExchangeSender_44",
+          "└─ExchangeSender_44 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_40 1.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg_41 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#7",
+          "      └─ExchangeReceiver_43 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender_42 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg_39 1.00 mpp[tiflash]  group by:test.employee.empid, ",
+          "            └─Window_27 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row)",
+          "              └─Sort_18 10000.00 mpp[tiflash]  test.employee.deptid",
+          "                └─ExchangeReceiver_17 10000.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "                    └─TableFullScan_15 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
         "Warn": null
       },
       {
-        "SQL": "",
-        "Plan": null,
+        "SQL": "explain select count(empid) from (select *, row_number() over () a from employee) t group by a",
+        "Plan": [
+          "TableReader_52 10000.00 root  data:ExchangeSender_51",
+          "└─ExchangeSender_51 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_46 10000.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg_44 10000.00 mpp[tiflash]  group by:Column#6, funcs:count(test.employee.empid)->Column#7",
+          "      └─Window_27 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
+          "        └─ExchangeReceiver_20 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─TableFullScan_18 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
         "Warn": null
       },
       {
-        "SQL": "",
-        "Plan": null,
+        "SQL": "explain select count(empid) from (select *, row_number() over (partition by deptid) a from employee) t group by a",
+        "Plan": [
+          "TableReader_54 10000.00 root  data:ExchangeSender_53",
+          "└─ExchangeSender_53 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_48 10000.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg_46 10000.00 mpp[tiflash]  group by:Column#6, funcs:count(test.employee.empid)->Column#7",
+          "      └─ExchangeReceiver_32 10000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender_31 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: binary]",
+          "          └─Window_30 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row)",
+          "            └─Sort_21 10000.00 mpp[tiflash]  test.employee.deptid",
+          "              └─ExchangeReceiver_20 10000.00 mpp[tiflash]  ",
+          "                └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "                  └─TableFullScan_18 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
         "Warn": null
       }
     ]
