@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -46,6 +47,11 @@ func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 }
 
 func TestNewCostInterfaceTiKV(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection"))
+	}()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -230,6 +236,11 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 }
 
 func TestNewCostInterfaceTiFlash(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection"))
+	}()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -398,6 +409,11 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 }
 
 func TestNewCostInterfaceRandGen(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection"))
+	}()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
