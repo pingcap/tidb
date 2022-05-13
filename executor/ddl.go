@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -614,7 +613,7 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 		return nil, nil, err
 	}
 	if job == nil {
-		return nil, nil, admin.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
+		return nil, nil, dbterror.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
 	}
 	if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
 		return nil, nil, errors.Errorf("Job %v type is %v, not dropped/truncated table", job.ID, job.Type)
@@ -693,7 +692,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	fn := func(jobs []*model.Job) (bool, error) {
 		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
 	}
-	err = admin.IterHistoryDDLJobs(txn, fn)
+	err = ddl.IterHistoryDDLJobs(txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			return nil, nil, errors.Errorf("Can't find dropped/truncated table '%s' in GC safe point %s", tableName.Name.O, model.TSConvert2Time(gcSafePoint).String())

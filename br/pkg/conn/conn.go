@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
@@ -445,4 +446,14 @@ func (mgr *Mgr) Close() {
 	}
 
 	mgr.PdController.Close()
+}
+
+// GetTS gets current ts from pd.
+func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
+	p, l, err := mgr.GetPDClient().GetTS(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return oracle.ComposeTS(p, l), nil
 }
