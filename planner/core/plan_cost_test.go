@@ -72,9 +72,9 @@ func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 }
 
 func TestNewCostInterfaceTiKV(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
 	}()
 
 	store, clean := testkit.CreateMockStore(t)
@@ -261,9 +261,9 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 }
 
 func TestNewCostInterfaceTiFlash(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
 	}()
 
 	store, clean := testkit.CreateMockStore(t)
@@ -449,9 +449,9 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 }
 
 func TestNewCostInterfaceRandGen(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableEliminatingPhysicalProjection"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
 	}()
 
 	store, clean := testkit.CreateMockStore(t)
