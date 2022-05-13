@@ -253,9 +253,6 @@ type Config struct {
 
 	// EnableBatchDML, unused since bootstrap v90
 	EnableBatchDML bool `toml:"enable-batch-dml" json:"enable-batch-dml"`
-
-	// RunAutoAnalyze, unused since bootstrap v92
-	RunAutoAnalyze bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -614,6 +611,12 @@ type Performance struct {
 	StatsLoadConcurrency     uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
 	StatsLoadQueueSize       uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 	EnableStatsCacheMemQuota bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// RunAutoAnalyze, unused since bootstrap v91
+	RunAutoAnalyze bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // PlanCache is the PlanCache section of the config.
