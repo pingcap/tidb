@@ -27,7 +27,7 @@ import (
 )
 
 func TestNonTransactionalDeleteSharding(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -69,7 +69,7 @@ func TestNonTransactionalDeleteSharding(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteDryRun(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -88,7 +88,7 @@ func TestNonTransactionalDeleteDryRun(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteErrorMessage(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -123,7 +123,7 @@ func TestNonTransactionalDeleteErrorMessage(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteSplitOnTiDBRowID(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -137,7 +137,7 @@ func TestNonTransactionalDeleteSplitOnTiDBRowID(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteNull(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -160,7 +160,7 @@ func TestNonTransactionalDeleteNull(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteSmallBatch(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=1024")
@@ -176,7 +176,7 @@ func TestNonTransactionalDeleteSmallBatch(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteShardOnGeneratedColumn(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -190,7 +190,7 @@ func TestNonTransactionalDeleteShardOnGeneratedColumn(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteAutoDetectShardColumn(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -228,7 +228,7 @@ func TestNonTransactionalDeleteAutoDetectShardColumn(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteInvisibleIndex(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -248,7 +248,7 @@ func TestNonTransactionalDeleteInvisibleIndex(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteIgnoreSelectLimit(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -263,7 +263,7 @@ func TestNonTransactionalDeleteIgnoreSelectLimit(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteReadStaleness(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
@@ -279,7 +279,7 @@ func TestNonTransactionalDeleteReadStaleness(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteCheckConstraint(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
@@ -347,7 +347,7 @@ func TestNonTransactionalDeleteCheckConstraint(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteOptimizerHints(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -360,7 +360,7 @@ func TestNonTransactionalDeleteOptimizerHints(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteMultiTables(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
@@ -379,7 +379,7 @@ func TestNonTransactionalDeleteMultiTables(t *testing.T) {
 }
 
 func TestNonTransactionalDeleteAlias(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
@@ -422,7 +422,7 @@ func TestNonTransactionalDeleteAlias(t *testing.T) {
 
 func TestNonTransactionalDeleteShardOnUnsupportedTypes(t *testing.T) {
 	// When some day the test fail because such types are supported, we can update related docs and consider remove the test.
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
