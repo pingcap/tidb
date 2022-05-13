@@ -2175,7 +2175,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
-	if !prop.IsEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
+	if !prop.IsSortItemEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
 		la.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Parallel Apply rejects the possible order properties of its outer child currently"))
 		return nil, true, nil
 	}
@@ -2227,7 +2227,7 @@ func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
 	for _, item := range lw.PartitionBy {
 		partitionByCols = append(partitionByCols, &property.MPPPartitionColumn{
 			Col:       item.Col,
-			CollateID: property.GetCollateIDByNameForPartition(item.Col.GetType().Collate),
+			CollateID: property.GetCollateIDByNameForPartition(item.Col.GetType().GetCollate()),
 		})
 	}
 
