@@ -1579,7 +1579,10 @@
         ],
         "Warning": [
           "Scalar function 'intdiv'(signature: IntDivideInt, return type: bigint(20)) is not supported to push down to storage layer now.",
-          "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
+          "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable",
+          "Scalar function 'intdiv'(signature: IntDivideInt, return type: bigint(20)) is not supported to push down to tikv now.",
+          "Scalar function 'intdiv'(signature: IntDivideInt, return type: bigint(20)) is not supported to push down to tikv now.",
+          "Scalar function 'intdiv'(signature: IntDivideInt, return type: bigint(20)) is not supported to push down to tikv now."
         ]
       },
       {

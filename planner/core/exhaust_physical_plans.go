@@ -2738,19 +2738,21 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	newProps := make([]*property.PhysicalProperty, 0, 3)
 	childProp := prop.CloneEssentialFields()
 	newProps = append(newProps, childProp)
-	if p.canPushToCop(kv.TiFlash) &&
+
+	if prop.TaskTp != property.MppTaskType && !expression.ContainVirtualColumn(p.Conditions) && p.SCtx().GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) &&
 		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Conditions, p.SCtx().GetClient(), kv.TiFlash) {
-		if prop.TaskTp != property.CopSingleReadTaskType {
-			childPropMpp := prop.CloneEssentialFields()
-			childPropMpp.TaskTp = property.CopSingleReadTaskType
-			newProps = append(newProps, childPropMpp)
-		}
-		if prop.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPAllowed() {
-			childPropMpp := prop.CloneEssentialFields()
-			childPropMpp.TaskTp = property.MppTaskType
-			newProps = append(newProps, childPropMpp)
-		}
+		childPropMpp := prop.CloneEssentialFields()
+		childPropMpp.TaskTp = property.MppTaskType
+		newProps = append(newProps, childPropMpp)
 	}
+	// push down to TiKV or cop TiFlash
+	if prop.TaskTp != property.CopSingleReadTaskType && !expression.ContainVirtualColumn(p.Conditions) && (p.canPushToCop(kv.TiKV) && expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Conditions, p.SCtx().GetClient(), kv.TiKV) ||
+		!p.SCtx().GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) && expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Conditions, p.SCtx().GetClient(), kv.TiFlash)) {
+		childPropMpp := prop.CloneEssentialFields()
+		childPropMpp.TaskTp = property.CopSingleReadTaskType
+		newProps = append(newProps, childPropMpp)
+	}
+
 	ret := make([]PhysicalPlan, 0, len(newProps))
 	for _, newProp := range newProps {
 		sel := PhysicalSelection{
