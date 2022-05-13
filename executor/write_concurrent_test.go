@@ -19,7 +19,6 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit"
 )
 
@@ -35,10 +34,8 @@ func TestBatchInsertWithOnDuplicate(t *testing.T) {
 	tk.MustExec(ctx, "create table duplicate_test(id int auto_increment, k1 int, primary key(id), unique key uk(k1))")
 	tk.MustExec(ctx, "insert into duplicate_test(k1) values(?),(?),(?),(?),(?)", permInt(5)...)
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableBatchDML = true
-	})
+	tk.MustExec(ctx, "SET GLOBAL tidb_enable_batch_dml = 1")
+	defer tk.MustExec(ctx, "SET GLOBAL tidb_enable_batch_dml = 0")
 
 	tk.ConcurrentRun(
 		3,
