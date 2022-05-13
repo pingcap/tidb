@@ -91,6 +91,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BackfillTotalCounter)
 	prometheus.MustRegister(BackfillProgressGauge)
 	prometheus.MustRegister(DDLWorkerHistogram)
+	prometheus.MustRegister(DDLJobTableDuration)
+	prometheus.MustRegister(DDLRunningJobCount)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
 	prometheus.MustRegister(DistSQLCoprCacheHistogram)

@@ -1530,6 +1530,11 @@ func (s *session) reset() {
 }
 
 func (s *session) execute(ctx context.Context, query string) ([]chunk.Row, error) {
+	startTime := time.Now()
+	var err error
+	defer func() {
+		metrics.DDLJobTableDuration.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}()
 	rs, err := s.s.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
 	if err != nil {
 		return nil, errors.Trace(err)

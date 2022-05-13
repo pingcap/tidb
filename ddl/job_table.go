@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/metrics"
 	"sort"
 	"strconv"
 	"strings"
@@ -212,6 +213,7 @@ func (d *ddl) doGeneralDDLJobWorker(wk *worker, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
+		metrics.DDLRunningJobCount.WithLabelValues("general").Inc()
 		defer func() {
 			d.generalDDLWorkerPool.put(wk)
 			d.deleteRunningDDLJobMap(int(job.ID))
@@ -219,6 +221,7 @@ func (d *ddl) doGeneralDDLJobWorker(wk *worker, job *model.Job) {
 				asyncNotify(d.ddlJobDoneCh)
 			}
 			asyncNotify(d.ddlJobCh)
+			metrics.DDLRunningJobCount.WithLabelValues("general").Dec()
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
 		if err := wk.HandleDDLJob(d.ddlCtx, job); err != nil {
@@ -251,6 +254,7 @@ func (d *ddl) doReorgDDLJobWorker(wk *worker, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
+		metrics.DDLRunningJobCount.WithLabelValues("reorg").Inc()
 		defer func() {
 			d.reorgWorkerPool.put(wk)
 			d.deleteRunningDDLJobMap(int(job.ID))
@@ -258,6 +262,7 @@ func (d *ddl) doReorgDDLJobWorker(wk *worker, job *model.Job) {
 				asyncNotify(d.ddlJobDoneCh)
 			}
 			asyncNotify(d.ddlJobCh)
+			metrics.DDLRunningJobCount.WithLabelValues("reorg").Dec()
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
 		if err := wk.HandleDDLJob(d.ddlCtx, job); err != nil {
