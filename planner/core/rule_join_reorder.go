@@ -109,54 +109,6 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				return nil, err
 			}
 		}
-		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-			ctx:        ctx,
-			otherConds: otherConds,
-			eqEdges:    eqEdges,
-			joinTypes:  joinTypes,
-		}
-
-		joinGroupNum := len(curJoinGroup)
-		var leadingJoinGroup []LogicalPlan
-		if hintInfo != nil {
-			for _, hintTbl := range hintInfo.leadingJoinOrder {
-				for i, joinGroup := range curJoinGroup {
-					tableAlias := extractTableAlias(joinGroup, joinGroup.SelectBlockOffset())
-					if tableAlias == nil {
-						continue
-					}
-					if hintTbl.dbName.L == tableAlias.dbName.L && hintTbl.tblName.L == tableAlias.tblName.L && hintTbl.selectOffset == tableAlias.selectOffset {
-						leadingJoinGroup = append(leadingJoinGroup, joinGroup)
-						curJoinGroup = append(curJoinGroup[:i], curJoinGroup[i+1:]...)
-						break
-					}
-				}
-			}
-			var errMsg string
-			if len(leadingJoinGroup) != len(hintInfo.leadingJoinOrder) {
-				errMsg = "leading hint is inapplicable, check if the leading hint table is valid"
-			} else if joinGroupNum <= ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
-				errMsg = "leading hint is inapplicable for the DP join reorder algorithm"
-			}
-			if len(errMsg) > 0 {
-				curJoinGroup = append(curJoinGroup, leadingJoinGroup...)
-				leadingJoinGroup = nil
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
-			}
-			if leadingJoinGroup != nil {
-				leadingJoin := leadingJoinGroup[0]
-				leadingJoinGroup = leadingJoinGroup[1:]
-				for len(leadingJoinGroup) > 0 {
-					var usedEdges []*expression.ScalarFunction
-					var joinType JoinType
-					leadingJoin, leadingJoinGroup[0], usedEdges, joinType = baseGroupSolver.checkConnection(leadingJoin, leadingJoinGroup[0])
-					leadingJoin, baseGroupSolver.otherConds = baseGroupSolver.makeJoin(leadingJoin, leadingJoinGroup[0], usedEdges, joinType)
-					leadingJoinGroup = leadingJoinGroup[1:]
-				}
-				baseGroupSolver.leadingJoinGroup = leadingJoin
-			}
-		}
-
 		originalSchema := p.Schema()
 
 		// Not support outer join reorder when using the DP algorithm
@@ -167,7 +119,30 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				break
 			}
 		}
-		if joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP {
+
+		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
+			ctx:        ctx,
+			otherConds: otherConds,
+			eqEdges:    eqEdges,
+			joinTypes:  joinTypes,
+		}
+
+		joinGroupNum := len(curJoinGroup)
+		useGreedy := joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP
+		if hintInfo != nil && hintInfo.leadingJoinOrder != nil {
+			if useGreedy {
+				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, hintInfo)
+				if !ok {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check if the leading hint table is valid"))
+				} else {
+					curJoinGroup = leftJoinGroup
+				}
+			} else {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable for the DP join reorder algorithm"))
+			}
+		}
+
+		if useGreedy {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
@@ -223,6 +198,41 @@ type baseSingleGroupJoinOrderSolver struct {
 	eqEdges          []*expression.ScalarFunction
 	joinTypes        []JoinType
 	leadingJoinGroup LogicalPlan
+}
+
+func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *tableHintInfo) (bool, []LogicalPlan) {
+	var leadingJoinGroup []LogicalPlan
+	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
+	for i := range curJoinGroup {
+		leftJoinGroup[i] = curJoinGroup[i]
+	}
+	for _, hintTbl := range hintInfo.leadingJoinOrder {
+		for i, joinGroup := range leftJoinGroup {
+			tableAlias := extractTableAlias(joinGroup, joinGroup.SelectBlockOffset())
+			if tableAlias == nil {
+				continue
+			}
+			if hintTbl.dbName.L == tableAlias.dbName.L && hintTbl.tblName.L == tableAlias.tblName.L && hintTbl.selectOffset == tableAlias.selectOffset {
+				leadingJoinGroup = append(leadingJoinGroup, joinGroup)
+				leftJoinGroup = append(leftJoinGroup[:i], leftJoinGroup[i+1:]...)
+				break
+			}
+		}
+	}
+	if len(leadingJoinGroup) != len(hintInfo.leadingJoinOrder) || leadingJoinGroup == nil {
+		return false, nil
+	}
+	leadingJoin := leadingJoinGroup[0]
+	leadingJoinGroup = leadingJoinGroup[1:]
+	for len(leadingJoinGroup) > 0 {
+		var usedEdges []*expression.ScalarFunction
+		var joinType JoinType
+		leadingJoin, leadingJoinGroup[0], usedEdges, joinType = s.checkConnection(leadingJoin, leadingJoinGroup[0])
+		leadingJoin, s.otherConds = s.makeJoin(leadingJoin, leadingJoinGroup[0], usedEdges, joinType)
+		leadingJoinGroup = leadingJoinGroup[1:]
+	}
+	s.leadingJoinGroup = leadingJoin
+	return true, leftJoinGroup
 }
 
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.

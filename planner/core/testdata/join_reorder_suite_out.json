@@ -759,17 +759,17 @@
           "└─HashJoin 155937656.25 root  CARTESIAN inner join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
+          "  └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
           "    ├─TableReader(Build) 9990.00 root  data:Selection",
-          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
           "      ├─TableReader(Build) 9980.01 root  data:Selection",
           "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "      └─TableReader(Probe) 9990.00 root  data:Selection",
-          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": [
           "Warning 1815 There are no matching table names for (t4) in optimizer hint /*+ LEADING(t2, t3, t, t4) */. Maybe you can use the table alias name",
