@@ -124,11 +124,19 @@ func (ft *FieldType) DelFlag(flag uint) {
 }
 
 func (ft *FieldType) SetFlen(flen int) {
-	ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
+	if ft.tp == mysql.TypeNewDecimal {
+		ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
+	} else {
+		ft.flen = flen
+	}
 }
 
 func (ft *FieldType) SetDecimal(decimal int) {
-	ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
+	if ft.tp == mysql.TypeNewDecimal {
+		ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
+	} else {
+		ft.decimal = decimal
+	}
 }
 
 func (ft *FieldType) SetCharset(charset string) {
