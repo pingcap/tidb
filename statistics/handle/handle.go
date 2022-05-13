@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -545,12 +544,17 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
+	enableQuota := oldCache.EnableQuota()
+	newCost := newCache.Cost()
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
-		h.statsCache.memTracker.Consume(newCache.Cost() - oldCache.Cost())
+		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
 		h.statsCache.Store(newCache)
 		updated = true
 	}
 	h.statsCache.Unlock()
+	if updated && enableQuota {
+		costGauge.Set(float64(newCost))
+	}
 	return
 }
 
@@ -731,10 +735,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	col := table.Columns[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -765,7 +765,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			col = &statistics.Column{
 				PhysicalID: table.PhysicalID,
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				FMSketch:   fmSketch,
 				Info:       colInfo,
 				Count:      count + nullCount,
 				ErrorRate:  errorRate,
@@ -783,6 +782,12 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				return errors.Trace(err)
 			}
 			cms, topN, err := h.cmSketchAndTopNFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+			// we load all the statistics, i.e., loadAll is true. We don't need to read FMSketch from storage in notNeedLoad IF.
+			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2019,18 +2024,13 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) error {
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		return err
-	}
-	address := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.RestrictedSQLExecutor)
 	ctx := context.TODO()
 	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
-	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending, address, procID)
+	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending, instance, procID)
 	if err != nil {
 		return err
 	}

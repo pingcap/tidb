@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -94,8 +95,7 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 
 	// TODO: choose an appropriate quota.
 	// Use the mem-quota-query as a workaround. As a result, a NT-DML may consume 2x of the memory quota.
-	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, se.GetSessionVars().MemQuotaQuery)
-	memTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+	memTracker := setMemTracker(se)
 	defer memTracker.DetachFromGlobalTracker()
 	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumnInfo, memTracker)
 	if err != nil {
@@ -112,13 +112,32 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize, se.GetSessionVars().EnableRedactLog)
 }
 
+func setMemTracker(se Session) *memory.Tracker {
+	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, se.GetSessionVars().MemQuotaQuery)
+	globalConfig := config.GetGlobalConfig()
+	switch globalConfig.OOMAction {
+	case config.OOMActionCancel:
+		action := &memory.PanicOnExceed{ConnID: se.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		memTracker.SetActionOnExceed(action)
+	case config.OOMActionLog:
+		fallthrough
+	default:
+		action := &memory.LogOnExceed{ConnID: se.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		memTracker.SetActionOnExceed(action)
+	}
+	memTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+	return memTracker
+}
+
 func checkConstraint(stmt *ast.NonTransactionalDeleteStmt, se Session) error {
 	sessVars := se.GetSessionVars()
 	if !(sessVars.IsAutocommit() && !sessVars.InTxn()) {
 		return errors.Errorf("non-transactional DML can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
 			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
 	}
-	if config.GetGlobalConfig().EnableBatchDML && sessVars.DMLBatchSize > 0 && (sessVars.BatchDelete || sessVars.BatchInsert) {
+	if variable.EnableBatchDML.Load() && sessVars.DMLBatchSize > 0 && (sessVars.BatchDelete || sessVars.BatchInsert) {
 		return errors.Errorf("can't run non-transactional DML with batch-dml")
 	}
 
@@ -304,9 +323,9 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	rs, err := se.ExecuteStmt(ctx, options.stmt.DeleteStmt)
 
 	// collect errors
-	failpoint.Inject("splitDeleteError", func(val failpoint.Value) {
+	failpoint.Inject("batchDeleteError", func(val failpoint.Value) {
 		if val.(bool) {
-			err = errors.New("injected split delete error")
+			err = errors.New("injected batch delete error")
 		}
 	})
 	if err != nil {
