@@ -4488,7 +4488,9 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			changed       bool
 			err           error
 		)
-		if ds.isForUpdateRead {
+		check := ds.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+		check = check && ds.ctx.GetSessionVars().ConnectionID > 0
+		if check {
 			latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
 			if err != nil {
 				ds.fdSet = fds
