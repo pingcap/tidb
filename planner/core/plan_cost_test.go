@@ -633,7 +633,6 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 		`SELECT a, avg(b), avg(d) FROM t WHERE a > 23184 AND d is null GROUP BY a`,
 		`SELECT a, avg(b), avg(d) FROM t WHERE k in (41049, 61733, 74407) AND b is null GROUP BY a`,
 		`SELECT a, avg(b), avg(d) FROM t WHERE k>=29858 and k<=5339 AND b = 55985 GROUP BY a`,
-		`SELECT a, avg(b), count(d) FROM t WHERE a is null AND d > 50159 GROUP BY a`,
 		`SELECT a, avg(b), count(d) FROM t WHERE a > 77364 AND d in (37426, 16633, 79522) GROUP BY a`,
 		`SELECT a, avg(b), count(d) FROM t WHERE a < 69545 AND d>=4791 and d<=3019 GROUP BY a`,
 		`SELECT a, avg(b), count(d) FROM t WHERE k = 53006 AND b > 25003 GROUP BY a`,
