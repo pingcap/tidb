@@ -277,6 +277,7 @@ func TestGetGlobalResolvedTS(t *testing.T) {
 	err = fakeMetaFiles(ctx, tmpdir, stores)
 	require.Nil(t, err)
 	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
+	require.Nil(t, err)
 	require.Equal(t, uint64(100), globalResolvedTS)
 }
 
@@ -308,5 +309,6 @@ func TestGetGlobalResolvedTS2(t *testing.T) {
 	err = fakeMetaFiles(ctx, tmpdir, stores)
 	require.Nil(t, err)
 	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
+	require.Nil(t, err)
 	require.Equal(t, uint64(98), globalResolvedTS)
 }
