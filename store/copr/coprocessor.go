@@ -300,7 +300,7 @@ type copIterator struct {
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
-	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
+	// when the Close is called. we use atomic.CompareAndSwap `closed` to make sure the channel is not closed twice.
 	closed uint32
 
 	resolvedLocks  util.TSSet
