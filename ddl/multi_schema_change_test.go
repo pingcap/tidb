@@ -1048,6 +1048,18 @@ func TestMultiSchemaChangeTableOption(t *testing.T) {
 		Check(testkit.Rows("SHARD_BITS=3 abc utf8mb4_bin"))
 }
 
+func TestMultiSchemaChangeNonPublicDefaultValue(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
+	tk.MustExec("create table t (a tinyint);")
+	tk.MustExec("insert into t set a = 10;")
+	tk.MustExec("alter table t add column b int not null, change column a c char(5) first;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("10 0"))
+}
+
 func composeHooks(dom *domain.Domain, cbs ...ddl.Callback) ddl.Callback {
 	return &ddl.TestDDLCallback{
 		Do: dom,
