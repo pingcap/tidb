@@ -75,13 +75,13 @@ func TestErrorHandle(t *testing.T) {
 	expectedForUpdateTS += 1
 	require.Equal(t, expectedForUpdateTS, getForUpdateTS(t, provider))
 
-	// StmtErrAfterQuery: ErrWriteConflict should not retry when not RC read
+	// StmtErrAfterQuery: ErrWriteConflict should not retry when not RCCheckTS read
 	lockErr = kv.ErrWriteConflict
 	action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, lockErr)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, action)
 	require.Nil(t, err)
 
-	// StmtErrAfterQuery: ErrWriteConflict should retry when RC read
+	// StmtErrAfterQuery: ErrWriteConflict should retry when RCCheckTS read
 	tk.MustExec("set @@tidb_rc_read_check_ts=1")
 	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
 	provider = newSimpleProvider(tk, do)
