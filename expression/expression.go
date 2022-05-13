@@ -1024,13 +1024,6 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	return false
 }
 
-func isValidTiFlashDecimalType(tp *types.FieldType) bool {
-	if tp.GetType() != mysql.TypeNewDecimal {
-		return false
-	}
-	return tp.GetFlen() > 0 && tp.GetFlen() <= 65 && tp.GetDecimal() >= 0 && tp.GetDecimal() <= 30 && tp.GetFlen() >= tp.GetDecimal()
-}
-
 func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
 	switch scalarFunc.FuncName.L {
 	case ast.Cast:
@@ -1101,7 +1094,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return sourceType.GetType() == retType.GetType() || retType.GetType() == mysql.TypeDouble
 		case tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastTimeAsDecimal,
 			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
-			return isValidTiFlashDecimalType(function.RetType)
+			return function.RetType.IsDecimalValid()
 		case tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastTimeAsString,
 			tipb.ScalarFuncSig_CastStringAsString /*, tipb.ScalarFuncSig_CastDurationAsString, tipb.ScalarFuncSig_CastJsonAsString*/ :
 			return true
