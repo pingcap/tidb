@@ -960,3 +960,29 @@ func TestTiDBQueryLogMaxLen(t *testing.T) {
 	require.Equal(t, val, fmt.Sprintf("%d", expected))
 	require.NoError(t, err)
 }
+
+func TestTiDBCommitterConcurrency(t *testing.T) {
+	sv := GetSysVar(TiDBCommitterConcurrency)
+	vars := NewSessionVars()
+
+	newVal := 1024
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, val, "1024")
+	require.NoError(t, err)
+
+	// out of range
+	newVal = 10001
+	expected := 10000
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 0
+	expected = 1
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+}
