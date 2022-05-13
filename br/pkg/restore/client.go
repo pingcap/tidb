@@ -1586,7 +1586,7 @@ func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) err
 	return nil
 }
 
-// FixIndicdesOfTables tries to fix the indices of the tables via `ADMIN RECOVERY INDEX`.
+// FixIndicesOfTables tries to fix the indices of the tables via `ADMIN RECOVERY INDEX`.
 func (rc *Client) FixIndicesOfTables(
 	ctx context.Context,
 	fullBackupTables map[int64]*metautil.Table,
@@ -1819,7 +1819,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	return nil
 }
 
-// RestoreMetaKVFiles tries to restore a file about meta kv-event from stream-backup.
+// RestoreMetaKVFile tries to restore a file about meta kv-event from stream-backup.
 func (rc *Client) RestoreMetaKVFile(
 	ctx context.Context,
 	file *backuppb.DataFileInfo,
@@ -1890,7 +1890,7 @@ func transferBoolToValue(enable bool) string {
 	return "OFF"
 }
 
-// GenGlobalIDs generates a global id by transaction way.
+// GenGlobalID generates a global id by transaction way.
 func (rc *Client) GenGlobalID(ctx context.Context) (int64, error) {
 	var id int64
 	storage := rc.GetDomain().Store()

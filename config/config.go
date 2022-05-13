@@ -161,7 +161,6 @@ type Config struct {
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
-	EnableBatchDML             bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	ServerVersion              string                  `toml:"server-version" json:"server-version"`
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
@@ -248,6 +247,12 @@ type Config struct {
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
+
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// EnableBatchDML, unused since bootstrap v90
+	EnableBatchDML bool `toml:"enable-batch-dml" json:"enable-batch-dml"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -930,6 +935,7 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.max-sql-length":        {},
 	"stmt-summary.refresh-interval":      {},
 	"stmt-summary.history-size":          {},
+	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
 	"mem-quota-query":                    {},
 	"query-log-max-len":                  {},
 }

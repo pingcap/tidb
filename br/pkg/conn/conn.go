@@ -5,11 +5,15 @@ package conn
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -38,6 +42,13 @@ import (
 )
 
 const (
+	// DefaultMergeRegionSizeBytes is the default region split size, 96MB.
+	// See https://github.com/tikv/tikv/blob/v4.0.8/components/raftstore/src/coprocessor/config.rs#L35-L38
+	DefaultMergeRegionSizeBytes uint64 = 96 * units.MiB
+
+	// DefaultMergeRegionKeyCount is the default region key count, 960000.
+	DefaultMergeRegionKeyCount uint64 = 960000
+
 	dialTimeout = 30 * time.Second
 
 	resetRetryTimes = 3
@@ -456,4 +467,81 @@ func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
 	}
 
 	return oracle.ComposeTS(p, l), nil
+}
+
+// GetMergeRegionSizeAndCount returns the tikv config `coprocessor.region-split-size` and `coprocessor.region-split-key`.
+func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64, error) {
+	regionSplitSize := DefaultMergeRegionSizeBytes
+	regionSplitKeys := DefaultMergeRegionKeyCount
+	type coprocessor struct {
+		RegionSplitKeys uint64 `json:"region-split-keys"`
+		RegionSplitSize string `json:"region-split-size"`
+	}
+
+	type config struct {
+		Cop coprocessor `json:"coprocessor"`
+	}
+	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
+		c := &config{}
+		e := json.NewDecoder(resp.Body).Decode(c)
+		if e != nil {
+			return e
+		}
+		rs, e := units.RAMInBytes(c.Cop.RegionSplitSize)
+		if e != nil {
+			return e
+		}
+		urs := uint64(rs)
+		if regionSplitSize == DefaultMergeRegionSizeBytes || urs < regionSplitSize {
+			regionSplitSize = urs
+			regionSplitKeys = c.Cop.RegionSplitKeys
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	return regionSplitSize, regionSplitKeys, nil
+}
+
+// GetConfigFromTiKV get configs from all alive tikv stores.
+func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func(*http.Response) error) error {
+	allStores, err := GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), SkipTiFlash)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	httpPrefix := "http://"
+	if mgr.GetTLSConfig() != nil {
+		httpPrefix = "https://"
+	}
+
+	for _, store := range allStores {
+		if store.State != metapb.StoreState_Up {
+			continue
+		}
+		// we need make sure every available store support backup-stream otherwise we might lose data.
+		// so check every store's config
+		addr := fmt.Sprintf("%s/config", store.GetStatusAddress())
+		if !strings.HasPrefix(addr, "http") {
+			addr = httpPrefix + addr
+		}
+		err = utils.WithRetry(ctx, func() error {
+			resp, e := cli.Get(addr)
+			if e != nil {
+				return e
+			}
+			err = fn(resp)
+			if err != nil {
+				return err
+			}
+			_ = resp.Body.Close()
+			return nil
+		}, utils.NewPDReqBackoffer())
+		if err != nil {
+			// if one store failed, break and return error
+			return err
+		}
+	}
+	return nil
 }
