@@ -25,7 +25,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -59,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 )
@@ -73,6 +73,9 @@ const (
 	TiDBBroadCastJoin = "tidb_bcj"
 	// HintBCJ indicates applying broadcast join by force.
 	HintBCJ = "broadcast_join"
+
+	// HintStraightJoin causes TiDB to join tables in the order in which they appear in the FROM clause.
+	HintStraightJoin = "straight_join"
 
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
@@ -4485,7 +4488,9 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			changed       bool
 			err           error
 		)
-		if ds.isForUpdateRead {
+		check := ds.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+		check = check && ds.ctx.GetSessionVars().ConnectionID > 0
+		if check {
 			latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
 			if err != nil {
 				ds.fdSet = fds
@@ -4651,9 +4656,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	}.Init(b.ctx, b.getSelectOffset())
 	p.SetSchema(schema)
 	p.names = names
-	for i, col := range tableInfo.Columns {
-		p.Columns[i] = col
-	}
+	copy(p.Columns, tableInfo.Columns)
 
 	// Some memory tables can receive some predicates
 	switch dbName.L {

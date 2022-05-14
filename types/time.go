@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/logutil"
-	tidbMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
 )
 
@@ -2413,11 +2413,11 @@ func parseAndValidateDurationValue(format string, index, cnt int) (int64, int, e
 	if err != nil {
 		return 0, 0, err
 	}
-	if year != 0 || month != 0 || tidbMath.Abs(day) > TimeMaxHour/24 {
+	if year != 0 || month != 0 || mathutil.Abs(day) > TimeMaxHour/24 {
 		return 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	}
 	dur := day*int64(GoDurationDay) + nano
-	if tidbMath.Abs(dur) > int64(MaxTime) {
+	if mathutil.Abs(dur) > int64(MaxTime) {
 		return 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	}
 	return dur, fsp, nil
