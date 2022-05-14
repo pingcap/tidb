@@ -897,17 +897,19 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Info("[ddl] DoDDLJob will quit because context done")
 			return context.Canceled
 		}
+		var ctx sessionctx.Context
 		if variable.AllowConcurrencyDDL.Load() {
-			ctx, err := d.sessPool.get()
+			ctx, err = d.sessPool.get()
 			if err != nil {
 				return errors.Trace(err)
 			}
-			historyJob, err = GetHistoryJobByID(ctx, jobID)
-			d.sessPool.put(ctx)
 		} else {
-			historyJob, err = GetHistoryJobByID(d.sessForAddDDL, jobID)
+			ctx = d.sessForAddDDL
 		}
-
+		historyJob, err = GetHistoryJobByID(ctx, jobID)
+		if variable.AllowConcurrencyDDL.Load() {
+			d.sessPool.put(ctx)
+		}
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
