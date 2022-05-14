@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -522,12 +523,14 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 		}
 		// we need make sure every available store support backup-stream otherwise we might lose data.
 		// so check every store's config
-		addr := fmt.Sprintf("%s/config", store.GetStatusAddress())
-		if !strings.HasPrefix(addr, "http") {
-			addr = httpPrefix + addr
+		addr, err := handleTiKVAddress(store, httpPrefix)
+		if err != nil {
+			return err
 		}
+		configAddr := fmt.Sprintf("%s/config", addr.String())
+
 		err = utils.WithRetry(ctx, func() error {
-			resp, e := cli.Get(addr)
+			resp, e := cli.Get(configAddr)
 			if e != nil {
 				return e
 			}
@@ -544,4 +547,39 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 		}
 	}
 	return nil
+}
+
+func handleTiKVAddress(store *metapb.Store, httpPrefix string) (*url.URL, error) {
+	statusAddr := store.GetStatusAddress()
+	nodeAddr := store.GetAddress()
+	if !strings.HasPrefix(statusAddr, "http") {
+		statusAddr = httpPrefix + statusAddr
+	}
+	if !strings.HasPrefix(nodeAddr, "http") {
+		nodeAddr = httpPrefix + nodeAddr
+	}
+
+	statusUrl, err := url.Parse(statusAddr)
+	if err != nil {
+		return nil, err
+	}
+	nodeUrl, err := url.Parse(nodeAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	// we try status address as default
+	addr := statusUrl
+	// but in sometimes we may not get the correct status address from PD.
+	if statusUrl.Hostname() != nodeUrl.Hostname() {
+		// if not matched, we use the address as default, but change the port
+		addr.Host = nodeUrl.Hostname() + ":" + statusUrl.Port()
+		log.Warn("store address and status address mismatch the host, we will use the store address as hostname",
+			zap.Uint64("store", store.Id),
+			zap.String("status address", statusAddr),
+			zap.String("node address", nodeAddr),
+			zap.Any("request address", statusUrl),
+		)
+	}
+	return addr, nil
 }
