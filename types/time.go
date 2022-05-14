@@ -17,7 +17,6 @@ package types
 import (
 	"bytes"
 	"fmt"
-	"github.com/cznic/mathutil"
 	"math"
 	"regexp"
 	"strconv"
@@ -2286,45 +2285,45 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 	}
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxValueSeconds*1000 {
+		if strictCheck && mathutil.Abs(riv) > TimeMaxValueSeconds*1000 {
 			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / int64(GoDurationDay/gotime.Microsecond)
 		riv %= int64(GoDurationDay / gotime.Microsecond)
 		return 0, 0, dayCount, riv * int64(gotime.Microsecond), MaxFsp, err
 	case "SECOND":
-		if strictCheck && tidbMath.Abs(iv) > TimeMaxValueSeconds {
+		if strictCheck && mathutil.Abs(iv) > TimeMaxValueSeconds {
 			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := iv / int64(GoDurationDay/gotime.Second)
 		iv %= int64(GoDurationDay / gotime.Second)
 		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), decimalLen, err
 	case "MINUTE":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour*60+TimeMaxMinute {
+		if strictCheck && mathutil.Abs(riv) > TimeMaxHour*60+TimeMaxMinute {
 			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / int64(GoDurationDay/gotime.Minute)
 		riv %= int64(GoDurationDay / gotime.Minute)
 		return 0, 0, dayCount, riv * int64(gotime.Minute), 0, err
 	case "HOUR":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour {
+		if strictCheck && mathutil.Abs(riv) > TimeMaxHour {
 			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / 24
 		riv %= 24
 		return 0, 0, dayCount, riv * int64(gotime.Hour), 0, err
 	case "DAY":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour/24 {
+		if strictCheck && mathutil.Abs(riv) > TimeMaxHour/24 {
 			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		return 0, 0, riv, 0, 0, err
 	case "WEEK":
-		if strictCheck && 7*tidbMath.Abs(riv) > TimeMaxHour/24 {
+		if strictCheck && 7*mathutil.Abs(riv) > TimeMaxHour/24 {
 			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		return 0, 0, 7 * riv, 0, 0, err
 	case "MONTH":
-		if strictCheck && tidbMath.Abs(riv) > 1 {
+		if strictCheck && mathutil.Abs(riv) > 1 {
 			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		return 0, riv, 0, 0, 0, err
