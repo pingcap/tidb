@@ -51,7 +51,7 @@ const (
 
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
-	FlagStreamRestoreTS = "restore-ts"
+	FlagStreamRestoreTS = "restored-ts"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
 
