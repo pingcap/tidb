@@ -1688,7 +1688,7 @@ func (b *builtinAddDateStringStringSig) vecEvalString(input *chunk.Chunk, result
 			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1750,7 +1750,7 @@ func (b *builtinAddDateStringIntSig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1812,7 +1812,7 @@ func (b *builtinAddDateStringRealSig) vecEvalString(input *chunk.Chunk, result *
 			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1874,7 +1874,7 @@ func (b *builtinAddDateStringDecimalSig) vecEvalString(input *chunk.Chunk, resul
 			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1926,7 +1926,7 @@ func (b *builtinAddDateIntStringSig) vecEvalTime(input *chunk.Chunk, result *chu
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1973,7 +1973,7 @@ func (b *builtinAddDateIntIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2020,7 +2020,7 @@ func (b *builtinAddDateIntRealSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2067,7 +2067,7 @@ func (b *builtinAddDateIntDecimalSig) vecEvalTime(input *chunk.Chunk, result *ch
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2114,7 +2114,7 @@ func (b *builtinAddDateDatetimeStringSig) vecEvalTime(input *chunk.Chunk, result
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2161,7 +2161,7 @@ func (b *builtinAddDateDatetimeIntSig) vecEvalTime(input *chunk.Chunk, result *c
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2208,7 +2208,7 @@ func (b *builtinAddDateDatetimeRealSig) vecEvalTime(input *chunk.Chunk, result *
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2255,7 +2255,7 @@ func (b *builtinAddDateDatetimeDecimalSig) vecEvalTime(input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2512,7 +2512,7 @@ func (b *builtinSubDateStringStringSig) vecEvalString(input *chunk.Chunk, result
 			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2574,7 +2574,7 @@ func (b *builtinSubDateStringIntSig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2636,7 +2636,7 @@ func (b *builtinSubDateStringRealSig) vecEvalString(input *chunk.Chunk, result *
 			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2698,7 +2698,7 @@ func (b *builtinSubDateStringDecimalSig) vecEvalString(input *chunk.Chunk, resul
 			result.AppendNull()
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2750,7 +2750,7 @@ func (b *builtinSubDateIntStringSig) vecEvalTime(input *chunk.Chunk, result *chu
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2797,7 +2797,7 @@ func (b *builtinSubDateIntIntSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2844,7 +2844,7 @@ func (b *builtinSubDateIntRealSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2891,7 +2891,7 @@ func (b *builtinSubDateIntDecimalSig) vecEvalTime(input *chunk.Chunk, result *ch
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2938,7 +2938,7 @@ func (b *builtinSubDateDatetimeStringSig) vecEvalTime(input *chunk.Chunk, result
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -2985,7 +2985,7 @@ func (b *builtinSubDateDatetimeIntSig) vecEvalTime(input *chunk.Chunk, result *c
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -3032,7 +3032,7 @@ func (b *builtinSubDateDatetimeRealSig) vecEvalTime(input *chunk.Chunk, result *
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -3079,7 +3079,7 @@ func (b *builtinSubDateDatetimeDecimalSig) vecEvalTime(input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
-		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+		resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}

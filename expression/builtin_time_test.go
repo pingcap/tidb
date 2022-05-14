@@ -946,7 +946,7 @@ func TestAddTimeSig(t *testing.T) {
 	resetStmtContext(ctx)
 	now, _, err := evalNowWithFsp(ctx, 0)
 	require.NoError(t, err)
-	res, _, err := du.add(ctx, now, "1", "MICROSECOND")
+	res, _, err := du.add(ctx, now, "1", "MICROSECOND", 6)
 	require.NoError(t, err)
 	require.Equal(t, 6, res.Fsp())
 

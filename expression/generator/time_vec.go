@@ -556,9 +556,9 @@ n := input.NumRows()
 			continue
 		}
         {{- if eq $.FuncName "AddDate" }}
-        resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+        resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
         {{- else }}
-        resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+        resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
         {{- end }}
 		if err != nil {
 			return err
@@ -637,9 +637,9 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 			{{- end }}
 		{{- else }}
 			{{- if eq $.FuncName "AddDate" }}
-				resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+				resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 			{{- else }}
-				resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+				resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 			{{- end }}
 		{{- end }}
 		if err != nil {

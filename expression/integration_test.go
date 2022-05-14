@@ -7101,3 +7101,42 @@ func TestIssue33397(t *testing.T) {
 	result := tk.MustQuery("select compress(a) from t").Rows()
 	require.Equal(t, [][]interface{}{{""}, {""}}, result)
 }
+
+func TestIssue31799(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	//// TODO: Wrong.
+	//result := tk.MustQuery("select date_add(cast('2001-01-01 00:00:00' as datetime), interval 1 second)").Rows()
+	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.000000"}}, result)
+	//result = tk.MustQuery("select date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1 second)").Rows()
+	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.000000"}}, result)
+	//
+	//// TODO: Wrong.
+	//result = tk.MustQuery("select date_add(cast('2001-01-01 00:00:00' as datetime), interval 1.1 second)").Rows()
+	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.100000"}}, result)
+	//result = tk.MustQuery("select date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1.1 second)").Rows()
+	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.100000"}}, result)
+	//
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c varchar(32))")
+	tk.MustExec("insert into t values(date_add(cast('00:00:00' as time), interval 1.1 second))")
+	result := tk.MustQuery("select * from t").Rows()
+	//result := tk.MustQuery("select date_add(cast('00:00:00' as time), interval 1.1 second)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.1"}}, result)
+	tk.MustExec("drop table t")
+	//
+	//// Legacy issue 7334.
+	//result = tk.MustQuery("select now() - interval 1 microsecond").Rows()
+	//require.Len(t, result[0][0], 26)
+
+	//// Temp for regression.
+	//result := tk.MustQuery("select adddate('2011-11-11 10:10:10', interval 1000 MICROSECOND)").Rows()
+	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.100000"}}, result)
+	//
+	//// Temp for regression.
+	//result = tk.MustQuery("SELECT 19000101000000 + INTERVAL '100000000:214748364700' MINUTE_SECOND").Rows()
+	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.100000"}}, result)
+}

@@ -2907,15 +2907,15 @@ func (du *baseDateArithmetical) getIntervalFromReal(ctx sessionctx.Context, args
 	return strconv.FormatFloat(interval, 'f', args[1].GetType().GetDecimal(), 64), false, nil
 }
 
-func (du *baseDateArithmetical) add(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
-	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
+func (du *baseDateArithmetical) add(ctx sessionctx.Context, date types.Time, interval string, unit string, fsp int) (types.Time, bool, error) {
+	year, month, day, nano, _, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
-	return du.addDate(ctx, date, year, month, day, nano)
+	return du.addDate(ctx, date, year, month, day, nano, fsp)
 }
 
-func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time, year, month, day, nano int64) (types.Time, bool, error) {
+func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time, year, month, day, nano int64, fsp int) (types.Time, bool, error) {
 	goTime, err := date.GoTime(time.UTC)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
@@ -2924,11 +2924,13 @@ func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time,
 	goTime = goTime.Add(time.Duration(nano))
 	goTime = types.AddDate(year, month, day, goTime)
 
-	if goTime.Nanosecond() == 0 {
-		date.SetFsp(0)
-	} else {
-		date.SetFsp(6)
-	}
+	date.SetFsp(fsp)
+
+	//if goTime.Nanosecond() == 0 {
+	//	date.SetFsp(0)
+	//} else {
+	//	date.SetFsp(6)
+	//}
 
 	// fix https://github.com/pingcap/tidb/issues/11329
 	if goTime.Year() == 0 {
@@ -2976,12 +2978,12 @@ func (du *baseDateArithmetical) subDuration(ctx sessionctx.Context, d types.Dura
 	return retDur, false, nil
 }
 
-func (du *baseDateArithmetical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
-	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
+func (du *baseDateArithmetical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string, fsp int) (types.Time, bool, error) {
+	year, month, day, nano, _, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
-	return du.addDate(ctx, date, -year, -month, -day, -nano)
+	return du.addDate(ctx, date, -year, -month, -day, -nano, fsp)
 }
 
 func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
@@ -3276,6 +3278,40 @@ func (du *baseDateArithmetical) vecGetIntervalFromReal(b *baseBuiltinFunc, input
 	return nil
 }
 
+// func timeUnitHasNoTime(unit string) (bool, err error) {
+// 	switch unit {
+// 	case "MICROSECOND":
+// 	case "SECOND":
+// 	case "MINUTE":
+// 	case "HOUR":
+// 	case "DAY":
+// 	case "WEEK":
+// 	case "MONTH":
+// 	case "QUARTER":
+// 	case "YEAR":
+// 	case "SECOND_MICROSECOND":
+// 	case  "MINUTE_MICROSECOND":
+// 	case  "MINUTE_SECOND":
+// 	case  "HOUR_MICROSECOND":
+// 	case  "HOUR_SECOND":
+// 	case  "HOUR_MINUTE":
+// 	case  "DAY_MICROSECOND":
+// 	case  "DAY_SECOND":
+// 	case  "DAY_MINUTE":
+// 	case  "DAY_HOUR":
+// 	case  "YEAR_MONTH":
+// 	default:
+// 		return false,
+// }
+
+func timeUnitContainsTime(unit string) bool {
+	return strings.Contains(unit, "SECOND") || strings.Contains(unit, "MINUTE") || strings.Contains(unit, "HOUR")
+}
+
+func timeUnitContainsDate(unit string) bool {
+	return strings.Contains(unit, "DAY") || strings.Contains(unit, "WEEK") || strings.Contains(unit, "MONTH") || strings.Contains(unit, "QUARTER") || strings.Contains(unit, "YEAR")
+}
+
 type addDateFunctionClass struct {
 	baseFunctionClass
 }
@@ -3325,12 +3361,13 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			return nil, err
 		}
 		bf.setDecimalAndFlenForTime(mathutil.Max(arg0Dec, internalFsp))
-	} else if dateEvalTp == types.ETString {
+	} else if dateEvalTp == types.ETString || dateEvalTp == types.ETInt {
 		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
 		if err != nil {
 			return nil, err
 		}
 		bf.tp.SetFlen(mysql.MaxDatetimeFullWidth)
+		// Keep Decimal unchanged (-1) as the evaluation will determine the Decimal based on the evaluated value.
 	} else {
 		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
 		if err != nil {
@@ -3486,7 +3523,7 @@ func (b *builtinAddDateStringStringSig) evalTime(row chunk.Row) (types.Time, boo
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3507,7 +3544,7 @@ func (b *builtinAddDateStringStringSig) evalString(row chunk.Row) (string, bool,
 		return types.ZeroTime.String(), true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
 	return result.String(), isNull, err
@@ -3542,7 +3579,7 @@ func (b *builtinAddDateStringIntSig) evalTime(row chunk.Row) (types.Time, bool, 
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3563,7 +3600,7 @@ func (b *builtinAddDateStringIntSig) evalString(row chunk.Row) (string, bool, er
 		return types.ZeroTime.String(), true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
 	return result.String(), isNull, err
@@ -3598,7 +3635,7 @@ func (b *builtinAddDateStringRealSig) evalTime(row chunk.Row) (types.Time, bool,
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3619,7 +3656,7 @@ func (b *builtinAddDateStringRealSig) evalString(row chunk.Row) (string, bool, e
 		return types.ZeroTime.String(), true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
 	return result.String(), isNull, err
@@ -3654,7 +3691,7 @@ func (b *builtinAddDateStringDecimalSig) evalTime(row chunk.Row) (types.Time, bo
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3675,7 +3712,7 @@ func (b *builtinAddDateStringDecimalSig) evalString(row chunk.Row) (string, bool
 		return types.ZeroTime.String(), true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
 	return result.String(), isNull, err
@@ -3710,7 +3747,7 @@ func (b *builtinAddDateIntStringSig) evalTime(row chunk.Row) (types.Time, bool, 
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3743,7 +3780,7 @@ func (b *builtinAddDateIntIntSig) evalTime(row chunk.Row) (types.Time, bool, err
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3776,7 +3813,7 @@ func (b *builtinAddDateIntRealSig) evalTime(row chunk.Row) (types.Time, bool, er
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3809,7 +3846,7 @@ func (b *builtinAddDateIntDecimalSig) evalTime(row chunk.Row) (types.Time, bool,
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3842,7 +3879,7 @@ func (b *builtinAddDateDatetimeStringSig) evalTime(row chunk.Row) (types.Time, b
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3875,7 +3912,7 @@ func (b *builtinAddDateDatetimeIntSig) evalTime(row chunk.Row) (types.Time, bool
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3908,7 +3945,7 @@ func (b *builtinAddDateDatetimeRealSig) evalTime(row chunk.Row) (types.Time, boo
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -3941,7 +3978,7 @@ func (b *builtinAddDateDatetimeDecimalSig) evalTime(row chunk.Row) (types.Time, 
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4275,7 +4312,7 @@ func (b *builtinSubDateStringStringSig) evalTime(row chunk.Row) (types.Time, boo
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4295,7 +4332,7 @@ func (b *builtinSubDateStringStringSig) evalString(row chunk.Row) (string, bool,
 		return types.ZeroTime.String(), true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
 	return result.String(), isNull, err
@@ -4330,7 +4367,7 @@ func (b *builtinSubDateStringIntSig) evalTime(row chunk.Row) (types.Time, bool, 
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4350,7 +4387,7 @@ func (b *builtinSubDateStringIntSig) evalString(row chunk.Row) (string, bool, er
 		return types.ZeroTime.String(), true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
 	return result.String(), isNull, err
@@ -4385,7 +4422,7 @@ func (b *builtinSubDateStringRealSig) evalTime(row chunk.Row) (types.Time, bool,
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4405,7 +4442,7 @@ func (b *builtinSubDateStringRealSig) evalString(row chunk.Row) (string, bool, e
 		return types.ZeroTime.String(), true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
 	return result.String(), isNull, err
 }
@@ -4437,7 +4474,7 @@ func (b *builtinSubDateStringDecimalSig) evalTime(row chunk.Row) (types.Time, bo
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4457,7 +4494,7 @@ func (b *builtinSubDateStringDecimalSig) evalString(row chunk.Row) (string, bool
 		return types.ZeroTime.String(), true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
 	return result.String(), isNull, err
@@ -4492,7 +4529,7 @@ func (b *builtinSubDateIntStringSig) evalTime(row chunk.Row) (types.Time, bool, 
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4525,7 +4562,7 @@ func (b *builtinSubDateIntIntSig) evalTime(row chunk.Row) (types.Time, bool, err
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4558,7 +4595,7 @@ func (b *builtinSubDateIntRealSig) evalTime(row chunk.Row) (types.Time, bool, er
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4596,7 +4633,7 @@ func (b *builtinSubDateIntDecimalSig) evalTime(row chunk.Row) (types.Time, bool,
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4624,7 +4661,7 @@ func (b *builtinSubDateDatetimeStringSig) evalTime(row chunk.Row) (types.Time, b
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4657,7 +4694,7 @@ func (b *builtinSubDateDatetimeIntSig) evalTime(row chunk.Row) (types.Time, bool
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4690,7 +4727,7 @@ func (b *builtinSubDateDatetimeRealSig) evalTime(row chunk.Row) (types.Time, boo
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
@@ -4723,7 +4760,7 @@ func (b *builtinSubDateDatetimeDecimalSig) evalTime(row chunk.Row) (types.Time, 
 		return types.ZeroTime, true, err
 	}
 
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit, b.tp.GetDecimal())
 	return result, isNull || err != nil, err
 }
 
