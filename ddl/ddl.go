@@ -627,7 +627,12 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // GetHistoryDDLCount the count of done ddl jobs.
 func (d *ddl) GetHistoryDDLCount() (count uint64, err error) {
 	if variable.AllowConcurrencyDDL.Load() {
-		rows, err := newSession(d.sessForAddDDL).execute(context.Background(), "select count(1) from mysql.tidb_ddl_history")
+		ctx, err := d.sessPool.get()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		defer d.sessPool.put(ctx)
+		rows, err := newSession(ctx).execute(context.Background(), "select count(1) from mysql.tidb_ddl_history")
 		if err != nil {
 			return 0, err
 		}
@@ -892,8 +897,17 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Info("[ddl] DoDDLJob will quit because context done")
 			return context.Canceled
 		}
+		if variable.AllowConcurrencyDDL.Load() {
+			ctx, err := d.sessPool.get()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			historyJob, err = GetHistoryJobByID(ctx, jobID)
+			d.sessPool.put(ctx)
+		} else {
+			historyJob, err = GetHistoryJobByID(d.sessForAddDDL, jobID)
+		}
 
-		historyJob, err = GetHistoryJobByID(d.sessForAddDDL, jobID)
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
