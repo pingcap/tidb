@@ -552,10 +552,10 @@ func handleTiKVAddress(store *metapb.Store, httpPrefix string) (*url.URL, error)
 	statusAddr := store.GetStatusAddress()
 	nodeAddr := store.GetAddress()
 	if !strings.HasPrefix(statusAddr, "http") {
-		statusAddr = httpPrefix + "://" + statusAddr
+		statusAddr = httpPrefix + statusAddr
 	}
 	if !strings.HasPrefix(nodeAddr, "http") {
-		nodeAddr = httpPrefix + "://" + nodeAddr
+		nodeAddr = httpPrefix + nodeAddr
 	}
 
 	statusUrl, err := url.Parse(statusAddr)
@@ -563,6 +563,9 @@ func handleTiKVAddress(store *metapb.Store, httpPrefix string) (*url.URL, error)
 		return nil, err
 	}
 	nodeUrl, err := url.Parse(nodeAddr)
+	if err != nil {
+		return nil, err
+	}
 
 	// we try status address as default
 	addr := statusUrl

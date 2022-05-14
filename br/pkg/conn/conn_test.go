@@ -407,7 +407,7 @@ func TestHandleTiKVAddress(t *testing.T) {
 				Address:       "127.0.0.1:20160",
 				StatusAddress: "127.0.0.1:20180",
 			},
-			httpPrefix: "http",
+			httpPrefix: "http://",
 			result:     "http://127.0.0.1:20180",
 		},
 		{
@@ -417,7 +417,7 @@ func TestHandleTiKVAddress(t *testing.T) {
 				Address:       "192.168.1.5:20160",
 				StatusAddress: "0.0.0.0:20180",
 			},
-			httpPrefix: "https",
+			httpPrefix: "https://",
 			// if status address and node address not match, we use node address as default host name.
 			result: "https://192.168.1.5:20180",
 		},
