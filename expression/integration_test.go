@@ -7234,3 +7234,18 @@ func TestIssue33397(t *testing.T) {
 	result := tk.MustQuery("select compress(a) from t").Rows()
 	require.Equal(t, [][]interface{}{{""}, {""}}, result)
 }
+
+func TestIssue34659(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(32))")
+	tk.MustExec("insert into t values(date_add(cast('00:00:00' as time), interval 1.1 second))")
+	result := tk.MustQuery("select * from t").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.1"}}, result)
+
+	result = tk.MustQuery("select date_add(cast('00:00:00' as time), interval 1.1 second)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.1"}}, result)
+}
