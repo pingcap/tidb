@@ -380,6 +380,7 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 		}))
 
 		for _, s := range ca.stores {
+			s.Address = mockServer.URL
 			s.StatusAddress = mockServer.URL
 		}
 

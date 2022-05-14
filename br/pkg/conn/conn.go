@@ -527,9 +527,10 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 		if err != nil {
 			return err
 		}
+		configAddr := fmt.Sprintf("%s/config", addr.String())
 
 		err = utils.WithRetry(ctx, func() error {
-			resp, e := cli.Get(addr.String())
+			resp, e := cli.Get(configAddr)
 			if e != nil {
 				return e
 			}
