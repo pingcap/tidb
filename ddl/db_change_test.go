@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -822,16 +821,15 @@ func (s *stateChangeSuite) runTestInSchemaState(
 	callback := &ddl.TestDDLCallback{Do: s.dom}
 	prevState := model.StateNone
 	var checkErr error
-	times := 0
 	se, err := session.CreateSession(s.store)
 	s.Require().NoError(err)
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	s.Require().NoError(err)
 	cbFunc := func(job *model.Job) {
-		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
+		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
-		times++
+		prevState = job.SchemaState
 		if job.SchemaState != state {
 			return
 		}
@@ -1276,7 +1274,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 		var qLen int
 		for {
 			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err1 := admin.GetDDLJobs(txn)
+				jobs, err1 := ddl.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
 				}
@@ -1306,7 +1304,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 		var qLen int
 		for {
 			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err3 := admin.GetDDLJobs(txn)
+				jobs, err3 := ddl.GetDDLJobs(txn)
 				if err3 != nil {
 					return err3
 				}
