@@ -380,6 +380,7 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 		}))
 
 		for _, s := range ca.stores {
+			s.Address = mockServer.URL
 			s.StatusAddress = mockServer.URL
 		}
 
@@ -391,5 +392,40 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 		require.Equal(t, ca.regionSplitSize, rs)
 		require.Equal(t, ca.regionSplitKeys, rk)
 		mockServer.Close()
+	}
+}
+
+func TestHandleTiKVAddress(t *testing.T) {
+	cases := []struct {
+		store      *metapb.Store
+		httpPrefix string
+		result     string
+	}{
+		{
+			store: &metapb.Store{
+				Id:            1,
+				State:         metapb.StoreState_Up,
+				Address:       "127.0.0.1:20160",
+				StatusAddress: "127.0.0.1:20180",
+			},
+			httpPrefix: "http://",
+			result:     "http://127.0.0.1:20180",
+		},
+		{
+			store: &metapb.Store{
+				Id:            1,
+				State:         metapb.StoreState_Up,
+				Address:       "192.168.1.5:20160",
+				StatusAddress: "0.0.0.0:20180",
+			},
+			httpPrefix: "https://",
+			// if status address and node address not match, we use node address as default host name.
+			result: "https://192.168.1.5:20180",
+		},
+	}
+	for _, ca := range cases {
+		addr, err := handleTiKVAddress(ca.store, ca.httpPrefix)
+		require.Nil(t, err)
+		require.Equal(t, ca.result, addr.String())
 	}
 }
