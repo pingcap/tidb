@@ -136,11 +136,10 @@ func TestSignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(6544), id)
 
-	// Test the MaxInt64 is the upper bound of `alloc` function but not `rebase`.
 	err = alloc.Rebase(context.Background(), int64(math.MaxInt64-1), true)
 	require.NoError(t, err)
 	_, _, err = alloc.Alloc(ctx, 1, 1, 1)
-	require.Error(t, err)
+	require.NoError(t, err)
 	err = alloc.Rebase(context.Background(), int64(math.MaxInt64), true)
 	require.NoError(t, err)
 
@@ -340,13 +339,12 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(6544), id)
 
-	// Test the MaxUint64 is the upper bound of `alloc` func but not `rebase`.
 	var n uint64 = math.MaxUint64 - 1
 	un := int64(n)
 	err = alloc.Rebase(context.Background(), un, true)
 	require.NoError(t, err)
 	_, _, err = alloc.Alloc(ctx, 1, 1, 1)
-	require.Error(t, err)
+	require.NoError(t, err)
 	un = int64(n + 1)
 	err = alloc.Rebase(context.Background(), un, true)
 	require.NoError(t, err)
