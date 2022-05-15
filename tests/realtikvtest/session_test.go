@@ -673,7 +673,6 @@ func TestLocalTemporaryTableReplace(t *testing.T) {
 	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 13 999", "4 14 104", "5 15 105"))
 }
 
-<<<<<<< HEAD
 func TestLocalTemporaryTableDelete(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
@@ -769,8 +768,6 @@ func TestLocalTemporaryTableDelete(t *testing.T) {
 	assertDelete("delete from tmp1 where v>=1006 or v<=1002", []int{1, 2, 6, 7, 8, 9})
 }
 
-=======
->>>>>>> master
 func TestLocalTemporaryTablePointGet(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
@@ -947,7 +944,6 @@ func TestLocalTemporaryTableScan(t *testing.T) {
 	tk.MustExec("commit")
 	assertSelectAsModified()
 }
-<<<<<<< HEAD
 
 func TestRetryForCurrentTxn(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
