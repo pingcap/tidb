@@ -1234,11 +1234,8 @@ type Explain struct {
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
-	Rows           [][]string
-	ExplainRows    [][]string
-	explainedPlans map[int]bool
-
-	ctes []*PhysicalCTE
+	Rows        [][]string
+	ExplainRows [][]string
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -1543,7 +1540,6 @@ func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
 			}
 		}
 	}
-	return
 }
 
 func getRuntimeInfoStr(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {

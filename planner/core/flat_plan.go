@@ -170,6 +170,7 @@ func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperato
 		IsRoot:            info.isRoot,
 		StoreType:         info.storeType,
 		Depth:             info.depth,
+		ReqType:           info.reqType,
 	}
 
 	if _, ok := p.(PhysicalPlan); ok {
@@ -239,6 +240,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		for i := range children {
 			childCtx.isRoot = info.isRoot
 			childCtx.storeType = info.storeType
+			childCtx.reqType = info.reqType
 			childCtx.driverSide = driverSideInfo[i]
 			childCtx.isLastChild = i == len(children)-1
 			target = f.flattenRecursively(children[i], childCtx, target)
