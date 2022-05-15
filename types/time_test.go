@@ -1351,7 +1351,7 @@ func TestExtractDurationValue(t *testing.T) {
 		{
 			unit:   "MINUTE_SECOND",
 			format: "61:61",
-			ans:    "01:02:01.000000",
+			ans:    "01:02:01",
 		},
 		{
 			unit:   "HOUR_MICROSECOND",
@@ -1361,7 +1361,7 @@ func TestExtractDurationValue(t *testing.T) {
 		{
 			unit:   "HOUR_SECOND",
 			format: "01:61:01",
-			ans:    "02:01:01.000000",
+			ans:    "02:01:01",
 		},
 		{
 			unit:   "HOUr_MINUTE",
@@ -1376,7 +1376,7 @@ func TestExtractDurationValue(t *testing.T) {
 		{
 			unit:   "DAY_SeCOND",
 			format: "1 02:03:04",
-			ans:    "26:03:04.000000",
+			ans:    "26:03:04",
 		},
 		{
 			unit:   "DAY_MINUTE",

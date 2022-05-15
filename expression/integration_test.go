@@ -7283,6 +7283,12 @@ func TestIssue34659(t *testing.T) {
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 minute_microsecond) as char)").Rows()
 	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
 
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 minute_second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:01:01"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 minute_second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"308:38:31"}}, result)
+
 	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_microsecond) as char)").Rows()
 	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
 
