@@ -88,3 +88,13 @@ func Min[v constraints.Ordered](x v, xs ...v) v {
 	}
 	return min
 }
+
+// Clamp restrict a value to a certain interval.
+func Clamp[v constraints.Integer | constraints.Float](n, min, max v) v {
+	if n >= max {
+		return max
+	} else if n <= min {
+		return min
+	}
+	return n
+}

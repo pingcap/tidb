@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -1278,7 +1279,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
-			cnt = clampRowCount(cnt, c.notNullCount())
+			cnt = mathutil.Clamp(cnt, 0, c.notNullCount())
 		}
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
@@ -1291,7 +1292,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 			cnt += highCnt
 		}
 
-		cnt = clampRowCount(cnt, c.TotalRowCount())
+		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		cnt *= c.GetIncreaseFactor(realtimeRowCount)
@@ -1307,8 +1308,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		rowCount += cnt
 	}
-
-	rowCount = clampRowCount(rowCount, float64(realtimeRowCount))
+	rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
 	return rowCount, nil
 }
 
@@ -1525,8 +1525,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
 		}
 	}
-
-	totalCount = clampRowCount(totalCount, float64(realtimeRowCount))
+	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
@@ -1779,16 +1778,6 @@ func (idx *Index) outOfRange(val types.Datum) bool {
 		return false
 	}
 	return true
-}
-
-func clampRowCount(rowCount, upperLimit float64) (clampedRowCount float64) {
-	if rowCount > upperLimit {
-		return upperLimit
-	}
-	if rowCount < 0 {
-		return 0
-	}
-	return rowCount
 }
 
 // matchPrefix checks whether ad is the prefix of value
