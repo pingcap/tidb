@@ -1097,42 +1097,6 @@ func (s *testSessionSuite) TestLastInsertID(c *C) {
 	c.Assert(lastInsertID+2, Equals, currLastInsertID)
 }
 
-func (s *testSessionSuite) TestPrepareZero(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(v timestamp)")
-	tk.MustExec("prepare s1 from 'insert into t (v) values (?)'")
-	tk.MustExec("set @v1='0'")
-	_, rs := tk.Exec("execute s1 using @v1")
-	c.Assert(rs, NotNil)
-	tk.MustExec("set @v2='" + types.ZeroDatetimeStr + "'")
-	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
-	tk.MustExec("execute s1 using @v2")
-	tk.MustQuery("select v from t").Check(testkit.Rows("0000-00-00 00:00:00"))
-	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
-}
-
-func (s *testSessionSuite) TestPrimaryKeyAutoIncrement(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL, name varchar(255) UNIQUE NOT NULL, status int)")
-	tk.MustExec("insert t (name) values (?)", "abc")
-	id := tk.Se.LastInsertID()
-	c.Check(id != 0, IsTrue)
-
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	tk1.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("%d abc <nil>", id)))
-
-	tk.MustExec("update t set name = 'abc', status = 1 where id = ?", id)
-	tk1.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("%d abc 1", id)))
-
-	// Check for pass bool param to tidb prepared statement
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id tinyint)")
-	tk.MustExec("insert t values (?)", true)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
-}
-
 func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
@@ -2360,53 +2324,6 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
-}
-
-// TestSetGroupConcatMaxLen is for issue #7034
-func (s *testSessionSuite2) TestSetGroupConcatMaxLen(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	// Normal case
-	tk.MustExec("set global group_concat_max_len = 100")
-	tk.MustExec("set @@session.group_concat_max_len = 50")
-	result := tk.MustQuery("show global variables  where variable_name='group_concat_max_len';")
-	result.Check(testkit.Rows("group_concat_max_len 100"))
-
-	result = tk.MustQuery("show session variables  where variable_name='group_concat_max_len';")
-	result.Check(testkit.Rows("group_concat_max_len 50"))
-
-	result = tk.MustQuery("select @@group_concat_max_len;")
-	result.Check(testkit.Rows("50"))
-
-	result = tk.MustQuery("select @@global.group_concat_max_len;")
-	result.Check(testkit.Rows("100"))
-
-	result = tk.MustQuery("select @@session.group_concat_max_len;")
-	result.Check(testkit.Rows("50"))
-
-	tk.MustExec("set @@group_concat_max_len = 1024")
-
-	result = tk.MustQuery("select @@group_concat_max_len;")
-	result.Check(testkit.Rows("1024"))
-
-	result = tk.MustQuery("select @@global.group_concat_max_len;")
-	result.Check(testkit.Rows("100"))
-
-	result = tk.MustQuery("select @@session.group_concat_max_len;")
-	result.Check(testkit.Rows("1024"))
-
-	// Test value out of range
-	tk.MustExec("set @@group_concat_max_len=1")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
-	result = tk.MustQuery("select @@group_concat_max_len;")
-	result.Check(testkit.Rows("4"))
-
-	_, err := tk.Exec("set @@group_concat_max_len = 18446744073709551616")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
-
-	// Test illegal type
-	_, err = tk.Exec("set @@group_concat_max_len='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSessionSuite2) TestUpdatePrivilege(c *C) {

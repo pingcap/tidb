@@ -22,7 +22,10 @@ import (
 
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -452,6 +455,101 @@ func TestSetVarHint(t *testing.T) {
 	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[planner:3126]Hint SET_VAR(group_concat_max_len=2048) is ignored as conflicting/duplicated.")
 }
 
+func TestPrepareZero(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(v timestamp)")
+	tk.MustExec("prepare s1 from 'insert into t (v) values (?)'")
+	tk.MustExec("set @v1='0'")
+	require.Error(t, tk.ExecToErr("execute s1 using @v1"))
+	tk.MustExec("set @v2='" + types.ZeroDatetimeStr + "'")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
+	tk.MustExec("execute s1 using @v2")
+	tk.MustQuery("select v from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
+}
+
+func TestPrimaryKeyAutoIncrement(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL, name varchar(255) UNIQUE NOT NULL, status int)")
+	tk.MustExec("insert t (name) values (?)", "abc")
+	id := tk.Session().LastInsertID()
+	require.NotZero(t, id)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("%d abc <nil>", id)))
+
+	tk.MustExec("update t set name = 'abc', status = 1 where id = ?", id)
+	tk1.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("%d abc 1", id)))
+
+	// Check for pass bool param to tidb prepared statement
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id tinyint)")
+	tk.MustExec("insert t values (?)", true)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+}
+
+// TestSetGroupConcatMaxLen is for issue #7034
+func TestSetGroupConcatMaxLen(t *testing.T) {
+	store, clean := createMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Normal case
+	tk.MustExec("set global group_concat_max_len = 100")
+	tk.MustExec("set @@session.group_concat_max_len = 50")
+	result := tk.MustQuery("show global variables  where variable_name='group_concat_max_len';")
+	result.Check(testkit.Rows("group_concat_max_len 100"))
+
+	result = tk.MustQuery("show session variables  where variable_name='group_concat_max_len';")
+	result.Check(testkit.Rows("group_concat_max_len 50"))
+
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("50"))
+
+	result = tk.MustQuery("select @@global.group_concat_max_len;")
+	result.Check(testkit.Rows("100"))
+
+	result = tk.MustQuery("select @@session.group_concat_max_len;")
+	result.Check(testkit.Rows("50"))
+
+	tk.MustExec("set @@group_concat_max_len = 1024")
+
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("1024"))
+
+	result = tk.MustQuery("select @@global.group_concat_max_len;")
+	result.Check(testkit.Rows("100"))
+
+	result = tk.MustQuery("select @@session.group_concat_max_len;")
+	result.Check(testkit.Rows("1024"))
+
+	// Test value out of range
+	tk.MustExec("set @@group_concat_max_len=1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("4"))
+
+	_, err := tk.Exec("set @@group_concat_max_len = 18446744073709551616")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
+
+	// Test illegal type
+	_, err = tk.Exec("set @@group_concat_max_len='hello'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
+}
+
 func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
@@ -575,6 +673,7 @@ func TestLocalTemporaryTableReplace(t *testing.T) {
 	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 13 999", "4 14 104", "5 15 105"))
 }
 
+<<<<<<< HEAD
 func TestLocalTemporaryTableDelete(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
@@ -670,6 +769,8 @@ func TestLocalTemporaryTableDelete(t *testing.T) {
 	assertDelete("delete from tmp1 where v>=1006 or v<=1002", []int{1, 2, 6, 7, 8, 9})
 }
 
+=======
+>>>>>>> master
 func TestLocalTemporaryTablePointGet(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
 	defer clean()
@@ -846,6 +947,7 @@ func TestLocalTemporaryTableScan(t *testing.T) {
 	tk.MustExec("commit")
 	assertSelectAsModified()
 }
+<<<<<<< HEAD
 
 func TestRetryForCurrentTxn(t *testing.T) {
 	store, clean := createMockStoreAndSetup(t)
