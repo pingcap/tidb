@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package realtikvtest
+package sessiontest
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -24,12 +25,13 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSysdateIsNow(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -42,7 +44,7 @@ func TestSysdateIsNow(t *testing.T) {
 }
 
 func TestEnableLegacyInstanceScope(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -60,7 +62,7 @@ func TestEnableLegacyInstanceScope(t *testing.T) {
 }
 
 func TestSetPDClientDynamicOption(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -96,7 +98,7 @@ func TestSetPDClientDynamicOption(t *testing.T) {
 }
 
 func TestSameNameObjectWithLocalTemporaryTable(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -161,7 +163,7 @@ func TestSameNameObjectWithLocalTemporaryTable(t *testing.T) {
 }
 
 func TestWriteOnMultipleCachedTable(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -203,7 +205,7 @@ func TestWriteOnMultipleCachedTable(t *testing.T) {
 }
 
 func TestForbidSettingBothTSVariable(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -230,7 +232,7 @@ func TestForbidSettingBothTSVariable(t *testing.T) {
 }
 
 func TestTiDBReadStaleness(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -245,7 +247,7 @@ func TestTiDBReadStaleness(t *testing.T) {
 }
 
 func TestFixSetTiDBSnapshotTS(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -270,7 +272,7 @@ func TestFixSetTiDBSnapshotTS(t *testing.T) {
 }
 
 func TestSetVarHint(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -455,7 +457,7 @@ func TestSetVarHint(t *testing.T) {
 }
 
 func TestPrepareZero(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -473,7 +475,7 @@ func TestPrepareZero(t *testing.T) {
 }
 
 func TestPrimaryKeyAutoIncrement(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -500,7 +502,7 @@ func TestPrimaryKeyAutoIncrement(t *testing.T) {
 
 // TestSetGroupConcatMaxLen is for issue #7034
 func TestSetGroupConcatMaxLen(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -550,7 +552,7 @@ func TestSetGroupConcatMaxLen(t *testing.T) {
 }
 
 func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -594,7 +596,7 @@ func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
 }
 
 func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -639,7 +641,7 @@ func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
 }
 
 func TestLocalTemporaryTableReplace(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -672,8 +674,103 @@ func TestLocalTemporaryTableReplace(t *testing.T) {
 	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 13 999", "4 14 104", "5 15 105"))
 }
 
+func TestLocalTemporaryTableDelete(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
+
+	insertRecords := func(idList []int) {
+		for _, id := range idList {
+			tk.MustExec("insert into tmp1 values (?, ?, ?)", id, id+100, id+1000)
+		}
+	}
+
+	checkAllExistRecords := func(idList []int) {
+		sort.Ints(idList)
+		expectedResult := make([]string, 0, len(idList))
+		expectedIndexResult := make([]string, 0, len(idList))
+		for _, id := range idList {
+			expectedResult = append(expectedResult, fmt.Sprintf("%d %d %d", id, id+100, id+1000))
+			expectedIndexResult = append(expectedIndexResult, fmt.Sprintf("%d", id+100))
+		}
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows(expectedResult...))
+
+		// check index deleted
+		tk.MustQuery("select /*+ use_index(tmp1, u) */ u from tmp1 order by u").Check(testkit.Rows(expectedIndexResult...))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
+
+	assertDelete := func(sql string, deleted []int) {
+		idList := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+		deletedMap := make(map[int]bool)
+		for _, id := range deleted {
+			deletedMap[id] = true
+		}
+
+		keepList := make([]int, 0)
+		for _, id := range idList {
+			if _, exist := deletedMap[id]; !exist {
+				keepList = append(keepList, id)
+			}
+		}
+
+		// delete records in txn and records are inserted in txn
+		tk.MustExec("begin")
+		insertRecords(idList)
+		tk.MustExec(sql)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		checkAllExistRecords(keepList)
+		tk.MustExec("rollback")
+		checkAllExistRecords([]int{})
+
+		// delete records out of txn
+		insertRecords(idList)
+		tk.MustExec(sql)
+		checkAllExistRecords(keepList)
+
+		// delete records in txn
+		insertRecords(deleted)
+		tk.MustExec("begin")
+		tk.MustExec(sql)
+		checkAllExistRecords(keepList)
+
+		// test rollback
+		tk.MustExec("rollback")
+		checkAllExistRecords(idList)
+
+		// test commit
+		tk.MustExec("begin")
+		tk.MustExec(sql)
+		tk.MustExec("commit")
+		checkAllExistRecords(keepList)
+
+		tk.MustExec("delete from tmp1")
+		checkAllExistRecords([]int{})
+	}
+
+	assertDelete("delete from tmp1 where id=1", []int{1})
+	assertDelete("delete from tmp1 where id in (1, 3, 5)", []int{1, 3, 5})
+	assertDelete("delete from tmp1 where u=102", []int{2})
+	assertDelete("delete from tmp1 where u in (103, 107, 108)", []int{3, 7, 8})
+	assertDelete("delete from tmp1 where id=10", []int{})
+	assertDelete("delete from tmp1 where id in (10, 12)", []int{})
+	assertDelete("delete from tmp1 where u=110", []int{})
+	assertDelete("delete from tmp1 where u in (111, 112)", []int{})
+	assertDelete("delete from tmp1 where id in (1, 11, 5)", []int{1, 5})
+	assertDelete("delete from tmp1 where u in (102, 121, 106)", []int{2, 6})
+	assertDelete("delete from tmp1 where id<3", []int{1, 2})
+	assertDelete("delete from tmp1 where u>107", []int{8, 9})
+	assertDelete("delete /*+ use_index(tmp1, u) */ from tmp1 where u>105 and u<107", []int{6})
+	assertDelete("delete from tmp1 where v>=1006 or v<=1002", []int{1, 2, 6, 7, 8, 9})
+}
+
 func TestLocalTemporaryTablePointGet(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -714,7 +811,7 @@ func TestLocalTemporaryTablePointGet(t *testing.T) {
 }
 
 func TestLocalTemporaryTableBatchPointGet(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -756,7 +853,7 @@ func TestLocalTemporaryTableBatchPointGet(t *testing.T) {
 }
 
 func TestLocalTemporaryTableScan(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -847,4 +944,80 @@ func TestLocalTemporaryTableScan(t *testing.T) {
 	assertSelectAsModified()
 	tk.MustExec("commit")
 	assertSelectAsModified()
+}
+
+func TestRetryForCurrentTxn(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("insert history values (1)")
+
+	// Firstly, enable retry.
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin")
+	tk.MustExec("update history set a = 2")
+	// Disable retry now.
+	tk.MustExec("set tidb_disable_txn_auto_retry = 1")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("update history set a = 3")
+
+	tk.MustExec("commit")
+	tk.MustQuery("select * from history").Check(testkit.Rows("2"))
+}
+
+// TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
+func TestTruncateAlloc(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table truncate_id (a int primary key auto_increment)")
+	tk.MustExec("insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
+	tk.MustExec("truncate table truncate_id")
+	tk.MustExec("insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
+	tk.MustQuery("select a from truncate_id where a > 11").Check(testkit.Rows())
+}
+
+func TestString(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("select 1")
+	// here to check the panic bug in String() when txn is nil after committed.
+	t.Log(tk.Session().String())
+}
+
+func TestDatabase(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test database.
+	tk.MustExec("create database xxx")
+	tk.MustExec("drop database xxx")
+
+	tk.MustExec("drop database if exists xxx")
+	tk.MustExec("create database xxx")
+	tk.MustExec("create database if not exists xxx")
+	tk.MustExec("drop database if exists xxx")
+
+	// Test schema.
+	tk.MustExec("create schema xxx")
+	tk.MustExec("drop schema xxx")
+
+	tk.MustExec("drop schema if exists xxx")
+	tk.MustExec("create schema xxx")
+	tk.MustExec("create schema if not exists xxx")
+	tk.MustExec("drop schema if exists xxx")
 }
