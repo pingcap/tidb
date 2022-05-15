@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc"
 )
 
+// WithRealTiKV is a flag identify whether tests run with real TiKV
 var WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
 
 func RunTestMain(m *testing.M) {

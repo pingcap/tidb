@@ -51,10 +51,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
-func TestMain(m *testing.M) {
-	realtikvtest.RunTestMain(m)
-}
-
 func createAsyncCommitTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().EnableAsyncCommit = true

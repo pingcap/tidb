@@ -130,7 +130,7 @@ func TestClusterTableSendError(t *testing.T) {
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("requestTiDBStoreError")`))
-	defer failpoint.Disable("tikvclient/tikvStoreSendReqResult")
+	defer func() { require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult")) }()
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
 	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(1))
 	require.Regexp(t, ".*TiDB server timeout, address is.*", tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error())
@@ -148,9 +148,7 @@ func TestAutoCommitNeedNotLinearizability(t *testing.T) {
 	tk.MustExec(`create table t1 (c int)`)
 
 	require.NoError(t, failpoint.Enable("tikvclient/getMinCommitTSFromTSO", `panic`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("tikvclient/getMinCommitTSFromTSO"))
-	}()
+	defer func() { require.NoError(t, failpoint.Disable("tikvclient/getMinCommitTSFromTSO")) }()
 
 	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1"))
 	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1"))
