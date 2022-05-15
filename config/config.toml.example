@@ -251,9 +251,6 @@ bind-info-lease = "3s"
 # Whether support pushing down aggregation with distinct to cop task
 distinct-agg-push-down = false
 
-# The max number of running concurrency two phase committer request for an SQL.
-committer-concurrency = 128
-
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
 
