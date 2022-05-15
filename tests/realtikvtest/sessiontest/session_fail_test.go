@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package realtikvtest
+package sessiontest
 
 import (
 	"context"
@@ -23,11 +23,12 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestFailStatementCommitInRetry(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -50,7 +51,7 @@ func TestFailStatementCommitInRetry(t *testing.T) {
 }
 
 func TestGetTSFailDirtyState(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -82,7 +83,7 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/mockGetTSErrorInRetry"))
 	}()
 
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -102,7 +103,7 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 func TestKillFlagInBackoff(t *testing.T) {
 	// This test checks the `killed` flag is passed down to the backoffer through
 	// session.KVVars.
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -122,7 +123,7 @@ func TestKillFlagInBackoff(t *testing.T) {
 }
 
 func TestClusterTableSendError(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -136,7 +137,7 @@ func TestClusterTableSendError(t *testing.T) {
 }
 
 func TestAutoCommitNeedNotLinearizability(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)

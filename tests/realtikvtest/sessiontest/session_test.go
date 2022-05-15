@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package realtikvtest
+package sessiontest
 
 import (
 	"fmt"
@@ -25,12 +25,13 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSysdateIsNow(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -43,7 +44,7 @@ func TestSysdateIsNow(t *testing.T) {
 }
 
 func TestEnableLegacyInstanceScope(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -61,7 +62,7 @@ func TestEnableLegacyInstanceScope(t *testing.T) {
 }
 
 func TestSetPDClientDynamicOption(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -97,7 +98,7 @@ func TestSetPDClientDynamicOption(t *testing.T) {
 }
 
 func TestSameNameObjectWithLocalTemporaryTable(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -162,7 +163,7 @@ func TestSameNameObjectWithLocalTemporaryTable(t *testing.T) {
 }
 
 func TestWriteOnMultipleCachedTable(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -204,7 +205,7 @@ func TestWriteOnMultipleCachedTable(t *testing.T) {
 }
 
 func TestForbidSettingBothTSVariable(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -231,7 +232,7 @@ func TestForbidSettingBothTSVariable(t *testing.T) {
 }
 
 func TestTiDBReadStaleness(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -246,7 +247,7 @@ func TestTiDBReadStaleness(t *testing.T) {
 }
 
 func TestFixSetTiDBSnapshotTS(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -271,7 +272,7 @@ func TestFixSetTiDBSnapshotTS(t *testing.T) {
 }
 
 func TestSetVarHint(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -456,7 +457,7 @@ func TestSetVarHint(t *testing.T) {
 }
 
 func TestPrepareZero(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -474,7 +475,7 @@ func TestPrepareZero(t *testing.T) {
 }
 
 func TestPrimaryKeyAutoIncrement(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -501,7 +502,7 @@ func TestPrimaryKeyAutoIncrement(t *testing.T) {
 
 // TestSetGroupConcatMaxLen is for issue #7034
 func TestSetGroupConcatMaxLen(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -551,7 +552,7 @@ func TestSetGroupConcatMaxLen(t *testing.T) {
 }
 
 func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -595,7 +596,7 @@ func TestLocalTemporaryTableInsertIgnore(t *testing.T) {
 }
 
 func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -640,7 +641,7 @@ func TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(t *testing.T) {
 }
 
 func TestLocalTemporaryTableReplace(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -674,7 +675,7 @@ func TestLocalTemporaryTableReplace(t *testing.T) {
 }
 
 func TestLocalTemporaryTableDelete(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -769,7 +770,7 @@ func TestLocalTemporaryTableDelete(t *testing.T) {
 }
 
 func TestLocalTemporaryTablePointGet(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -810,7 +811,7 @@ func TestLocalTemporaryTablePointGet(t *testing.T) {
 }
 
 func TestLocalTemporaryTableBatchPointGet(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -852,7 +853,7 @@ func TestLocalTemporaryTableBatchPointGet(t *testing.T) {
 }
 
 func TestLocalTemporaryTableScan(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -946,7 +947,7 @@ func TestLocalTemporaryTableScan(t *testing.T) {
 }
 
 func TestRetryForCurrentTxn(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -972,7 +973,7 @@ func TestRetryForCurrentTxn(t *testing.T) {
 
 // TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
 func TestTruncateAlloc(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -985,7 +986,7 @@ func TestTruncateAlloc(t *testing.T) {
 }
 
 func TestString(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -996,7 +997,7 @@ func TestString(t *testing.T) {
 }
 
 func TestDatabase(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)

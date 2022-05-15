@@ -15,7 +15,7 @@
 // This file contains tests about statistics which need running with real TiKV.
 // Only tests under /session will be run with real TiKV, so we put them here instead of /statistics.
 
-package realtikvtest
+package statisticstest
 
 import (
 	"fmt"
@@ -23,11 +23,12 @@ import (
 
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
-	store, dom, clean := createMockStoreAndDomainAndSetup(t)
+	store, dom, clean := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	defer clean()
 	defer func() {
 		tk := testkit.NewTestKit(t, store)

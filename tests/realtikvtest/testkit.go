@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
+
 package realtikvtest
 
 import (
@@ -36,9 +38,9 @@ import (
 	"google.golang.org/grpc"
 )
 
-var withRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
+var WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
 
-func TestMain(m *testing.M) {
+func RunTestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	flag.Parse()
 	session.SetSchemaLease(20 * time.Millisecond)
@@ -63,7 +65,7 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func clearTiKVStorage(t *testing.T, store kv.Storage) {
+func ClearTiKVStorage(t *testing.T, store kv.Storage) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	iter, err := txn.Iter(nil, nil)
@@ -75,7 +77,7 @@ func clearTiKVStorage(t *testing.T, store kv.Storage) {
 	require.NoError(t, txn.Commit(context.Background()))
 }
 
-func clearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
+func ClearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
 	endpoints, err := backend.EtcdAddrs()
 	require.NoError(t, err)
 	cli, err := clientv3.New(clientv3.Config{
@@ -101,12 +103,12 @@ func clearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
 	require.NoError(t, err)
 }
 
-func createMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
-	store, _, clean := createMockStoreAndDomainAndSetup(t, opts...)
+func CreateMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
+	store, _, clean := CreateMockStoreAndDomainAndSetup(t, opts...)
 	return store, clean
 }
 
-func createMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
 	// set it to 5 seconds for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff.Store(500)
@@ -115,7 +117,7 @@ func createMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	var dom *domain.Domain
 	var err error
 
-	if *withRealTiKV {
+	if *WithRealTiKV {
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
@@ -123,8 +125,8 @@ func createMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		store, err = d.Open("tikv://127.0.0.1:2379?disableGC=true")
 		require.NoError(t, err)
 
-		clearTiKVStorage(t, store)
-		clearEtcdStorage(t, store.(kv.EtcdBackend))
+		ClearTiKVStorage(t, store)
+		ClearEtcdStorage(t, store.(kv.EtcdBackend))
 
 		session.ResetStoreForWithTiKVTest(store)
 		dom, err = session.BootstrapSession(store)
