@@ -41,6 +41,7 @@ import (
 // WithRealTiKV is a flag identify whether tests run with real TiKV
 var WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
 
+// RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	flag.Parse()
@@ -66,7 +67,7 @@ func RunTestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func ClearTiKVStorage(t *testing.T, store kv.Storage) {
+func clearTiKVStorage(t *testing.T, store kv.Storage) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	iter, err := txn.Iter(nil, nil)
@@ -78,7 +79,7 @@ func ClearTiKVStorage(t *testing.T, store kv.Storage) {
 	require.NoError(t, txn.Commit(context.Background()))
 }
 
-func ClearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
+func clearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
 	endpoints, err := backend.EtcdAddrs()
 	require.NoError(t, err)
 	cli, err := clientv3.New(clientv3.Config{
@@ -104,11 +105,13 @@ func ClearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
 	require.NoError(t, err)
 }
 
+// CreateMockStoreAndSetup return a new kv.Storage.
 func CreateMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
 	store, _, clean := CreateMockStoreAndDomainAndSetup(t, opts...)
 	return store, clean
 }
 
+// CreateMockStoreAndDomainAndSetup return a new kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
 	// set it to 5 seconds for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
@@ -126,8 +129,8 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		store, err = d.Open("tikv://127.0.0.1:2379?disableGC=true")
 		require.NoError(t, err)
 
-		ClearTiKVStorage(t, store)
-		ClearEtcdStorage(t, store.(kv.EtcdBackend))
+		clearTiKVStorage(t, store)
+		clearEtcdStorage(t, store.(kv.EtcdBackend))
 
 		session.ResetStoreForWithTiKVTest(store)
 		dom, err = session.BootstrapSession(store)
