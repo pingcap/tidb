@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
@@ -35,10 +34,8 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/types"
@@ -1355,62 +1352,6 @@ func TestDoDDLJobQuit(t *testing.T) {
 	// this DDL call will enter deadloop before this fix
 	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil)
 	require.Equal(t, "context canceled", err.Error())
-}
-
-func TestTemporaryTableInterceptor(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
-	tbl, err := tk.Session().GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
-	require.NoError(t, err)
-	require.Equal(t, model.TempTableLocal, tbl.Meta().TempTableType)
-	tblID := tbl.Meta().ID
-
-	// prepare a kv pair for temporary table
-	k := append(tablecodec.EncodeTablePrefix(tblID), 1)
-	err = tk.Session().GetSessionVars().TemporaryTableData.SetTableKey(tblID, k, []byte("v1"))
-	require.NoError(t, err)
-
-	initTxnFuncs := []func() error{
-		func() error {
-			tk.Session().PrepareTSFuture(context.Background())
-			return nil
-		},
-		func() error {
-			return sessiontxn.NewTxn(context.Background(), tk.Session())
-		},
-		func() error {
-			return tk.Session().NewStaleTxnWithStartTS(context.Background(), 0)
-		},
-		func() error {
-			return tk.Session().InitTxnWithStartTS(0)
-		},
-	}
-
-	for _, initFunc := range initTxnFuncs {
-		err := initFunc()
-		require.NoError(t, err)
-
-		txn, err := tk.Session().Txn(true)
-		require.NoError(t, err)
-
-		val, err := txn.Get(context.Background(), k)
-		require.NoError(t, err)
-		require.Equal(t, []byte("v1"), val)
-
-		val, err = txn.GetSnapshot().Get(context.Background(), k)
-		require.NoError(t, err)
-		require.Equal(t, []byte("v1"), val)
-
-		tk.Session().RollbackTxn(context.Background())
-	}
-
-	// Also check GetSnapshotWithTS
-	snap := tk.Session().GetSnapshotWithTS(0)
-	val, err := snap.Get(context.Background(), k)
-	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), val)
 }
 
 func TestCoprocessorOOMAction(t *testing.T) {
