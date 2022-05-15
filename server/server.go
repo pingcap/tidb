@@ -193,7 +193,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
-		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
+		concurrentLimiter: NewTokenLimiter(uint(cfg.Instance.ConnectionConcurrencyLimit)),
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.NewGlobalConnID(0, true),
 		internalSessions:  make(map[interface{}]struct{}, 100),
@@ -349,7 +349,7 @@ func setTxnScope() {
 
 // Export config-related metrics
 func (s *Server) reportConfig() {
-	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
+	metrics.ConfigStatus.WithLabelValues("tidb_connection_concurrency_limit").Set(float64(s.cfg.Instance.ConnectionConcurrencyLimit))
 	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
 }
 

@@ -82,6 +82,9 @@ const (
 	DefExpensiveQueryTimeThreshold = 60
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
+	// DefConnectionConcurrencyLimit is the number of sessions that can execute requests concurrently.
+	DefConnectionConcurrencyLimit = 1000
+	MaxConnectionConcurrencyLimit = 4294967295
 )
 
 // Valid config maps
@@ -117,6 +120,7 @@ var (
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
 				"plugin.load":                   "plugin_load",
 				"plugin.dir":                    "plugin_dir",
+				"token-limit":                   "tidb_connection_concurrency_limit",
 			},
 		},
 		{
@@ -159,7 +163,7 @@ type Config struct {
 	Lease            string `toml:"lease" json:"lease"`
 	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool   `toml:"split-table" json:"split-table"`
-	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
+	TokenLimit       uint32 `toml:"token-limit" json:"token-limit"`
 	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction        string `toml:"oom-action" json:"oom-action"`
@@ -455,6 +459,7 @@ type Instance struct {
 	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
+	ConnectionConcurrencyLimit uint32 `toml:"tidb_connection_concurrency_limit" json:"tidb_connection_concurrency_limit"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -798,6 +803,7 @@ var defaultConf = Config{
 		EnableCollectExecutionInfo:  true,
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
+		ConnectionConcurrencyLimit:  DefConnectionConcurrencyLimit,
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -1093,6 +1099,9 @@ func (c *Config) Valid() error {
 	if c.IndexLimit < DefIndexLimit || c.IndexLimit > DefMaxOfIndexLimit {
 		return fmt.Errorf("index-limit should be [%d, %d]", DefIndexLimit, DefMaxOfIndexLimit)
 	}
+	if c.TokenLimit < 1 || c.TokenLimit > MaxConnectionConcurrencyLimit {
+		return fmt.Errorf("token-limit must be greater than or equal to 1 and less than or equal to %d", MaxConnectionConcurrencyLimit)
+	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
@@ -1120,6 +1129,10 @@ func (c *Config) Valid() error {
 
 	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {
 		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
+	}
+
+	if c.Instance.ConnectionConcurrencyLimit < 1 || c.Instance.ConnectionConcurrencyLimit > MaxConnectionConcurrencyLimit {
+		return fmt.Errorf("tidb_connection_concurrency_limit in [Instance] must be greater than or equal to 1 and less than or equal to %d", MaxConnectionConcurrencyLimit)
 	}
 
 	if c.PreparedPlanCache.Capacity < 1 {

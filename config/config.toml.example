@@ -28,9 +28,6 @@ lease = "45s"
 # turn off this option if there will be a large number of tables created.
 split-table = true
 
-# The limit of concurrent executed sessions.
-token-limit = 1000
-
 # Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
 oom-use-tmp-storage = true
 
@@ -476,3 +473,6 @@ tidb_slow_log_threshold = 300
 # tidb_record_plan_in_slow_log is used to enable record query plan in slow log.
 # 0 is disable. 1 is enable.
 tidb_record_plan_in_slow_log = 1
+
+# The limit of concurrent executed connections.
+tidb_connection_concurrency_limit = 1000

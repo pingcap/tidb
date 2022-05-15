@@ -450,7 +450,7 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Lease = *ddlLease
 	}
 	if actualFlags[nmTokenLimit] {
-		cfg.TokenLimit = uint(*tokenLimit)
+		cfg.Instance.ConnectionConcurrencyLimit = uint32(*tokenLimit)
 	}
 	if actualFlags[nmPluginLoad] {
 		cfg.Instance.PluginLoad = *pluginLoad
@@ -562,6 +562,8 @@ func setGlobalVars() {
 					cfg.Instance.PluginLoad = cfg.Plugin.Load
 				case "plugin.dir":
 					cfg.Instance.PluginDir = cfg.Plugin.Dir
+				case "token-limit":
+					cfg.Instance.ConnectionConcurrencyLimit = cfg.TokenLimit
 				}
 			case "log":
 				switch oldName {

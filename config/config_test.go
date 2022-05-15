@@ -204,7 +204,6 @@ unrecognized-option-test = true
 	require.NoError(t, err)
 
 	_, err = f.WriteString(`
-token-limit = 0
 enable-table-lock = true
 alter-primary-key = true
 delay-clean-table-lock = 5
@@ -278,7 +277,6 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint(6000), conf.TiKVClient.RegionCacheTTL)
 	require.Equal(t, int64(0), conf.TiKVClient.StoreLimit)
 	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
-	require.Equal(t, uint(1000), conf.TokenLimit)
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
@@ -541,7 +539,10 @@ func TestConflictInstanceConfig(t *testing.T) {
 	// Just receive a warning and keep their respective values.
 	expectedConflictOptions := map[string]InstanceConfigSection{
 		"": {
-			"", map[string]string{"check-mb4-value-in-utf8": "tidb_check_mb4_value_in_utf8"},
+			"", map[string]string{
+				"check-mb4-value-in-utf8": "tidb_check_mb4_value_in_utf8",
+				"token-limit":             "tidb_connection_concurrency_limit",
+			},
 		},
 		"log": {
 			"log", map[string]string{"enable-slow-log": "tidb_enable_slow_log"},
@@ -550,10 +551,10 @@ func TestConflictInstanceConfig(t *testing.T) {
 			"performance", map[string]string{"force-priority": "tidb_force_priority"},
 		},
 	}
-	_, err = f.WriteString("check-mb4-value-in-utf8 = true \n" +
+	_, err = f.WriteString("check-mb4-value-in-utf8 = true \ntoken-limit = 10 \n" +
 		"[log] \nenable-slow-log = true \n" +
 		"[performance] \nforce-priority = \"NO_PRIORITY\"\n" +
-		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"")
+		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_connection_concurrency_limit = 100 \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"")
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	err = conf.Load(configFile)
@@ -561,6 +562,8 @@ func TestConflictInstanceConfig(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), "Conflict configuration options exists on both [instance] section and some other sections."))
 	require.False(t, conf.Instance.CheckMb4ValueInUTF8.Load())
 	require.True(t, conf.CheckMb4ValueInUTF8.Load())
+	require.Equal(t, uint32(10), conf.TokenLimit)
+	require.Equal(t, uint32(100), conf.Instance.ConnectionConcurrencyLimit)
 	require.Equal(t, true, conf.Log.EnableSlowLog.Load())
 	require.Equal(t, false, conf.Instance.EnableSlowLog.Load())
 	require.Equal(t, "NO_PRIORITY", conf.Performance.ForcePriority)
