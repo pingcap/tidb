@@ -1191,7 +1191,7 @@ func FlattenPhysicalPlanForStmtCtx(stmtCtx *stmtctx.StatementContext) *plannerco
 		return f
 	}
 	p := pp.(plannercore.Plan)
-	flat := plannercore.FlattenPhysicalPlan(p)
+	flat := plannercore.FlattenPhysicalPlan(p, false)
 	if flat != nil {
 		stmtCtx.SetFlatPlan(flat)
 		return flat

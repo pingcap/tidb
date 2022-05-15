@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -1305,27 +1304,21 @@ func (e *Explain) RenderResult() error {
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose:
 		if e.Rows == nil || e.Analyze {
-			e.explainedPlans = map[int]bool{}
-			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
-			if err != nil {
-				return err
-			}
-			err = e.explainPlanInRowFormatCTE()
-			if err != nil {
-				return err
-			}
+			flat := FlattenPhysicalPlan(e.TargetPlan, true)
+			e.explainFlatPlanInRowFormat(flat)
 		}
 	case types.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
 			e.prepareDotInfo(physicalPlan)
 		}
 	case types.ExplainFormatHint:
-		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
+		flat := FlattenPhysicalPlan(e.TargetPlan, false)
+		hints := GenHintsFromFlatPlan(flat)
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatVisual:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
-			flat := FlattenPhysicalPlan(physicalPlan)
+			flat := FlattenPhysicalPlan(physicalPlan, false)
 			str := VisualPlanStrFromFlatPlan(e.ctx, flat)
 			e.Rows = append(e.Rows, []string{str})
 		}
@@ -1516,133 +1509,39 @@ func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 	}
 }
 
-func (e *Explain) explainPlanInRowFormatCTE() (err error) {
-	explainedCTEPlan := make(map[int]struct{})
-	for i := 0; i < len(e.ctes); i++ {
-		x := (*CTEDefinition)(e.ctes[i])
-		// skip if the CTE has been explained, the same CTE has same IDForStorage
-		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
-			continue
-		}
-		e.prepareOperatorInfo(x, "root", "", "", true)
-		childIndent := texttree.Indent4Child("", true)
-		err = e.explainPlanInRowFormat(x.SeedPlan, "root", "(Seed Part)", childIndent, x.RecurPlan == nil)
-		if x.RecurPlan != nil {
-			err = e.explainPlanInRowFormat(x.RecurPlan, "root", "(Recursive Part)", childIndent, true)
-		}
-		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
+func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
+	if flat == nil || len(flat.Main) == 0 {
+		return
 	}
-
-	return
-}
-
-// explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent string, isLastChild bool) (err error) {
-	e.prepareOperatorInfo(p, taskType, driverSide, indent, isLastChild)
-	e.explainedPlans[p.ID()] = true
-	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
-		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[p.ID()]; ok {
-			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
-		}
-	}
-
-	// For every child we create a new sub-tree rooted by it.
-	childIndent := texttree.Indent4Child(indent, isLastChild)
-
-	if physPlan, ok := p.(PhysicalPlan); ok {
-		// indicate driven side and driving side of 'join' and 'apply'
-		// See issue https://github.com/pingcap/tidb/issues/14602.
-		driverSideInfo := make([]string, len(physPlan.Children()))
-		buildSide := -1
-
-		switch plan := physPlan.(type) {
-		case *PhysicalApply:
-			buildSide = plan.InnerChildIdx ^ 1
-		case *PhysicalHashJoin:
-			if plan.UseOuterToBuild {
-				buildSide = plan.InnerChildIdx ^ 1
-			} else {
-				buildSide = plan.InnerChildIdx
-			}
-		case *PhysicalMergeJoin:
-			if plan.JoinType == RightOuterJoin {
-				buildSide = 0
-			} else {
-				buildSide = 1
-			}
-		case *PhysicalIndexJoin:
-			buildSide = plan.InnerChildIdx ^ 1
-		case *PhysicalIndexMergeJoin:
-			buildSide = plan.InnerChildIdx ^ 1
-		case *PhysicalIndexHashJoin:
-			buildSide = plan.InnerChildIdx ^ 1
-		}
-
-		if buildSide != -1 {
-			driverSideInfo[0], driverSideInfo[1] = "(Build)", "(Probe)"
+	for _, flatOp := range flat.Main {
+		taskTp := ""
+		if flatOp.IsRoot {
+			taskTp = "root"
 		} else {
-			buildSide = 0
+			taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 		}
-
-		// Always put the Build above the Probe.
-		for i := range physPlan.Children() {
-			pchild := &physPlan.Children()[i^buildSide]
-			if e.explainedPlans[(*pchild).ID()] {
-				continue
-			}
-			err = e.explainPlanInRowFormat(*pchild, taskType, driverSideInfo[i], childIndent, i == len(physPlan.Children())-1)
-			if err != nil {
-				return
+		e.prepareOperatorInfo(flatOp.Origin, taskTp, flatOp.TextTreeExplainID)
+		if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
+			if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
 			}
 		}
 	}
-
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		switch x.StoreType {
-		case kv.TiKV, kv.TiFlash, kv.TiDB:
-			// expected do nothing
-		default:
-			return errors.Errorf("the store type %v is unknown", x.StoreType)
-		}
-		taskName := x.ReadReqType.Name() + "[" + x.StoreType.Name() + "]"
-		err = e.explainPlanInRowFormat(x.tablePlan, taskName, "", childIndent, true)
-	case *PhysicalIndexReader:
-		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
-	case *PhysicalIndexLookUpReader:
-		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
-		if err != nil {
-			return
-		}
-		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
-	case *PhysicalIndexMergeReader:
-		for _, pchild := range x.partialPlans {
-			err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Build)", childIndent, false)
-			if err != nil {
-				return
+	for _, cte := range flat.CTEs {
+		for _, flatOp := range cte {
+			taskTp := ""
+			if flatOp.IsRoot {
+				taskTp = "root"
+			} else {
+				taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
+			}
+			e.prepareOperatorInfo(flatOp.Origin, taskTp, flatOp.TextTreeExplainID)
+			if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
+				if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
+					e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
+				}
 			}
 		}
-		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
-	case *Insert:
-		if x.SelectPlan != nil {
-			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)
-		}
-	case *Update:
-		if x.SelectPlan != nil {
-			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)
-		}
-	case *Delete:
-		if x.SelectPlan != nil {
-			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)
-		}
-	case *Execute:
-		if x.Plan != nil {
-			err = e.explainPlanInRowFormat(x.Plan, "root", "", indent, true)
-		}
-	case *PhysicalCTE:
-		e.ctes = append(e.ctes, x)
-	case *PhysicalShuffleReceiverStub:
-		err = e.explainPlanInRowFormat(x.DataSource, "root", "", childIndent, true)
 	}
 	return
 }
@@ -1703,12 +1602,11 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, estimated rows, task type, access object and other operator info.
-func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
+func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 	if p.ExplainID().String() == "_0" {
 		return
 	}
 
-	id := texttree.PrettyIdentifier(p.ExplainID().String()+driverSide, indent, isLastChild)
 	estRows, estCost, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string

@@ -80,7 +80,7 @@ func TestPreferRangeScan(t *testing.T) {
 		normalized, digest := core.NormalizePlan(p)
 
 		// test the new normalization code
-		flat := core.FlattenPhysicalPlan(p)
+		flat := core.FlattenPhysicalPlan(p, false)
 		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
 		require.Equal(t, normalized, newNormalized)
 		require.Equal(t, digest, newDigest)
@@ -124,7 +124,7 @@ func TestNormalizedPlan(t *testing.T) {
 		normalized, digest := core.NormalizePlan(p)
 
 		// test the new normalization code
-		flat := core.FlattenPhysicalPlan(p)
+		flat := core.FlattenPhysicalPlan(p, false)
 		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
 		require.Equal(t, normalized, newNormalized)
 		require.Equal(t, digest, newDigest)
@@ -171,7 +171,7 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 		normalized, digest := core.NormalizePlan(ep.TargetPlan)
 
 		// test the new normalization code
-		flat := core.FlattenPhysicalPlan(ep.TargetPlan)
+		flat := core.FlattenPhysicalPlan(ep.TargetPlan, false)
 		newNormalized, newPlanDigest := core.NormalizeFlatPlan(flat)
 		require.Equal(t, digest, newPlanDigest)
 		require.Equal(t, normalized, newNormalized)
@@ -207,7 +207,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 		encodeStr := core.EncodePlan(p)
 
 		// test the new encoding code
-		flat := core.FlattenPhysicalPlan(p)
+		flat := core.FlattenPhysicalPlan(p, false)
 		newEncodeStr := core.EncodeFlatPlan(flat)
 		require.Equal(t, encodeStr, newEncodeStr)
 
@@ -450,7 +450,7 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	normalized1, digest1 := core.NormalizePlan(physicalPlan)
 
 	// test the new normalization code
-	flat := core.FlattenPhysicalPlan(physicalPlan)
+	flat := core.FlattenPhysicalPlan(physicalPlan, false)
 	newNormalized, newPlanDigest := core.NormalizeFlatPlan(flat)
 	require.Equal(t, digest1, newPlanDigest)
 	require.Equal(t, normalized1, newNormalized)
@@ -463,7 +463,7 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	normalized2, digest2 := core.NormalizePlan(physicalPlan)
 
 	// test the new normalization code
-	flat = core.FlattenPhysicalPlan(physicalPlan)
+	flat = core.FlattenPhysicalPlan(physicalPlan, false)
 	newNormalized, newPlanDigest = core.NormalizeFlatPlan(flat)
 	require.Equal(t, digest2, newPlanDigest)
 	require.Equal(t, normalized2, newNormalized)
@@ -673,7 +673,7 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		flat := core.FlattenPhysicalPlan(p)
+		flat := core.FlattenPhysicalPlan(p, false)
 		core.EncodeFlatPlan(flat)
 	}
 }

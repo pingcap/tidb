@@ -197,7 +197,7 @@ func TestResourceGroupTag(t *testing.T) {
 				require.True(t, ok)
 				_, expectPlanDigest = plannercore.NormalizePlan(p)
 
-				flat := plannercore.FlattenPhysicalPlan(p)
+				flat := plannercore.FlattenPhysicalPlan(p, false)
 				_, newPlanDigest := plannercore.NormalizeFlatPlan(flat)
 				require.Equal(t, expectPlanDigest, newPlanDigest)
 			}

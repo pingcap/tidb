@@ -327,7 +327,7 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 		hints := core.GenHintsFromPhysicalPlan(p)
 
 		// test the new genHints code
-		flat := core.FlattenPhysicalPlan(p)
+		flat := core.FlattenPhysicalPlan(p, false)
 		newHints := core.GenHintsFromFlatPlan(flat)
 		assertSameHints(t, hints, newHints)
 
@@ -874,7 +874,7 @@ func TestJoinHints(t *testing.T) {
 		hints := core.GenHintsFromPhysicalPlan(p)
 
 		// test the new genHints code
-		flat := core.FlattenPhysicalPlan(p)
+		flat := core.FlattenPhysicalPlan(p, false)
 		newHints := core.GenHintsFromFlatPlan(flat)
 		assertSameHints(t, hints, newHints)
 
@@ -1296,7 +1296,7 @@ func TestIndexHint(t *testing.T) {
 		hints := core.GenHintsFromPhysicalPlan(p)
 
 		// test the new genHints code
-		flat := core.FlattenPhysicalPlan(p)
+		flat := core.FlattenPhysicalPlan(p, false)
 		newHints := core.GenHintsFromFlatPlan(flat)
 		assertSameHints(t, hints, newHints)
 
@@ -1350,7 +1350,7 @@ func TestIndexMergeHint(t *testing.T) {
 		hints := core.GenHintsFromPhysicalPlan(p)
 
 		// test the new genHints code
-		flat := core.FlattenPhysicalPlan(p)
+		flat := core.FlattenPhysicalPlan(p, false)
 		newHints := core.GenHintsFromFlatPlan(flat)
 		assertSameHints(t, hints, newHints)
 
@@ -1393,7 +1393,7 @@ func TestQueryBlockHint(t *testing.T) {
 		hints := core.GenHintsFromPhysicalPlan(p)
 
 		// test the new genHints code
-		flat := core.FlattenPhysicalPlan(p)
+		flat := core.FlattenPhysicalPlan(p, false)
 		newHints := core.GenHintsFromFlatPlan(flat)
 		assertSameHints(t, hints, newHints)
 
@@ -1440,7 +1440,7 @@ func TestInlineProjection(t *testing.T) {
 		hints := core.GenHintsFromPhysicalPlan(p)
 
 		// test the new genHints code
-		flat := core.FlattenPhysicalPlan(p)
+		flat := core.FlattenPhysicalPlan(p, false)
 		newHints := core.GenHintsFromFlatPlan(flat)
 		assertSameHints(t, hints, newHints)
 

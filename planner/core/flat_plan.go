@@ -37,13 +37,13 @@ type FlatPhysicalPlan struct {
 	// then InExecute will be true.
 	InExecute bool
 
-	ctesToFlatten []*PhysicalCTE
+	buildSideFirst bool
+	ctesToFlatten  []*PhysicalCTE
 }
 
 // FlatPlanTree is a simplified plan tree.
 // It arranges all operators in the tree as a slice, ordered by the order of traversing the tree, which means a
-// depth-first traversal plus some special rule for some operators. Anyway, it will be the same order you'll see
-// in the result of an EXPLAIN statement.
+// depth-first traversal plus some special rule for some operators.
 type FlatPlanTree []*FlatOperator
 
 // GetSelectPlan skips Insert, Delete and Update at the beginning of the FlatPlanTree.
@@ -125,8 +125,10 @@ type operatorCtx struct {
 }
 
 // FlattenPhysicalPlan generates a FlatPhysicalPlan from a PhysicalPlan, Insert, Delete, Update, Explain or Execute.
-func FlattenPhysicalPlan(p Plan) *FlatPhysicalPlan {
-	res := &FlatPhysicalPlan{}
+func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
+	res := &FlatPhysicalPlan{
+		buildSideFirst: buildSideFirst,
+	}
 	initInfo := &operatorCtx{
 		depth:       0,
 		driverSide:  Empty,
@@ -194,15 +196,15 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 
 		switch plan := physPlan.(type) {
 		case *PhysicalApply:
-			driverSideInfo[plan.InnerChildIdx] = BuildSide
-			driverSideInfo[1-plan.InnerChildIdx] = ProbeSide
+			driverSideInfo[plan.InnerChildIdx] = ProbeSide
+			driverSideInfo[1-plan.InnerChildIdx] = BuildSide
 		case *PhysicalHashJoin:
 			if plan.UseOuterToBuild {
-				driverSideInfo[plan.InnerChildIdx] = BuildSide
-				driverSideInfo[1-plan.InnerChildIdx] = ProbeSide
-			} else {
 				driverSideInfo[plan.InnerChildIdx] = ProbeSide
 				driverSideInfo[1-plan.InnerChildIdx] = BuildSide
+			} else {
+				driverSideInfo[plan.InnerChildIdx] = BuildSide
+				driverSideInfo[1-plan.InnerChildIdx] = ProbeSide
 			}
 		case *PhysicalMergeJoin:
 			if plan.JoinType == RightOuterJoin {
@@ -213,22 +215,33 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 				driverSideInfo[1] = BuildSide
 			}
 		case *PhysicalIndexJoin:
-			driverSideInfo[plan.InnerChildIdx] = BuildSide
-			driverSideInfo[1-plan.InnerChildIdx] = ProbeSide
+			driverSideInfo[plan.InnerChildIdx] = ProbeSide
+			driverSideInfo[1-plan.InnerChildIdx] = BuildSide
 		case *PhysicalIndexMergeJoin:
-			driverSideInfo[plan.InnerChildIdx] = BuildSide
-			driverSideInfo[1-plan.InnerChildIdx] = ProbeSide
+			driverSideInfo[plan.InnerChildIdx] = ProbeSide
+			driverSideInfo[1-plan.InnerChildIdx] = BuildSide
 		case *PhysicalIndexHashJoin:
-			driverSideInfo[plan.InnerChildIdx] = BuildSide
-			driverSideInfo[1-plan.InnerChildIdx] = ProbeSide
+			driverSideInfo[plan.InnerChildIdx] = ProbeSide
+			driverSideInfo[1-plan.InnerChildIdx] = BuildSide
 		}
 
-		for i := range physPlan.Children() {
+		children := make([]PhysicalPlan, len(physPlan.Children()))
+		copy(children, physPlan.Children())
+		// Put the build side before the probe side if buildSideFirst is true.
+		if f.buildSideFirst &&
+			len(driverSideInfo) == 2 &&
+			driverSideInfo[0] == ProbeSide &&
+			driverSideInfo[1] == BuildSide {
+			driverSideInfo[0], driverSideInfo[1] = driverSideInfo[1], driverSideInfo[0]
+			children[0], children[1] = children[1], children[0]
+		}
+
+		for i := range children {
 			childCtx.isRoot = info.isRoot
 			childCtx.storeType = info.storeType
 			childCtx.driverSide = driverSideInfo[i]
-			childCtx.isLastChild = i == len(physPlan.Children())-1
-			target = f.flattenRecursively(physPlan.Children()[i], childCtx, target)
+			childCtx.isLastChild = i == len(children)-1
+			target = f.flattenRecursively(children[i], childCtx, target)
 		}
 	}
 
