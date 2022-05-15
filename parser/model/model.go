@@ -979,6 +979,29 @@ type PartitionInfo struct {
 	Num                 uint64                `json:"num"`
 }
 
+func (pi *PartitionInfo) Clone() *PartitionInfo {
+	newPi := *pi
+	newPi.Columns = make([]CIStr, len(pi.Columns))
+	copy(newPi.Columns, pi.Columns)
+
+	newPi.Definitions = make([]PartitionDefinition, len(pi.Definitions))
+	for i := range pi.Definitions {
+		newPi.Definitions[i] = pi.Definitions[i].Clone()
+	}
+
+	newPi.AddingDefinitions = make([]PartitionDefinition, len(pi.AddingDefinitions))
+	for i := range pi.AddingDefinitions {
+		newPi.AddingDefinitions[i] = pi.AddingDefinitions[i].Clone()
+	}
+
+	newPi.DroppingDefinitions = make([]PartitionDefinition, len(pi.DroppingDefinitions))
+	for i := range pi.DroppingDefinitions {
+		newPi.DroppingDefinitions[i] = pi.DroppingDefinitions[i].Clone()
+	}
+
+	return &newPi
+}
+
 // GetNameByID gets the partition name by ID.
 func (pi *PartitionInfo) GetNameByID(id int64) string {
 	definitions := pi.Definitions
