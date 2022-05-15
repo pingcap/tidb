@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
+
 package realtikvtest
 
 import (
@@ -36,9 +38,11 @@ import (
 	"google.golang.org/grpc"
 )
 
-var withRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
+// WithRealTiKV is a flag identify whether tests run with real TiKV
+var WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
 
-func TestMain(m *testing.M) {
+// RunTestMain run common setups for all real tikv tests.
+func RunTestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	flag.Parse()
 	session.SetSchemaLease(20 * time.Millisecond)
@@ -101,12 +105,14 @@ func clearEtcdStorage(t *testing.T, backend kv.EtcdBackend) {
 	require.NoError(t, err)
 }
 
-func createMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
-	store, _, clean := createMockStoreAndDomainAndSetup(t, opts...)
+// CreateMockStoreAndSetup return a new kv.Storage.
+func CreateMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
+	store, _, clean := CreateMockStoreAndDomainAndSetup(t, opts...)
 	return store, clean
 }
 
-func createMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+// CreateMockStoreAndDomainAndSetup return a new kv.Storage and *domain.Domain.
+func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
 	// set it to 5 seconds for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff.Store(500)
@@ -115,7 +121,7 @@ func createMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	var dom *domain.Domain
 	var err error
 
-	if *withRealTiKV {
+	if *WithRealTiKV {
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
