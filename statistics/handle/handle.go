@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -261,9 +260,10 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	tables := make([]*statistics.Table, 0, len(rows))
-	deletedTableIDs := make([]int64, 0, len(rows))
+	option := &tableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
 	for _, row := range rows {
 		version := row.GetUint64(0)
 		physicalID := row.GetInt64(1)
@@ -275,7 +275,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		h.mu.Unlock()
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
-			deletedTableIDs = append(deletedTableIDs, physicalID)
+			oldCache.Del(physicalID)
 			continue
 		}
 		tableInfo := table.Meta()
@@ -289,7 +289,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 			continue
 		}
 		if tbl == nil {
-			deletedTableIDs = append(deletedTableIDs, physicalID)
+			oldCache.Del(physicalID)
 			continue
 		}
 		tbl.Version = version
@@ -297,9 +297,13 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		tables = append(tables, tbl)
+		if option.byQuery {
+			oldCache.PutByQuery(physicalID, tbl)
+		} else {
+			oldCache.Put(physicalID, tbl)
+		}
 	}
-	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
+	h.updateStatsCache(oldCache.update(nil, nil, lastVersion))
 	return nil
 }
 
@@ -548,12 +552,17 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
+	enableQuota := oldCache.EnableQuota()
+	newCost := newCache.Cost()
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
-		h.statsCache.memTracker.Consume(newCache.Cost() - oldCache.Cost())
+		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
 		h.statsCache.Store(newCache)
 		updated = true
 	}
 	h.statsCache.Unlock()
+	if updated && enableQuota {
+		costGauge.Set(float64(newCost))
+	}
 	return
 }
 
@@ -734,10 +743,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	col := table.Columns[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -768,7 +773,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			col = &statistics.Column{
 				PhysicalID: table.PhysicalID,
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				FMSketch:   fmSketch,
 				Info:       colInfo,
 				Count:      count + nullCount,
 				ErrorRate:  errorRate,
@@ -786,6 +790,12 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				return errors.Trace(err)
 			}
 			cms, topN, err := h.cmSketchAndTopNFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+			// we load all the statistics, i.e., loadAll is true. We don't need to read FMSketch from storage in notNeedLoad IF.
+			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2022,18 +2032,13 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) error {
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		return err
-	}
-	address := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.RestrictedSQLExecutor)
 	ctx := context.TODO()
 	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
-	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending, address, procID)
+	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending, instance, procID)
 	if err != nil {
 		return err
 	}
@@ -2065,4 +2070,31 @@ func WithTableStatsByQuery() TableStatsOpt {
 	return func(option *tableStatsOption) {
 		option.byQuery = true
 	}
+}
+
+// SetStatsCacheCapacity sets capacity
+func (h *Handle) SetStatsCacheCapacity(c int64) {
+	if h == nil {
+		return
+	}
+	v := h.statsCache.Load()
+	if v == nil {
+		return
+	}
+	sc := v.(statsCache)
+	sc.SetCapacity(c)
+}
+
+// GetStatsCacheFrontTable gets front table in statsCacheInner implementation
+// only used for test
+func (h *Handle) GetStatsCacheFrontTable() int64 {
+	if h == nil {
+		return 0
+	}
+	v := h.statsCache.Load()
+	if v == nil {
+		return 0
+	}
+	sc := v.(statsCache)
+	return sc.Front()
 }

@@ -1001,12 +1001,10 @@ func TestBatchInsertDelete(t *testing.T) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableBatchDML = true
-	})
+	tk.MustExec("SET GLOBAL tidb_enable_batch_dml = 1")
+	defer tk.MustExec("SET GLOBAL tidb_enable_batch_dml = 0")
 
-	// Change to batch inset mode and batch size to 50.
+	// Change to batch insert mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
 	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
