@@ -262,9 +262,6 @@ txn-total-size-limit = 104857600
 # NOTE: Increasing this limit may cause performance problems.
 txn-entry-size-limit = 6291456
 
-# The max number of running concurrency two phase committer request for an SQL.
-committer-concurrency = 128
-
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
 
