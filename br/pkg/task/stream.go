@@ -68,7 +68,7 @@ var (
 	StreamResume   = "log resume"
 	StreamStatus   = "log status"
 	StreamTruncate = "log truncate"
-	StreamCheck    = "log check"
+	StreamMetadata = "log metadata"
 
 	skipSummaryCommandList = map[string]struct{}{
 		StreamStatus:   {},
@@ -88,7 +88,7 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamResume:   RunStreamResume,
 	StreamStatus:   RunStreamStatus,
 	StreamTruncate: RunStreamTruncate,
-	StreamCheck:    RunStreamCheck,
+	StreamMetadata: RunStreamMetadata,
 }
 
 // StreamConfig specifies the configure about backup stream
@@ -296,6 +296,10 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if backend.GetS3() == nil {
+			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
+				"Only support s3 storage currently.")
 		}
 
 		opts := storage.ExternalStorageOptions{
@@ -561,7 +565,7 @@ func RunStreamStart(
 	return nil
 }
 
-func RunStreamCheck(
+func RunStreamMetadata(
 	c context.Context,
 	g glue.Glue,
 	cmdName string,
