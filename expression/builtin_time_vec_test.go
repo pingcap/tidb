@@ -156,7 +156,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETReal},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
 			},
 			geners: []dataGenerator{newRangeInt64Gener(-1000, 1000)},
 		},
@@ -194,7 +194,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETDatetime},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeDatetime).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).BuildP(),
 			},
 			geners: []dataGenerator{&dateTimeGener{Fsp: 0, randGen: newDefaultRandGen()}},
 		},
@@ -361,7 +361,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{nil,
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).BuildP()},
 			geners: []dataGenerator{
 				&dateStrGener{randGen: newDefaultRandGen()},
 				&dateStrGener{randGen: newDefaultRandGen()},
@@ -381,7 +381,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{nil,
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).BuildP(),
 			},
 			geners: []dataGenerator{
 				gener{*newDefaultGener(0.2, types.ETString)},

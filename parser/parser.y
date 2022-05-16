@@ -715,6 +715,7 @@ import (
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
+	batch                      "BATCH"
 	buckets                    "BUCKETS"
 	builtins                   "BUILTINS"
 	cancel                     "CANCEL"
@@ -6152,6 +6153,7 @@ UnReservedKeyword:
 
 TiDBKeyword:
 	"ADMIN"
+|	"BATCH"
 |	"BUCKETS"
 |	"BUILTINS"
 |	"CANCEL"
@@ -13490,7 +13492,7 @@ TableLockList:
  * Split a SQL on a column. Used for bulk delete that doesn't need ACID.
  *******************************************************************/
 NonTransactionalDeleteStmt:
-	"SPLIT" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
+	"BATCH" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
 	{
 		$$ = &ast.NonTransactionalDeleteStmt{
 			DryRun:      $5.(int),

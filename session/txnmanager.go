@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -96,6 +97,22 @@ func (m *txnManager) OnStmtStart(ctx context.Context) error {
 	return m.ctxProvider.OnStmtStart(ctx)
 }
 
+// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+	if m.ctxProvider == nil {
+		return sessiontxn.NoIdea()
+	}
+	return m.ctxProvider.OnStmtErrorForNextAction(point, err)
+}
+
+// OnStmtRetry is the hook that should be called when a statement retry
+func (m *txnManager) OnStmtRetry(ctx context.Context) error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	return m.ctxProvider.OnStmtRetry(ctx)
+}
+
 func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) sessiontxn.TxnContextProvider {
 	if r.Provider != nil {
 		return r.Provider
@@ -114,5 +131,6 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		Sctx:                  m.sctx,
 		Pessimistic:           txnMode == ast.Pessimistic,
 		CausalConsistencyOnly: r.CausalConsistencyOnly,
+		UpdateForUpdateTS:     executor.UpdateForUpdateTS,
 	}
 }

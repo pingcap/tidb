@@ -293,7 +293,7 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 	// issue #13027, #13961
 	if (a.RetTp.GetType() == mysql.TypeEnum || a.RetTp.GetType() == mysql.TypeSet) &&
 		(a.Name != ast.AggFuncFirstRow && a.Name != ast.AggFuncMax && a.Name != ast.AggFuncMin) {
-		a.RetTp = types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlen(mysql.MaxFieldCharLength).BuildP()
+		a.RetTp = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(mysql.MaxFieldCharLength).BuildP()
 	}
 }
 

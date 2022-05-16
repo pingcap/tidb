@@ -37,7 +37,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestLogFormat(t *testing.T) {
-	mem := new(memory.Tracker)
+	mem := memory.NewTracker(-1, -1)
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
 	info := &util.ProcessInfo{
 		ID:            233,
