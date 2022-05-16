@@ -111,6 +111,7 @@ func (p *PessimisticRCTxnContextProvider) OnInitialize(ctx context.Context, tp s
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error {
 	p.ctx = ctx
+	p.stmtTS = 0
 	p.stmtTSFuture = nil
 	p.stmtRCCheckTS = p.stmtTS
 	p.stmtInfoSchema = p.is

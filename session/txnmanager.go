@@ -135,7 +135,7 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil)
 	}
 
-	if r.TxnMode == ast.Pessimistic {
+	if txnMode == ast.Pessimistic {
 		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
 		case ast.ReadCommitted:
 			return readcomitted.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
