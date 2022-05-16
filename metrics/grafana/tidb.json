@@ -11835,7 +11835,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_statistics_stats_healthy{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "avg(tidb_statistics_stats_healthy{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
