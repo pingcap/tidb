@@ -5418,6 +5418,8 @@ func TestHistoryReadInTxn(t *testing.T) {
 	} {
 		for _, setSnapshotBeforeTxn := range []bool{false, true} {
 			t.Run(fmt.Sprintf("[%s] setSnapshotBeforeTxn[%v]", isolation, setSnapshotBeforeTxn), func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
 				tk.MustExec("rollback")
 				tk.MustExec("set @@tidb_snapshot=''")
 
@@ -5443,6 +5445,7 @@ func TestHistoryReadInTxn(t *testing.T) {
 					for _, sql := range notAllowedSQLs {
 						err := tk.ExecToErr(sql)
 						require.Errorf(t, err, "can not execute write statement when 'tidb_snapshot' is set")
+						time.Sleep(20 * time.Millisecond)
 					}
 				}
 
