@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -522,11 +521,11 @@ func TestPreparedStmt(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
-	plannercore.SetPreparedPlanCache(false) // requires plan cache disabled, or the IndexNames = 1 on first test.
+	variable.SetPreparedPlanCache(false) // requires plan cache disabled, or the IndexNames = 1 on first test.
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

@@ -16,7 +16,6 @@ package core
 
 import (
 	"math"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -35,32 +34,9 @@ import (
 )
 
 var (
-	// preparedPlanCacheEnabledValue stores the global config "prepared-plan-cache-enabled".
-	// The value is false unless "prepared-plan-cache-enabled" is true in configuration.
-	preparedPlanCacheEnabledValue int32 = 0
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
-
-const (
-	preparedPlanCacheEnabled = 1
-	preparedPlanCacheUnable  = 0
-)
-
-// SetPreparedPlanCache sets isEnabled to true, then prepared plan cache is enabled.
-func SetPreparedPlanCache(isEnabled bool) {
-	if isEnabled {
-		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheEnabled)
-	} else {
-		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheUnable)
-	}
-}
-
-// PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
-func PreparedPlanCacheEnabled() bool {
-	isEnabled := atomic.LoadInt32(&preparedPlanCacheEnabledValue)
-	return isEnabled == preparedPlanCacheEnabled
-}
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
 // Put the parameters that may affect the plan in planCacheValue, such as bindSQL.

@@ -33,11 +33,11 @@ func TestPlanCache(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
-	plannercore.SetPreparedPlanCache(true)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})

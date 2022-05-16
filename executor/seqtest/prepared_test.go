@@ -30,6 +30,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -42,15 +43,15 @@ func TestPrepared(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
 
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
+		variable.SetPreparedPlanCache(flag)
 
 		tk := testkit.NewTestKit(t, store)
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
@@ -294,14 +295,14 @@ func TestPrepared(t *testing.T) {
 func TestPreparedLimitOffset(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
+		variable.SetPreparedPlanCache(flag)
 
 		tk := testkit.NewTestKit(t, store)
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
@@ -336,13 +337,13 @@ func TestPreparedLimitOffset(t *testing.T) {
 func TestPreparedNullParam(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
+		variable.SetPreparedPlanCache(flag)
 		tk := testkit.NewTestKit(t, store)
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
@@ -378,13 +379,13 @@ func TestPreparedNullParam(t *testing.T) {
 func TestPrepareWithAggregation(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
+		variable.SetPreparedPlanCache(flag)
 		tk := testkit.NewTestKit(t, store)
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
@@ -411,13 +412,13 @@ func TestPrepareWithAggregation(t *testing.T) {
 func TestPreparedIssue7579(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
+		variable.SetPreparedPlanCache(flag)
 		tk := testkit.NewTestKit(t, store)
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
@@ -460,9 +461,9 @@ func TestPreparedIssue7579(t *testing.T) {
 func TestPreparedInsert(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
@@ -470,7 +471,7 @@ func TestPreparedInsert(t *testing.T) {
 	pb := &dto.Metric{}
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
+		variable.SetPreparedPlanCache(flag)
 		tk := testkit.NewTestKit(t, store)
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
@@ -547,9 +548,9 @@ func TestPreparedInsert(t *testing.T) {
 func TestPreparedUpdate(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
@@ -557,7 +558,7 @@ func TestPreparedUpdate(t *testing.T) {
 	pb := &dto.Metric{}
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
+		variable.SetPreparedPlanCache(flag)
 		tk := testkit.NewTestKit(t, store)
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
@@ -608,11 +609,11 @@ func TestPreparedUpdate(t *testing.T) {
 func TestIssue21884(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
-	plannercore.SetPreparedPlanCache(false)
+	variable.SetPreparedPlanCache(false)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -634,9 +635,9 @@ func TestIssue21884(t *testing.T) {
 func TestPreparedDelete(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
@@ -644,7 +645,7 @@ func TestPreparedDelete(t *testing.T) {
 	pb := &dto.Metric{}
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
+		variable.SetPreparedPlanCache(flag)
 		tk := testkit.NewTestKit(t, store)
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
@@ -695,11 +696,11 @@ func TestPreparedDelete(t *testing.T) {
 func TestPrepareDealloc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
-	plannercore.SetPreparedPlanCache(true)
+	variable.SetPreparedPlanCache(true)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -749,13 +750,13 @@ func TestPrepareDealloc(t *testing.T) {
 func TestPreparedIssue8153(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
+		variable.SetPreparedPlanCache(flag)
 		tk := testkit.NewTestKit(t, store)
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
@@ -805,13 +806,13 @@ func TestPreparedIssue8153(t *testing.T) {
 func TestPreparedIssue8644(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
+		variable.SetPreparedPlanCache(flag)
 		tk := testkit.NewTestKit(t, store)
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{

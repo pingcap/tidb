@@ -46,9 +46,9 @@ import (
 func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -83,9 +83,9 @@ func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
 func TestPreparePointGetWithDML(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -116,9 +116,9 @@ func TestPreparePointGetWithDML(t *testing.T) {
 func TestPrepareIgnoreCloseStmtCmd(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -157,9 +157,9 @@ func TestPrepareIgnoreCloseStmtCmd(t *testing.T) {
 func TestRandomFlushPlanCache(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -247,9 +247,9 @@ func TestRandomFlushPlanCache(t *testing.T) {
 func TestFlushPlanCache(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -341,9 +341,9 @@ func TestFlushPlanCache(t *testing.T) {
 func TestFlushPlanCacheWithoutPCEnable(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(false)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(false)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -437,9 +437,9 @@ func TestFlushPlanCacheWithoutPCEnable(t *testing.T) {
 func TestPrepareCache(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -518,9 +518,9 @@ func TestPrepareCache(t *testing.T) {
 func TestPrepareCacheIndexScan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -623,9 +623,9 @@ func randValue(tk *testkit.TestKit, tbl, col, dtype, rtype string) string {
 func TestPrepareCacheChangingParamType(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -688,9 +688,9 @@ func TestPrepareCacheChangingParamType(t *testing.T) {
 func TestPrepareCacheChangeCharsetCollation(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -729,9 +729,9 @@ func TestPrepareCacheChangeCharsetCollation(t *testing.T) {
 func TestPrepareCacheDeferredFunction(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -782,9 +782,9 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 func TestPrepareCacheNow(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -850,9 +850,9 @@ func TestPrepareTableAsNameOnGroupByWithCache(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210702")
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -884,9 +884,9 @@ func TestPrepareTableAsNameOnGroupByWithCache(t *testing.T) {
 func TestPrepareCachePointGetInsert(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -920,9 +920,9 @@ func TestPrepareCachePointGetInsert(t *testing.T) {
 func TestIssue31280(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -962,9 +962,9 @@ func TestIssue31280(t *testing.T) {
 func TestIssue31375(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1092,9 +1092,9 @@ func TestPrepareCacheForClusteredIndex(t *testing.T) {
 func TestPrepareCacheForPartition(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1239,9 +1239,9 @@ func mustExec(t *testing.T, se session.Session, sql string) {
 func TestConstPropAndPPDWithCache(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1339,9 +1339,9 @@ func TestConstPropAndPPDWithCache(t *testing.T) {
 func TestPlanCacheUnionScan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1438,9 +1438,9 @@ func TestPlanCacheUnionScan(t *testing.T) {
 func TestPlanCacheSwitchDB(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1493,9 +1493,9 @@ func TestPlanCacheHitInfo(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210705")
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1529,9 +1529,9 @@ func TestPlanCacheHitInfo(t *testing.T) {
 func TestIssue29303(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1557,9 +1557,9 @@ func TestIssue29303(t *testing.T) {
 func TestIssue28942(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1585,9 +1585,9 @@ func TestIssue28942(t *testing.T) {
 func TestPlanCacheUnsignedHandleOverflow(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1612,9 +1612,9 @@ func TestPlanCacheUnsignedHandleOverflow(t *testing.T) {
 func TestIssue28254(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1639,9 +1639,9 @@ func TestIssue28254(t *testing.T) {
 func TestIssue33067(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1663,9 +1663,9 @@ func TestIssue33067(t *testing.T) {
 func TestIssue29486(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1694,9 +1694,9 @@ func TestIssue29486(t *testing.T) {
 func TestIssue28867(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1737,9 +1737,9 @@ func TestIssue28867(t *testing.T) {
 func TestParamMarker4FastPlan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1849,9 +1849,9 @@ func TestParamMarker4FastPlan(t *testing.T) {
 func TestIssue29565(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec(`use test`)
@@ -1872,9 +1872,9 @@ func TestIssue29565(t *testing.T) {
 func TestIssue31730(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec(`use test`)
@@ -1889,9 +1889,9 @@ func TestIssue31730(t *testing.T) {
 func TestIssue28828(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -1929,9 +1929,9 @@ func TestIssue28828(t *testing.T) {
 func TestIssue28920(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -1959,9 +1959,9 @@ func TestIssue28920(t *testing.T) {
 func TestIssue18066(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2044,9 +2044,9 @@ func TestInvisibleIndexPrepare(t *testing.T) {
 func TestPrepareCacheWithJoinTable(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2067,9 +2067,9 @@ func TestPrepareCacheWithJoinTable(t *testing.T) {
 func TestPlanCacheSnapshot(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2113,9 +2113,9 @@ func TestPlanCacheSnapshot(t *testing.T) {
 func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2193,9 +2193,9 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 func TestIssue26873(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2217,9 +2217,9 @@ func TestIssue26873(t *testing.T) {
 func TestIssue29511(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2239,9 +2239,9 @@ func TestIssue29511(t *testing.T) {
 func TestIssue23671(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2264,9 +2264,9 @@ func TestIssue23671(t *testing.T) {
 func TestIssue29296(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2297,9 +2297,9 @@ func TestIssue29296(t *testing.T) {
 func TestIssue28246(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2325,9 +2325,9 @@ func TestIssue28246(t *testing.T) {
 func TestIssue29805(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2354,9 +2354,9 @@ func TestIssue29805(t *testing.T) {
 func TestIssue29993(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2425,9 +2425,9 @@ func TestIssue29993(t *testing.T) {
 func TestIssue30100(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2453,9 +2453,9 @@ func TestIssue30100(t *testing.T) {
 func TestPartitionTable(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2587,9 +2587,9 @@ func TestPartitionTable(t *testing.T) {
 func TestPartitionWithVariedDataSources(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2743,9 +2743,9 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 func TestCachedTable(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	orgEnable := variable.PreparedPlanCacheEnabled()
+	defer variable.SetPreparedPlanCache(orgEnable)
+	variable.SetPreparedPlanCache(true)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -2807,11 +2807,11 @@ func TestCachedTable(t *testing.T) {
 }
 
 func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
-	orgEnable := core.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
-	core.SetPreparedPlanCache(true)
+	variable.SetPreparedPlanCache(true)
 
 	ctx := context.Background()
 	store, clean := testkit.CreateMockStore(t)
@@ -2861,9 +2861,9 @@ func TestPreparePlanCacheSwitch(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set global tidb_prepared_plan_cache_size=0`)
-	require.False(t, core.PreparedPlanCacheEnabled())
+	require.False(t, variable.PreparedPlanCacheEnabled())
 	tk.MustExec(`set global tidb_prepared_plan_cache_size=100`)
-	require.True(t, core.PreparedPlanCacheEnabled())
+	require.True(t, variable.PreparedPlanCacheEnabled())
 	tk.MustExec(`set global tidb_prepared_plan_cache_size=0`)
-	require.False(t, core.PreparedPlanCacheEnabled())
+	require.False(t, variable.PreparedPlanCacheEnabled())
 }

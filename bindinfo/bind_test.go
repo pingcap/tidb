@@ -17,6 +17,7 @@ package bindinfo_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"testing"
 
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -36,11 +36,11 @@ import (
 func TestPrepareCacheWithBinding(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgEnable := variable.PreparedPlanCacheEnabled()
 	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
+		variable.SetPreparedPlanCache(orgEnable)
 	}()
-	plannercore.SetPreparedPlanCache(true)
+	variable.SetPreparedPlanCache(true)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

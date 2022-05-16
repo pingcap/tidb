@@ -16,10 +16,11 @@ package variable
 
 import (
 	"math"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
-	"go.uber.org/atomic"
+	atomic2 "go.uber.org/atomic"
 )
 
 /*
@@ -694,6 +695,15 @@ const (
 	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
 	// for any type of configuration item that has concurrent workers.
 	MaxConfigurableConcurrency = 256
+
+	preparedPlanCacheEnabled = 1
+	preparedPlanCacheUnable  = 0
+)
+
+var (
+	// preparedPlanCacheEnabledValue stores the global config "prepared-plan-cache-enabled".
+	// The value is false unless "prepared-plan-cache-enabled" is true in configuration.
+	preparedPlanCacheEnabledValue int32 = 0
 )
 
 // Default TiDB system variable values.
@@ -870,11 +880,11 @@ const (
 
 // Process global variables.
 var (
-	ProcessGeneralLog           = atomic.NewBool(false)
-	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen              = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU           = atomic.NewBool(false)
-	EnableBatchDML              = atomic.NewBool(false)
+	ProcessGeneralLog           = atomic2.NewBool(false)
+	GlobalLogMaxDays            = atomic2.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen              = atomic2.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU           = atomic2.NewBool(false)
+	EnableBatchDML              = atomic2.NewBool(false)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
@@ -890,22 +900,22 @@ var (
 	ExpensiveQueryTimeThreshold       uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold    uint64 = 10 // 10s
 	DefExecutorConcurrency                   = 5
-	MemoryUsageAlarmRatio                    = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
-	EnableLocalTxn                           = atomic.NewBool(DefTiDBEnableLocalTxn)
-	MaxTSOBatchWaitInterval                  = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
-	EnableTSOFollowerProxy                   = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
-	RestrictedReadOnly                       = atomic.NewBool(DefTiDBRestrictedReadOnly)
-	VarTiDBSuperReadOnly                     = atomic.NewBool(DefTiDBSuperReadOnly)
-	PersistAnalyzeOptions                    = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
-	TableCacheLease                          = atomic.NewInt64(DefTiDBTableCacheLease)
-	EnableColumnTracking                     = atomic.NewBool(DefTiDBEnableColumnTracking)
-	StatsLoadSyncWait                        = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
-	StatsLoadPseudoTimeout                   = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	MemQuotaBindingCache                     = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
-	GCMaxWaitTime                            = atomic.NewInt64(DefTiDBGCMaxWaitTime)
-	StatsCacheMemQuota                       = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
-	PreparedPlanCacheSize                    = atomic.NewUint32(uint32(DefTiDBPreparedPlanCacheSize))
-	PreparedPlanCacheMemoryGuardRatio        = atomic.NewFloat64(DefTiDBPreparedPlanCacheMemoryGuardRatio)
+	MemoryUsageAlarmRatio                    = atomic2.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
+	EnableLocalTxn                           = atomic2.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval                  = atomic2.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy                   = atomic2.NewBool(DefTiDBEnableTSOFollowerProxy)
+	RestrictedReadOnly                       = atomic2.NewBool(DefTiDBRestrictedReadOnly)
+	VarTiDBSuperReadOnly                     = atomic2.NewBool(DefTiDBSuperReadOnly)
+	PersistAnalyzeOptions                    = atomic2.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                          = atomic2.NewInt64(DefTiDBTableCacheLease)
+	EnableColumnTracking                     = atomic2.NewBool(DefTiDBEnableColumnTracking)
+	StatsLoadSyncWait                        = atomic2.NewInt64(DefTiDBStatsLoadSyncWait)
+	StatsLoadPseudoTimeout                   = atomic2.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	MemQuotaBindingCache                     = atomic2.NewInt64(DefTiDBMemQuotaBindingCache)
+	GCMaxWaitTime                            = atomic2.NewInt64(DefTiDBGCMaxWaitTime)
+	StatsCacheMemQuota                       = atomic2.NewInt64(DefTiDBStatsCacheMemQuota)
+	PreparedPlanCacheSize                    = atomic2.NewUint32(uint32(DefTiDBPreparedPlanCacheSize))
+	PreparedPlanCacheMemoryGuardRatio        = atomic2.NewFloat64(DefTiDBPreparedPlanCacheMemoryGuardRatio)
 )
 
 var (
@@ -914,3 +924,18 @@ var (
 	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
 	GetMemQuotaAnalyze func() int64 = nil
 )
+
+// SetPreparedPlanCache sets isEnabled to true, then prepared plan cache is enabled.
+func SetPreparedPlanCache(isEnabled bool) {
+	if isEnabled {
+		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheEnabled)
+	} else {
+		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheUnable)
+	}
+}
+
+// PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
+func PreparedPlanCacheEnabled() bool {
+	isEnabled := atomic.LoadInt32(&preparedPlanCacheEnabledValue)
+	return isEnabled == preparedPlanCacheEnabled
+}
