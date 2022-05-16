@@ -1681,7 +1681,11 @@ func (rc *Client) RestoreKVFiles(
 					summary.CollectInt("File", 1)
 					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
 				}()
-				return rc.fileImporter.ImportKVFiles(ectx, file, rule, rc.restoreTS)
+				startTS := rc.startTS
+				if file.Cf == stream.DefaultCF {
+					startTS = rc.shiftStartTS
+				}
+				return rc.fileImporter.ImportKVFiles(ectx, file, rule, startTS, rc.restoreTS)
 			})
 		}
 	}
