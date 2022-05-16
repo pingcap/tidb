@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -573,6 +574,88 @@ func TestSavepointInPessimisticAndOptimistic(t *testing.T) {
 	tk2.MustQuery("select * from t").Check(testkit.Rows("2 2"))
 	tk2.MustExec("commit")
 	tk1.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+}
+
+func TestSavepointInBigTxn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(id int key, a int)")
+	rowCount := 10000
+
+	// Test for rollback batch insert
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("insert into t values (0, 0)")
+	tk1.MustExec("savepoint s1")
+	for i := 1; i < rowCount; i++ {
+		insert := fmt.Sprintf("insert into t values (%v, %v)", i, i)
+		tk1.MustExec(insert)
+	}
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount)))
+	tk1.MustExec("rollback to s1")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+	tk1.MustExec("commit")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+
+	// Test for rollback batch update
+	tk1.MustExec("begin")
+	for i := 1; i < rowCount; i++ {
+		insert := fmt.Sprintf("insert into t values (%v, %v)", i, i)
+		tk1.MustExec(insert)
+	}
+	tk1.MustExec("commit")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("savepoint s1")
+	for i := 1; i < rowCount; i++ {
+		update := fmt.Sprintf("update t set a=a+1 where id = %v", i)
+		tk1.MustExec(update)
+	}
+	tk1.MustQuery("select count(*) from t where id != a").Check(testkit.Rows(strconv.Itoa(rowCount - 1)))
+	tk1.MustExec("rollback to s1")
+	tk1.MustQuery("select count(*) from t where id != a").Check(testkit.Rows("0"))
+	tk1.MustExec("commit")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount)))
+
+	// Test for rollback batch insert on duplicate update
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("savepoint s1")
+	for i := 1; i < rowCount; i++ {
+		insert := fmt.Sprintf("insert into t values (%v, %v) on duplicate key update a=a+1", i, i)
+		tk1.MustExec(insert)
+	}
+	tk1.MustQuery("select count(*) from t where id != a").Check(testkit.Rows(strconv.Itoa(rowCount - 1)))
+	tk1.MustExec("rollback to s1")
+	tk1.MustQuery("select count(*) from t where id != a").Check(testkit.Rows("0"))
+	tk1.MustExec("commit")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount)))
+
+	// Test for rollback batch delete.
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("insert into t values (-1, -1)")
+	tk1.MustExec("savepoint s1")
+	for i := 0; i < rowCount; i++ {
+		update := fmt.Sprintf("delete from t where id = %v", i)
+		tk1.MustExec(update)
+	}
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+	tk1.MustExec("rollback to s1")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount + 1)))
+	tk1.MustExec("rollback")
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount)))
+
+	// Test for many savepoint in 1 txn.
+	tk1.MustExec("truncate table t")
+	tk1.MustExec("begin pessimistic")
+	for i := 0; i < rowCount; i++ {
+		insert := fmt.Sprintf("insert into t values (%v, %v)", i, i)
+		tk1.MustExec(insert)
+		tk1.MustExec(fmt.Sprintf("savepoint s%v", i))
+	}
+	tk1.MustQuery("select count(*) from t").Check(testkit.Rows(strconv.Itoa(rowCount)))
+	tk1.MustExec("rollback to s1")
+	tk1.MustExec("commit")
+	tk1.MustQuery("select * from t order by id").Check(testkit.Rows("0 0", "1 1"))
 }
 
 func TestSavepointWithBinlog(t *testing.T) {
