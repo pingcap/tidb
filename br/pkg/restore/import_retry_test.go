@@ -275,7 +275,7 @@ func TestRegionSplit(t *testing.T) {
 func TestRetryBackoff(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient()
-	rs := utils.InitialRetryState(2, time.Millisecond, 10 * time.Millisecond)
+	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
@@ -303,6 +303,6 @@ func TestRetryBackoff(t *testing.T) {
 	printPDRegion("cli", cli.regionsInfo.Regions)
 	require.Equal(t, 1, rs.Attempt())
 	// we retried leader not found error. so the next backoff should be 2 * initical backoff.
-	require.Equal(t, 2 * time.Millisecond, rs.ExponentialBackoff())
+	require.Equal(t, 2*time.Millisecond, rs.ExponentialBackoff())
 	require.NoError(t, err)
 }
