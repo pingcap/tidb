@@ -1507,7 +1507,7 @@ func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 }
 
 func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
-	if flat == nil || len(flat.Main) == 0 {
+	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
 		return
 	}
 	for _, flatOp := range flat.Main {

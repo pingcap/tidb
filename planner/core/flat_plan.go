@@ -37,6 +37,9 @@ type FlatPhysicalPlan struct {
 	// then InExecute will be true.
 	InExecute bool
 
+	// InExplain means if the original plan tree contains Explain operator.
+	InExplain bool
+
 	buildSideFirst bool
 	ctesToFlatten  []*PhysicalCTE
 }
@@ -324,6 +327,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			target = f.flattenRecursively(plan.Plan, childCtx, target)
 		}
 	case *Explain:
+		f.InExplain = true
 		// Explain is ignored in flattenSingle(). We start to explain its TargetPlan from a new operatorCtx.
 		if plan.TargetPlan != nil {
 			initInfo := &operatorCtx{
