@@ -929,6 +929,11 @@ func TestModifyInvalidColumnData(t *testing.T) {
 	tk.MustExec("insert into t values (0x3F, 0x3F, 0x90)")
 	tk.MustGetErrCode("alter table t convert to charset utf8", errno.ErrTruncatedWrongValueForField)
 
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20) charset latin1, b char(20), c char(20) charset latin1)")
+	tk.MustExec("insert into t values (0x70, 0x61, 0x90)")
+	tk.MustGetErrMsg("alter table t convert to charset utf8mb4", "[table:1366]Incorrect string value '\\x90' for column 'c'")
+
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(20)) charset = latin1")
@@ -946,6 +951,7 @@ func TestModifyInvalidColumnData(t *testing.T) {
 	tk.MustExec("alter table t modify column b varchar(20) charset utf8")
 	// change varchar(20) to varchar(19) will do reorg which uses '?' instead of invalid characters
 	tk.MustQuery("select hex(a), hex(b) from t").Check(testkit.Rows("3F 90"))
+
 	tk.MustExec("set sql_mode=default")
 }
 

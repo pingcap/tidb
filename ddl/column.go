@@ -1558,10 +1558,7 @@ func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model
 }
 
 func needCheckLatin1Convert(oldCol, newCol *model.ColumnInfo) bool {
-	if oldCol.GetCharset() != newCol.GetCharset() {
-		return oldCol.GetCharset() == charset.CharsetLatin1
-	}
-	return false
+	return oldCol.GetCharset() == charset.CharsetLatin1 && newCol.GetCharset() != charset.CharsetLatin1
 }
 
 func (w *worker) checkLatin1Convert(schema, t model.CIStr, oldCols []*model.ColumnInfo, newCols []*model.ColumnInfo) (err error) {
@@ -1574,7 +1571,15 @@ func (w *worker) checkLatin1Convert(schema, t model.CIStr, oldCols []*model.Colu
 	defer w.sessPool.put(sctx)
 
 	var buf strings.Builder
-	buf.WriteString("select * from %n.%n where ")
+	buf.WriteString("select ")
+	for i, col := range oldCols {
+		if i == 0 {
+			buf.WriteString(col.Name.L)
+		} else {
+			buf.WriteString("," + col.Name.L)
+		}
+	}
+	buf.WriteString(" from %n.%n where ")
 	paramsList := make([]interface{}, 0, 2+3*len(oldCols))
 	paramsList = append(paramsList, schema.L, t.L)
 	for i, col := range oldCols {
@@ -1595,7 +1600,7 @@ func (w *worker) checkLatin1Convert(schema, t model.CIStr, oldCols []*model.Colu
 	if rowCount != 0 {
 		row := rows[0]
 		for i, col := range oldCols {
-			_, err = table.CastValue(sctx, row.GetDatum(col.Offset, &col.FieldType), newCols[i], false, false)
+			_, err = table.CastValue(sctx, row.GetDatum(i, &col.FieldType), newCols[i], false, false)
 			if err != nil {
 				return errors.Trace(err)
 			}
