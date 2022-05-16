@@ -75,7 +75,7 @@ func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is interface{}) {
 
 // AssertTxnManagerReadTS is used only for test
 func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
-	actual, err := GetTxnManager(sctx).GetReadTS()
+	actual, err := GetTxnManager(sctx).GetStmtReadTS()
 	if err != nil {
 		panic(err)
 	}

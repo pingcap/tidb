@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
+	goctx "golang.org/x/net/context"
 )
 
 func TestNoZeroDateMode(t *testing.T) {
@@ -758,7 +760,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("USE test")
-	tk.MustExec("create table t(a char(10)) charset latin1 collate latin1_bin")
+	tk.MustExec("create table t(a char(10), index i(a)) charset latin1 collate latin1_bin")
 
 	tk.MustGetErrCode("alter table t charset gbk", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t charset ''", errno.ErrUnknownCharacterSet)
@@ -769,9 +771,18 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustGetErrCode("alter table t charset utf8 collate utf8mb4_bin;", errno.ErrCollationCharsetMismatch)
 	tk.MustGetErrCode("alter table t charset utf8 collate utf8_bin collate utf8mb4_bin collate utf8_bin;", errno.ErrCollationCharsetMismatch)
 
-	tk.MustGetErrCode("alter table t charset utf8", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t charset utf8mb4", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t charset utf8mb4 collate utf8mb4_bin", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table t charset utf8")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), index i(a)) charset latin1 collate latin1_bin")
+	tk.MustExec("alter table t charset utf8mb4")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), index i(a)) charset latin1 collate latin1_bin")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("admin check table t")
 
 	tk.MustGetErrCode("alter table t charset latin1 charset utf8 charset utf8mb4 collate utf8_bin;", errno.ErrConflictingDeclarations)
 
@@ -790,6 +801,13 @@ func TestChangingTableCharset(t *testing.T) {
 		}
 	}
 	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(20), key i(a)) charset=latin1")
+	tk.MustGetErrCode("alter table t convert to charset utf8 collate utf8_unicode_ci", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t convert to charset utf8 collate utf8_general_ci", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
+	tk.MustGetErrCode("alter table t convert to charset latin1", errno.ErrUnsupportedDDLOperation)
 
 	// Test when column charset can not convert to the target charset.
 	tk.MustExec("drop table t;")
@@ -817,7 +835,7 @@ func TestChangingTableCharset(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := mockCtx.NewTxn(context.Background())
+		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -1065,7 +1083,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := mockCtx.NewTxn(context.Background())
+		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -1859,7 +1877,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := mockCtx.NewTxn(context.Background())
+		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -3429,7 +3447,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	// Check filter out data from removed local temp tables
 	tk.MustExec("create temporary table a_local_temp_table_7 (id int)")
 	ctx := tk.Session()
-	require.Nil(t, ctx.NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	_, err = ctx.Txn(true)
 	require.NoError(t, err)
 	sessionVars := tk.Session().GetSessionVars()

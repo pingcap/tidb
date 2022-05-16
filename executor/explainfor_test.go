@@ -139,6 +139,10 @@ func TestExplainForVerbose(t *testing.T) {
 			require.Equal(t, rs2[i][j], rs[i][j])
 		}
 	}
+	tk.MustQuery("explain format = 'verbose' select * from t1").Rows()
+	tk.MustQuery("explain format = 'VERBOSE' select * from t1").Rows()
+	tk.MustQuery("explain analyze format = 'verbose' select * from t1").Rows()
+	tk.MustQuery("explain analyze format = 'VERBOSE' select * from t1").Rows()
 }
 
 func TestIssue11124(t *testing.T) {

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/logutil"
-	tidbMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
 )
 
@@ -2240,8 +2240,8 @@ func ExtractDurationNum(d *Duration, unit string) (res int64, err error) {
 
 // parseSingleTimeValue parse the format according the given unit. If we set strictCheck true, we'll check whether
 // the converted value not exceed the range of MySQL's TIME type.
-// The first four returned values are year, month, day and nanosecond.
-func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, int64, int64, int64, error) {
+// The returned values are year, month, day, nanosecond and fsp.
+func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, int64, int64, int64, int, error) {
 	// Format is a preformatted number, it format should be A[.[B]].
 	decimalPointPos := strings.IndexRune(format, '.')
 	if decimalPointPos == -1 {
@@ -2253,24 +2253,25 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 	}
 	iv, err := strconv.ParseInt(format[0:decimalPointPos], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
+		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 	}
 	riv := iv // Rounded integer value
 
+	decimalLen := 0
 	dv := int64(0)
 	lf := len(format) - 1
 	// Has fraction part
 	if decimalPointPos < lf {
 		dvPre := oneToSixDigitRegex.FindString(format[decimalPointPos+1:]) // the numberical prefix of the fraction part
-		dvPreLen := len(dvPre)
-		if dvPreLen >= 6 {
+		decimalLen = len(dvPre)
+		if decimalLen >= 6 {
 			// MySQL rounds down to 1e-6.
 			if dv, err = strconv.ParseInt(dvPre[0:6], 10, 64); err != nil {
-				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
+				return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		} else {
-			if dv, err = strconv.ParseInt(dvPre+"000000"[:6-dvPreLen], 10, 64); err != nil {
-				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
+			if dv, err = strconv.ParseInt(dvPre+"000000"[:6-decimalLen], 10, 64); err != nil {
+				return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		}
 		if dv >= 500000 { // Round up, and we should keep 6 digits for microsecond, so dv should in [000000, 999999].
@@ -2283,70 +2284,71 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 	}
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxValueSeconds*1000 {
-			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && mathutil.Abs(riv) > TimeMaxValueSeconds*1000 {
+			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / int64(GoDurationDay/gotime.Microsecond)
 		riv %= int64(GoDurationDay / gotime.Microsecond)
-		return 0, 0, dayCount, riv * int64(gotime.Microsecond), err
+		return 0, 0, dayCount, riv * int64(gotime.Microsecond), MaxFsp, err
 	case "SECOND":
-		if strictCheck && tidbMath.Abs(iv) > TimeMaxValueSeconds {
-			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && mathutil.Abs(iv) > TimeMaxValueSeconds {
+			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := iv / int64(GoDurationDay/gotime.Second)
 		iv %= int64(GoDurationDay / gotime.Second)
-		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), err
+		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), decimalLen, err
 	case "MINUTE":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour*60+TimeMaxMinute {
-			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && mathutil.Abs(riv) > TimeMaxHour*60+TimeMaxMinute {
+			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / int64(GoDurationDay/gotime.Minute)
 		riv %= int64(GoDurationDay / gotime.Minute)
-		return 0, 0, dayCount, riv * int64(gotime.Minute), err
+		return 0, 0, dayCount, riv * int64(gotime.Minute), 0, err
 	case "HOUR":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour {
-			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && mathutil.Abs(riv) > TimeMaxHour {
+			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
 		dayCount := riv / 24
 		riv %= 24
-		return 0, 0, dayCount, riv * int64(gotime.Hour), err
+		return 0, 0, dayCount, riv * int64(gotime.Hour), 0, err
 	case "DAY":
-		if strictCheck && tidbMath.Abs(riv) > TimeMaxHour/24 {
-			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && mathutil.Abs(riv) > TimeMaxHour/24 {
+			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
-		return 0, 0, riv, 0, err
+		return 0, 0, riv, 0, 0, err
 	case "WEEK":
-		if strictCheck && 7*tidbMath.Abs(riv) > TimeMaxHour/24 {
-			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && 7*mathutil.Abs(riv) > TimeMaxHour/24 {
+			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
-		return 0, 0, 7 * riv, 0, err
+		return 0, 0, 7 * riv, 0, 0, err
 	case "MONTH":
-		if strictCheck && tidbMath.Abs(riv) > 1 {
-			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		if strictCheck && mathutil.Abs(riv) > 1 {
+			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
-		return 0, riv, 0, 0, err
+		return 0, riv, 0, 0, 0, err
 	case "QUARTER":
 		if strictCheck {
-			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
-		return 0, 3 * riv, 0, 0, err
+		return 0, 3 * riv, 0, 0, 0, err
 	case "YEAR":
 		if strictCheck {
-			return 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+			return 0, 0, 0, 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 		}
-		return riv, 0, 0, 0, err
+		return riv, 0, 0, 0, 0, err
 	}
 
-	return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
+	return 0, 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
 }
 
-// parseTimeValue gets years, months, days, nanoseconds from a string
+// parseTimeValue gets years, months, days, nanoseconds and fsp from a string
 // nanosecond will not exceed length of single day
 // MySQL permits any punctuation delimiter in the expr format.
 // See https://dev.mysql.com/doc/refman/8.0/en/expressions.html#temporal-intervals
-func parseTimeValue(format string, index, cnt int) (int64, int64, int64, int64, error) {
+func parseTimeValue(format string, index, cnt int) (int64, int64, int64, int64, int, error) {
 	neg := false
 	originalFmt := format
+	fsp := map[bool]int{true: MaxFsp, false: MinFsp}[index == MicrosecondIndex]
 	format = strings.TrimSpace(format)
 	if len(format) > 0 && format[0] == '-' {
 		neg = true
@@ -2358,7 +2360,7 @@ func parseTimeValue(format string, index, cnt int) (int64, int64, int64, int64, 
 	}
 	matches := numericRegex.FindAllString(format, -1)
 	if len(matches) > cnt {
-		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	for i := range matches {
 		if neg {
@@ -2371,58 +2373,58 @@ func parseTimeValue(format string, index, cnt int) (int64, int64, int64, int64, 
 
 	years, err := strconv.ParseInt(fields[YearIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	months, err := strconv.ParseInt(fields[MonthIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	days, err := strconv.ParseInt(fields[DayIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 
 	hours, err := strconv.ParseInt(fields[HourIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	minutes, err := strconv.ParseInt(fields[MinuteIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	seconds, err := strconv.ParseInt(fields[SecondIndex], 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	microseconds, err := strconv.ParseInt(alignFrac(fields[MicrosecondIndex], MaxFsp), 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
+		return 0, 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, originalFmt)
 	}
 	seconds = hours*3600 + minutes*60 + seconds
 	days += seconds / (3600 * 24)
 	seconds %= 3600 * 24
-	return years, months, days, seconds*int64(gotime.Second) + microseconds*int64(gotime.Microsecond), nil
+	return years, months, days, seconds*int64(gotime.Second) + microseconds*int64(gotime.Microsecond), fsp, nil
 }
 
-func parseAndValidateDurationValue(format string, index, cnt int) (int64, error) {
-	year, month, day, nano, err := parseTimeValue(format, index, cnt)
+func parseAndValidateDurationValue(format string, index, cnt int) (int64, int, error) {
+	year, month, day, nano, fsp, err := parseTimeValue(format, index, cnt)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	if year != 0 || month != 0 || tidbMath.Abs(day) > TimeMaxHour/24 {
-		return 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+	if year != 0 || month != 0 || mathutil.Abs(day) > TimeMaxHour/24 {
+		return 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	}
 	dur := day*int64(GoDurationDay) + nano
-	if tidbMath.Abs(dur) > int64(MaxTime) {
-		return 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+	if mathutil.Abs(dur) > int64(MaxTime) {
+		return 0, 0, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	}
-	return dur, nil
+	return dur, fsp, nil
 }
 
 // ParseDurationValue parses time value from time unit and format.
 // Returns y years m months d days + n nanoseconds
 // Nanoseconds will no longer than one day.
-func ParseDurationValue(unit string, format string) (y int64, m int64, d int64, n int64, _ error) {
+func ParseDurationValue(unit string, format string) (y int64, m int64, d int64, n int64, fsp int, _ error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
 		return parseSingleTimeValue(unit, format, false)
@@ -2449,7 +2451,7 @@ func ParseDurationValue(unit string, format string) (y int64, m int64, d int64, 
 	case "YEAR_MONTH":
 		return parseTimeValue(format, MonthIndex, YearMonthMaxCnt)
 	default:
-		return 0, 0, 0, 0, errors.Errorf("invalid single timeunit - %s", unit)
+		return 0, 0, 0, 0, 0, errors.Errorf("invalid single timeunit - %s", unit)
 	}
 }
 
@@ -2458,77 +2460,74 @@ func ExtractDurationValue(unit string, format string) (Duration, error) {
 	unit = strings.ToUpper(unit)
 	switch unit {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
-		_, month, day, nano, err := parseSingleTimeValue(unit, format, true)
+		_, month, day, nano, fsp, err := parseSingleTimeValue(unit, format, true)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		dur := Duration{Duration: gotime.Duration((month*30+day)*int64(GoDurationDay) + nano)}
-		if unit == "MICROSECOND" {
-			dur.Fsp = MaxFsp
-		}
+		dur := Duration{Duration: gotime.Duration((month*30+day)*int64(GoDurationDay) + nano), Fsp: fsp}
 		return dur, err
 	case "SECOND_MICROSECOND":
-		d, err := parseAndValidateDurationValue(format, MicrosecondIndex, SecondMicrosecondMaxCnt)
+		d, fsp, err := parseAndValidateDurationValue(format, MicrosecondIndex, SecondMicrosecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
 	case "MINUTE_MICROSECOND":
-		d, err := parseAndValidateDurationValue(format, MicrosecondIndex, MinuteMicrosecondMaxCnt)
+		d, fsp, err := parseAndValidateDurationValue(format, MicrosecondIndex, MinuteMicrosecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
 	case "MINUTE_SECOND":
-		d, err := parseAndValidateDurationValue(format, SecondIndex, MinuteSecondMaxCnt)
+		d, fsp, err := parseAndValidateDurationValue(format, SecondIndex, MinuteSecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
 	case "HOUR_MICROSECOND":
-		d, err := parseAndValidateDurationValue(format, MicrosecondIndex, HourMicrosecondMaxCnt)
+		d, fsp, err := parseAndValidateDurationValue(format, MicrosecondIndex, HourMicrosecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
 	case "HOUR_SECOND":
-		d, err := parseAndValidateDurationValue(format, SecondIndex, HourSecondMaxCnt)
+		d, fsp, err := parseAndValidateDurationValue(format, SecondIndex, HourSecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
 	case "HOUR_MINUTE":
-		d, err := parseAndValidateDurationValue(format, MinuteIndex, HourMinuteMaxCnt)
+		d, fsp, err := parseAndValidateDurationValue(format, MinuteIndex, HourMinuteMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: 0}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
 	case "DAY_MICROSECOND":
-		d, err := parseAndValidateDurationValue(format, MicrosecondIndex, DayMicrosecondMaxCnt)
+		d, fsp, err := parseAndValidateDurationValue(format, MicrosecondIndex, DayMicrosecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
 	case "DAY_SECOND":
-		d, err := parseAndValidateDurationValue(format, SecondIndex, DaySecondMaxCnt)
+		d, fsp, err := parseAndValidateDurationValue(format, SecondIndex, DaySecondMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
 	case "DAY_MINUTE":
-		d, err := parseAndValidateDurationValue(format, MinuteIndex, DayMinuteMaxCnt)
+		d, fsp, err := parseAndValidateDurationValue(format, MinuteIndex, DayMinuteMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: 0}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
 	case "DAY_HOUR":
-		d, err := parseAndValidateDurationValue(format, HourIndex, DayHourMaxCnt)
+		d, fsp, err := parseAndValidateDurationValue(format, HourIndex, DayHourMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
-		return Duration{Duration: gotime.Duration(d), Fsp: 0}, nil
+		return Duration{Duration: gotime.Duration(d), Fsp: fsp}, nil
 	case "YEAR_MONTH":
-		_, err := parseAndValidateDurationValue(format, MonthIndex, YearMonthMaxCnt)
+		_, _, err := parseAndValidateDurationValue(format, MonthIndex, YearMonthMaxCnt)
 		if err != nil {
 			return ZeroDuration, err
 		}
