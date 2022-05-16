@@ -160,6 +160,7 @@ func (o *OverRegionsInRangeController) runInRegion(ctx context.Context, f Region
 			if !o.handleInRegionError(ctx, result, region) {
 				return false, o.Run(ctx, f)
 			}
+			time.Sleep(o.rs.ExponentialBackoff())
 			return o.runInRegion(ctx, f, region)
 		case fromStart:
 			logutil.CL(ctx).Warn("retry for execution over regions", logutil.ShortError(&result))

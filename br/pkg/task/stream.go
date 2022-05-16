@@ -933,7 +933,7 @@ func RunStreamRestore(
 	}
 
 	if len(cfg.FullBackupStorage) > 0 {
-		if cfg.StartTS, err = getFullBakcupTS(ctx, cfg); err != nil {
+		if cfg.StartTS, err = getFullBackupTS(ctx, cfg); err != nil {
 			return errors.Trace(err)
 		}
 		if cfg.StartTS < logMinTS {
@@ -1193,8 +1193,8 @@ func getLogRange(
 	return logMinTS, logMaxTS, nil
 }
 
-// getFullBakcupTS gets the snapshot-ts of full bakcup
-func getFullBakcupTS(
+// getFullBackupTS gets the snapshot-ts of full bakcup
+func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, error) {
