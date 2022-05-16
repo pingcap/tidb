@@ -29,7 +29,7 @@ function check_result() {
 }
 
 run_sql 'DROP DATABASE IF EXISTS db;'
-export GO_FAILPOINTS='github.com/br/pkg/lightning/mydump/MockInaccurateRowID=return(true)'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/mydump/MockInaccurateRowID=return(true)'
 run_lightning --config "tests/$TEST_NAME/config.toml"
 check_result
 run_sql 'DROP DATABASE IF EXISTS db;'

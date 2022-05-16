@@ -62,6 +62,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/rand"
 )
 
 const (
@@ -2148,30 +2149,47 @@ type deliverResult struct {
 
 func (cr *chunkRestore) adjustLocalRowID(rawData *deliveredKVs, t *TableRestore) {
 	data := rawData.kvs.(*kv.KvPairs)
-	curRowIDs := data.GetRowIDs()
-	illegalIdx := -1
-	for i := range curRowIDs {
-		if curRowIDs[i] > cr.originalRowIDMax {
-			illegalIdx = i
-			break
+	curRowIDToKV := data.GetRowIDToKv()
+	illegalIDs := make([]int64, 0)
+	for id := range curRowIDToKV {
+		if id > cr.originalRowIDMax {
+			illegalIDs = append(illegalIDs, id)
 		}
 	}
-	if illegalIdx >= 0 {
-		if illegalIdx > 0 {
-			rawData.rowID = curRowIDs[illegalIdx-1] // final legal ID
-		}
-		if curRowIDs[illegalIdx] > cr.curRowIDMax {
-			// need to reallocate
-			cr.curRowIDBase, cr.curRowIDMax = t.allocateRowIDs()
-		}
-		// set new rowIDs
-		for i := illegalIdx; i < len(curRowIDs); i++ {
-			data.SetRowID(i, cr.curRowIDBase) // set new rowID
-			cr.curRowIDBase++
-			if cr.curRowIDBase > cr.curRowIDMax {
-				// need to reallocate
+	fmt.Printf("illegalIDs: %v\n", illegalIDs)
+	if len(illegalIDs) > 0 {
+		for _, illegalID := range illegalIDs {
+			if cr.curRowIDBase >= cr.curRowIDMax {
+				// reallocate id from tableRestore
 				cr.curRowIDBase, cr.curRowIDMax = t.allocateRowIDs()
 			}
+			newRowID := cr.curRowIDBase
+			cr.curRowIDBase++
+			for _, kv := range curRowIDToKV[illegalID] {
+				// reset rowID
+				kv.RowID = newRowID
+			}
+			rawData.rowID = newRowID
+		}
+	} else if rand.Uint32()%10 < 1 {
+		fmt.Printf("randomly change!\n")
+		if cr.curRowIDBase >= cr.curRowIDMax {
+			// reallocate id from tableRestore
+			cr.curRowIDBase, cr.curRowIDMax = t.allocateRowIDs()
+		}
+		newRowID := cr.curRowIDBase
+		cr.curRowIDBase++
+		for id := range curRowIDToKV {
+			for _, ptr := range curRowIDToKV[id] {
+				ptr.RowID = newRowID
+			}
+		}
+		rawData.rowID = newRowID
+	}
+	newData := data.GetRowIDToKv()
+	for id := range newData {
+		for _, kv := range newData[id] {
+			fmt.Printf("new rowID: %d\n", kv.RowID)
 		}
 	}
 }
