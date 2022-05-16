@@ -176,7 +176,6 @@ type Config struct {
 	Security                   Security                `toml:"security" json:"security"`
 	Status                     Status                  `toml:"status" json:"status"`
 	Performance                Performance             `toml:"performance" json:"performance"`
-	PreparedPlanCache          PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing             `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
 	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
@@ -626,13 +625,6 @@ type PlanCache struct {
 	Shards   uint `toml:"shards" json:"shards"`
 }
 
-// PreparedPlanCache is the PreparedPlanCache section of the config.
-type PreparedPlanCache struct {
-	Enabled          bool    `toml:"enabled" json:"enabled"`
-	Capacity         uint    `toml:"capacity" json:"capacity"`
-	MemoryGuardRatio float64 `toml:"memory-guard-ratio" json:"memory-guard-ratio"`
-}
-
 // OpenTracing is the opentracing section of the config.
 type OpenTracing struct {
 	Enable     bool                `toml:"enable" json:"enable"`
@@ -843,11 +835,6 @@ var defaultConf = Config{
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
-	},
-	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          false,
-		Capacity:         1000,
-		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
 		Enable: false,
