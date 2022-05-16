@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/types"
@@ -111,4 +112,40 @@ func TestTxnGoString(t *testing.T) {
 
 	tk.MustExec("rollback")
 	require.Equal(t, "Txn{state=invalid}", fmt.Sprintf("%#v", txn))
+}
+
+func TestSetTransactionIsolationOneSho(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (k int, v int)")
+	tk.MustExec("insert t values (1, 42)")
+	tk.MustExec("set tx_isolation = 'read-committed'")
+	tk.MustQuery("select @@tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustExec("set tx_isolation = 'repeatable-read'")
+	tk.MustExec("set transaction isolation level read committed")
+	tk.MustQuery("select @@tx_isolation_one_shot").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@tx_isolation").Check(testkit.Rows("REPEATABLE-READ"))
+
+	// Check isolation level is set to read committed.
+	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		require.Equal(t, kv.SI, req.IsolationLevel)
+	})
+	_, err := tk.Session().Execute(ctx, "select * from t where k = 1")
+	require.NoError(t, err)
+
+	// Check it just take effect for one time.
+	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		require.Equal(t, kv.SI, req.IsolationLevel)
+	})
+	_, err = tk.Session().Execute(ctx, "select * from t where k = 1")
+	require.NoError(t, err)
+
+	// Can't change isolation level when it's inside a transaction.
+	tk.MustExec("begin")
+	_, err = tk.Session().Execute(ctx, "set transaction isolation level read committed")
+	require.Error(t, err)
 }
