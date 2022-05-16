@@ -19,7 +19,6 @@ import (
 	"flag"
 	"fmt"
 	"net"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,12 +26,12 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
@@ -44,25 +43,21 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 )
 
@@ -79,7 +74,6 @@ type testSessionSuiteBase struct {
 	cluster testutils.Cluster
 	store   kv.Storage
 	dom     *domain.Domain
-	pdAddr  string
 }
 
 type testSessionSuite struct {
@@ -98,16 +92,72 @@ type testSessionSerialSuite struct {
 	testSessionSuiteBase
 }
 
+func clearTiKVStorage(store kv.Storage) error {
+	txn, err := store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	iter, err := txn.Iter(nil, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for iter.Valid() {
+		if err := txn.Delete(iter.Key()); err != nil {
+			return errors.Trace(err)
+		}
+		if err := iter.Next(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return txn.Commit(context.Background())
+}
+
+func clearEtcdStorage(ebd kv.EtcdBackend) error {
+	endpoints, err := ebd.EtcdAddrs()
+	if err != nil {
+		return err
+	}
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:        endpoints,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithBackoffMaxDelay(time.Second * 3),
+		},
+		TLS: ebd.TLSConfig(),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cli.Close()
+
+	resp, err := cli.Get(context.Background(), "/tidb", clientv3.WithPrefix())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, kv := range resp.Kvs {
+		if kv.Lease != 0 {
+			if _, err := cli.Revoke(context.Background(), clientv3.LeaseID(kv.Lease)); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	if *withTiKV {
-		s.pdAddr = "127.0.0.1:2379"
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", s.pdAddr))
+		store, err := d.Open("tikv://127.0.0.1:2379?disableGC=true")
 		c.Assert(err, IsNil)
 		err = clearTiKVStorage(store)
 		c.Assert(err, IsNil)
@@ -153,56 +203,6 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
 		}
 	}
-}
-
-type mockBinlogPump struct {
-}
-
-var _ binlog.PumpClient = &mockBinlogPump{}
-
-func (p *mockBinlogPump) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
-	return &binlog.WriteBinlogResp{}, nil
-}
-
-type mockPumpPullBinlogsClient struct {
-	grpc.ClientStream
-}
-
-func (m mockPumpPullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
-	return nil, nil
-}
-
-func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
-	return mockPumpPullBinlogsClient{mockcopr.MockGRPCClientStream()}, nil
-}
-
-func (s *testSessionSuite) TestForCoverage(c *C) {
-	// Just for test coverage.
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
-	tk.MustExec("insert t values ()")
-	tk.MustExec("insert t values ()")
-	tk.MustExec("insert t values ()")
-
-	// Normal request will not cover txn.Seek.
-	tk.MustExec("admin check table t")
-
-	// Cover dirty table operations in StateTxn.
-	tk.Se.GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&mockBinlogPump{})
-	tk.MustExec("begin")
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert t values ()")
-	tk.MustExec("delete from t where id = 2")
-	tk.MustExec("update t set v = 5 where id = 2")
-	tk.MustExec("insert t values ()")
-	tk.MustExec("rollback")
-
-	c.Check(tk.Se.SetCollation(mysql.DefaultCollationID), IsNil)
-
-	tk.MustExec("show processlist")
-	_, err := tk.Se.FieldList("t")
-	c.Check(err, IsNil)
 }
 
 func (s *testSessionSuite2) TestErrorRollback(c *C) {
@@ -836,92 +836,6 @@ func (s *testSessionSuite) TestRetryUnion(c *C) {
 	c.Assert(err, ErrorMatches, ".*can not retry select for update statement")
 }
 
-func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists normal_table")
-	tk.MustExec("create table normal_table(a int primary key, b int)")
-	defer tk.MustExec("drop table if exists normal_table")
-	tk.MustExec("drop table if exists temp_table")
-	tk.MustExec("create global temporary table temp_table(a int primary key, b int) on commit delete rows")
-	defer tk.MustExec("drop table if exists temp_table")
-
-	// insert select
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("insert normal_table value(100, 100)")
-	tk.MustExec("set @@autocommit = 0")
-	// used to make conflicts
-	tk.MustExec("update normal_table set b=b+1 where a=100")
-	tk.MustExec("insert temp_table value(1, 1)")
-	tk.MustExec("insert normal_table select * from temp_table")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
-
-	// try to conflict with tk
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	tk1.MustExec("update normal_table set b=b+1 where a=100")
-
-	// It will retry internally.
-	tk.MustExec("commit")
-	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 1", "100 102"))
-	tk.MustQuery("select a, b from temp_table order by a").Check(testkit.Rows())
-
-	// update multi-tables
-	tk.MustExec("update normal_table set b=b+1 where a=100")
-	tk.MustExec("insert temp_table value(1, 2)")
-	// before update: normal_table=(1 1) (100 102), temp_table=(1 2)
-	tk.MustExec("update normal_table, temp_table set normal_table.b=temp_table.b where normal_table.a=temp_table.a")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
-
-	// try to conflict with tk
-	tk1.MustExec("update normal_table set b=b+1 where a=100")
-
-	// It will retry internally.
-	tk.MustExec("commit")
-	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 104"))
-}
-
-func (s *testSessionSuite) TestRetryLocalTempTable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists normal_table")
-	tk.MustExec("create table normal_table(a int primary key, b int)")
-	defer tk.MustExec("drop table if exists normal_table")
-	tk.MustExec("drop table if exists temp_table")
-	tk.MustExec("create temporary table l_temp_table(a int primary key, b int)")
-	defer tk.MustExec("drop table if exists l_temp_table")
-
-	// insert select
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("insert normal_table value(100, 100)")
-	tk.MustExec("set @@autocommit = 0")
-	// used to make conflicts
-	tk.MustExec("update normal_table set b=b+1 where a=100")
-	tk.MustExec("insert l_temp_table value(1, 2)")
-	tk.MustExec("insert normal_table select * from l_temp_table")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
-
-	// try to conflict with tk
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	tk1.MustExec("update normal_table set b=b+1 where a=100")
-
-	// It will retry internally.
-	tk.MustExec("commit")
-	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 102"))
-	tk.MustQuery("select a, b from l_temp_table order by a").Check(testkit.Rows("1 2"))
-
-	// update multi-tables
-	tk.MustExec("update normal_table set b=b+1 where a=100")
-	tk.MustExec("insert l_temp_table value(3, 4)")
-	// before update: normal_table=(1 1) (100 102), temp_table=(1 2)
-	tk.MustExec("update normal_table, l_temp_table set normal_table.b=l_temp_table.b where normal_table.a=l_temp_table.a")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
-
-	// try to conflict with tk
-	tk1.MustExec("update normal_table set b=b+1 where a=100")
-
-	// It will retry internally.
-	tk.MustExec("commit")
-	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 104"))
-}
-
 func (s *testSessionSuite) TestRetryShow(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@autocommit = 0")
@@ -948,63 +862,6 @@ func (s *testSessionSuite) TestNoRetryForCurrentTxn(c *C) {
 
 	tk1.MustExec("update history set a = 3")
 	c.Assert(tk.ExecToErr("commit"), NotNil)
-}
-
-func (s *testSessionSuite) TestRetryForCurrentTxn(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table history (a int)")
-	tk.MustExec("insert history values (1)")
-
-	// Firstly, enable retry.
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustExec("update history set a = 2")
-	// Disable retry now.
-	tk.MustExec("set tidb_disable_txn_auto_retry = 1")
-
-	tk1.MustExec("update history set a = 3")
-	tk.MustExec("commit")
-	tk.MustQuery("select * from history").Check(testkit.Rows("2"))
-}
-
-// TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
-func (s *testSessionSuite) TestTruncateAlloc(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table truncate_id (a int primary key auto_increment)")
-	tk.MustExec("insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
-	tk.MustExec("truncate table truncate_id")
-	tk.MustExec("insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
-	tk.MustQuery("select a from truncate_id where a > 11").Check(testkit.Rows())
-}
-
-func (s *testSessionSuite) TestString(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("select 1")
-	// here to check the panic bug in String() when txn is nil after committed.
-	c.Log(tk.Se.String())
-}
-
-func (s *testSessionSuite) TestDatabase(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	// Test database.
-	tk.MustExec("create database xxx")
-	tk.MustExec("drop database xxx")
-
-	tk.MustExec("drop database if exists xxx")
-	tk.MustExec("create database xxx")
-	tk.MustExec("create database if not exists xxx")
-	tk.MustExec("drop database if exists xxx")
-
-	// Test schema.
-	tk.MustExec("create schema xxx")
-	tk.MustExec("drop schema xxx")
-
-	tk.MustExec("drop schema if exists xxx")
-	tk.MustExec("create schema xxx")
-	tk.MustExec("create schema if not exists xxx")
-	tk.MustExec("drop schema if exists xxx")
 }
 
 // TestInTrans . See https://dev.mysql.com/doc/internals/en/status-flags.html
@@ -1148,42 +1005,6 @@ func (s *testSessionSuite) TestLastInsertID(c *C) {
 	currLastInsertID := tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	tk.MustQuery("select c1 from t where c2 = 20").Check(testkit.Rows(fmt.Sprint(currLastInsertID)))
 	c.Assert(lastInsertID+2, Equals, currLastInsertID)
-}
-
-func (s *testSessionSuite) TestPrepareZero(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(v timestamp)")
-	tk.MustExec("prepare s1 from 'insert into t (v) values (?)'")
-	tk.MustExec("set @v1='0'")
-	_, rs := tk.Exec("execute s1 using @v1")
-	c.Assert(rs, NotNil)
-	tk.MustExec("set @v2='" + types.ZeroDatetimeStr + "'")
-	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
-	tk.MustExec("execute s1 using @v2")
-	tk.MustQuery("select v from t").Check(testkit.Rows("0000-00-00 00:00:00"))
-	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
-}
-
-func (s *testSessionSuite) TestPrimaryKeyAutoIncrement(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL, name varchar(255) UNIQUE NOT NULL, status int)")
-	tk.MustExec("insert t (name) values (?)", "abc")
-	id := tk.Se.LastInsertID()
-	c.Check(id != 0, IsTrue)
-
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	tk1.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("%d abc <nil>", id)))
-
-	tk.MustExec("update t set name = 'abc', status = 1 where id = ?", id)
-	tk1.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("%d abc 1", id)))
-
-	// Check for pass bool param to tidb prepared statement
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id tinyint)")
-	tk.MustExec("insert t values (?)", true)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 }
 
 func (s *testSessionSuite) TestAutoIncrementID(c *C) {
@@ -2415,53 +2236,6 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 }
 
-// TestSetGroupConcatMaxLen is for issue #7034
-func (s *testSessionSuite2) TestSetGroupConcatMaxLen(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	// Normal case
-	tk.MustExec("set global group_concat_max_len = 100")
-	tk.MustExec("set @@session.group_concat_max_len = 50")
-	result := tk.MustQuery("show global variables  where variable_name='group_concat_max_len';")
-	result.Check(testkit.Rows("group_concat_max_len 100"))
-
-	result = tk.MustQuery("show session variables  where variable_name='group_concat_max_len';")
-	result.Check(testkit.Rows("group_concat_max_len 50"))
-
-	result = tk.MustQuery("select @@group_concat_max_len;")
-	result.Check(testkit.Rows("50"))
-
-	result = tk.MustQuery("select @@global.group_concat_max_len;")
-	result.Check(testkit.Rows("100"))
-
-	result = tk.MustQuery("select @@session.group_concat_max_len;")
-	result.Check(testkit.Rows("50"))
-
-	tk.MustExec("set @@group_concat_max_len = 1024")
-
-	result = tk.MustQuery("select @@group_concat_max_len;")
-	result.Check(testkit.Rows("1024"))
-
-	result = tk.MustQuery("select @@global.group_concat_max_len;")
-	result.Check(testkit.Rows("100"))
-
-	result = tk.MustQuery("select @@session.group_concat_max_len;")
-	result.Check(testkit.Rows("1024"))
-
-	// Test value out of range
-	tk.MustExec("set @@group_concat_max_len=1")
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
-	result = tk.MustQuery("select @@group_concat_max_len;")
-	result.Check(testkit.Rows("4"))
-
-	_, err := tk.Exec("set @@group_concat_max_len = 18446744073709551616")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
-
-	// Test illegal type
-	_, err = tk.Exec("set @@group_concat_max_len='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
-}
-
 func (s *testSessionSuite2) TestUpdatePrivilege(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2;")
@@ -3511,29 +3285,6 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(sb.String(), Equals, "SELECT 3")
 }
 
-func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
-	tk.MustExec("begin")
-	tk.MustExec("insert into g_tmp values (3, 3, 3)")
-	tk.MustExec("insert into g_tmp values (4, 7, 9)")
-
-	// Cover table scan.
-	tk.MustQuery("select * from g_tmp").Check(testkit.Rows("3 3 3", "4 7 9"))
-	// Cover index reader.
-	tk.MustQuery("select b from g_tmp where b > 3").Check(testkit.Rows("7"))
-	// Cover index lookup.
-	tk.MustQuery("select c from g_tmp where b = 3").Check(testkit.Rows("3"))
-	// Cover point get.
-	tk.MustQuery("select * from g_tmp where a = 3").Check(testkit.Rows("3 3 3"))
-	// Cover batch point get.
-	tk.MustQuery("select * from g_tmp where a in (2,3,4)").Check(testkit.Rows("3 3 3", "4 7 9"))
-	tk.MustExec("commit")
-
-	// The global temporary table data is discard after the transaction commit.
-	tk.MustQuery("select * from g_tmp").Check(testkit.Rows())
-}
-
 func (s *testSessionSuite) TestReadDMLBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set global tidb_dml_batch_size=1000")
@@ -3602,51 +3353,6 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	tk.MustExec("commit")
 }
 
-func (s *testSessionSuite) TestTMPTableSize(c *C) {
-	// Test the @@tidb_tmp_table_max_size system variable.
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create global temporary table t (c1 int, c2 mediumtext) on commit delete rows")
-	tk.MustExec("create temporary table tl (c1 int, c2 mediumtext)")
-
-	tk.MustQuery("select @@global.tidb_tmp_table_max_size").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBTmpTableMaxSize)))
-	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTiDBTmpTableMaxSize))
-
-	// Min value 1M, so the result is change to 1M, with a warning.
-	tk.MustExec("set @@global.tidb_tmp_table_max_size = 123")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_tmp_table_max_size value: '123'"))
-
-	// Change the session scope value to 2M.
-	tk.MustExec("set @@session.tidb_tmp_table_max_size = 2097152")
-	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(2097152))
-
-	// Check in another session, change session scope value does not affect the global scope.
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustQuery("select @@global.tidb_tmp_table_max_size").Check(testkit.Rows(strconv.Itoa(1 << 20)))
-
-	// The value is now 1M, check the error when table size exceed it.
-	tk.MustExec(fmt.Sprintf("set @@session.tidb_tmp_table_max_size = %d", 1<<20))
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (1, repeat('x', 512*1024))")
-	tk.MustExec("insert into t values (1, repeat('x', 512*1024))")
-	tk.MustGetErrCode("insert into t values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
-	tk.MustExec("rollback")
-
-	// Check local temporary table
-	tk.MustExec("begin")
-	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
-	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
-	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
-	tk.MustExec("rollback")
-
-	// Check local temporary table with some data in session
-	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
-	tk.MustExec("begin")
-	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
-	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
-	tk.MustExec("rollback")
-}
-
 func (s *testSessionSuite) TestAuthPluginForUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER 'tapfu1' IDENTIFIED WITH mysql_native_password BY 'tapfu1'")
@@ -3668,682 +3374,4 @@ func (s *testSessionSuite) TestAuthPluginForUser(c *C) {
 	plugin, err = tk.Se.AuthPluginForUser(&auth.UserIdentity{Username: "tapfu4", Hostname: `%`})
 	c.Assert(err, IsNil)
 	c.Assert(plugin, Equals, "")
-}
-
-func (s *testSessionSuite) TestLocalTemporaryTableInsert(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
-	tk.MustExec("insert into tmp1 (u, v) values(11, 101)")
-	tk.MustExec("insert into tmp1 (u, v) values(12, 102)")
-	tk.MustExec("insert into tmp1 values(3, 13, 102)")
-
-	checkRecordOneTwoThreeAndNonExist := func() {
-		tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
-		tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 102"))
-		tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 102"))
-		tk.MustQuery("select * from tmp1 where id=99").Check(testkit.Rows())
-	}
-
-	// inserted records exist
-	checkRecordOneTwoThreeAndNonExist()
-
-	// insert dup records out txn must be error
-	_, err := tk.Exec("insert into tmp1 values(1, 999, 9999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	checkRecordOneTwoThreeAndNonExist()
-
-	_, err = tk.Exec("insert into tmp1 values(99, 11, 999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	checkRecordOneTwoThreeAndNonExist()
-
-	// insert dup records in txn must be error
-	tk.MustExec("begin")
-	_, err = tk.Exec("insert into tmp1 values(1, 999, 9999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	checkRecordOneTwoThreeAndNonExist()
-
-	_, err = tk.Exec("insert into tmp1 values(99, 11, 9999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	checkRecordOneTwoThreeAndNonExist()
-
-	tk.MustExec("insert into tmp1 values(4, 14, 104)")
-	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows("4 14 104"))
-
-	_, err = tk.Exec("insert into tmp1 values(4, 999, 9999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-
-	_, err = tk.Exec("insert into tmp1 values(99, 14, 9999)")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-
-	checkRecordOneTwoThreeAndNonExist()
-	tk.MustExec("commit")
-
-	// check committed insert works
-	checkRecordOneTwoThreeAndNonExist()
-	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows("4 14 104"))
-
-	// check rollback works
-	tk.MustExec("begin")
-	tk.MustExec("insert into tmp1 values(5, 15, 105)")
-	tk.MustQuery("select * from tmp1 where id=5").Check(testkit.Rows("5 15 105"))
-	tk.MustExec("rollback")
-	tk.MustQuery("select * from tmp1 where id=5").Check(testkit.Rows())
-}
-
-func (s *testSessionSuite) TestLocalTemporaryTableInsertIgnore(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
-	tk.MustExec("insert into tmp1 values(1, 11, 101)")
-	tk.MustExec("insert into tmp1 values(2, 12, 102)")
-
-	// test outside transaction
-	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
-	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
-	tk.MustExec("insert ignore into tmp1 values(5, 15, 105)")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp1 where id=5").Check(testkit.Rows("5 15 105"))
-
-	// test in transaction and rollback
-	tk.MustExec("begin")
-	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
-	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
-	tk.MustExec("insert ignore into tmp1 values(3, 13, 103)")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
-	tk.MustExec("insert ignore into tmp1 values(3, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'PRIMARY'"))
-	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
-	tk.MustExec("rollback")
-	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 102", "5 15 105"))
-
-	// test commit
-	tk.MustExec("begin")
-	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
-	tk.MustExec("insert ignore into tmp1 values(3, 13, 103)")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustExec("insert ignore into tmp1 values(3, 100, 1000)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'PRIMARY'"))
-	tk.MustExec("commit")
-	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 102", "3 13 103", "5 15 105"))
-}
-
-func (s *testSessionSuite) TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
-	tk.MustExec("insert into tmp1 values(1, 11, 101)")
-	tk.MustExec("insert into tmp1 values(2, 12, 102)")
-
-	// test outside transaction
-	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
-	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
-	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=202")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 202"))
-	tk.MustExec("insert into tmp1 values(3, 13, 103) on duplicate key update v=203")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
-
-	// test in transaction and rollback
-	tk.MustExec("begin")
-	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
-	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
-	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=302")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 302"))
-	tk.MustExec("insert into tmp1 values(4, 14, 104) on duplicate key update v=204")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows("4 14 104"))
-	tk.MustExec("rollback")
-	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 202", "3 13 103"))
-
-	// test commit
-	tk.MustExec("begin")
-	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
-	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=302")
-	tk.MustExec("insert into tmp1 values(4, 14, 104) on duplicate key update v=204")
-	tk.MustExec("commit")
-	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 302", "3 13 103", "4 14 104"))
-}
-
-func (s *testSessionSuite) TestLocalTemporaryTableReplace(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
-	tk.MustExec("insert into tmp1 values(1, 11, 101)")
-	tk.MustExec("insert into tmp1 values(2, 12, 102)")
-	tk.MustExec("insert into tmp1 values(3, 13, 103)")
-
-	// out of transaction
-	tk.MustExec("replace into tmp1 values(1, 12, 1000)")
-	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 12 1000", "3 13 103"))
-	tk.MustExec("replace into tmp1 values(4, 14, 104)")
-	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows("4 14 104"))
-
-	// in transaction and rollback
-	tk.MustExec("begin")
-	tk.MustExec("replace into tmp1 values(1, 13, 999)")
-	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 13 999", "4 14 104"))
-	tk.MustExec("replace into tmp1 values(5, 15, 105)")
-	tk.MustQuery("select * from tmp1 where id=5").Check(testkit.Rows("5 15 105"))
-	tk.MustExec("rollback")
-	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 12 1000", "3 13 103", "4 14 104"))
-
-	// out of transaction
-	tk.MustExec("begin")
-	tk.MustExec("replace into tmp1 values(1, 13, 999)")
-	tk.MustExec("replace into tmp1 values(5, 15, 105)")
-	tk.MustExec("commit")
-	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 13 999", "4 14 104", "5 15 105"))
-}
-
-func (s *testSessionSuite) TestLocalTemporaryTableDelete(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
-
-	insertRecords := func(idList []int) {
-		for _, id := range idList {
-			tk.MustExec("insert into tmp1 values (?, ?, ?)", id, id+100, id+1000)
-		}
-	}
-
-	checkAllExistRecords := func(idList []int) {
-		sort.Ints(idList)
-		expectedResult := make([]string, 0, len(idList))
-		expectedIndexResult := make([]string, 0, len(idList))
-		for _, id := range idList {
-			expectedResult = append(expectedResult, fmt.Sprintf("%d %d %d", id, id+100, id+1000))
-			expectedIndexResult = append(expectedIndexResult, fmt.Sprintf("%d", id+100))
-		}
-		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows(expectedResult...))
-
-		// check index deleted
-		tk.MustQuery("select /*+ use_index(tmp1, u) */ u from tmp1 order by u").Check(testkit.Rows(expectedIndexResult...))
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-	}
-
-	assertDelete := func(sql string, deleted []int) {
-		idList := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
-
-		deletedMap := make(map[int]bool)
-		for _, id := range deleted {
-			deletedMap[id] = true
-		}
-
-		keepList := make([]int, 0)
-		for _, id := range idList {
-			if _, exist := deletedMap[id]; !exist {
-				keepList = append(keepList, id)
-			}
-		}
-
-		// delete records in txn and records are inserted in txn
-		tk.MustExec("begin")
-		insertRecords(idList)
-		tk.MustExec(sql)
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-		checkAllExistRecords(keepList)
-		tk.MustExec("rollback")
-		checkAllExistRecords([]int{})
-
-		// delete records out of txn
-		insertRecords(idList)
-		tk.MustExec(sql)
-		checkAllExistRecords(keepList)
-
-		// delete records in txn
-		insertRecords(deleted)
-		tk.MustExec("begin")
-		tk.MustExec(sql)
-		checkAllExistRecords(keepList)
-
-		// test rollback
-		tk.MustExec("rollback")
-		checkAllExistRecords(idList)
-
-		// test commit
-		tk.MustExec("begin")
-		tk.MustExec(sql)
-		tk.MustExec("commit")
-		checkAllExistRecords(keepList)
-
-		tk.MustExec("delete from tmp1")
-		checkAllExistRecords([]int{})
-	}
-
-	assertDelete("delete from tmp1 where id=1", []int{1})
-	assertDelete("delete from tmp1 where id in (1, 3, 5)", []int{1, 3, 5})
-	assertDelete("delete from tmp1 where u=102", []int{2})
-	assertDelete("delete from tmp1 where u in (103, 107, 108)", []int{3, 7, 8})
-	assertDelete("delete from tmp1 where id=10", []int{})
-	assertDelete("delete from tmp1 where id in (10, 12)", []int{})
-	assertDelete("delete from tmp1 where u=110", []int{})
-	assertDelete("delete from tmp1 where u in (111, 112)", []int{})
-	assertDelete("delete from tmp1 where id in (1, 11, 5)", []int{1, 5})
-	assertDelete("delete from tmp1 where u in (102, 121, 106)", []int{2, 6})
-	assertDelete("delete from tmp1 where id<3", []int{1, 2})
-	assertDelete("delete from tmp1 where u>107", []int{8, 9})
-	assertDelete("delete /*+ use_index(tmp1, u) */ from tmp1 where u>105 and u<107", []int{6})
-	assertDelete("delete from tmp1 where v>=1006 or v<=1002", []int{1, 2, 6, 7, 8, 9})
-}
-
-func (s *testSessionSuite) TestLocalTemporaryTablePointGet(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
-	tk.MustExec("insert into tmp1 values(1, 11, 101)")
-	tk.MustExec("insert into tmp1 values(2, 12, 102)")
-	tk.MustExec("insert into tmp1 values(4, 14, 104)")
-
-	// check point get out transaction
-	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from tmp1 where u=11").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 102"))
-	tk.MustQuery("select * from tmp1 where u=12").Check(testkit.Rows("2 12 102"))
-
-	// check point get in transaction
-	tk.MustExec("begin")
-	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from tmp1 where u=11").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 102"))
-	tk.MustQuery("select * from tmp1 where u=12").Check(testkit.Rows("2 12 102"))
-	tk.MustExec("insert into tmp1 values(3, 13, 103)")
-	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
-	tk.MustQuery("select * from tmp1 where u=13").Check(testkit.Rows("3 13 103"))
-	tk.MustExec("update tmp1 set v=999 where id=2")
-	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 999"))
-	tk.MustExec("delete from tmp1 where id=4")
-	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp1 where u=14").Check(testkit.Rows())
-	tk.MustExec("commit")
-
-	// check point get after transaction
-	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
-	tk.MustQuery("select * from tmp1 where u=13").Check(testkit.Rows("3 13 103"))
-	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 999"))
-	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp1 where u=14").Check(testkit.Rows())
-}
-
-func (s *testSessionSuite) TestLocalTemporaryTableBatchPointGet(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
-	tk.MustExec("insert into tmp1 values(1, 11, 101)")
-	tk.MustExec("insert into tmp1 values(2, 12, 102)")
-	tk.MustExec("insert into tmp1 values(3, 13, 103)")
-	tk.MustExec("insert into tmp1 values(4, 14, 104)")
-
-	// check point get out transaction
-	tk.MustQuery("select * from tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from tmp1 where id in (1, 3, 5)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from tmp1 where u in (11, 13, 15)").Check(testkit.Rows("1 11 101", "3 13 103"))
-
-	// check point get in transaction
-	tk.MustExec("begin")
-	tk.MustQuery("select * from tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from tmp1 where id in (1, 3, 5)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from tmp1 where u in (11, 13, 15)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustExec("insert into tmp1 values(6, 16, 106)")
-	tk.MustQuery("select * from tmp1 where id in (1, 6)").Check(testkit.Rows("1 11 101", "6 16 106"))
-	tk.MustQuery("select * from tmp1 where u in (11, 16)").Check(testkit.Rows("1 11 101", "6 16 106"))
-	tk.MustExec("update tmp1 set v=999 where id=3")
-	tk.MustQuery("select * from tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 999"))
-	tk.MustQuery("select * from tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 999"))
-	tk.MustExec("delete from tmp1 where id=4")
-	tk.MustQuery("select * from tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
-	tk.MustExec("commit")
-
-	// check point get after transaction
-	tk.MustQuery("select * from tmp1 where id in (1, 3, 6)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
-	tk.MustQuery("select * from tmp1 where u in (11, 13, 16)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
-	tk.MustQuery("select * from tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
-}
-
-func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
-	tk.MustExec("insert into tmp1 values" +
-		"(1, 101, 1001), (3, 113, 1003), (5, 105, 1005), (7, 117, 1007), (9, 109, 1009)," +
-		"(10, 110, 1010), (12, 112, 1012), (14, 114, 1014), (16, 116, 1016), (18, 118, 1018)",
-	)
-
-	assertSelectAsUnModified := func() {
-		// For TableReader
-		tk.MustQuery("select * from tmp1 where id>3 order by id").Check(testkit.Rows(
-			"5 105 1005", "7 117 1007", "9 109 1009",
-			"10 110 1010", "12 112 1012", "14 114 1014", "16 116 1016", "18 118 1018",
-		))
-
-		// For IndexLookUpReader
-		tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u").Check(testkit.Rows(
-			"5 105 1005", "9 109 1009", "10 110 1010",
-			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
-		))
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-
-		// For IndexReader
-		tk.MustQuery("select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id").Check(testkit.Rows(
-			"3 113", "5 105", "7 117", "9 109", "10 110",
-			"12 112", "14 114", "16 116", "18 118",
-		))
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-
-		// For IndexMerge, temporary table should not use index merge
-		tk.MustQuery("select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u").Check(testkit.Rows(
-			"9 109 1009", "10 110 1010",
-			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
-		))
-
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."))
-	}
-
-	doModify := func() {
-		tk.MustExec("insert into tmp1 values(2, 100, 1002)")
-		tk.MustExec("insert into tmp1 values(4, 104, 1004)")
-		tk.MustExec("insert into tmp1 values(11, 111, 1011)")
-		tk.MustExec("update tmp1 set v=9999 where id=7")
-		tk.MustExec("update tmp1 set u=132 where id=12")
-		tk.MustExec("delete from tmp1 where id=16")
-	}
-
-	assertSelectAsModified := func() {
-		// For TableReader
-		tk.MustQuery("select * from tmp1 where id>3 order by id").Check(testkit.Rows(
-			"4 104 1004", "5 105 1005", "7 117 9999", "9 109 1009",
-			"10 110 1010", "11 111 1011", "12 132 1012", "14 114 1014", "18 118 1018",
-		))
-
-		// For IndexLookUpReader
-		tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u").Check(testkit.Rows(
-			"4 104 1004", "5 105 1005", "9 109 1009", "10 110 1010", "11 111 1011",
-			"3 113 1003", "14 114 1014", "7 117 9999", "18 118 1018", "12 132 1012",
-		))
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-
-		// For IndexReader
-		tk.MustQuery("select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id").Check(testkit.Rows(
-			"3 113", "4 104", "5 105", "7 117", "9 109",
-			"10 110", "11 111", "12 132", "14 114", "18 118",
-		))
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-
-		// For IndexMerge, temporary table should not use index merge
-		tk.MustQuery("select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u").Check(testkit.Rows(
-			"9 109 1009", "10 110 1010", "11 111 1011",
-			"3 113 1003", "14 114 1014", "7 117 9999", "18 118 1018", "12 132 1012",
-		))
-
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."))
-	}
-
-	assertSelectAsUnModified()
-	tk.MustExec("begin")
-	assertSelectAsUnModified()
-	doModify()
-	tk.MustExec("rollback")
-	assertSelectAsUnModified()
-	tk.MustExec("begin")
-	doModify()
-	assertSelectAsModified()
-	tk.MustExec("commit")
-	assertSelectAsModified()
-}
-
-func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
-
-	idList := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
-	insertRecords := func(idList []int) {
-		for _, id := range idList {
-			tk.MustExec("insert into tmp1 values (?, ?, ?)", id, id+100, id+1000)
-		}
-	}
-
-	checkNoChange := func() {
-		expect := make([]string, 0)
-		for _, id := range idList {
-			expect = append(expect, fmt.Sprintf("%d %d %d", id, id+100, id+1000))
-		}
-		tk.MustQuery("select * from tmp1").Check(testkit.Rows(expect...))
-	}
-
-	checkUpdatesAndDeletes := func(updates []string, deletes []int) {
-		modifyMap := make(map[int]string)
-		for _, m := range updates {
-			parts := strings.Split(strings.TrimSpace(m), " ")
-			c.Assert(len(parts) != 0, IsTrue)
-			id, err := strconv.Atoi(parts[0])
-			c.Assert(err, IsNil)
-			modifyMap[id] = m
-		}
-
-		for _, d := range deletes {
-			modifyMap[d] = ""
-		}
-
-		expect := make([]string, 0)
-		for _, id := range idList {
-			modify, exist := modifyMap[id]
-			if !exist {
-				expect = append(expect, fmt.Sprintf("%d %d %d", id, id+100, id+1000))
-				continue
-			}
-
-			if modify != "" {
-				expect = append(expect, modify)
-			}
-
-			delete(modifyMap, id)
-		}
-
-		otherIds := make([]int, 0)
-		for id := range modifyMap {
-			otherIds = append(otherIds, id)
-		}
-
-		sort.Ints(otherIds)
-		for _, id := range otherIds {
-			modify, exist := modifyMap[id]
-			c.Assert(exist, IsTrue)
-			expect = append(expect, modify)
-		}
-
-		tk.MustQuery("select * from tmp1").Check(testkit.Rows(expect...))
-	}
-
-	type checkSuccess struct {
-		update []string
-		delete []int
-	}
-
-	type checkError struct {
-		err error
-	}
-
-	cases := []struct {
-		sql             string
-		checkResult     interface{}
-		additionalCheck func(error)
-	}{
-		// update with point get for primary key
-		{"update tmp1 set v=999 where id=1", checkSuccess{[]string{"1 101 999"}, nil}, nil},
-		{"update tmp1 set id=12 where id=1", checkSuccess{[]string{"12 101 1001"}, []int{1}}, nil},
-		{"update tmp1 set id=1 where id=1", checkSuccess{nil, nil}, nil},
-		{"update tmp1 set u=101 where id=1", checkSuccess{nil, nil}, nil},
-		{"update tmp1 set v=999 where id=100", checkSuccess{nil, nil}, nil},
-		{"update tmp1 set u=102 where id=100", checkSuccess{nil, nil}, nil},
-		{"update tmp1 set u=21 where id=1", checkSuccess{[]string{"1 21 1001"}, nil}, func(_ error) {
-			// check index deleted
-			tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u=101").Check(testkit.Rows())
-			tk.MustQuery("show warnings").Check(testkit.Rows())
-		}},
-		{"update tmp1 set id=2 where id=1", checkError{kv.ErrKeyExists}, nil},
-		{"update tmp1 set u=102 where id=1", checkError{kv.ErrKeyExists}, nil},
-		// update with batch point get for primary key
-		{"update tmp1 set v=v+1000 where id in (1, 3, 5)", checkSuccess{[]string{"1 101 2001", "3 103 2003", "5 105 2005"}, nil}, nil},
-		{"update tmp1 set u=u+1 where id in (9, 100)", checkSuccess{[]string{"9 110 1009"}, nil}, nil},
-		{"update tmp1 set u=101 where id in (100, 101)", checkSuccess{nil, nil}, nil},
-		{"update tmp1 set id=id+1 where id in (8, 9)", checkError{kv.ErrKeyExists}, nil},
-		{"update tmp1 set u=u+1 where id in (8, 9)", checkError{kv.ErrKeyExists}, nil},
-		{"update tmp1 set id=id+20 where id in (1, 3, 5)", checkSuccess{[]string{"21 101 1001", "23 103 1003", "25 105 1005"}, []int{1, 3, 5}}, nil},
-		{"update tmp1 set u=u+100 where id in (1, 3, 5)", checkSuccess{[]string{"1 201 1001", "3 203 1003", "5 205 1005"}, nil}, func(_ error) {
-			// check index deleted
-			tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u in (101, 103, 105)").Check(testkit.Rows())
-			tk.MustQuery("show warnings").Check(testkit.Rows())
-		}},
-		// update with point get for unique key
-		{"update tmp1 set v=888 where u=101", checkSuccess{[]string{"1 101 888"}, nil}, nil},
-		{"update tmp1 set id=21 where u=101", checkSuccess{[]string{"21 101 1001"}, []int{1}}, nil},
-		{"update tmp1 set v=888 where u=201", checkSuccess{nil, nil}, nil},
-		{"update tmp1 set u=201 where u=101", checkSuccess{[]string{"1 201 1001"}, nil}, nil},
-		{"update tmp1 set id=2 where u=101", checkError{kv.ErrKeyExists}, nil},
-		{"update tmp1 set u=102 where u=101", checkError{kv.ErrKeyExists}, nil},
-		// update with batch point get for unique key
-		{"update tmp1 set v=v+1000 where u in (101, 103)", checkSuccess{[]string{"1 101 2001", "3 103 2003"}, nil}, nil},
-		{"update tmp1 set v=v+1000 where u in (201, 203)", checkSuccess{nil, nil}, nil},
-		{"update tmp1 set v=v+1000 where u in (101, 110)", checkSuccess{[]string{"1 101 2001"}, nil}, nil},
-		{"update tmp1 set id=id+1 where u in (108, 109)", checkError{kv.ErrKeyExists}, nil},
-		// update with table scan and index scan
-		{"update tmp1 set v=v+1000 where id<3", checkSuccess{[]string{"1 101 2001", "2 102 2002"}, nil}, nil},
-		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>107", checkSuccess{[]string{"8 108 2008", "9 109 2009"}, nil}, nil},
-		{"update tmp1 set v=v+1000 where v>=1007 or v<=1002", checkSuccess{[]string{"1 101 2001", "2 102 2002", "7 107 2007", "8 108 2008", "9 109 2009"}, nil}, nil},
-		{"update tmp1 set v=v+1000 where id>=10", checkSuccess{nil, nil}, nil},
-		{"update tmp1 set id=id+1 where id>7", checkError{kv.ErrKeyExists}, nil},
-		{"update tmp1 set id=id+1 where id>8", checkSuccess{[]string{"10 109 1009"}, []int{9}}, nil},
-		{"update tmp1 set u=u+1 where u>107", checkError{kv.ErrKeyExists}, nil},
-		{"update tmp1 set u=u+1 where u>108", checkSuccess{[]string{"9 110 1009"}, nil}, nil},
-		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>108 or u<102", checkSuccess{[]string{"1 101 2001", "9 109 2009"}, nil}, nil},
-	}
-
-	executeSQL := func(sql string, checkResult interface{}, additionalCheck func(error)) (err error) {
-		switch check := checkResult.(type) {
-		case checkSuccess:
-			tk.MustExec(sql)
-			tk.MustQuery("show warnings").Check(testkit.Rows())
-			checkUpdatesAndDeletes(check.update, check.delete)
-		case checkError:
-			err = tk.ExecToErr(sql)
-			c.Assert(err, NotNil)
-			expectedErr, _ := check.err.(*terror.Error)
-			c.Assert(expectedErr.Equal(err), IsTrue)
-			checkNoChange()
-		default:
-			c.Fail()
-		}
-
-		if additionalCheck != nil {
-			additionalCheck(err)
-		}
-		return
-	}
-
-	for _, sqlCase := range cases {
-		// update records in txn and records are inserted in txn
-		tk.MustExec("begin")
-		insertRecords(idList)
-		_ = executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
-		tk.MustExec("rollback")
-		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
-
-		// update records out of txn
-		insertRecords(idList)
-		_ = executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
-		tk.MustExec("delete from tmp1")
-
-		// update records in txn and rollback
-		insertRecords(idList)
-		tk.MustExec("begin")
-		_ = executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
-		tk.MustExec("rollback")
-		// rollback left records unmodified
-		checkNoChange()
-
-		// update records in txn and commit
-		tk.MustExec("begin")
-		err := executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
-		tk.MustExec("commit")
-		if err != nil {
-			checkNoChange()
-		} else {
-			r, _ := sqlCase.checkResult.(checkSuccess)
-			checkUpdatesAndDeletes(r.update, r.delete)
-		}
-		if sqlCase.additionalCheck != nil {
-			sqlCase.additionalCheck(err)
-		}
-		tk.MustExec("delete from tmp1")
-		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
-	}
-}
-
-func (s *testSessionSuite) TestTemporaryTableInterceptor(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
-	tbl, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().TempTableType, Equals, model.TempTableLocal)
-	tblID := tbl.Meta().ID
-
-	// prepare a kv pair for temporary table
-	k := append(tablecodec.EncodeTablePrefix(tblID), 1)
-	err = tk.Se.GetSessionVars().TemporaryTableData.SetTableKey(tblID, k, []byte("v1"))
-	c.Assert(err, IsNil)
-
-	initTxnFuncs := []func() error{
-		func() error {
-			tk.Se.PrepareTSFuture(context.Background())
-			return nil
-		},
-		func() error {
-			return sessiontxn.NewTxn(context.Background(), tk.Se)
-		},
-		func() error {
-			return tk.Se.NewStaleTxnWithStartTS(context.Background(), 0)
-		},
-		func() error {
-			return tk.Se.InitTxnWithStartTS(0)
-		},
-	}
-
-	for _, initFunc := range initTxnFuncs {
-		err := initFunc()
-		c.Assert(err, IsNil)
-
-		txn, err := tk.Se.Txn(true)
-		c.Assert(err, IsNil)
-
-		val, err := txn.Get(context.Background(), k)
-		c.Assert(err, IsNil)
-		c.Assert(val, BytesEquals, []byte("v1"))
-
-		val, err = txn.GetSnapshot().Get(context.Background(), k)
-		c.Assert(err, IsNil)
-		c.Assert(val, BytesEquals, []byte("v1"))
-
-		tk.Se.RollbackTxn(context.Background())
-	}
-
-	// Also check GetSnapshotWithTS
-	snap := tk.Se.GetSnapshotWithTS(0)
-	val, err := snap.Get(context.Background(), k)
-	c.Assert(err, IsNil)
-	c.Assert(val, BytesEquals, []byte("v1"))
 }

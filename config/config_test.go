@@ -209,7 +209,6 @@ enable-table-lock = true
 alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
-enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
@@ -283,7 +282,6 @@ grpc-max-send-msg-size = 40960
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
-	require.True(t, conf.EnableBatchDML)
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.MaxServerConnections)
