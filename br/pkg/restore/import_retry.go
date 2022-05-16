@@ -27,13 +27,13 @@ type OverRegionsInRangeController struct {
 	metaClient SplitClient
 
 	errors error
-	rs     utils.RetryState
+	rs     *utils.RetryState
 }
 
 // OverRegionsInRange creates a controller that cloud be used to scan regions in a range and
 // apply a function over these regions.
 // You can then call the `Run` method for applying some functions.
-func OverRegionsInRange(start, end []byte, metaClient SplitClient, retryStatus utils.RetryState) OverRegionsInRangeController {
+func OverRegionsInRange(start, end []byte, metaClient SplitClient, retryStatus *utils.RetryState) OverRegionsInRangeController {
 	// IMPORTANT: we record the start/end key with TimeStamp.
 	// but scanRegion will drop the TimeStamp and the end key is exclusive.
 	// if we do not use PrefixNextKey. we might scan fewer regions than we expected.
@@ -84,7 +84,6 @@ func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region
 
 // handleInRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
 func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, result RPCResult, region *RegionInfo) (cont bool) {
-
 	if nl := result.StoreError.GetNotLeader(); nl != nil {
 		if nl.Leader != nil {
 			region.Leader = nl.Leader
@@ -92,12 +91,16 @@ func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, 
 			return true
 		}
 		// we retry manually, simply record the retry event.
-		o.rs.RecordRetry()
+		time.Sleep(o.rs.ExponentialBackoff())
 		// There may not be leader, waiting...
 		leader, err := o.tryFindLeader(ctx, region)
 		if err != nil {
 			// Leave the region info unchanged, let it retry then.
 			logutil.CL(ctx).Warn("failed to find leader", logutil.Region(region.Region), logutil.ShortError(err))
+			return false
+		}
+		if leader == nil {
+			logutil.CL(ctx).Warn("failed to find leader, leader is none", logutil.Region(region.Region))
 			return false
 		}
 		region.Leader = leader
@@ -160,7 +163,6 @@ func (o *OverRegionsInRangeController) runInRegion(ctx context.Context, f Region
 			if !o.handleInRegionError(ctx, result, region) {
 				return false, o.Run(ctx, f)
 			}
-			time.Sleep(o.rs.ExponentialBackoff())
 			return o.runInRegion(ctx, f, region)
 		case fromStart:
 			logutil.CL(ctx).Warn("retry for execution over regions", logutil.ShortError(&result))

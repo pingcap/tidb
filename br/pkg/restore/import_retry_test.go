@@ -48,7 +48,7 @@ func TestScanSuccess(t *testing.T) {
 	ctx := context.Background()
 
 	// make exclusive to inclusive.
-	ctl := restore.OverRegionsInRange([]byte("aa"), []byte("aay"), cli, rs)
+	ctl := restore.OverRegionsInRange([]byte("aa"), []byte("aay"), cli, &rs)
 	collectedRegions := []*restore.RegionInfo{}
 	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
 		collectedRegions = append(collectedRegions, r)
@@ -56,7 +56,7 @@ func TestScanSuccess(t *testing.T) {
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba")
 
-	ctl = restore.OverRegionsInRange([]byte("aaz"), []byte("bb"), cli, rs)
+	ctl = restore.OverRegionsInRange([]byte("aaz"), []byte("bb"), cli, &rs)
 	collectedRegions = []*restore.RegionInfo{}
 	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
 		collectedRegions = append(collectedRegions, r)
@@ -64,7 +64,7 @@ func TestScanSuccess(t *testing.T) {
 	})
 	assertRegions(t, collectedRegions, "aay", "bba", "bbh", "cca")
 
-	ctl = restore.OverRegionsInRange([]byte("aa"), []byte("cc"), cli, rs)
+	ctl = restore.OverRegionsInRange([]byte("aa"), []byte("cc"), cli, &rs)
 	collectedRegions = []*restore.RegionInfo{}
 	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
 		collectedRegions = append(collectedRegions, r)
@@ -72,7 +72,7 @@ func TestScanSuccess(t *testing.T) {
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba", "bbh", "cca", "")
 
-	ctl = restore.OverRegionsInRange([]byte("aa"), []byte(""), cli, rs)
+	ctl = restore.OverRegionsInRange([]byte("aa"), []byte(""), cli, &rs)
 	collectedRegions = []*restore.RegionInfo{}
 	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
 		collectedRegions = append(collectedRegions, r)
@@ -85,7 +85,7 @@ func TestNotLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient()
 	rs := utils.InitialRetryState(1, 0, 0)
-	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, rs)
+	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	notLeader := errorpb.Error{
@@ -141,7 +141,7 @@ func TestEpochNotMatch(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient()
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, rs)
+	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
@@ -200,7 +200,7 @@ func TestRegionSplit(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient()
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, rs)
+	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
@@ -276,7 +276,7 @@ func TestRetryBackoff(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient()
 	rs := utils.InitialRetryState(2, time.Millisecond, 10 * time.Millisecond)
-	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, rs)
+	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
@@ -290,9 +290,6 @@ func TestRetryBackoff(t *testing.T) {
 		StoreError: &errorpb.Error{
 			NotLeader: &errorpb.NotLeader{
 				RegionId: 2,
-				Leader: &metapb.Peer{
-					Id: 202,
-				},
 			},
 		}}
 	isSecondRun := false
@@ -304,7 +301,8 @@ func TestRetryBackoff(t *testing.T) {
 		return restore.RPCResultOK()
 	})
 	printPDRegion("cli", cli.regionsInfo.Regions)
+	require.Equal(t, 1, rs.Attempt())
 	// we retried leader not found error. so the next backoff should be 2 * initical backoff.
-	require.Equal(t, 2 * time.Millisecond, rs.NextBackoff(nil))
+	require.Equal(t, 2 * time.Millisecond, rs.ExponentialBackoff())
 	require.NoError(t, err)
 }

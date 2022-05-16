@@ -399,7 +399,7 @@ func (importer *FileImporter) ImportKVFiles(
 		logutil.Key("endKey", endKey))
 
 	rs := utils.InitialRetryState(32, 100*time.Millisecond, 8*time.Second)
-	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, rs)
+	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, &rs)
 	err = ctl.Run(ctx, func(ctx context.Context, r *RegionInfo) RPCResult {
 		return importer.ImportKVFileForRegion(ctx, file, rule, restoreTs, r)
 	})
