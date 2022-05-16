@@ -16,6 +16,7 @@ package memory
 
 import (
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -90,6 +91,10 @@ var memLimit *memInfoCache
 // expiration time is 500ms
 var memUsage *memInfoCache
 
+// expiration time is 500ms
+// save the memory usage of the server process
+var serverMemUsage *memInfoCache
+
 // MemTotalCGroup returns the total amount of RAM on this system in container environment.
 func MemTotalCGroup() (uint64, error) {
 	mem, t := memLimit.get()
@@ -130,6 +135,9 @@ func init() {
 		RWMutex: &sync.RWMutex{},
 	}
 	memUsage = &memInfoCache{
+		RWMutex: &sync.RWMutex{},
+	}
+	serverMemUsage = &memInfoCache{
 		RWMutex: &sync.RWMutex{},
 	}
 	_, err := MemTotal()
@@ -177,4 +185,18 @@ func readUint(path string) (uint64, error) {
 		return 0, err
 	}
 	return parseUint(strings.TrimSpace(string(v)), 10, 64)
+}
+
+// InstanceMemUsed returns the memory usage of this TiDB server
+func InstanceMemUsed() (uint64, error) {
+	used, t := serverMemUsage.get()
+	if time.Since(t) < 500*time.Millisecond {
+		return used, nil
+	}
+	var memoryUsage uint64
+	instanceStats := &runtime.MemStats{}
+	runtime.ReadMemStats(instanceStats)
+	memoryUsage = instanceStats.HeapAlloc
+	serverMemUsage.set(memoryUsage, time.Now())
+	return memoryUsage, nil
 }
