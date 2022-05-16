@@ -57,9 +57,9 @@
             "IsPhysicalPlan": true
           },
           {
-            "TextTreeExplainID": "    ├─IndexReader_17(Build)",
+            "TextTreeExplainID": "    ├─IndexReader_17(Probe)",
             "Depth": 3,
-            "DriverSide": 1,
+            "DriverSide": 2,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
@@ -75,9 +75,9 @@
             "IsPhysicalPlan": true
           },
           {
-            "TextTreeExplainID": "    └─TableReader_27(Probe)",
+            "TextTreeExplainID": "    └─TableReader_27(Build)",
             "Depth": 3,
-            "DriverSide": 2,
+            "DriverSide": 1,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
@@ -183,9 +183,9 @@
             "IsPhysicalPlan": true
           },
           {
-            "TextTreeExplainID": "├─Selection_30(Build)",
+            "TextTreeExplainID": "├─Selection_30(Probe)",
             "Depth": 1,
-            "DriverSide": 1,
+            "DriverSide": 2,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
@@ -201,9 +201,9 @@
             "IsPhysicalPlan": true
           },
           {
-            "TextTreeExplainID": "└─Selection_32(Probe)",
+            "TextTreeExplainID": "└─Selection_32(Build)",
             "Depth": 1,
-            "DriverSide": 2,
+            "DriverSide": 1,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
