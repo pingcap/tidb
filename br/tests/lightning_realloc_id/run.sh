@@ -26,6 +26,9 @@ function check_result() {
   check_contains 'Tables_in_db: test'
   run_sql 'SELECT count(*) FROM db.test;'
   check_contains 'count(*): 20'
+  run_sql 'SELECT * FROM db.test;'
+  check_contains 'id: 100015'
+  check_contains 'id: 15'
 }
 
 run_sql 'DROP DATABASE IF EXISTS db;'

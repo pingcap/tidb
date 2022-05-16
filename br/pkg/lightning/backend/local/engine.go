@@ -33,6 +33,7 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -1004,10 +1005,15 @@ type Writer struct {
 }
 
 func (w *Writer) flushAndNewWriter() error {
-	err := w.flush(context.Background())
+	var err error
+	failpoint.Inject("MockFlushWriter", func() {
+		failpoint.Goto("CreateNewWriter")
+	})
+	err = w.flush(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.Label("CreateNewWriter")
 	newWriter, err := w.createSSTWriter()
 	if err != nil {
 		return errors.Trace(err)
@@ -1024,7 +1030,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		w.writer = writer
 	}
-	if len(kvs) > 0 && kvs[0].RowID > w.prevRowID+1 {
+	if len(kvs) > 0 && w.prevRowID != 0 && kvs[0].RowID > w.prevRowID+1 {
 		// rowID leap. probably re-alloc id
 		// should write to different sst
 		err := w.flushAndNewWriter()
@@ -1058,7 +1064,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 	}
 	sliceIdx := -1
 	for i := 1; i < len(kvs); i++ {
-		if kvs[i].RowID > kvs[i-1].RowID+1 {
+		if kvs[i].RowID > kvs[i-1].RowID+1 && sliceIdx == -1 {
 			// rowID leap, probably re-alloc id
 			// should write to different sst
 			sliceIdx = i
@@ -1070,8 +1076,11 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 	if sliceIdx > 0 {
 		oldKvs := kvs[:sliceIdx]
 		kvs = kvs[sliceIdx:]
-		w.writer.writeKVs(oldKvs)
-		err := w.flushAndNewWriter()
+		err := w.writer.writeKVs(oldKvs)
+		if err != nil {
+			return err
+		}
+		err = w.flushAndNewWriter()
 		if err != nil {
 			return err
 		}
