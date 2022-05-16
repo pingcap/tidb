@@ -1408,7 +1408,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 			ts := oracle.GoTimeToTS(time.Now())
 			s := reorg.d.store.(tikv.Storage)
 			s.UpdateSPCache(ts, time.Now())
-			time.Sleep(time.Millisecond * 3)
+			time.Sleep(time.Second * 3)
 		}
 	})
 	currentVer, err := getValidCurrentVersion(reorg.d.store)

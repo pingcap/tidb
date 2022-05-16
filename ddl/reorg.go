@@ -15,7 +15,9 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -640,7 +642,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		})
 
 		var err error
-		element, start, end, pid, err = detDDLReorgHandle(job, t, wk.sess)
+		element, start, end, pid, err = getDDLReorgHandle(job, t, wk.sess)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -698,7 +700,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 		element = elements[0]
 	} else {
 		var err error
-		element, start, end, pid, err = detDDLReorgHandle(job, t, wk.sess)
+		element, start, end, pid, err = getDDLReorgHandle(job, t, wk.sess)
 
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
@@ -727,26 +729,32 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) error {
 		return nil
 	}
 
-	se, err := pool.get()
-	if err != nil {
-		return err
-	}
-	defer pool.put(se)
+	if variable.AllowConcurrencyDDL.Load() {
+		se, err := pool.get()
+		if err != nil {
+			return err
+		}
+		defer pool.put(se)
 
-	sess := newSession(se)
-	err = sess.begin()
-	if err != nil {
-		return err
+		sess := newSession(se)
+		err = sess.begin()
+		if err != nil {
+			return err
+		}
+
+		err = UpdateDDLReorgHandle(nil, sess, r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
+		if err != nil {
+			return err
+		}
+		return sess.commit()
 	}
 
-	txn, err := sess.txn()
+	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
+	})
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
-
-	err = UpdateDDLReorgHandle(meta.NewMeta(txn), sess, r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
-	if err != nil {
-		return err
-	}
-	return sess.commit()
+	return nil
 }

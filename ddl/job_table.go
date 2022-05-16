@@ -331,11 +331,11 @@ func updateConcurrencyDDLJob(sctx *session, job *model.Job, updateRawArgs bool) 
 
 // GetDDLReorgHandleForTest gets the latest processed DDL reorganize position. It is only used for test.
 func GetDDLReorgHandleForTest(job *model.Job, t *meta.Meta, sess sessionctx.Context) (*meta.Element, kv.Key, kv.Key, int64, error) {
-	return detDDLReorgHandle(job, t, newSession(sess))
+	return getDDLReorgHandle(job, t, newSession(sess))
 }
 
-// detDDLReorgHandle gets the latest processed DDL reorganize position.
-func detDDLReorgHandle(job *model.Job, t *meta.Meta, sess *session) (*meta.Element, kv.Key, kv.Key, int64, error) {
+// getDDLReorgHandle gets the latest processed DDL reorganize position.
+func getDDLReorgHandle(job *model.Job, t *meta.Meta, sess *session) (*meta.Element, kv.Key, kv.Key, int64, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		return GetConcurrentDDLReorgHandle(job, sess)
 	}
