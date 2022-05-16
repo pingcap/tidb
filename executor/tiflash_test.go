@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"

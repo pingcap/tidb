@@ -701,7 +701,7 @@ const (
 )
 
 var (
-	// preparedPlanCacheEnabledValue stores the global config "prepared-plan-cache-enabled".
+	// preparedPlanCacheEnabledValue indicates whether to enable prepared plan cache.
 	// The value is false unless "prepared-plan-cache-enabled" is true in configuration.
 	preparedPlanCacheEnabledValue int32 = 0
 )
@@ -914,7 +914,7 @@ var (
 	MemQuotaBindingCache                     = atomic2.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                            = atomic2.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                       = atomic2.NewInt64(DefTiDBStatsCacheMemQuota)
-	PreparedPlanCacheSize                    = atomic2.NewUint32(uint32(DefTiDBPreparedPlanCacheSize))
+	PreparedPlanCacheSize                    = atomic2.NewUint32(uint32(0)) // '0' means disable prepared plan cache.
 	PreparedPlanCacheMemoryGuardRatio        = atomic2.NewFloat64(DefTiDBPreparedPlanCacheMemoryGuardRatio)
 )
 

@@ -17,7 +17,6 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"

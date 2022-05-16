@@ -17,7 +17,6 @@ package bindinfo_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"testing"
 
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
