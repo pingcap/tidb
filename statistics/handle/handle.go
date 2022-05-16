@@ -260,6 +260,10 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	option := &tableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
 	for _, row := range rows {
 		version := row.GetUint64(0)
 		physicalID := row.GetInt64(1)
@@ -293,9 +297,13 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		oldCache.Put(physicalID, tbl)
+		if option.byQuery {
+			oldCache.PutByQuery(physicalID, tbl)
+		} else {
+			oldCache.Put(physicalID, tbl)
+		}
 	}
-	h.updateStatsCache(oldCache.update(nil, nil, lastVersion, opts...))
+	h.updateStatsCache(oldCache.update(nil, nil, lastVersion))
 	return nil
 }
 
@@ -2075,4 +2083,18 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	}
 	sc := v.(statsCache)
 	sc.SetCapacity(c)
+}
+
+// GetStatsCacheFrontTable gets front table in statsCacheInner implementation
+// only used for test
+func (h *Handle) GetStatsCacheFrontTable() int64 {
+	if h == nil {
+		return 0
+	}
+	v := h.statsCache.Load()
+	if v == nil {
+		return 0
+	}
+	sc := v.(statsCache)
+	return sc.Front()
 }
