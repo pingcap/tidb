@@ -379,6 +379,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 		} else {
 			m.sendError(err)
 		}
+		m.store.GetRegionCache().InvalidateTiFlashMPPStores()
 		return
 	}
 
