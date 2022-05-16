@@ -93,6 +93,15 @@ func NoIdea() (StmtErrorAction, error) {
 	return StmtActionNoIdea, nil
 }
 
+// AdviceType is the option for advice
+type AdviceType int
+
+const (
+	// AdviceWarmUp indicates to warm up the provider's inner state.
+	// For example, the provider can prefetch tso when it is advised.
+	AdviceWarmUp AdviceType = iota
+)
+
 // TxnContextProvider provides txn context
 type TxnContextProvider interface {
 	// GetTxnInfoSchema returns the information schema used by txn
@@ -110,6 +119,20 @@ type TxnContextProvider interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
+	// Advise is used to give advice to provider
+	Advise(tp AdviceType) error
+}
+
+// StmtInfoSchemaReplaceProvider is a little hack, it is used to replace the provider's info schema in a statement
+// See https://github.com/pingcap/tidb/pull/22381 When we are using plan cache with a for update statement, the info schema
+// will be forced replaced with the lasted one to make the plan cache invalid forcing rebuild the plan. So the the provider with
+// pessimistic mode should provide a method to replace it's info schema.
+// Even though it is not a good solution and the best way to solve the above problem is to invalid the plan cache but keep the
+// info schema unchanged, we still need to support it before we fixed it one day.
+// TODO: remove it
+type StmtInfoSchemaReplaceProvider interface {
+	TxnContextProvider
+	ReplaceStmtInfoSchema(is infoschema.InfoSchema)
 }
 
 // TxnManager is an interface providing txn context management in session
@@ -134,6 +157,9 @@ type TxnManager interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
+	// Advise is used to give advice to provider.
+	// For example, `AdviceWarmUp` can tell the provider to warm up its inner state.
+	Advise(tp AdviceType) error
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:
@@ -155,6 +181,11 @@ func NewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
 		return err
 	}
 	return GetTxnManager(sctx).OnStmtStart(ctx)
+}
+
+// WarmUpTxn gives the `AdviceWarmUp` advise to the provider
+func WarmUpTxn(sctx sessionctx.Context) error {
+	return GetTxnManager(sctx).Advise(AdviceWarmUp)
 }
 
 // GetTxnManager returns the TxnManager object from session context

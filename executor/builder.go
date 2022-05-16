@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -70,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 var (
@@ -1580,11 +1578,6 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 // and some stale/historical read contexts. For example, it will return txn.StartTS in RR and return
 // the current timestamp in RC isolation
 func (b *executorBuilder) getReadTS() (uint64, error) {
-	// `refreshForUpdateTSForRC` should always be invoked before returning the cached value to
-	// ensure the correct value is returned even the `snapshotTS` field is already set by other
-	// logics. However for `IndexLookUpMergeJoin` and `IndexLookUpHashJoin`, it requires caching the
-	// snapshotTS and and may even use it after the txn being destroyed. In this case, mark
-	// `snapshotTSCached` to skip `refreshForUpdateTSForRC`.
 	failpoint.Inject("assertNotStaleReadForExecutorGetReadTS", func() {
 		// after refactoring stale read will use its own context provider
 		staleread.AssertStmtStaleness(b.ctx, false)
@@ -1598,12 +1591,6 @@ func (b *executorBuilder) getReadTS() (uint64, error) {
 		b.snapshotTS = snapshotTS
 		b.snapshotTSCached = true
 		return snapshotTS, nil
-	}
-
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			return 0, err
-		}
 	}
 
 	if b.snapshotTS != 0 {
@@ -2220,42 +2207,7 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 		}
 		return nil
 	}
-	// The Repeatable Read transaction use Read Committed level to read data for writing (insert, update, delete, select for update),
-	// We should always update/refresh the for-update-ts no matter the isolation level is RR or RC.
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		return b.refreshForUpdateTSForRC()
-	}
 	return UpdateForUpdateTS(b.ctx, 0)
-}
-
-// refreshForUpdateTSForRC is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
-// It could use the cached tso from the statement future to avoid get tso many times.
-func (b *executorBuilder) refreshForUpdateTSForRC() error {
-	defer func() {
-		b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-	}()
-	// The first time read-consistency read is executed and `RcReadCheckTS` is enabled, try to use
-	// the last valid ts as the for update read ts.
-	if b.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		rcReadTS := b.ctx.GetSessionVars().TxnCtx.LastRcReadTs
-		if rcReadTS == 0 {
-			rcReadTS = b.ctx.GetSessionVars().TxnCtx.StartTS
-		}
-		return UpdateForUpdateTS(b.ctx, rcReadTS)
-	}
-	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
-	if future == nil {
-		return nil
-	}
-	newForUpdateTS, waitErr := future.Wait()
-	if waitErr != nil {
-		logutil.BgLogger().Warn("wait tso failed",
-			zap.Uint64("startTS", b.ctx.GetSessionVars().TxnCtx.StartTS),
-			zap.Error(waitErr))
-	}
-	b.ctx.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
-	// If newForUpdateTS is 0, it will force to get a new for-update-ts from PD.
-	return UpdateForUpdateTS(b.ctx, newForUpdateTS)
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {

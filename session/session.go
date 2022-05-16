@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -2400,8 +2399,8 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 
-	if p, isOK := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); isOK {
-		p.InfoSchema = is
+	if p, isOK := txnManager.GetContextProvider().(sessiontxn.StmtInfoSchemaReplaceProvider); isOK {
+		p.ReplaceStmtInfoSchema(is)
 	}
 
 	if ok {
@@ -3189,14 +3188,6 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)
-	} else if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
-		// Prepare the statement future if the transaction is valid in RC transactions.
-		// If the `RCCheckTS` is used, try to use the last valid ts to read.
-		if s.GetSessionVars().StmtCtx.RCCheckTS {
-			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
-		} else {
-			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
-		}
 	}
 }
 

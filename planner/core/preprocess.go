@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
@@ -1712,10 +1711,10 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 		return
 	}
 
-	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
-		// When the current provider is `legacy.SimpleTxnContextProvider` it should to keep the logic equals to the old implement.
-		// After refactoring, the `legacy.SimpleTxnContextProvider` will be removed, and this code will be removed too.
-		provider.InfoSchema = p.ensureInfoSchema()
+	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(sessiontxn.StmtInfoSchemaReplaceProvider); ok {
+		// When the current provider is `sessiontxn.StmtInfoSchemaReplaceProvider` it should use the `p.ensureInfoSchema()`
+		// because the desired info schema may have been changed
+		provider.ReplaceStmtInfoSchema(p.ensureInfoSchema())
 	}
 }
 
