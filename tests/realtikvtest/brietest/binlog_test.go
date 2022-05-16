@@ -15,7 +15,7 @@
 // This file contains tests about binlog which need running with real TiKV.
 // Only tests under /session will be run with real TiKV, so we put them here.
 
-package realtikvtest
+package brietest
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -53,7 +54,7 @@ func (m mockPumpPullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
 
 func TestForCoverage(t *testing.T) {
 	// Just for test coverage.
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)

@@ -169,21 +169,28 @@ func swapAndOverrideFile(ctx context.Context, s storage.ExternalStorage, path st
 }
 
 const (
-	truncateSafepointFileName = "v1_stream_trancate_safepoint.txt"
+	// TruncateSafePointFileName is the filename that the ts(the log have been truncated) is saved into.
+	TruncateSafePointFileName = "v1_stream_trancate_safepoint.txt"
+	// GlobalCheckpointFileName is the filename that the ts(the global checkpoint) is saved into.
+	GlobalCheckpointFileName = "v1_stream_global_checkpoint.txt"
 )
 
-// GetTruncateSafepoint gets the current truncate safepoint.
+// GetTSFromFile gets the current truncate safepoint.
 // truncate safepoint is the TS used for last truncating:
 // which means logs before this TS would probably be deleted or incomplete.
-func GetTruncateSafepoint(ctx context.Context, s storage.ExternalStorage) (uint64, error) {
-	exists, err := s.FileExists(ctx, truncateSafepointFileName)
+func GetTSFromFile(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	filename string,
+) (uint64, error) {
+	exists, err := s.FileExists(ctx, filename)
 	if err != nil {
 		return 0, err
 	}
 	if !exists {
 		return 0, nil
 	}
-	data, err := s.ReadFile(ctx, truncateSafepointFileName)
+	data, err := s.ReadFile(ctx, filename)
 	if err != nil {
 		return 0, err
 	}
@@ -194,10 +201,15 @@ func GetTruncateSafepoint(ctx context.Context, s storage.ExternalStorage) (uint6
 	return value, nil
 }
 
-// SetTruncateSafepoint overrides the current truncate safepoint.
+// SetTSToFile overrides the current truncate safepoint.
 // truncate safepoint is the TS used for last truncating:
 // which means logs before this TS would probably be deleted or incomplete.
-func SetTruncateSafepoint(ctx context.Context, s storage.ExternalStorage, safepoint uint64) error {
+func SetTSToFile(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	safepoint uint64,
+	filename string,
+) error {
 	content := strconv.FormatUint(safepoint, 10)
-	return truncateAndWrite(ctx, s, truncateSafepointFileName, []byte(content))
+	return truncateAndWrite(ctx, s, filename, []byte(content))
 }

@@ -15,7 +15,7 @@
 // This file contains tests about backup restore (br) which need running with real TiKV.
 // Only tests under /session will be run with real TiKV, so we put them here instead of /br.
 
-package realtikvtest
+package brietest
 
 import (
 	"os"
@@ -24,15 +24,16 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBackupAndRestore(t *testing.T) {
-	if !*withRealTiKV {
+	if !*realtikvtest.WithRealTiKV {
 		t.Skip("only run BR SQL integration test with tikv store")
 	}
 
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	cfg := config.GetGlobalConfig()
