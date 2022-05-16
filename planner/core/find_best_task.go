@@ -292,7 +292,7 @@ func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBette
 	if curTask.invalid() {
 		return false, nil
 	}
-	if bestTask.invalid() && !curTask.invalid() {
+	if bestTask.invalid() {
 		return true, nil
 	}
 	if ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
