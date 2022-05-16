@@ -138,14 +138,14 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamEndTS, "2035-1-1 00:00:00", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
 	_ = flags.MarkHidden(flagStreamEndTS)
-	flags.Int64(flagGCSafePointTTS, utils.DefaultBRGCSafePointTTL,
+	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamStartSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 	_ = flags.MarkHidden(flagGCSafePointTTS)
 }
 
 func DefineStreamPauseFlags(flags *pflag.FlagSet) {
 	DefineStreamCommonFlags(flags)
-	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamGCSafePointTTL,
+	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamPauseSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 }
 
@@ -231,7 +231,7 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if cfg.SafePointTTL <= 0 {
-		cfg.SafePointTTL = utils.DefaultBRGCSafePointTTL
+		cfg.SafePointTTL = utils.DefaultStreamStartSafePointTTL
 	}
 
 	return nil
@@ -248,7 +248,7 @@ func (cfg *StreamConfig) ParseStreamPauseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.SafePointTTL <= 0 {
-		cfg.SafePointTTL = utils.DefaultStreamGCSafePointTTL
+		cfg.SafePointTTL = utils.DefaultStreamPauseSafePointTTL
 	}
 	return nil
 }
@@ -634,7 +634,7 @@ func RunStreamStop(
 
 	if err := streamMgr.setGCSafePoint(ctx,
 		utils.BRServiceSafePoint{
-			ID:       buildPausePointName(ti.Info.Name),
+			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      0,
 			BackupTS: 0,
 		},
@@ -687,7 +687,7 @@ func RunStreamPause(
 	if err = streamMgr.setGCSafePoint(
 		ctx,
 		utils.BRServiceSafePoint{
-			ID:       buildPausePointName(ti.Info.Name),
+			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      cfg.SafePointTTL,
 			BackupTS: globalCheckPointTS,
 		},
@@ -761,7 +761,7 @@ func RunStreamResume(
 
 	if err := streamMgr.setGCSafePoint(ctx,
 		utils.BRServiceSafePoint{
-			ID:       buildPausePointName(ti.Info.Name),
+			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      0,
 			BackupTS: globalCheckPointTS,
 		},
@@ -1442,6 +1442,6 @@ func ShiftTS(startTS uint64) uint64 {
 	}
 }
 
-func buildPausePointName(taskName string) string {
+func buildPauseSafePointName(taskName string) string {
 	return fmt.Sprintf("%s_pause_safepoint", taskName)
 }
