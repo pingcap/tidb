@@ -456,15 +456,28 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			return err
 		}
 	}
-	tps := make([]*types.FieldType, len(e.UsingVars))
-	varsNum := len(e.UsingVars)
-	for i, param := range e.UsingVars {
-		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
-		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
-		if tps[i] == nil {
-			tps[i] = types.NewFieldType(mysql.TypeNull)
+
+	var varsNum int
+	var binVarTypes []byte
+	var txtVarTypes []*types.FieldType
+	isBinProtocol := len(e.PrepareParams) > 0
+	if isBinProtocol { // binary protocol
+		varsNum = len(e.PrepareParams)
+		for _, param := range e.PrepareParams {
+			binVarTypes = append(binVarTypes, param.Kind())
+		}
+	} else { // txt protocol
+		varsNum = len(e.UsingVars)
+		for _, param := range e.UsingVars {
+			name := param.(*expression.ScalarFunction).GetArgs()[0].String()
+			tp := sctx.GetSessionVars().UserVarTypes[name]
+			if tp == nil {
+				tp = types.NewFieldType(mysql.TypeNull)
+			}
+			txtVarTypes = append(txtVarTypes, tp)
 		}
 	}
+
 	if prepared.CachedPlan != nil {
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
@@ -505,7 +518,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					sctx.PreparedPlanCache().Delete(cacheKey)
 					break
 				}
-				if !cachedVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
+				if !cachedVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
 					continue
 				}
 				planValid := true
@@ -576,13 +589,13 @@ REBUILD:
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, isBinProtocol, binVarTypes, txtVarTypes, sessVars.StmtCtx.BindSQL)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
 			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
-				if cacheVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
+				if cacheVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
 					hitVal = true
 					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
