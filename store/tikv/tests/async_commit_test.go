@@ -562,3 +562,32 @@ func (s *testAsyncCommitSuite) TestPessimisticTxnResolveAsyncCommitLock(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
+
+func (s *testAsyncCommitSuite) TestRollbackAsyncCommitEnforcesFallback(c *C) {
+	t1 := s.beginAsyncCommit(c)
+	t1.SetPessimistic(true)
+	t1.Set([]byte("a"), []byte("a"))
+	t1.Set([]byte("z"), []byte("z"))
+	committer, err := t1.NewCommitter(1)
+	c.Assert(err, IsNil)
+	committer.SetUseAsyncCommit()
+	committer.SetLockTTL(1000)
+	committer.SetMaxCommitTS(oracle.ComposeTS(oracle.ExtractPhysical(committer.GetStartTS())+1500, 0))
+	committer.PrewriteMutations(context.Background(), committer.GetMutations().Slice(0, 1))
+	c.Assert(committer.IsAsyncCommit(), IsTrue)
+	lock := s.mustGetLock(c, []byte("a"))
+	resolver := s.store.GetLockResolver()
+	for {
+		currentTS, err := s.store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		c.Assert(err, IsNil)
+		status, err := resolver.GetTxnStatus(lock.TxnID, currentTS, []byte("a"))
+		c.Assert(err, IsNil)
+		if status.TTL() == 0 && status.CommitTS() == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond * 30)
+	}
+	c.Assert(committer.IsAsyncCommit(), IsTrue)
+	committer.PrewriteMutations(context.Background(), committer.GetMutations().Slice(1, 2))
+	c.Assert(committer.IsAsyncCommit(), IsFalse)
+}

@@ -28,6 +28,7 @@ import (
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/prometheus/client_golang/prometheus"
@@ -75,6 +76,20 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 	})
 
 	ttl := c.lockTTL
+
+	// ref: https://github.com/pingcap/tidb/issues/33641
+	// we make the TTL satisfy the following condition:
+	// 	max_commit_ts.physical < start_ts.physical + TTL < (current_ts of some check_txn_status that wants to resolve this lock).physical
+	// and we have:
+	//  current_ts <= max_ts <= min_commit_ts of this lock
+	// such that
+	// 	max_commit_ts < min_commit_ts, so if this lock is resolved, it will be forced to fall back to normal 2PC, thus resolving the issue.
+	if c.isAsyncCommit() && c.isPessimistic {
+		safeTTL := uint64(oracle.ExtractPhysical(c.maxCommitTS)-oracle.ExtractPhysical(c.startTS)) + 1
+		if safeTTL > ttl {
+			ttl = safeTTL
+		}
+	}
 
 	if c.sessionID > 0 {
 		failpoint.Inject("twoPCShortLockTTL", func() {
