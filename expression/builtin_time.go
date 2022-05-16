@@ -2908,7 +2908,7 @@ func (du *baseDateArithmetical) getIntervalFromReal(ctx sessionctx.Context, args
 }
 
 func (du *baseDateArithmetical) add(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
-	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
+	year, month, day, nano, _, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2977,7 +2977,7 @@ func (du *baseDateArithmetical) subDuration(ctx sessionctx.Context, d types.Dura
 }
 
 func (du *baseDateArithmetical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
-	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
+	year, month, day, nano, _, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
