@@ -48,9 +48,6 @@ tmp-storage-quota = -1
 # Valid options: ["log", "cancel"]
 oom-action = "cancel"
 
-# Enable batch commit for the DMLs.
-enable-batch-dml = false
-
 # Make "kill query" behavior compatible with MySQL. It's not recommend to
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
@@ -264,9 +261,6 @@ txn-total-size-limit = 104857600
 # The limitation of the size in byte for each entry in one transaction.
 # NOTE: Increasing this limit may cause performance problems.
 txn-entry-size-limit = 6291456
-
-# The max number of running concurrency two phase committer request for an SQL.
-committer-concurrency = 128
 
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
