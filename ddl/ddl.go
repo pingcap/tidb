@@ -410,11 +410,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			asyncNotify(worker.ddlJobCh)
 		}
 
-		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
-			return err
-		})
+		d.ddlSeqNumMu.seqNum, err = d.GetHistoryDDLCount()
 		if err != nil {
 			return err
 		}
@@ -435,6 +431,18 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Run(d.PollTiFlashRoutine)
 
 	return nil
+}
+
+// GetHistoryDDLCount the count of done ddl jobs.
+func (d *ddl) GetHistoryDDLCount() (uint64, error) {
+	var count uint64
+	err := kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err error
+		count, err = t.GetHistoryDDLCount()
+		return err
+	})
+	return count, err
 }
 
 func (d *ddl) close() {
