@@ -94,7 +94,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			)
 			pos := &ast.ColumnPosition{}
 			checkErr = job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
-			elements = ddl.BuildElements([]*model.ColumnInfo{changingCol}, changingIdxs)
+			elements = ddl.BuildElements(changingCol, changingIdxs)
 		}
 		if job.Type == model.ActionAddIndex {
 			if times == 1 {

@@ -4976,7 +4976,6 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,

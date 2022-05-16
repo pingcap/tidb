@@ -1048,15 +1048,15 @@ func (w *worker) onModifyTableCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *mo
 			newCol := col.Clone()
 			newCol.SetCharset(toCharset)
 			newCol.SetCollate(toCollate)
-			newCol.ID = allocateColumnID(tblInfo)
-			if field_types.HasCharset(&col.FieldType) && needCheckColumnData(col, newCol) {
+			if field_types.HasCharset(&col.FieldType) && needCheckLatin1Convert(col, newCol) {
 				oldCols = append(oldCols, col)
 				newCols = append(newCols, newCol)
 			}
 		}
-		if len(newCols) != 0 {
-			done, err := w.doCheckColumns(d, t, job, dbInfo, tblInfo, oldCols, newCols)
-			if !done || err != nil {
+		if len(oldCols) != 0 {
+			err := w.checkLatin1Convert(dbInfo.Name, tblInfo.Name, oldCols, newCols)
+			if err != nil && job.ReorgMeta.SQLMode.HasStrictMode() {
+				job.State = model.JobStateCancelled
 				return ver, err
 			}
 		}
