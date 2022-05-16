@@ -64,7 +64,11 @@ func (p *PessimisticRCTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSche
 		return is.(infoschema.InfoSchema)
 	}
 
-	return p.stmtInfoSchema
+	if p.stmtInfoSchema != nil {
+		return p.stmtInfoSchema
+	}
+
+	return p.is
 }
 
 // GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
