@@ -921,18 +921,34 @@ func (tr *TableRestore) importKV(
 ) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 	regionSplitSize := int64(rc.cfg.TikvImporter.RegionSplitSize)
-	if regionSplitSize == 0 && rc.taskMgr != nil {
+	regionSplitKeys := int64(rc.cfg.TikvImporter.RegionSplitKeys)
+	if regionSplitSize == 0 {
 		regionSplitSize = int64(config.SplitRegionSize)
-		if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
-			if len(tasks) > 0 {
-				regionSplitSize = int64(config.SplitRegionSize) * int64(mathutil.Min(len(tasks), config.MaxSplitRegionSizeRatio))
+		if rc.taskMgr != nil {
+			if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
+				if len(tasks) > 0 {
+					regionSplitSize = int64(config.SplitRegionSize) * int64(mathutil.Min(len(tasks), config.MaxSplitRegionSizeRatio))
+				}
+				return nil, nil
+			}); err != nil {
+				return errors.Trace(err)
 			}
-			return nil, nil
-		}); err != nil {
-			return errors.Trace(err)
 		}
 	}
-	err := closedEngine.Import(ctx, regionSplitSize)
+	if regionSplitKeys == 0 {
+		regionSplitKeys = int64(config.SplitRegionKeys)
+		if rc.taskMgr != nil {
+			if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
+				if len(tasks) > 0 {
+					regionSplitSize = int64(config.SplitRegionKeys) * int64(mathutil.Min(len(tasks), config.MaxSplitRegionSizeRatio))
+				}
+				return nil, nil
+			}); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
 	if err == nil && saveCpErr == nil {

@@ -90,8 +90,8 @@ const (
 
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
 	// lower the max-key-count to avoid tikv trigger region auto split
-	regionMaxKeyCount      = 144_000_000
-	defaultRegionSplitSize = 10 * units.GiB
+	regionMaxKeyCount      = 1_280_000
+	defaultRegionSplitSize = 96 * units.MiB
 	// The max ranges count in a batch to split and scatter.
 	maxBatchSplitRanges = 4096
 
@@ -111,7 +111,7 @@ var (
 	// Local backend is compatible with TiDB [4.0.0, NextMajorVersion).
 	localMinTiDBVersion = *semver.New("4.0.0")
 	localMinTiKVVersion = *semver.New("4.0.0")
-	localMinPDVersion   = *semver.New("4.0.0")
+	localMinPDVersion   = *semver.New("7.0.0")
 	localMaxTiDBVersion = version.NextMajorVersion()
 	localMaxTiKVVersion = version.NextMajorVersion()
 	localMaxPDVersion   = version.NextMajorVersion()
@@ -1328,7 +1328,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	return allErr
 }
 
-func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize int64) error {
+func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1342,13 +1342,16 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-	kvRegionSplitSize, regionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+	kvRegionSplitSize, kvRegionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 	if err == nil {
 		if kvRegionSplitSize > regionSplitSize {
 			regionSplitSize = kvRegionSplitSize
 		}
+		if kvRegionSplitKeys > regionSplitKeys {
+			regionSplitKeys = kvRegionSplitKeys
+		}
 	} else {
-		regionSplitKeys = int64(regionMaxKeyCount)
+		log.L().Warn("fail to get region split keys and size", zap.Error(err))
 		if regionSplitSize > defaultRegionSplitSize {
 			regionSplitKeys = int64(float64(regionSplitSize) / float64(defaultRegionSplitSize) * float64(regionMaxKeyCount))
 		}
