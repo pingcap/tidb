@@ -718,6 +718,24 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBPreparedPlanCacheSize, Value: strconv.FormatUint(uint64(0), 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000, SetGlobal: func(s *SessionVars, val string) error {
+		uVal, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			PreparedPlanCacheSize.Store(uint32(uVal))
+		}
+		return err
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatUint(uint64(PreparedPlanCacheSize.Load()), 10), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBPreparedPlanCacheMemoryGuardRatio, Value: strconv.FormatFloat(DefTiDBPreparedPlanCacheMemoryGuardRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(s *SessionVars, val string) error {
+		f, err := strconv.ParseFloat(val, 64)
+		if err == nil {
+			PreparedPlanCacheMemoryGuardRatio.Store(f)
+		}
+		return err
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatFloat(PreparedPlanCacheMemoryGuardRatio.Load(), 'f', -1, 64), nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {

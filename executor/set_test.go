@@ -1657,3 +1657,25 @@ func TestInstanceScopeSwitching(t *testing.T) {
 	tk.MustExec("set tidb_enable_legacy_instance_scope = 0")
 	tk.MustGetErrCode("set tidb_general_log = 1", errno.ErrGlobalVariable)
 }
+
+func TestPreparePlanCacheValid(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 0")
+	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 2")
+	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("2"))
+
+	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = -0.1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_memory_guard_ratio value: '-0.1'"))
+	tk.MustQuery("select @@global.tidb_prepared_plan_cache_memory_guard_ratio").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = 2.2")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_memory_guard_ratio value: '2.2'"))
+	tk.MustQuery("select @@global.tidb_prepared_plan_cache_memory_guard_ratio").Check(testkit.Rows("1"))
+	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = 0.5")
+	tk.MustQuery("select @@global.tidb_prepared_plan_cache_memory_guard_ratio").Check(testkit.Rows("0.5"))
+}

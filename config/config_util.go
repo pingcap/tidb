@@ -54,9 +54,7 @@ var (
 		"TxnLocalLatches.Capacity":        {},
 		"CompatibleKillQuery":             {},
 		"TreatOldVersionUTF8AsUTF8MB4":    {},
-		"OpenTracing.Enable":              {},
-		"PreparedPlanCache.Enabled":       {},
-	}
+		"OpenTracing.Enable":              {}}
 )
 
 // MergeConfigItems overwrites the dynamic config items and leaves the other items unchanged.
