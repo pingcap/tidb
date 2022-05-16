@@ -2192,6 +2192,13 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 	if !txnCtx.IsPessimistic {
 		return nil
 	}
+
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		// The updateTS can be auto updated in `PessimisticRCTxnContextProvider` when call `GetStmtReadTS` or `GetStmtForUpdateTS`,
+		// so it is not necessary to do it again here
+		return nil
+	}
+
 	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
 		return nil
 	}
