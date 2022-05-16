@@ -16,7 +16,7 @@ package memory
 
 import (
 	"os"
-    "runtime"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,7 +91,7 @@ var memLimit *memInfoCache
 // expiration time is 500ms
 var memUsage *memInfoCache
 
-// expiration time is 500ms 
+// expiration time is 500ms
 // save the memory usage of the server process
 var serverMemUsage *memInfoCache
 
@@ -200,4 +200,3 @@ func InstanceMemUsed() (uint64, error) {
 	serverMemUsage.set(memoryUsage, time.Now())
 	return memoryUsage, nil
 }
-
