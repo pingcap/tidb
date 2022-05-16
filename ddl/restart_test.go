@@ -18,12 +18,17 @@ package ddl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -127,7 +132,7 @@ func TestSchemaResume(t *testing.T) {
 		require.NoError(t, d1.Stop())
 	}()
 
-	testCheckOwner(t, d1, true)
+	require.True(t, d1.OwnerManager().IsOwner())
 
 	dbInfo, err := testSchemaInfo(d1, "test_restart")
 	require.NoError(t, err)
@@ -228,7 +233,7 @@ func TestTableResume(t *testing.T) {
 		testDropSchema(t, testNewContext(d), d, dbInfo)
 	}()
 
-	testCheckOwner(t, d, true)
+	require.True(t, d.OwnerManager().IsOwner())
 
 	tblInfo, err := testTableInfo(d, "t1", 3)
 	require.NoError(t, err)
@@ -250,4 +255,52 @@ func TestTableResume(t *testing.T) {
 	}
 	testRunInterruptedJob(t, d, job)
 	testCheckTableState(t, d, dbInfo, tblInfo, model.StateNone)
+}
+
+// testTableInfo creates a test table with num int columns and with no index.
+func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
+	tblInfo := &model.TableInfo{
+		Name: model.NewCIStr(name),
+	}
+	genIDs, err := d.genGlobalIDs(1)
+
+	if err != nil {
+		return nil, err
+	}
+	tblInfo.ID = genIDs[0]
+
+	cols := make([]*model.ColumnInfo, num)
+	for i := range cols {
+		col := &model.ColumnInfo{
+			Name:         model.NewCIStr(fmt.Sprintf("c%d", i+1)),
+			Offset:       i,
+			DefaultValue: i + 1,
+			State:        model.StatePublic,
+		}
+
+		col.FieldType = *types.NewFieldType(mysql.TypeLong)
+		col.ID = allocateColumnID(tblInfo)
+		cols[i] = col
+	}
+	tblInfo.Columns = cols
+	tblInfo.Charset = "utf8"
+	tblInfo.Collate = "utf8_bin"
+	return tblInfo, nil
+}
+
+func testCheckTableState(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
+		require.NoError(t, err)
+
+		if state == model.StateNone {
+			require.NoError(t, err)
+			return nil
+		}
+
+		require.Equal(t, info.Name, tblInfo.Name)
+		require.Equal(t, info.State, state)
+		return nil
+	}))
 }

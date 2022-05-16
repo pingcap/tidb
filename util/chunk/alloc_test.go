@@ -158,14 +158,14 @@ func TestAvoidColumnReuse(t *testing.T) {
 	// So when reusing Chunk, we should ignore them.
 
 	fieldTypes := []*types.FieldType{
-		types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).BuildP(),
-		types.NewFieldTypeBuilderP().SetType(mysql.TypeJSON).BuildP(),
-		types.NewFieldTypeBuilderP().SetType(mysql.TypeFloat).BuildP(),
-		types.NewFieldTypeBuilderP().SetType(mysql.TypeNewDecimal).BuildP(),
-		types.NewFieldTypeBuilderP().SetType(mysql.TypeDouble).BuildP(),
-		types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP(),
-		types.NewFieldTypeBuilderP().SetType(mysql.TypeTimestamp).BuildP(),
-		types.NewFieldTypeBuilderP().SetType(mysql.TypeDatetime).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
 	}
 	alloc := NewAllocator()
 	for i := 0; i < maxFreeChunks+10; i++ {

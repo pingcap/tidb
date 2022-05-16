@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
@@ -60,7 +61,7 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 		comment := fmt.Sprintf("case: %v, sql: %s", i, tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		require.NoError(t, tk.Session().NewTxn(context.Background()))
+		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
@@ -364,7 +365,7 @@ func TestDAGPlanBuilderUnionScan(t *testing.T) {
 		comment := fmt.Sprintf("input: %s", tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		require.NoError(t, tk.Session().NewTxn(context.Background()))
+		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 
 		// Make txn not read only.
 		txn, err := tk.Session().Txn(true)
@@ -1558,7 +1559,7 @@ func doTestDAGPlanBuilderWindow(t *testing.T, vars, input []string, output []str
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		err = tk.Session().NewTxn(context.Background())
+		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NoError(t, err)

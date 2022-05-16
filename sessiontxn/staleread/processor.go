@@ -93,11 +93,11 @@ func (p *baseProcessor) setAsNonStaleRead() error {
 }
 
 func (p *baseProcessor) setEvaluatedTS(ts uint64) (err error) {
-	is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(ts)
+	is, err := GetSessionSnapshotInfoSchema(p.sctx, ts)
 	if err != nil {
 		return err
 	}
-	is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
+
 	return p.setEvaluatedValues(ts, is, func(sctx sessionctx.Context) (uint64, error) {
 		return ts, nil
 	})
@@ -109,8 +109,7 @@ func (p *baseProcessor) setEvaluatedEvaluator(evaluator StalenessTSEvaluator) er
 		return err
 	}
 
-	is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(ts)
-	is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
+	is, err := GetSessionSnapshotInfoSchema(p.sctx, ts)
 	if err != nil {
 		return err
 	}
@@ -265,4 +264,13 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluat
 	return func(sctx sessionctx.Context) (uint64, error) {
 		return CalculateTsWithReadStaleness(sctx, readStaleness)
 	}
+}
+
+// GetSessionSnapshotInfoSchema returns the session's information schema with specified ts
+func GetSessionSnapshotInfoSchema(sctx sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
+	is, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
+	if err != nil {
+		return nil, err
+	}
+	return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is), nil
 }

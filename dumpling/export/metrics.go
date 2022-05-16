@@ -68,7 +68,7 @@ func InitMetricsVector(labels prometheus.Labels) {
 			Namespace: "dumpling",
 			Subsystem: "write",
 			Name:      "receive_chunk_duration_time",
-			Help:      "Bucketed histogram of write time (s) of files",
+			Help:      "Bucketed histogram of receiving time (s) of chunks",
 			Buckets:   prometheus.ExponentialBuckets(0.00005, 2, 20),
 		}, labelNames)
 	errorCount = prometheus.NewCounterVec(

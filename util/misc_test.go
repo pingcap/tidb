@@ -91,11 +91,6 @@ func TestX509NameParseMatch(t *testing.T) {
 	assert.Equal(t, result, X509NameOnline(check))
 }
 
-func TestBasicFuncGetStack(t *testing.T) {
-	b := GetStack()
-	assert.Less(t, len(b), 4096)
-}
-
 func TestBasicFuncWithRecovery(t *testing.T) {
 	var recovery interface{}
 	WithRecovery(func() {

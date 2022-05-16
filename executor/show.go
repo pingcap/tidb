@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -61,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
@@ -1929,13 +1929,6 @@ func runWithSystemSession(sctx sessionctx.Context, fn func(sessionctx.Context) e
 	if err != nil {
 		return err
 	}
-	// TODO(tangenta): remove the CurrentDB assignment after
-	// https://github.com/pingcap/tidb/issues/34090 is fixed.
-	originDB := sysCtx.GetSessionVars().CurrentDB
-	sysCtx.GetSessionVars().CurrentDB = sctx.GetSessionVars().CurrentDB
-	defer func() {
-		sysCtx.GetSessionVars().CurrentDB = originDB
-	}()
 	defer b.releaseSysSession(sysCtx)
 	return fn(sysCtx)
 }

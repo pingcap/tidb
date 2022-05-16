@@ -411,10 +411,14 @@ const (
 		end_time TIMESTAMP,
 		state ENUM('pending', 'running', 'finished', 'failed') NOT NULL,
 		fail_reason TEXT,
-		instance CHAR(64) NOT NULL comment 'address of the TiDB instance executing the analyze job',
+		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the analyze job',
 		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
 		PRIMARY KEY (id),
 		KEY (update_time)
+	);`
+	// CreateAdvisoryLocks stores the advisory locks (get_lock, release_lock).
+	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
+		lock_name VARCHAR(64) NOT NULL PRIMARY KEY
 	);`
 )
 
@@ -609,11 +613,15 @@ const (
 	version87 = 87
 	// version88 fixes the issue https://github.com/pingcap/tidb/issues/33650.
 	version88 = 88
+	// version89 adds the tables mysql.advisory_locks
+	version89 = 89
+	// version90 converts enable-batch-dml to a sysvar
+	version90 = 90
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version88
+var currentBootstrapVersion int64 = version90
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -705,6 +713,8 @@ var (
 		upgradeToVer86,
 		upgradeToVer87,
 		upgradeToVer88,
+		upgradeToVer89,
+		upgradeToVer90,
 	}
 )
 
@@ -1808,6 +1818,36 @@ func upgradeToVer88(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_client_priv` `Repl_client_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`")
 }
 
+func upgradeToVer89(s Session, ver int64) {
+	if ver >= version89 {
+		return
+	}
+	doReentrantDDL(s, CreateAdvisoryLocks)
+}
+
+// importConfigOption is a one-time import.
+// It is intended to be used to convert a config option to a sysvar.
+// It reads the config value from the tidb-server executing the bootstrap
+// (not guaranteed to be the same on all servers), and writes a message
+// to the error log. The message is important since the behavior is weird
+// (changes to the config file will no longer take effect past this point).
+func importConfigOption(s Session, configName, svName, valStr string) {
+	message := fmt.Sprintf("%s is now configured by the system variable %s. One-time importing the value specified in tidb.toml file", configName, svName)
+	logutil.BgLogger().Warn(message, zap.String("value", valStr))
+	// We use insert ignore, since if its a duplicate we don't want to overwrite any user-set values.
+	sql := fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, svName, valStr)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer90(s Session, ver int64) {
+	if ver >= version90 {
+		return
+	}
+	valStr := variable.BoolToOnOff(config.GetGlobalConfig().EnableBatchDML)
+	importConfigOption(s, "enable-batch-dml", variable.TiDBEnableBatchDML, valStr)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1900,6 +1940,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsMetaHistory)
 	// Create analyze_jobs table.
 	mustExecute(s, CreateAnalyzeJobs)
+	// Create advisory_locks table.
+	mustExecute(s, CreateAdvisoryLocks)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
