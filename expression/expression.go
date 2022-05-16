@@ -1424,8 +1424,8 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 					newDecimal = mysql.MaxDecimalScale
 				}
 			}
-			args[0].GetType().SetFlen(newFlen)
-			args[0].GetType().SetDecimal(newDecimal)
+			args[0].GetType().SetFlenUnderLimit(newFlen)
+			args[0].GetType().SetDecimalUnderLimit(newDecimal)
 		}
 	}
 }

@@ -379,9 +379,8 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 		}
 		lLen, rLen := lType.GetFlen()+lExtend, rType.GetFlen()+rExtend
 		cLen := mathutil.Max(lLen, rLen)
-		cLen = mathutil.Min(65, cLen)
-		commonType.SetDecimal(cDec)
-		commonType.SetFlen(cLen)
+		commonType.SetDecimalUnderLimit(cDec)
+		commonType.SetFlenUnderLimit(cLen)
 	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {
 		if mysql.IsIntegerType(commonType.GetType()) {
 			// If the target type is int, both TiFlash and Mysql only support cast to Int64

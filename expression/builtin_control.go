@@ -75,7 +75,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		// If both arguments are NULL, make resulting type BINARY(0).
 		if rhs.GetType() == mysql.TypeNull {
 			resultFieldType.SetType(mysql.TypeString)
-			resultFieldType.SetFlen(0)
+			resultFieldType.SetFlen(1)
 			resultFieldType.SetDecimal(0)
 			types.SetBinChsClnFlag(resultFieldType)
 		}
@@ -95,7 +95,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			if lhs.GetDecimal() == types.UnspecifiedLength || rhs.GetDecimal() == types.UnspecifiedLength {
 				resultFieldType.SetDecimal(types.UnspecifiedLength)
 			} else {
-				resultFieldType.SetDecimal(mathutil.Max(lhs.GetDecimal(), rhs.GetDecimal()))
+				resultFieldType.SetDecimalUnderLimit(mathutil.Max(lhs.GetDecimal(), rhs.GetDecimal()))
 			}
 		}
 
@@ -146,7 +146,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 				rhsFlen -= rhs.GetDecimal()
 			}
 			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.GetDecimal() + 1 // account for -1 len fields
-			resultFieldType.SetFlen(mathutil.Min(flen, mysql.MaxDecimalWidth))  // make sure it doesn't overflow
+			resultFieldType.SetFlenUnderLimit(flen)
 
 		} else {
 			resultFieldType.SetFlen(maxlen(lhs.GetFlen(), rhs.GetFlen()))
@@ -224,7 +224,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if fieldTp.GetType() == mysql.TypeNull {
-		fieldTp.SetFlen(0)
+		fieldTp.SetFlen(1)
 		fieldTp.SetDecimal(0)
 		types.SetBinChsClnFlag(fieldTp)
 	}

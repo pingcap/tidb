@@ -188,15 +188,15 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 		if a.Args[0].GetType().GetFlen() < 0 || a.RetTp.GetFlen() > mysql.MaxDecimalWidth {
 			a.RetTp.SetFlen(mysql.MaxDecimalWidth)
 		}
-		a.RetTp.SetFlen(mathutil.Min(a.Args[0].GetType().GetFlen()+21, mysql.MaxDecimalWidth))
+		a.RetTp.SetFlenUnderLimit(mathutil.Min(a.Args[0].GetType().GetFlen()+21, mysql.MaxDecimalWidth))
 		a.RetTp.SetDecimal(0)
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		if a.Args[0].GetType().GetFlen() < 0 || a.RetTp.GetFlen() > mysql.MaxDecimalWidth {
 			a.RetTp.SetFlen(mysql.MaxDecimalWidth)
 		}
-		a.RetTp.SetFlen(mathutil.Min(a.Args[0].GetType().GetFlen()+22, mysql.MaxDecimalWidth))
-		a.RetTp.SetDecimal(a.Args[0].GetType().GetDecimal())
+		a.RetTp.SetFlenUnderLimit(a.Args[0].GetType().GetFlen() + 22)
+		a.RetTp.SetDecimalUnderLimit(a.Args[0].GetType().GetDecimal())
 		if a.RetTp.GetDecimal() < 0 || a.RetTp.GetDecimal() > mysql.MaxDecimalScale {
 			a.RetTp.SetDecimal(mysql.MaxDecimalScale)
 		}
@@ -226,20 +226,21 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.SetDecimal(types.DivFracIncr)
+		a.RetTp.SetDecimalUnderLimit(types.DivFracIncr)
 		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType().GetType())
-		a.RetTp.SetFlen(flen + types.DivFracIncr)
+		a.RetTp.SetFlenUnderLimit(flen + types.DivFracIncr)
 	case mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		if a.Args[0].GetType().GetDecimal() < 0 {
 			a.RetTp.SetDecimal(mysql.MaxDecimalScale)
 		} else {
-			a.RetTp.SetDecimal(mathutil.Min(a.Args[0].GetType().GetDecimal()+types.DivFracIncr, mysql.MaxDecimalScale))
+			a.RetTp.SetDecimalUnderLimit(a.Args[0].GetType().GetDecimal() + types.DivFracIncr)
 		}
 		if a.Args[0].GetType().GetFlen() < 0 {
 			a.RetTp.SetFlen(mysql.MaxDecimalWidth)
+		} else {
+			a.RetTp.SetFlenUnderLimit(a.Args[0].GetType().GetFlen() + types.DivFracIncr)
 		}
-		a.RetTp.SetFlen(mathutil.Min(mysql.MaxDecimalWidth, a.Args[0].GetType().GetFlen()+types.DivFracIncr))
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)

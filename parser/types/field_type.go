@@ -124,6 +124,10 @@ func (ft *FieldType) DelFlag(flag uint) {
 }
 
 func (ft *FieldType) SetFlen(flen int) {
+	ft.flen = flen
+}
+
+func (ft *FieldType) SetFlenUnderLimit(flen int) {
 	if ft.tp == mysql.TypeNewDecimal {
 		ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
 	} else {
@@ -132,6 +136,10 @@ func (ft *FieldType) SetFlen(flen int) {
 }
 
 func (ft *FieldType) SetDecimal(decimal int) {
+	ft.decimal = decimal
+}
+
+func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
 	if ft.tp == mysql.TypeNewDecimal {
 		ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
 	} else {
