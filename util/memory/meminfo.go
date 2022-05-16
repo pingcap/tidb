@@ -16,6 +16,7 @@ package memory
 
 import (
 	"os"
+        "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -178,3 +179,17 @@ func readUint(path string) (uint64, error) {
 	}
 	return parseUint(strings.TrimSpace(string(v)), 10, 64)
 }
+
+func InstanceMemUsed() (uint64, error) {
+	used, t := memUsage.get()
+	if time.Since(t) < 500*time.Millisecond {
+		return used, nil
+	}
+	var memoryUsage uint64
+	instanceStats := &runtime.MemStats{}
+	runtime.ReadMemStats(instanceStats)
+	memoryUsage = instanceStats.HeapAlloc
+	memUsage.set(memoryUsage, time.Now())
+	return memoryUsage, nil
+}
+
