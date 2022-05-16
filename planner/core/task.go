@@ -1891,6 +1891,18 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	return t
 }
 
+func (p *PhysicalWindow) attach2Task(tasks ...task) task {
+	if mpp, ok := tasks[0].copy().(*mppTask); ok && p.storeTp == kv.TiFlash {
+		// TODO: find a better way to solve the cost problem.
+		mpp.cst = mpp.cost() * 0.05
+		p.cost = mpp.cost()
+		return attachPlan2Task(p, mpp)
+	}
+	t := tasks[0].convertToRootTask(p.ctx)
+	p.cost = t.cost()
+	return attachPlan2Task(p.self, t)
+}
+
 // mppTask can not :
 // 1. keep order
 // 2. support double read
@@ -2019,10 +2031,6 @@ func (t *mppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 }
 
 func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
-	if len(prop.SortItems) != 0 {
-		t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
-		return &mppTask{}
-	}
 	if !t.needEnforceExchanger(prop) {
 		return t
 	}

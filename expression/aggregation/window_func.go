@@ -18,8 +18,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // WindowFuncDesc describes a window function signature, only used in planner.
@@ -91,4 +93,42 @@ func UseDefaultFrame(name string) (bool, ast.FrameClause) {
 func NeedFrame(name string) bool {
 	_, ok := noFrameWindowFuncs[strings.ToLower(name)]
 	return !ok
+}
+
+// Clone makes a copy of SortItem.
+func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
+	return &WindowFuncDesc{*s.baseFuncDesc.clone()}
+}
+
+// WindowFuncToPBExpr converts aggregate function to pb.
+func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
+	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
+	tp := desc.GetTiPBExpr(true)
+	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+
+	children := make([]*tipb.Expr, 0, len(desc.Args))
+	for _, arg := range desc.Args {
+		pbArg := pc.ExprToPB(arg)
+		if pbArg == nil {
+			return nil
+		}
+		children = append(children, pbArg)
+	}
+	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(desc.RetTp)}
+}
+
+// CanPushDownToTiFlash control whether a window function desc can be push down to tiflash.
+func (s *WindowFuncDesc) CanPushDownToTiFlash() bool {
+	// window functions
+	switch s.Name {
+	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncLead, ast.WindowFuncLag:
+		return true
+		// TODO: support aggregate functions
+		//case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:
+		//	return true
+	}
+
+	return false
 }

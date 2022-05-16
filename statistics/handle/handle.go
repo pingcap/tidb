@@ -260,6 +260,10 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	option := &tableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
 	for _, row := range rows {
 		version := row.GetUint64(0)
 		physicalID := row.GetInt64(1)
@@ -293,9 +297,13 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		oldCache.Put(physicalID, tbl)
+		if option.byQuery {
+			oldCache.PutByQuery(physicalID, tbl)
+		} else {
+			oldCache.Put(physicalID, tbl)
+		}
 	}
-	h.updateStatsCache(oldCache.update(nil, nil, lastVersion, opts...))
+	h.updateStatsCache(oldCache.update(nil, nil, lastVersion))
 	return nil
 }
 
@@ -735,10 +743,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	col := table.Columns[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -769,7 +773,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			col = &statistics.Column{
 				PhysicalID: table.PhysicalID,
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				FMSketch:   fmSketch,
 				Info:       colInfo,
 				Count:      count + nullCount,
 				ErrorRate:  errorRate,
@@ -787,6 +790,12 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				return errors.Trace(err)
 			}
 			cms, topN, err := h.cmSketchAndTopNFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+			// we load all the statistics, i.e., loadAll is true. We don't need to read FMSketch from storage in notNeedLoad IF.
+			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2074,4 +2083,18 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	}
 	sc := v.(statsCache)
 	sc.SetCapacity(c)
+}
+
+// GetStatsCacheFrontTable gets front table in statsCacheInner implementation
+// only used for test
+func (h *Handle) GetStatsCacheFrontTable() int64 {
+	if h == nil {
+		return 0
+	}
+	v := h.statsCache.Load()
+	if v == nil {
+		return 0
+	}
+	sc := v.(statsCache)
+	return sc.Front()
 }
