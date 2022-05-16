@@ -1054,14 +1054,10 @@ func (w *worker) onModifyTableCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *mo
 			}
 		}
 		if len(oldCols) != 0 {
-			err := w.checkLatin1Convert(dbInfo.Name, tblInfo.Name, oldCols, newCols)
+			err := w.checkLatin1Convert(job, dbInfo.Name, tblInfo.Name, oldCols, newCols)
 			if err != nil {
-				if job.ReorgMeta.SQLMode.HasStrictMode() {
-					job.State = model.JobStateCancelled
-					return ver, err
-				} else {
-					job.AddWarning(err)
-				}
+				job.State = model.JobStateCancelled
+				return ver, err
 			}
 		}
 		for _, col := range tblInfo.Columns {

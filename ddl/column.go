@@ -1561,7 +1561,7 @@ func needCheckLatin1Convert(oldCol, newCol *model.ColumnInfo) bool {
 	return oldCol.GetCharset() == charset.CharsetLatin1 && newCol.GetCharset() != charset.CharsetLatin1
 }
 
-func (w *worker) checkLatin1Convert(schema, t model.CIStr, oldCols []*model.ColumnInfo, newCols []*model.ColumnInfo) (err error) {
+func (w *worker) checkLatin1Convert(job *model.Job, schema, t model.CIStr, oldCols []*model.ColumnInfo, newCols []*model.ColumnInfo) (err error) {
 	sctx, err := w.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
@@ -1602,7 +1602,11 @@ func (w *worker) checkLatin1Convert(schema, t model.CIStr, oldCols []*model.Colu
 		for i, col := range oldCols {
 			_, err = table.CastValue(sctx, row.GetDatum(i, &col.FieldType), newCols[i], false, false)
 			if err != nil {
-				return errors.Trace(err)
+				if job.ReorgMeta.SQLMode.HasStrictMode() {
+					return errors.Trace(err)
+				} else {
+					job.AddWarning(err)
+				}
 			}
 		}
 	}
@@ -1642,14 +1646,10 @@ func (w *worker) doModifyColumn(
 	}
 
 	if needCheckLatin1Convert(oldCol, newCol) {
-		err := w.checkLatin1Convert(dbInfo.Name, tblInfo.Name, []*model.ColumnInfo{oldCol}, []*model.ColumnInfo{newCol})
+		err := w.checkLatin1Convert(job, dbInfo.Name, tblInfo.Name, []*model.ColumnInfo{oldCol}, []*model.ColumnInfo{newCol})
 		if err != nil {
-			if job.ReorgMeta.SQLMode.HasStrictMode() {
-				job.State = model.JobStateRollingback
-				return ver, errors.Trace(err)
-			} else {
-				job.AddWarning(err)
-			}
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
 		}
 	}
 
