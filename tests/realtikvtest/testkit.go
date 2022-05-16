@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -64,7 +65,12 @@ func RunTestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 	}
-	goleak.VerifyTestMain(m, opts...)
+	callback := func(i int) int {
+		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
+		time.Sleep(time.Second)
+		return i
+	}
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
 func clearTiKVStorage(t *testing.T, store kv.Storage) {
