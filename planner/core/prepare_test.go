@@ -1028,6 +1028,35 @@ func TestPrepareWithWindowFunction(t *testing.T) {
 	tk.MustQuery("execute stmt2 using @a, @b").Check(testkit.Rows("0", "0"))
 }
 
+func TestPrepareWindowFunctionWithoutParamsCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer tk.MustExec("set @@tidb_enable_window_function = 0")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 (d DOUBLE, id INT, sex CHAR(1), n INT NOT NULL AUTO_INCREMENT, PRIMARY KEY(n));")
+	tk.MustExec("insert into t1(d, id, sex) values (1.0, 1, 'M'),(2.0, 2, 'F'),(3.0, 3, 'F'),(4.0, 4, 'F'),(5.0, 5, 'M')")
+	// prepare phase, we don't check the window function args.
+	tk.MustExec("prepare p from \"select id, sex, lead(id, ?) over () from t1\"")
+	// execute phase, we do check the window function args (param is initialized).
+	err := tk.ExecToErr("execute p using @p1")
+	require.NotNil(t, err)
+	require.EqualError(t, err, "[planner:1210]Incorrect arguments to lead")
+	tk.MustExec("set @p1 = 3")
+	// execute phase, we do check the window function args (param is valid).
+	tk.MustQuery("execute p using @p1").Check(testkit.Rows("1 M 4", "2 F 5", "3 F <nil>", "4 F <nil>", "5 M <nil>"))
+
+	// execute phase, we do check the window function args (param is invalid).
+	tk.MustExec("PREPARE p FROM \"SELECT id, sex, LEAD(id, ?) OVER (), ntile(?) over() FROM t1\"")
+	tk.MustExec("set @p2 = 3")
+	tk.MustQuery("execute p using @p1, @p2").Check(testkit.Rows("1 M 4 1", "2 F 5 1", "3 F <nil> 2", "4 F <nil> 2", "5 M <nil> 3"))
+	tk.MustExec("set @p2 = 0") // ntile doesn't allow param to be 0
+	err = tk.ExecToErr("execute p using @p1, @p2")
+	require.NotNil(t, err)
+	require.EqualError(t, err, "[planner:1210]Incorrect arguments to ntile")
+}
+
 func TestPrepareWithSnapshot(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
