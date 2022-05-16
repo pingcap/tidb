@@ -5809,11 +5809,11 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 	}
 	expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
 
-	checker := &paramMarkerInPrepareChecker{}
+	checker := &expression.ParamMarkerInPrepareChecker{}
 	boundClause.Expr.Accept(checker)
 
 	// If it has paramMarker and is in prepare stmt. We don't need to eval it since its value is not decided yet.
-	if !checker.inPrepareStmt {
+	if !checker.InPrepareStmt {
 		// Do not raise warnings for truncate.
 		oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate
 		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
@@ -5862,26 +5862,6 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 	return bound, nil
 }
 
-// paramMarkerInPrepareChecker checks whether the given ast tree has paramMarker and is in prepare statement.
-type paramMarkerInPrepareChecker struct {
-	inPrepareStmt bool
-}
-
-// Enter implements Visitor Interface.
-func (pc *paramMarkerInPrepareChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch v := in.(type) {
-	case *driver.ParamMarkerExpr:
-		pc.inPrepareStmt = !v.InExecute
-		return v, true
-	}
-	return in, false
-}
-
-// Leave implements Visitor Interface.
-func (pc *paramMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
-}
-
 // buildWindowFunctionFrame builds the window function frames.
 // See https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
 func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem) (*WindowFrame, error) {
@@ -5900,6 +5880,7 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 }
 
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
+	checker := &expression.ParamMarkerInPrepareChecker{}
 	for _, windowFuncExpr := range windowFuncExprs {
 		if strings.ToLower(windowFuncExpr.F) == ast.AggFuncGroupConcat {
 			return ErrNotSupportedYet.GenWithStackByArgs("group_concat as window function")
@@ -5908,7 +5889,11 @@ func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, wi
 		if err != nil {
 			return err
 		}
-		desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFuncExpr.F, args)
+		checker.InPrepareStmt = false
+		for _, expr := range windowFuncExpr.Args {
+			expr.Accept(checker)
+		}
+		desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFuncExpr.F, args, checker.InPrepareStmt)
 		if err != nil {
 			return err
 		}
@@ -6018,8 +6003,13 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 		schema := np.Schema().Clone()
 		descs := make([]*aggregation.WindowFuncDesc, 0, len(funcs))
 		preArgs := 0
+		checker := &expression.ParamMarkerInPrepareChecker{}
 		for _, windowFunc := range funcs {
-			desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.F, args[preArgs:preArgs+len(windowFunc.Args)])
+			checker.InPrepareStmt = false
+			for _, expr := range windowFunc.Args {
+				expr.Accept(checker)
+			}
+			desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.F, args[preArgs:preArgs+len(windowFunc.Args)], checker.InPrepareStmt)
 			if err != nil {
 				return nil, nil, err
 			}
