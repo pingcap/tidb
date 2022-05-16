@@ -607,9 +607,9 @@ var defaultSysVars = []*SysVar{
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			return checkGCTxnMaxWaitTime(vars, normalizedValue, originalValue, scope)
 		}, SetGlobal: func(s *SessionVars, val string) error {
-			GCMaxWaitTime.Store(TidbOptInt64(val, DefTiDBGCMaxWaitTime))
-			return nil
-		}},
+		GCMaxWaitTime.Store(TidbOptInt64(val, DefTiDBGCMaxWaitTime))
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBTableCacheLease, Value: strconv.Itoa(DefTiDBTableCacheLease), Type: TypeUnsigned, MinValue: 1, MaxValue: 10, SetGlobal: func(s *SessionVars, sVal string) error {
 		var val int64
 		val, err := strconv.ParseInt(sVal, 10, 64)
@@ -690,10 +690,10 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(vars *SessionVars) (string, error) {
 			return strconv.FormatInt(StatsCacheMemQuota.Load(), 10), nil
 		}, SetGlobal: func(vars *SessionVars, s string) error {
-			v := TidbOptInt64(s, DefTiDBStatsCacheMemQuota)
-			StatsCacheMemQuota.Store(v)
-			return nil
-		},
+		v := TidbOptInt64(s, DefTiDBStatsCacheMemQuota)
+		StatsCacheMemQuota.Store(v)
+		return nil
+	},
 	},
 	{Scope: ScopeGlobal, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(DefTiDBQueryLogMaxLen), Type: TypeInt, MinValue: 0, MaxValue: 1073741824, SetGlobal: func(s *SessionVars, val string) error {
 		QueryLogMaxLen.Store(int32(TidbOptInt64(val, DefTiDBQueryLogMaxLen)))
@@ -722,11 +722,7 @@ var defaultSysVars = []*SysVar{
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
 			PreparedPlanCacheSize.Store(uint32(uVal))
-			if uVal > 0 {
-				SetPreparedPlanCache(true)
-			} else {
-				SetPreparedPlanCache(false)
-			}
+			SetPreparedPlanCache(uVal > 0)
 		}
 		return err
 	}, GetGlobal: func(s *SessionVars) (string, error) {
