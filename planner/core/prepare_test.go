@@ -2852,18 +2852,3 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 0"))
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
-
-func TestPreparePlanCacheSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	orgValue := variable.PreparedPlanCacheSize.Load()
-	defer variable.PreparedPlanCacheSize.Store(orgValue)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set global tidb_prepared_plan_cache_size=0`)
-	require.False(t, variable.PreparedPlanCacheEnabled())
-	tk.MustExec(`set global tidb_prepared_plan_cache_size=100`)
-	require.True(t, variable.PreparedPlanCacheEnabled())
-	tk.MustExec(`set global tidb_prepared_plan_cache_size=0`)
-	require.False(t, variable.PreparedPlanCacheEnabled())
-}

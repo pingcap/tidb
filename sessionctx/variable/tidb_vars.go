@@ -15,12 +15,10 @@
 package variable
 
 import (
-	"math"
-	"sync/atomic"
-
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	atomic2 "go.uber.org/atomic"
+	"math"
 )
 
 /*
@@ -682,6 +680,8 @@ const (
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
+	// TiDBEnablePreparedPlanCache indicates whether to enable Plan Cache of the PREPARE statement.
+	TiDBEnablePreparedPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPreparedPlanCacheSize indicates the number of cached statements.
 	TiDBPreparedPlanCacheSize = "tidb_prepared_plan_cache_size"
 	// TiDBPreparedPlanCacheMemoryGuardRatio is used to prevent [performance.max-memory] from being exceeded
@@ -695,15 +695,6 @@ const (
 	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
 	// for any type of configuration item that has concurrent workers.
 	MaxConfigurableConcurrency = 256
-
-	preparedPlanCacheEnabled = 1
-	preparedPlanCacheUnable  = 0
-)
-
-var (
-	// preparedPlanCacheEnabledValue indicates whether to enable prepared plan cache.
-	// The value is false unless "prepared-plan-cache-enabled" is true in configuration.
-	preparedPlanCacheEnabledValue int32 = 0
 )
 
 // Default TiDB system variable values.
@@ -874,6 +865,7 @@ const (
 	DefTiDBCommitterConcurrency                     = 128
 	DefTiDBBatchDMLIgnoreError                      = false
 	DefTiDBMemQuotaAnalyze                          = -1
+	DefTiDBEnablePreparedPlanCache                  = false
 	DefTiDBPreparedPlanCacheSize             uint   = 1000
 	DefTiDBPreparedPlanCacheMemoryGuardRatio        = 0.1
 )
@@ -914,7 +906,8 @@ var (
 	MemQuotaBindingCache                     = atomic2.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                            = atomic2.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                       = atomic2.NewInt64(DefTiDBStatsCacheMemQuota)
-	PreparedPlanCacheSize                    = atomic2.NewUint32(uint32(0)) // '0' means disable prepared plan cache.
+	EnablePreparedPlanCache                  = atomic2.NewBool(DefTiDBEnablePreparedPlanCache)
+	PreparedPlanCacheSize                    = atomic2.NewUint32(uint32(DefTiDBPreparedPlanCacheSize))
 	PreparedPlanCacheMemoryGuardRatio        = atomic2.NewFloat64(DefTiDBPreparedPlanCacheMemoryGuardRatio)
 )
 
@@ -927,15 +920,10 @@ var (
 
 // SetPreparedPlanCache sets isEnabled to true, then prepared plan cache is enabled.
 func SetPreparedPlanCache(isEnabled bool) {
-	if isEnabled {
-		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheEnabled)
-	} else {
-		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheUnable)
-	}
+	EnablePreparedPlanCache.Store(isEnabled)
 }
 
 // PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
 func PreparedPlanCacheEnabled() bool {
-	isEnabled := atomic.LoadInt32(&preparedPlanCacheEnabledValue)
-	return isEnabled == preparedPlanCacheEnabled && PreparedPlanCacheSize.Load() > 0
+	return EnablePreparedPlanCache.Load()
 }

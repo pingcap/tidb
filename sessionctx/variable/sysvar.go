@@ -720,11 +720,16 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBPreparedPlanCacheSize, Value: strconv.FormatUint(uint64(0), 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal, Name: TiDBEnablePreparedPlanCache, Value: BoolToOnOff(DefTiDBEnablePreparedPlanCache), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		EnablePreparedPlanCache.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(EnablePreparedPlanCache.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBPreparedPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBPreparedPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetGlobal: func(s *SessionVars, val string) error {
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
 			PreparedPlanCacheSize.Store(uint32(uVal))
-			SetPreparedPlanCache(uVal > 0)
 		}
 		return err
 	}, GetGlobal: func(s *SessionVars) (string, error) {
