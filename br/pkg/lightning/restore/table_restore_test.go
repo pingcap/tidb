@@ -831,7 +831,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess() {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID, gomock.Any()).
+		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
 		Return(nil)
 	mockBackend.EXPECT().
 		CleanupEngine(ctx, engineUUID).
@@ -866,7 +866,7 @@ func (s *tableRestoreSuite) TestImportKVFailure() {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID, gomock.Any()).
+		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)

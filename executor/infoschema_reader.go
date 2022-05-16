@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -677,10 +678,29 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 }
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
-	if err := tryFillViewColumnType(ctx, sctx, sctx.GetInfoSchema().(infoschema.InfoSchema), schema.Name, tbl); err != nil {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		return
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	var viewSchema *expression.Schema
+	var viewOutputNames types.NameSlice
+	if tbl.IsView() {
+		var viewLogicalPlan plannercore.Plan
+		// Build plan is not thread safe, there will be concurrency on sessionctx.
+		if err := runWithSystemSession(sctx, func(s sessionctx.Context) error {
+			planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
+			var err error
+			viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}); err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return
+		}
+
+		viewSchema = viewLogicalPlan.Schema()
+		viewOutputNames = viewLogicalPlan.OutputNames()
 	}
+
 	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []collate.WildcardPattern
 	var tableSchemaFilterEnable,
 		tableNameFilterEnable, columnsFilterEnable bool
@@ -715,6 +735,17 @@ ForColumnsTag:
 		if col.Hidden {
 			continue
 		}
+
+		ft := &col.FieldType
+		if viewSchema != nil {
+			// If this is a view, replace the column with the view column.
+			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
+			if idx >= 0 {
+				col1 := viewSchema.Columns[idx]
+				ft = col1.GetType()
+			}
+		}
+
 		if !extractor.SkipRequest {
 			if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.Name.L) {
 				continue
@@ -743,58 +774,58 @@ ForColumnsTag:
 		}
 
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
-		colLen, decimal := col.GetFlen(), col.GetDecimal()
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.GetType())
+		colLen, decimal := ft.GetFlen(), ft.GetDecimal()
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
 		if decimal == types.UnspecifiedLength {
 			decimal = defaultDecimal
 		}
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen
 		}
-		if col.GetType() == mysql.TypeSet {
+		if ft.GetType() == mysql.TypeSet {
 			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
 			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.GetElems() {
+			for _, ele := range ft.GetElems() {
 				colLen += len(ele)
 			}
-			if len(col.GetElems()) != 0 {
-				colLen += (len(col.GetElems()) - 1)
+			if len(ft.GetElems()) != 0 {
+				colLen += (len(ft.GetElems()) - 1)
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.GetCharset())
-		} else if col.GetType() == mysql.TypeEnum {
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+		} else if ft.GetType() == mysql.TypeEnum {
 			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
 			// the longest string in the enum is 'cdef'
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.GetElems() {
+			for _, ele := range ft.GetElems() {
 				if len(ele) > colLen {
 					colLen = len(ele)
 				}
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.GetCharset())
-		} else if types.IsString(col.GetType()) {
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+		} else if types.IsString(ft.GetType()) {
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.GetCharset())
-		} else if types.IsTypeFractionable(col.GetType()) {
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+		} else if types.IsTypeFractionable(ft.GetType()) {
 			datetimePrecision = decimal
-		} else if types.IsTypeNumeric(col.GetType()) {
+		} else if types.IsTypeNumeric(ft.GetType()) {
 			numericPrecision = colLen
-			if col.GetType() != mysql.TypeFloat && col.GetType() != mysql.TypeDouble {
+			if ft.GetType() != mysql.TypeFloat && ft.GetType() != mysql.TypeDouble {
 				numericScale = decimal
 			} else if decimal != -1 {
 				numericScale = decimal
 			}
 		}
-		columnType := col.FieldType.InfoSchemaStr()
+		columnType := ft.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
-			if col.GetType() == mysql.TypeBit {
+			if ft.GetType() == mysql.TypeBit {
 				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
 				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
 				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
@@ -808,7 +839,7 @@ ForColumnsTag:
 			i+1,                   // ORIGINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
-			types.TypeToStr(col.GetType(), col.GetCharset()), // DATA_TYPE
+			types.TypeToStr(ft.GetType(), ft.GetCharset()), // DATA_TYPE
 			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
 			charOctLen,           // CHARACTER_OCTET_LENGTH
 			numericPrecision,     // NUMERIC_PRECISION
