@@ -1664,7 +1664,9 @@ func TestPreparePlanCacheValid(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 0")
-	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_size value: '0'"))
+	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
 	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_size = 2")
 	tk.MustQuery("select @@global.tidb_prepared_plan_cache_size").Check(testkit.Rows("2"))
 

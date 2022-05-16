@@ -15,10 +15,11 @@
 package variable
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	atomic2 "go.uber.org/atomic"
-	"math"
 )
 
 /*
