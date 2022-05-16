@@ -951,8 +951,6 @@ func TestModifyInvalidColumnData(t *testing.T) {
 	tk.MustExec("alter table t modify column b varchar(20) charset utf8")
 	// change varchar(20) to varchar(19) will do reorg which uses '?' instead of invalid characters
 	tk.MustQuery("select hex(a), hex(b) from t").Check(testkit.Rows("3F 90"))
-
-	tk.MustExec("set sql_mode=default")
 }
 
 func TestModifyColumnOption(t *testing.T) {
