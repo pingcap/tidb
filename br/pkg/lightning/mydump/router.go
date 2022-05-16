@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-tools/pkg/filter"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/slice"
 	"go.uber.org/zap"
 
@@ -121,7 +121,7 @@ var defaultFileRouteRules = []*config.FileRouteRule{
 
 // // RouteRule is a rule to route file path to target schema/table
 type FileRouter interface {
-	// Route apply rule to path. Return nil if path doesn't math route rule;
+	// Route apply rule to path. Return nil if path doesn't match route rule;
 	// return error if path match route rule but the captured value for field is invalid
 	Route(path string) (*RouteResult, error)
 }

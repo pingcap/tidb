@@ -27,10 +27,12 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -41,6 +43,7 @@ func TestColumnAdd(t *testing.T) {
 	defer clean()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
+	internal := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int, c2 int);")
 	tk.MustExec("insert t values (1, 2);")
@@ -86,19 +89,16 @@ func TestColumnAdd(t *testing.T) {
 	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
 
 	// Drop column.
-	first = true
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
+		if dropCol == nil {
+			tbl := external.GetTableByName(t, internal, "test", "t")
+			dropCol = tbl.VisibleCols()[2]
+		}
+	}
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		jobID = job.ID
-		require.NoError(t, dom.Reload())
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
-		require.True(t, exist)
-		switch job.SchemaState {
-		case model.StateNone:
-			if first {
-				dropCol = tbl.VisibleCols()[2]
-				first = false
-			}
-		default:
+		tbl := external.GetTableByName(t, internal, "test", "t")
+		if job.SchemaState != model.StatePublic {
 			for _, col := range tbl.Cols() {
 				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
 			}
@@ -126,7 +126,7 @@ func TestColumnAdd(t *testing.T) {
 				return
 			}
 			sess := testNewContext(store)
-			err := sess.NewTxn(context.Background())
+			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
 			_, err = writeOnlyTable.AddRecord(sess, types.MakeDatums(10, 10))
 			require.NoError(t, err)
@@ -211,7 +211,7 @@ func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle
 
 func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
 	// WriteOnlyTable: insert t values (2, 3)
-	err := ctx.NewTxn(context.Background())
+	err := sessiontxn.NewTxn(context.Background(), ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -219,7 +219,7 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -257,7 +257,7 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -274,7 +274,7 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -296,7 +296,7 @@ func touchedSlice(t table.Table) []bool {
 func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.Table) error {
 	ctx := context.TODO()
 	// publicTable Insert t values (4, 4, 4)
-	err := sctx.NewTxn(ctx)
+	err := sessiontxn.NewTxn(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -304,7 +304,7 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sctx.NewTxn(ctx)
+	err = sessiontxn.NewTxn(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -321,7 +321,7 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sctx.NewTxn(ctx)
+	err = sessiontxn.NewTxn(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -369,7 +369,7 @@ type historyJobArgs struct {
 }
 
 func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn(context.Background())
+	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)

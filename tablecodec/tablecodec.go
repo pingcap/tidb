@@ -82,6 +82,11 @@ func TablePrefix() []byte {
 	return tablePrefix
 }
 
+// MetaPrefix returns meta prefix 'm'.
+func MetaPrefix() []byte {
+	return metaPrefix
+}
+
 // EncodeRowKey encodes the table id and record handle into a kv.Key
 func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 	buf := make([]byte, 0, prefixLen+len(encodedHandle))
@@ -192,6 +197,16 @@ func DecodeValuesBytesToStrings(b []byte) ([]string, error) {
 		b = remain
 	}
 	return datumValues, nil
+}
+
+// EncodeMetaKey encodes the key and field into meta key.
+func EncodeMetaKey(key []byte, field []byte) kv.Key {
+	ek := make([]byte, 0, len(metaPrefix)+codec.EncodedBytesLength(len(key))+8+codec.EncodedBytesLength(len(field)))
+	ek = append(ek, metaPrefix...)
+	ek = codec.EncodeBytes(ek, key)
+	ek = codec.EncodeUint(ek, uint64(structure.HashData))
+	ek = codec.EncodeBytes(ek, field)
+	return ek
 }
 
 // DecodeMetaKey decodes the key and get the meta key and meta field.
@@ -375,6 +390,20 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	return colDatum, nil
 }
 
+// DecodeColumnValueWithDatum decodes data to an existing Datum according to the column info.
+func DecodeColumnValueWithDatum(data []byte, ft *types.FieldType, loc *time.Location, result *types.Datum) error {
+	var err error
+	_, *result, err = codec.DecodeOne(data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	*result, err = Unflatten(*result, ft, loc)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // DecodeRowWithMapNew decode a row to datum map.
 func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 	loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
@@ -401,7 +430,7 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 	return rd.DecodeToDatumMap(b, row)
 }
 
-// DecodeRowWithMap decodes a byte slice into datums with a existing row map.
+// DecodeRowWithMap decodes a byte slice into datums with an existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
 func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
@@ -504,7 +533,7 @@ func decodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.
 	var d types.Datum
 	var err error
 	if handle.IsInt() {
-		if mysql.HasUnsignedFlag(ft.Flag) {
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
 			d = types.NewUintDatum(uint64(handle.IntValue()))
 		} else {
 			d = types.NewIntDatum(handle.IntValue())
@@ -573,24 +602,24 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	if datum.IsNull() {
 		return datum, nil
 	}
-	switch ft.Tp {
+	switch ft.GetType() {
 	case mysql.TypeFloat:
 		datum.SetFloat32(float32(datum.GetFloat64()))
 		return datum, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob,
 		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
-		datum.SetString(datum.GetString(), ft.Collate)
+		datum.SetString(datum.GetString(), ft.GetCollate())
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24,
 		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		t := types.NewTime(types.ZeroCoreTime, ft.Tp, ft.Decimal)
+		t := types.NewTime(types.ZeroCoreTime, ft.GetType(), ft.GetDecimal())
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+		if ft.GetType() == mysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, loc)
 			if err != nil {
 				return datum, errors.Trace(err)
@@ -600,27 +629,27 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration: // duration should read fsp from column meta data
-		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: ft.Decimal}
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: ft.GetDecimal()}
 		datum.SetMysqlDuration(dur)
 		return datum, nil
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
-		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
+		enum, err := types.ParseEnumValue(ft.GetElems(), datum.GetUint64())
 		if err != nil {
 			enum = types.Enum{}
 		}
-		datum.SetMysqlEnum(enum, ft.Collate)
+		datum.SetMysqlEnum(enum, ft.GetCollate())
 		return datum, nil
 	case mysql.TypeSet:
-		set, err := types.ParseSetValue(ft.Elems, datum.GetUint64())
+		set, err := types.ParseSetValue(ft.GetElems(), datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		datum.SetMysqlSet(set, ft.Collate)
+		datum.SetMysqlSet(set, ft.GetCollate())
 		return datum, nil
 	case mysql.TypeBit:
 		val := datum.GetUint64()
-		byteSize := (ft.Flen + 7) >> 3
+		byteSize := (ft.GetFlen() + 7) >> 3
 		datum.SetUint64(0)
 		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize))
 	}
@@ -770,7 +799,7 @@ func decodeRestoredValuesV5(columns []rowcodec.ColInfo, results [][]byte, restor
 			newResults[i] = results[i]
 			continue
 		}
-		if collate.IsBinCollation(columns[i].Ft.Collate) {
+		if collate.IsBinCollation(columns[i].Ft.GetCollate()) {
 			noPaddingDatum, err := DecodeColumnValue(results[i], columns[i].Ft, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -812,7 +841,7 @@ func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
 		copyColInfo := rowcodec.ColInfo{
 			ID: col.ID,
 		}
-		if collate.IsBinCollation(col.Ft.Collate) {
+		if collate.IsBinCollation(col.Ft.GetCollate()) {
 			// Change the fieldType from string to uint since we store the number of the truncated spaces.
 			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
 		} else {
@@ -934,12 +963,28 @@ func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
 	return key
 }
 
-// EncodeTablePrefix encodes table prefix with table ID.
+// EncodeTablePrefix encodes the table prefix to generate a key
 func EncodeTablePrefix(tableID int64) kv.Key {
-	var key kv.Key
+	key := make([]byte, 0, tablePrefixLength+idLen)
 	key = append(key, tablePrefix...)
 	key = codec.EncodeInt(key, tableID)
 	return key
+}
+
+// EncodeTablePrefixSeekKey encodes the table prefix and encodecValue into a kv.Key.
+// It used for seek justly.
+func EncodeTablePrefixSeekKey(tableID int64, encodecValue []byte) kv.Key {
+	key := make([]byte, 0, tablePrefixLength+idLen+len(encodecValue))
+	key = appendTablePrefix(key, tableID)
+	key = append(key, encodecValue...)
+	return key
+}
+
+// appendTablePrefix appends table prefix "t[tableID]" into buf.
+func appendTablePrefix(buf []byte, tableID int64) []byte {
+	buf = append(buf, tablePrefix...)
+	buf = codec.EncodeInt(buf, tableID)
+	return buf
 }
 
 // appendTableRecordPrefix appends table record prefix  "t[tableID]_r".
@@ -1117,7 +1162,7 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 //		|  Layout of Options:
 //		|
 //		|     Segment:             Common Handle                 |     Global Index      |   New Collation
-// 		|     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID |    restoreData
+// 		|     Layout:  CHandle flag | CHandle Len | CHandle      | PidFlag | PartitionID |    restoreData
 //		|     Length:     1         | 2           | len(CHandle) |    1    |    8        |   len(restoreData)
 //		|
 //		|     Common Handle Segment: Exists when unique index used common handles.
@@ -1179,12 +1224,12 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 			col := tblInfo.Columns[idxCol.Offset]
 			// If  the column is the primary key's column,
 			// the restored data will be written later. Skip writing it here to avoid redundancy.
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				continue
 			}
 			if types.NeedRestoredData(&col.FieldType) {
 				colIds = append(colIds, col.ID)
-				if collate.IsBinCollation(col.Collate) {
+				if collate.IsBinCollation(col.GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
 				} else {
 					allRestoredData = append(allRestoredData, indexedValues[i])
@@ -1301,14 +1346,14 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 		return
 	}
 	colValue := v.GetBytes()
-	if tblCol.Charset == charset.CharsetBin || tblCol.Charset == charset.CharsetASCII {
+	if tblCol.GetCharset() == charset.CharsetBin || tblCol.GetCharset() == charset.CharsetASCII {
 		// Count character length by bytes if charset is binary or ascii.
 		if len(colValue) > idxCol.Length {
 			// truncate value and limit its length
 			if v.Kind() == types.KindBytes {
 				v.SetBytes(colValue[:idxCol.Length])
 			} else {
-				v.SetString(v.GetString()[:idxCol.Length], tblCol.Collate)
+				v.SetString(v.GetString()[:idxCol.Length], tblCol.GetCollate())
 			}
 		}
 	} else if utf8.RuneCount(colValue) > idxCol.Length {
@@ -1316,7 +1361,7 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 		rs := bytes.Runes(colValue)
 		truncateStr := string(rs[:idxCol.Length])
 		// truncate value and limit its length
-		v.SetString(truncateStr, tblCol.Collate)
+		v.SetString(truncateStr, tblCol.GetCollate())
 	}
 }
 

@@ -432,17 +432,24 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 func PaginateScanRegion(
 	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
 ) ([]*RegionInfo, error) {
-	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
-		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey >= endKey, startKey: %s, endkey: %s",
+	if len(endKey) != 0 && bytes.Compare(startKey, endKey) > 0 {
+		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
 	var regions []*RegionInfo
-	err := utils.WithRetry(ctx, func() error {
+	var err error
+	// we don't need to return multierr. since there only 3 times retry.
+	// in most case 3 times retry have the same error. so we just return the last error.
+	// actually we'd better remove all multierr in br/lightning.
+	// because it's not easy to check multierr equals normal error.
+	// see https://github.com/pingcap/tidb/issues/33419.
+	_ = utils.WithRetry(ctx, func() error {
 		regions = []*RegionInfo{}
 		scanStartKey := startKey
 		for {
-			batch, err := client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			var batch []*RegionInfo
+			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -458,7 +465,7 @@ func PaginateScanRegion(
 				break
 			}
 		}
-		if err := CheckRegionConsistency(startKey, endKey, regions); err != nil {
+		if err = CheckRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
 			return err
 		}

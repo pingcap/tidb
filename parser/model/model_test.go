@@ -32,6 +32,85 @@ func TestT(t *testing.T) {
 	require.Equal(t, "aBC", abc.String())
 }
 
+func newColumnForTest(id int64, offset int) *ColumnInfo {
+	return &ColumnInfo{
+		ID:     id,
+		Name:   NewCIStr(fmt.Sprintf("c_%d", id)),
+		Offset: offset,
+	}
+}
+
+func newIndexForTest(id int64, cols ...*ColumnInfo) *IndexInfo {
+	idxCols := make([]*IndexColumn, 0, len(cols))
+	for _, c := range cols {
+		idxCols = append(idxCols, &IndexColumn{Offset: c.Offset, Name: c.Name})
+	}
+	return &IndexInfo{
+		ID:      id,
+		Name:    NewCIStr(fmt.Sprintf("i_%d", id)),
+		Columns: idxCols,
+	}
+}
+
+func checkOffsets(t *testing.T, tbl *TableInfo, ids ...int) {
+	require.Equal(t, len(ids), len(tbl.Columns))
+	for i := 0; i < len(ids); i++ {
+		expected := fmt.Sprintf("c_%d", ids[i])
+		require.Equal(t, expected, tbl.Columns[i].Name.L)
+		require.Equal(t, i, tbl.Columns[i].Offset)
+	}
+	for _, col := range tbl.Columns {
+		for _, idx := range tbl.Indices {
+			for _, idxCol := range idx.Columns {
+				if col.Name.L != idxCol.Name.L {
+					continue
+				}
+				// Columns with the same name should have a same offset.
+				require.Equal(t, col.Offset, idxCol.Offset)
+			}
+		}
+	}
+}
+
+func TestMoveColumnInfo(t *testing.T) {
+	c0 := newColumnForTest(0, 0)
+	c1 := newColumnForTest(1, 1)
+	c2 := newColumnForTest(2, 2)
+	c3 := newColumnForTest(3, 3)
+	c4 := newColumnForTest(4, 4)
+
+	i0 := newIndexForTest(0, c0, c1, c2, c3, c4)
+	i1 := newIndexForTest(1, c4, c2)
+	i2 := newIndexForTest(2, c0, c4)
+	i3 := newIndexForTest(3, c1, c2, c3)
+	i4 := newIndexForTest(4, c3, c2, c1)
+
+	tbl := &TableInfo{
+		ID:      1,
+		Name:    NewCIStr("t"),
+		Columns: []*ColumnInfo{c0, c1, c2, c3, c4},
+		Indices: []*IndexInfo{i0, i1, i2, i3, i4},
+	}
+
+	// Original offsets: [0, 1, 2, 3, 4]
+	tbl.MoveColumnInfo(4, 0)
+	checkOffsets(t, tbl, 4, 0, 1, 2, 3)
+	tbl.MoveColumnInfo(2, 3)
+	checkOffsets(t, tbl, 4, 0, 2, 1, 3)
+	tbl.MoveColumnInfo(3, 2)
+	checkOffsets(t, tbl, 4, 0, 1, 2, 3)
+	tbl.MoveColumnInfo(0, 4)
+	checkOffsets(t, tbl, 0, 1, 2, 3, 4)
+	tbl.MoveColumnInfo(2, 2)
+	checkOffsets(t, tbl, 0, 1, 2, 3, 4)
+	tbl.MoveColumnInfo(0, 0)
+	checkOffsets(t, tbl, 0, 1, 2, 3, 4)
+	tbl.MoveColumnInfo(1, 4)
+	checkOffsets(t, tbl, 0, 2, 3, 4, 1)
+	tbl.MoveColumnInfo(3, 0)
+	checkOffsets(t, tbl, 4, 0, 2, 3, 1)
+}
+
 func TestModelBasic(t *testing.T) {
 	column := &ColumnInfo{
 		ID:           1,
@@ -41,7 +120,7 @@ func TestModelBasic(t *testing.T) {
 		FieldType:    *types.NewFieldType(0),
 		Hidden:       true,
 	}
-	column.Flag |= mysql.PriKeyFlag
+	column.AddFlag(mysql.PriKeyFlag)
 
 	index := &IndexInfo{
 		Name:  NewCIStr("key"),
@@ -115,7 +194,7 @@ func TestModelBasic(t *testing.T) {
 	require.False(t, table2.IsBaseTable())
 
 	// Corner cases
-	column.Flag ^= mysql.PriKeyFlag
+	column.ToggleFlag(mysql.PriKeyFlag)
 	pkName = table.GetPkName()
 	require.Equal(t, NewCIStr(""), pkName)
 	newColumn = table.GetPkColInfo()
@@ -132,9 +211,9 @@ func TestModelBasic(t *testing.T) {
 	require.Equal(t, false, no)
 
 	extraPK := NewExtraHandleColInfo()
-	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.Flag)
-	require.Equal(t, charset.CharsetBin, extraPK.Charset)
-	require.Equal(t, charset.CollationBin, extraPK.Collate)
+	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.GetFlag())
+	require.Equal(t, charset.CharsetBin, extraPK.GetCharset())
+	require.Equal(t, charset.CollationBin, extraPK.GetCollate())
 }
 
 func TestJobStartTime(t *testing.T) {
@@ -143,7 +222,7 @@ func TestJobStartTime(t *testing.T) {
 		BinlogInfo: &HistoryInfo{},
 	}
 	require.Equal(t, TSConvert2Time(job.StartTS), time.Unix(0, 0))
-	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:queueing, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0", time.Unix(0, 0)), job.String())
+	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0", time.Unix(0, 0)), job.String())
 }
 
 func TestJobCodec(t *testing.T) {
@@ -399,11 +478,11 @@ func TestDefaultValue(t *testing.T) {
 		err = json.Unmarshal(bytes, &newCol)
 		require.NoError(t, err, comment)
 		if isConsistent {
-			require.Equal(t, newCol.GetDefaultValue(), col.GetDefaultValue())
-			require.Equal(t, newCol.GetOriginDefaultValue(), col.GetOriginDefaultValue())
+			require.Equal(t, col.GetDefaultValue(), newCol.GetDefaultValue(), comment)
+			require.Equal(t, col.GetOriginDefaultValue(), newCol.GetOriginDefaultValue(), comment)
 		} else {
-			require.False(t, col.DefaultValue == newCol.DefaultValue, comment)
-			require.False(t, col.DefaultValue == newCol.DefaultValue, comment)
+			require.NotEqual(t, col.GetDefaultValue(), newCol.GetDefaultValue(), comment)
+			require.NotEqual(t, col.GetOriginDefaultValue(), newCol.GetOriginDefaultValue(), comment)
 		}
 	}
 }

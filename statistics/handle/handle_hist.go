@@ -15,7 +15,6 @@
 package handle
 
 import (
-	"runtime"
 	"sync"
 	"time"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -105,7 +105,7 @@ func (h *Handle) genHistMissingColumns(neededColumns []model.TableColumnID) []mo
 	statsCache := h.statsCache.Load().(statsCache)
 	missingColumns := make([]model.TableColumnID, 0, len(neededColumns))
 	for _, col := range neededColumns {
-		tbl, ok := statsCache.tables[col.TableID]
+		tbl, ok := statsCache.Get(col.TableID)
 		if !ok {
 			continue
 		}
@@ -136,7 +136,7 @@ type StatsReaderContext struct {
 }
 
 // SubLoadWorker loads hist data for each column
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *sync.WaitGroup) {
+func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupWrapper) {
 	readerCtx := &StatsReaderContext{}
 	defer func() {
 		exitWg.Done()
@@ -170,10 +170,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededColumnTask, readerCtx *StatsReade
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("stats loading panicked", zap.Any("error", r), zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("stats loading panicked", zap.Any("error", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
 	}()
@@ -190,7 +187,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededColumnTask, readerCtx *StatsReade
 	}
 	col := task.TableColumnID
 	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.tables[col.TableID]
+	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
 		h.writeToResultChan(task.ResultCh, col)
 		return nil, nil
@@ -351,10 +348,7 @@ func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededColumnTask, task *Nee
 func (h *Handle) writeToResultChan(resultCh chan model.TableColumnID, rs model.TableColumnID) {
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
 	select {
@@ -370,7 +364,7 @@ func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.tables[col.TableID]
+	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
 		return true
 	}
@@ -380,7 +374,7 @@ func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version))
+	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version, WithTableStatsByQuery()))
 }
 
 func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableColumnID) bool {
