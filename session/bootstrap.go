@@ -1854,10 +1854,10 @@ func upgradeToVer91(s Session, ver int64) {
 	if ver >= version91 {
 		return
 	}
-	valStr := strconv.FormatUint(uint64(config.GetGlobalConfig().Performance.TxnEntrySizeLimit), 10)
+	valStr := strconv.FormatUint(config.GetGlobalConfig().Performance.TxnEntrySizeLimit, 10)
 	importConfigOption(s, "txn-entry-size-limit", variable.TiDBTxnEntrySizeLimit, valStr)
-	vStr := strconv.FormatUint(uint64(config.GetGlobalConfig().Performance.TxnTotalSizeLimit), 10)
-	importConfigOption(s, "txn-total-size-limit", variable.TiDBTxnTotalSizeLimit, vStr)
+	valStr = strconv.FormatUint(config.GetGlobalConfig().Performance.TxnTotalSizeLimit, 10)
+	importConfigOption(s, "txn-total-size-limit", variable.TiDBTxnTotalSizeLimit, valStr)
 }
 
 func writeOOMAction(s Session) {
