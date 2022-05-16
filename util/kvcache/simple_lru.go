@@ -127,9 +127,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		}
 		return
 	}
-        
-        memUsed, err := memory.InstanceMemUsed()
-	//memUsed, err := memory.MemUsed()
+    memUsed, err := memory.InstanceMemUsed()
 	if err != nil {
 		l.DeleteAll()
 		return
@@ -149,8 +147,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
 		if memUsed > uint64(float64(l.quota)*(1.0-l.guard)) {
-			//memUsed, err = memory.MemUsed()
-                        memUsed, err = memory.InstanceMemUsed()
+            memUsed, err = memory.InstanceMemUsed()
 			if err != nil {
 				l.DeleteAll()
 				return

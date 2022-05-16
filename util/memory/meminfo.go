@@ -180,6 +180,7 @@ func readUint(path string) (uint64, error) {
 	return parseUint(strings.TrimSpace(string(v)), 10, 64)
 }
 
+// Get process memory
 func InstanceMemUsed() (uint64, error) {
 	used, t := memUsage.get()
 	if time.Since(t) < 500*time.Millisecond {
