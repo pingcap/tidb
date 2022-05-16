@@ -1854,9 +1854,9 @@ func upgradeToVer91(s Session, ver int64) {
 	if ver >= version91 {
 		return
 	}
-	valStr := strconv.FormatUint(config.GetGlobalConfig().Performance.TxnEntrySizeLimit, 10)
+	valStr := fmt.Sprint(config.GetGlobalConfig().Performance.TxnEntrySizeLimit)
 	importConfigOption(s, "txn-entry-size-limit", variable.TiDBTxnEntrySizeLimit, valStr)
-	valStr = strconv.FormatUint(config.GetGlobalConfig().Performance.TxnTotalSizeLimit, 10)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Performance.TxnTotalSizeLimit)
 	importConfigOption(s, "txn-total-size-limit", variable.TiDBTxnTotalSizeLimit, valStr)
 }
 
