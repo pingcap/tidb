@@ -24,6 +24,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -140,6 +142,9 @@ var (
 	// DeprecatedOptions indicates the config options existing in some other sections in config file.
 	// They should be moved to [instance] section.
 	DeprecatedOptions []InstanceConfigSection
+
+	// TikvConfigLock protects against concurrent tikv config refresh
+	TikvConfigLock sync.Mutex
 )
 
 // Config contains configuration options.
@@ -161,7 +166,6 @@ type Config struct {
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
-	EnableBatchDML             bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	ServerVersion              string                  `toml:"server-version" json:"server-version"`
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
@@ -248,6 +252,12 @@ type Config struct {
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
+
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// EnableBatchDML, unused since bootstrap v90
+	EnableBatchDML bool `toml:"enable-batch-dml" json:"enable-batch-dml"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -260,9 +270,10 @@ func (c *Config) UpdateTempStoragePath() {
 	}
 }
 
-func (c *Config) getTiKVConfig() *tikvcfg.Config {
+// GetTiKVConfig returns configuration options from tikvcfg
+func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
-		CommitterConcurrency:  c.Performance.CommitterConcurrency,
+		CommitterConcurrency:  int(tikvutil.CommitterConcurrency.Load()),
 		MaxTxnTTL:             c.Performance.MaxTxnTTL,
 		TiKVClient:            c.TiKVClient,
 		Security:              c.Security.ClusterSecurity(),
@@ -595,9 +606,8 @@ type Performance struct {
 	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
-	ProjectionPushDown   bool   `toml:"projection-push-down" json:"projection-push-down"`
-	CommitterConcurrency int    `toml:"committer-concurrency" json:"committer-concurrency"`
-	MaxTxnTTL            uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
+	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
 	MemProfileInterval       string `toml:"-" json:"-"`
 	IndexUsageSyncLease      string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
@@ -820,7 +830,6 @@ var defaultConf = Config{
 		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
 		ProjectionPushDown:    false,
-		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease:      "0s",
@@ -902,7 +911,9 @@ func GetGlobalConfig() *Config {
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
 	globalConf.Store(config)
-	cfg := *config.getTiKVConfig()
+	TikvConfigLock.Lock()
+	defer TikvConfigLock.Unlock()
+	cfg := *config.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
 }
 
@@ -930,8 +941,10 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.max-sql-length":        {},
 	"stmt-summary.refresh-interval":      {},
 	"stmt-summary.history-size":          {},
+	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
 	"mem-quota-query":                    {},
 	"query-log-max-len":                  {},
+	"performance.committer-concurrency":  {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
