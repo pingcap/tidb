@@ -1042,7 +1042,7 @@ func TestCTEInlineHint(t *testing.T) {
 	tk.MustExec("drop table if exists tc")
 	tk.MustExec("create table tc(a int)")
 	tk.MustExec("insert into tc values (1), (5), (10), (15), (20), (30), (50);")
-	tk.MustExec("with cte(x) as (select /*+ CTE_INLINE()*/ * from tc where a < 60) select * from cte where a <18;")
+	tk.MustExec("with cte as (select /*+ CTE_INLINE()*/ * from tc where tc.a < 60) select * from cte where cte.a <18;")
 
 	var (
 		input  []string
