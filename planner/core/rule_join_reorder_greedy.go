@@ -47,6 +47,8 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 	}
 	var leadingJoinNodes []*jrNode
 	if s.leadingJoinGroup != nil {
+		// We have a leading hint to let some tables join first. The result is stored in the s.leadingJoinGroup.
+		// We generate jrNode separately for it.
 		leadingJoinNodes, err = s.generateJoinOrderNode([]LogicalPlan{s.leadingJoinGroup}, tracer)
 		if err != nil {
 			return nil, err
@@ -58,6 +60,8 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 	})
 
 	if leadingJoinNodes != nil {
+		// The leadingJoinNodes should be the first element in the s.curJoinGroup.
+		// So it can be joined first.
 		leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)
 		s.curJoinGroup = leadingJoinNodes
 	}

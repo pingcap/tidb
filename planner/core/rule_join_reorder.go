@@ -180,10 +180,11 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 
 		joinGroupNum := len(curJoinGroup)
 		useGreedy := joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP
-		if hasOuterJoin {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable when we have outer join"))
-		} else {
-			if hintInfo != nil && hintInfo.leadingJoinOrder != nil {
+
+		if hintInfo != nil && hintInfo.leadingJoinOrder != nil {
+			if hasOuterJoin {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable when we have outer join"))
+			} else {
 				if useGreedy {
 					ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, hintInfo)
 					if !ok {

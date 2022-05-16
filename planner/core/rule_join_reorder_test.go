@@ -77,6 +77,7 @@ func TestLeadingJoinHint(t *testing.T) {
 	tk.MustExec("create table t8(a int, b int, key(a));")
 	runJoinReorderTestData(t, tk, "TestLeadingJoinHint")
 
+	// test cases for outer join
 	tk.MustExec("select /*+ leading(t1, t3) */ * from t1 left join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
 	res := tk.MustQuery("show warnings").Rows()
 	require.True(t, len(res) > 0)
@@ -98,4 +99,8 @@ func TestLeadingJoinHint(t *testing.T) {
 	tk.MustExec("select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
 	res = tk.MustQuery("show warnings").Rows()
 	require.True(t, len(res) > 0)
+
+	// test cases for multiple leading hints
+	tk.MustExec("select /*+ leading(t1) leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 }
