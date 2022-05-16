@@ -942,7 +942,7 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "END_TIME", tp: mysql.TypeDatetime},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 	{name: "FAIL_REASON", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
-	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
