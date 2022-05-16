@@ -507,10 +507,10 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 				if index.Primary {
 					if len(index.Columns) == 1 {
 						shardColumnInfo = tableInfo.Columns[index.Columns[0].Offset]
-					} else {
-						// if the clustered index contains multiple columns, we cannot automatically choose a column as the shard column
-						return false, nil, errors.New("Non-transactional delete, the clustered index contains multiple columns. Please specify a shard column")
+						break
 					}
+					// if the clustered index contains multiple columns, we cannot automatically choose a column as the shard column
+					return false, nil, errors.New("Non-transactional delete, the clustered index contains multiple columns. Please specify a shard column")
 				}
 			}
 			if shardColumnInfo == nil {
@@ -522,9 +522,14 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 		if shardColumnInfo != nil {
 			shardColumnName = shardColumnInfo.Name.L
 		}
+
+		outputTableName := tableName.Name
+		if tableAsName.L != "" {
+			outputTableName = tableAsName
+		}
 		stmt.ShardColumn = &ast.ColumnName{
 			Schema: tableName.Schema,
-			Table:  tableAsName, // so that table alias works
+			Table:  outputTableName, // so that table alias works
 			Name:   model.NewCIStr(shardColumnName),
 		}
 		return true, shardColumnInfo, nil
