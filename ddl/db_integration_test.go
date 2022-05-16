@@ -945,6 +945,13 @@ func TestModifyInvalidColumnData(t *testing.T) {
 		"t CREATE TABLE `t` (\n  `a` varchar(20) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20) charset latin1, b char(20), c char(20) charset latin1)")
+	tk.MustExec("insert into t values (0x70, 0x61, 0x90)")
+	tk.MustExec("insert into t values (0x90, 0x61, 0x70)")
+	tk.MustExec("alter table t convert to charset utf8mb4")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1366 Incorrect string value '\\x90' for column 'c'"))
+
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(20), b varchar(20)) charset = latin1")
 	tk.MustExec("insert into t values (0x90, 0x90)")
 	tk.MustExec("alter table t modify column a varchar(19) charset utf8")
