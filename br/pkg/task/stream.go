@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -351,20 +352,14 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 	return nil
 }
 
-// setGCSafePoint specifies currentTS should belong to (gcSafePoint, currentTS),
-// and set startTS as a serverSafePoint to PD
-func (s *streamMgr) setGCSafePoint(ctx context.Context, safePoint uint64) error {
-	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), safePoint)
+// setGCSafePoint sets the server safe point to PD.
+func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
+	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.BackupTS)
 	if err != nil {
 		return errors.Annotatef(err,
-			"failed to check gc safePoint, ts %v", safePoint)
+			"failed to check gc safePoint, ts %v", sp.BackupTS)
 	}
 
-	sp := utils.BRServiceSafePoint{
-		ID:       utils.MakeSafePointID(),
-		TTL:      s.cfg.SafePointTTL,
-		BackupTS: safePoint,
-	}
 	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
@@ -508,7 +503,15 @@ func RunStreamStart(
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if err = streamMgr.setGCSafePoint(ctx, streamMgr.cfg.StartTS); err != nil {
+
+	if err = streamMgr.setGCSafePoint(
+		ctx,
+		utils.BRServiceSafePoint{
+			ID:       utils.MakeSafePointID(),
+			TTL:      cfg.SafePointTTL,
+			BackupTS: cfg.StartTS,
+		},
+	); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -644,6 +647,16 @@ func RunStreamStop(
 		return errors.Trace(err)
 	}
 
+	if err := streamMgr.setGCSafePoint(ctx,
+		utils.BRServiceSafePoint{
+			ID:       buildPausePointName(ti.Info.Name),
+			TTL:      0,
+			BackupTS: 0,
+		},
+	); err != nil {
+		log.Warn("failed to remove safe point", zap.String("error", err.Error()))
+	}
+
 	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
@@ -686,7 +699,14 @@ func RunStreamPause(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = streamMgr.setGCSafePoint(ctx, globalCheckPointTS); err != nil {
+	if err = streamMgr.setGCSafePoint(
+		ctx,
+		utils.BRServiceSafePoint{
+			ID:       buildPausePointName(ti.Info.Name),
+			TTL:      cfg.SafePointTTL,
+			BackupTS: globalCheckPointTS,
+		},
+	); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -694,6 +714,7 @@ func RunStreamPause(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
@@ -752,6 +773,18 @@ func RunStreamResume(
 	if err != nil {
 		return err
 	}
+
+	if err := streamMgr.setGCSafePoint(ctx,
+		utils.BRServiceSafePoint{
+			ID:       buildPausePointName(ti.Info.Name),
+			TTL:      0,
+			BackupTS: globalCheckPointTS,
+		},
+	); err != nil {
+		log.Warn("failed to remove safe point",
+			zap.Uint64("safe-point", globalCheckPointTS), zap.String("error", err.Error()))
+	}
+
 	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
@@ -1429,4 +1462,8 @@ func ShiftTS(startTS uint64) uint64 {
 	} else {
 		return oracle.ComposeTS(shiftPhysical, logical)
 	}
+}
+
+func buildPausePointName(taskName string) string {
+	return fmt.Sprintf("%s_pause_safepoint", taskName)
 }
