@@ -632,7 +632,7 @@ func (d *ddl) GetHistoryDDLCount() (count uint64, err error) {
 			return 0, errors.Trace(err)
 		}
 		defer d.sessPool.put(ctx)
-		rows, err := newSession(ctx).execute(context.Background(), "select count(1) from mysql.tidb_ddl_history")
+		rows, err := newSession(ctx).execute(context.Background(), "select count(1) from mysql.tidb_ddl_history", "get_history_ddl_cnt")
 		if err != nil {
 			return 0, err
 		}
@@ -1237,7 +1237,7 @@ func CancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 		}
 		getJobSQL = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id in (%s) order by job_id", strings.Join(idsStr, ", "))
 	}
-	rows, err := sess.execute(context.Background(), getJobSQL)
+	rows, err := sess.execute(context.Background(), getJobSQL, "cancel")
 	if err != nil {
 		return nil, err
 	}
@@ -1338,7 +1338,7 @@ func GetConcurrentDDLReorgHandle(job *model.Job, sess *session) (element *meta.E
 	var id int64
 	var tp []byte
 	sql := fmt.Sprintf("select curr_ele_id, curr_ele_type from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	rows, err := sess.execute(context.Background(), sql)
+	rows, err := sess.execute(context.Background(), sql, "get_handle")
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
@@ -1352,7 +1352,7 @@ func GetConcurrentDDLReorgHandle(job *model.Job, sess *session) (element *meta.E
 		TypeKey: tp,
 	}
 	sql = fmt.Sprintf("select start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d", job.ID, id)
-	rows, err = sess.execute(context.Background(), sql)
+	rows, err = sess.execute(context.Background(), sql, "get_handle")
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
@@ -1545,11 +1545,11 @@ func (s *session) reset() {
 	s.s.StmtRollback()
 }
 
-func (s *session) execute(ctx context.Context, query string) ([]chunk.Row, error) {
+func (s *session) execute(ctx context.Context, query string, label string) ([]chunk.Row, error) {
 	startTime := time.Now()
 	var err error
 	defer func() {
-		metrics.DDLJobTableDuration.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		metrics.DDLJobTableDuration.WithLabelValues(label + "-" + metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	rs, err := s.s.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
 	if err != nil {
