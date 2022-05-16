@@ -1305,6 +1305,8 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, ErrWrongTypeForVar.GenWithStackByArgs(TiDBPartitionPruneMode)
 		}
 		return string(mode), nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return s.PartitionPruneMode.Load(), nil
 	}, SetSession: func(s *SessionVars, val string) error {
 		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 		return nil

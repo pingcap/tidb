@@ -1107,6 +1107,7 @@ type V2AnalyzeOptions struct {
 	FilledOpts map[ast.AnalyzeOptionType]uint64
 	ColChoice  model.ColumnChoice
 	ColumnList []*model.ColumnInfo
+	IsTable    bool
 }
 
 // AnalyzeColumnsTask is used for analyze columns.

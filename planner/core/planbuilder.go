@@ -2178,6 +2178,13 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	if !persist {
 		return optionsMap, colsInfoMap, nil
 	}
+	dynamicPrune := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	if !isAnalyzeTable && dynamicPrune && (len(astOpts) > 0 || astColChoice != model.DefaultChoice) {
+		astOpts = make(map[ast.AnalyzeOptionType]uint64, 0)
+		astColChoice = model.DefaultChoice
+		astColList = make([]*model.ColumnInfo, 0)
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Ignore columns and options when analyze partition in dynamic mode"))
+	}
 	tblSavedOpts, tblSavedColChoice, tblSavedColList, err := b.getSavedAnalyzeOpts(tbl.TableInfo.ID, tbl.TableInfo)
 	if err != nil {
 		return nil, nil, err
@@ -2200,35 +2207,49 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		FilledOpts: tblFilledOpts,
 		ColChoice:  tblColChoice,
 		ColumnList: tblColList,
+		IsTable:    true,
 	}
 	optionsMap[tbl.TableInfo.ID] = tblAnalyzeOptions
 	colsInfoMap[tbl.TableInfo.ID] = tblColsInfo
 	for _, id := range physicalIDs {
 		if id != tbl.TableInfo.ID {
-			parSavedOpts, parSavedColChoice, parSavedColList, err := b.getSavedAnalyzeOpts(id, tbl.TableInfo)
-			if err != nil {
-				return nil, nil, err
+			if !dynamicPrune {
+				parSavedOpts, parSavedColChoice, parSavedColList, err := b.getSavedAnalyzeOpts(id, tbl.TableInfo)
+				if err != nil {
+					return nil, nil, err
+				}
+				// merge partition level options with table level options firstly
+				savedOpts := mergeAnalyzeOptions(parSavedOpts, tblSavedOpts)
+				savedColChoice, savedColList := mergeColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
+				// then merge statement level options
+				mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
+				filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
+				finalColChoice, mergedColList := mergeColumnList(astColChoice, astColList, savedColChoice, savedColList)
+				finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
+				if err != nil {
+					return nil, nil, err
+				}
+				parV2Options := V2AnalyzeOptions{
+					PhyTableID: id,
+					RawOpts:    mergedOpts,
+					FilledOpts: filledMergedOpts,
+					ColChoice:  finalColChoice,
+					ColumnList: finalColList,
+				}
+				optionsMap[id] = parV2Options
+				colsInfoMap[id] = finalColsInfo
+			} else {
+				parV2Options := V2AnalyzeOptions{
+					PhyTableID: id,
+					RawOpts:    tblOpts,
+					FilledOpts: tblFilledOpts,
+					ColChoice:  tblColChoice,
+					ColumnList: tblColList,
+					IsTable:    false,
+				}
+				optionsMap[id] = parV2Options
+				colsInfoMap[id] = tblColsInfo
 			}
-			// merge partition level options with table level options firstly
-			savedOpts := mergeAnalyzeOptions(parSavedOpts, tblSavedOpts)
-			savedColChoice, savedColList := mergeColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
-			// then merge statement level options
-			mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
-			filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
-			finalColChoice, mergedColList := mergeColumnList(astColChoice, astColList, savedColChoice, savedColList)
-			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
-			if err != nil {
-				return nil, nil, err
-			}
-			parV2Options := V2AnalyzeOptions{
-				PhyTableID: id,
-				RawOpts:    mergedOpts,
-				FilledOpts: filledMergedOpts,
-				ColChoice:  finalColChoice,
-				ColumnList: finalColList,
-			}
-			optionsMap[id] = parV2Options
-			colsInfoMap[id] = finalColsInfo
 		}
 	}
 	return optionsMap, colsInfoMap, nil
