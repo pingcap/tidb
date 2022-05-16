@@ -88,10 +88,6 @@ const (
 	gRPCKeepAliveTimeout = 5 * time.Minute
 	gRPCBackOffMaxDelay  = 10 * time.Minute
 
-	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
-	// lower the max-key-count to avoid tikv trigger region auto split
-	regionMaxKeyCount      = 1_280_000
-	defaultRegionSplitSize = 96 * units.MiB
 	// The max ranges count in a batch to split and scatter.
 	maxBatchSplitRanges = 4096
 
@@ -111,7 +107,7 @@ var (
 	// Local backend is compatible with TiDB [4.0.0, NextMajorVersion).
 	localMinTiDBVersion = *semver.New("4.0.0")
 	localMinTiKVVersion = *semver.New("4.0.0")
-	localMinPDVersion   = *semver.New("7.0.0")
+	localMinPDVersion   = *semver.New("4.0.0")
 	localMaxTiDBVersion = version.NextMajorVersion()
 	localMaxTiKVVersion = version.NextMajorVersion()
 	localMaxPDVersion   = version.NextMajorVersion()
@@ -823,7 +819,7 @@ func (local *local) WriteToTiKV(
 	// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
 	// because the range-properties is not 100% accurate
 	regionMaxSize := regionSplitSize
-	if regionSplitSize <= defaultRegionSplitSize {
+	if regionSplitSize <= int64(config.SplitRegionSize) {
 		regionMaxSize = regionSplitSize * 4 / 3
 	}
 
@@ -1352,8 +1348,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		}
 	} else {
 		log.L().Warn("fail to get region split keys and size", zap.Error(err))
-		if regionSplitSize > defaultRegionSplitSize {
-			regionSplitKeys = int64(float64(regionSplitSize) / float64(defaultRegionSplitSize) * float64(regionMaxKeyCount))
+		if regionSplitSize > int64(config.SplitRegionSize) {
+			regionSplitKeys = int64(float64(regionSplitSize) / float64(config.SplitRegionSize) * float64(config.SplitRegionKeys))
 		}
 	}
 
