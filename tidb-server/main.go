@@ -668,6 +668,7 @@ func setGlobalVars() {
 	// For CI environment we default enable prepare-plan-cache.
 	variable.SetPreparedPlanCache(config.CheckTableBeforeDrop || variable.PreparedPlanCacheSize.Load() > 0)
 	if variable.PreparedPlanCacheEnabled() {
+		variable.PreparedPlanCacheSize.Store(uint32(variable.DefTiDBPreparedPlanCacheSize))
 		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.ServerMemoryQuota)
 		total, err := memory.MemTotal()
 		terror.MustNil(err)

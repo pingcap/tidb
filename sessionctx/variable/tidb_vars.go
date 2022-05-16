@@ -937,5 +937,5 @@ func SetPreparedPlanCache(isEnabled bool) {
 // PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
 func PreparedPlanCacheEnabled() bool {
 	isEnabled := atomic.LoadInt32(&preparedPlanCacheEnabledValue)
-	return isEnabled == preparedPlanCacheEnabled
+	return isEnabled == preparedPlanCacheEnabled && PreparedPlanCacheSize.Load() > 0
 }
