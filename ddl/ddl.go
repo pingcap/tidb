@@ -536,8 +536,8 @@ func (d *ddl) readyForConcurrencyDDL() error {
 		asyncNotify(wk.ddlJobCh)
 		return wk, nil
 	}
-	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(reorgWorkerFunc, batchAddingJobs, batchAddingJobs, 3*time.Minute))
-	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
+	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(reorgWorkerFunc, batchAddingJobs, batchAddingJobs, 3*time.Minute), reorg)
+	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0), general)
 	var err error
 	if err != nil {
 		return errors.Trace(err)

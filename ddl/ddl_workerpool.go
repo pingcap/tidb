@@ -23,12 +23,14 @@ import (
 
 // workerPool is used to new worker.
 type workerPool struct {
+	t       jobType
 	exit    atomic.Bool
 	resPool *pools.ResourcePool
 }
 
-func newDDLWorkerPool(resPool *pools.ResourcePool) *workerPool {
+func newDDLWorkerPool(resPool *pools.ResourcePool, tp jobType) *workerPool {
 	return &workerPool{
+		t:       tp,
 		exit:    *atomic.NewBool(false),
 		resPool: resPool,
 	}
@@ -79,4 +81,9 @@ func (sg *workerPool) close() {
 	sg.exit.Store(true)
 	logutil.BgLogger().Info("[ddl] closing workerPool")
 	sg.resPool.Close()
+}
+
+// tp return the type of worker pool.
+func (sg *workerPool) tp() jobType {
+	return sg.t
 }

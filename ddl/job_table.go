@@ -61,6 +61,16 @@ const (
 
 type jobType int
 
+func (t jobType) String() string {
+	switch t {
+	case general:
+		return "general"
+	case reorg:
+		return "reorg"
+	}
+	return ""
+}
+
 const (
 	general jobType = iota
 	reorg           = iota
@@ -150,14 +160,9 @@ func (d *ddl) startDispatchLoop() {
 			time.Sleep(time.Second)
 			continue
 		}
-		var enableGeneralDDLJob, enableReorgDDLJob bool
 		select {
 		case <-d.ddlJobCh:
-			enableGeneralDDLJob = true
-			enableReorgDDLJob = true
 		case <-ticker.C:
-			enableGeneralDDLJob = true
-			enableReorgDDLJob = true
 		case _, ok = <-notifyDDLJobByEtcdChGeneral:
 			if !ok {
 				logutil.BgLogger().Error("[ddl] notifyDDLJobByEtcdChGeneral channel closed")
@@ -165,7 +170,6 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Duration(1) * time.Second)
 				continue
 			}
-			enableGeneralDDLJob = true
 		case _, ok = <-notifyDDLJobByEtcdChReorg:
 			if !ok {
 				logutil.BgLogger().Error("[ddl] notifyDDLJobByEtcdChGeneral channel closed")
@@ -173,100 +177,50 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Duration(1) * time.Second)
 				continue
 			}
-			enableReorgDDLJob = true
 		case <-d.ctx.Done():
 			return
 		}
-		for enableGeneralDDLJob || enableReorgDDLJob {
-			if enableGeneralDDLJob {
-				enableGeneralDDLJob = d.generalDDLJob(sess)
-			}
-			if enableReorgDDLJob {
-				enableReorgDDLJob = d.reorgDDLJob(sess)
-			}
-		}
+		d.runDDLJob(sess, d.generalDDLWorkerPool, d.getGeneralJob)
+		d.runDDLJob(sess, d.reorgWorkerPool, d.getReorgJob)
 	}
 }
 
-func (d *ddl) generalDDLJob(sess *session) bool {
-	wk, err := d.generalDDLWorkerPool.get()
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl] get general worker fail", zap.Error(err))
+func (d *ddl) runDDLJob(sess *session, pool *workerPool, getJob func(*session) (*model.Job, error)) {
+	wk, err := pool.get()
+	if err != nil || wk == nil {
+		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
+		return
 	}
-	if wk == nil {
-		logutil.BgLogger().Debug("[ddl] no general worker available now")
-		return false
-	}
-	job, err := d.getGeneralJob(sess)
+
+	job, err := getJob(sess)
 	if job == nil || err != nil {
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] get job met error", zap.Error(err))
 		}
-		d.generalDDLWorkerPool.put(wk)
-		return false
+		pool.put(wk)
+		return
 	}
-	d.doGeneralDDLJobWorker(wk, job)
-	return true
+
+	d.doDDLJobWorker(wk, pool, job)
 }
 
-func (d *ddl) doGeneralDDLJobWorker(wk *worker, job *model.Job) {
+func (d *ddl) doDDLJobWorker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
-		metrics.DDLRunningJobCount.WithLabelValues("general").Inc()
+		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
-			d.generalDDLWorkerPool.put(wk)
+			pool.put(wk)
 			d.deleteRunningDDLJobMap(int(job.ID))
 			if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
 				asyncNotify(d.ddlJobDoneCh)
 			}
 			asyncNotify(d.ddlJobCh)
-			metrics.DDLRunningJobCount.WithLabelValues("general").Dec()
+			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
 		if err := wk.HandleDDLJob(d.ddlCtx, job); err != nil {
-			log.Error("[ddl] handle General DDL job failed", zap.Error(err))
-		}
-	})
-}
-
-func (d *ddl) reorgDDLJob(sess *session) bool {
-	wk, err := d.reorgWorkerPool.get()
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl] get reorg worker fail", zap.Error(err))
-	}
-	if wk == nil {
-		return false
-	}
-	job, err := d.getReorgJob(sess)
-	if job == nil || err != nil {
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] get job met error", zap.Error(err))
-		}
-		d.reorgWorkerPool.put(wk)
-		return false
-	}
-	d.doReorgDDLJobWorker(wk, job)
-	return true
-}
-
-func (d *ddl) doReorgDDLJobWorker(wk *worker, job *model.Job) {
-	injectFailPointForGetJob(job)
-	d.insertRunningDDLJobMap(int(job.ID))
-	d.wg.Run(func() {
-		metrics.DDLRunningJobCount.WithLabelValues("reorg").Inc()
-		defer func() {
-			d.reorgWorkerPool.put(wk)
-			d.deleteRunningDDLJobMap(int(job.ID))
-			if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
-				asyncNotify(d.ddlJobDoneCh)
-			}
-			asyncNotify(d.ddlJobCh)
-			metrics.DDLRunningJobCount.WithLabelValues("reorg").Dec()
-		}()
-		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
-		if err := wk.HandleDDLJob(d.ddlCtx, job); err != nil {
-			log.Error("[ddl] handle Reorg DDL job failed", zap.Error(err))
+			logutil.BgLogger().Info("[ddl] handle ddl job failed", zap.Error(err), zap.String("job", job.String()))
 		}
 	})
 }
