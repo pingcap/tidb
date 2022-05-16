@@ -104,3 +104,72 @@ func TestLeadingJoinHint(t *testing.T) {
 	tk.MustExec("select /*+ leading(t1) leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 }
+
+func TestJoinOrderHint(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	tk.MustExec("create table t5(a int, b int, key(a));")
+	tk.MustExec("create table t6(a int, b int, key(a));")
+	tk.MustExec("create table t7(a int, b int, key(a));")
+	tk.MustExec("create table t8(a int, b int, key(a));")
+
+	// test cases for using the leading hint and straight_join hint at the same time
+	tk.MustExec("select /*+ leading(t1) straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
+
+	tk.MustExec("select /*+ straight_join() leading(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
+
+	// test cases for using the join order hint and join algorithm hint
+	tk.MustExec("select /*+ straight_join()  */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
+
+	tk.MustExec("select /*+ straight_join() leading(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
+
+	runJoinReorderTestData(t, tk, "TestJoinOrderHint")
+}
+
+func TestJoinOrderHintWithBinding(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+
+	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec("create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res := tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) join `test` . `t3` on `t2` . `b` = `t3` . `b`", "SELECT /*+ straight_join()*/ * FROM (`test`.`t1` JOIN `test`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `test`.`t3` ON `t2`.`b` = `t3`.`b`")
+
+	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, len(res), 0)
+
+	tk.MustExec("create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) join `test` . `t3` on `t2` . `b` = `t3` . `b`")
+
+	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+}
