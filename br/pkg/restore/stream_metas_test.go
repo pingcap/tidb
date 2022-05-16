@@ -115,15 +115,15 @@ func TestTruncateSafepoint(t *testing.T) {
 	l, err := storage.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 
-	ts, err := restore.GetTruncateSafepoint(ctx, l)
+	ts, err := restore.GetTSFromFile(ctx, l, restore.TruncateSafePointFileName)
 	require.NoError(t, err)
 	require.Equal(t, int(ts), 0)
 
 	for i := 0; i < 100; i++ {
 		n := rand.Uint64()
-		require.NoError(t, restore.SetTruncateSafepoint(ctx, l, n))
+		require.NoError(t, restore.SetTSToFile(ctx, l, n, restore.TruncateSafePointFileName))
 
-		ts, err = restore.GetTruncateSafepoint(ctx, l)
+		ts, err = restore.GetTSFromFile(ctx, l, restore.TruncateSafePointFileName)
 		require.NoError(t, err)
 		require.Equal(t, ts, n, "failed at %d round: truncate safepoint mismatch", i)
 	}
