@@ -617,29 +617,10 @@ func RunStreamStop(
 	}
 	defer streamMgr.close()
 
-	storage, err := cfg.makeStorage(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
-		return errors.Trace(err)
-	}
-
-	globalCheckpointTS, err := ti.GetGlobalCheckPointTS(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if err = restore.SetTSToFile(
-		ctx,
-		storage,
-		globalCheckpointTS,
-		restore.GlobalCheckpointFileName,
-	); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1209,19 +1190,12 @@ func getLogRange(
 	}
 	logMinTS := mathutil.Max(logStartTS, truncateTS)
 
-	// get log global checkpoint ts from GlobalCheckpointFileName.
-	// If globalCheckpointTS equals 0, which represents the log task has not been stop.
-	logMaxTS, err := restore.GetTSFromFile(ctx, s, restore.GlobalCheckpointFileName)
+	// get max global resolved ts from metas.
+	logMaxTS, err := getGlobalResolvedTS(ctx, s)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	// get max global resolved ts from metas.
-	if logMaxTS == 0 {
-		if logMaxTS, err = getGlobalResolvedTS(ctx, s); err != nil {
-			return 0, 0, errors.Trace(err)
-		}
-	}
+	logMaxTS = mathutil.Max(logMinTS, logMaxTS)
 
 	return logMinTS, logMaxTS, nil
 }
