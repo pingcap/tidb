@@ -258,6 +258,10 @@ type Config struct {
 
 	// EnableBatchDML, unused since bootstrap v90
 	EnableBatchDML bool `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	// MemQuotaQuery,QueryLogMaxLen,CommitterConcurrency, unused since bootstrap v91
+	MemQuotaQuery        int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	QueryLogMaxLen       uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	CommitterConcurrency int    `toml:"committer-concurrency" json:"committer-concurrency"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
