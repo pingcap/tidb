@@ -317,6 +317,21 @@ func (t *Table) GetColRowCount() float64 {
 	return -1
 }
 
+// GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
+// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, ture.
+func (t *Table) GetStatsHealthy() (int64, bool) {
+	if t == nil || t.Pseudo {
+		return 0, false
+	}
+	var healthy int64
+	if t.ModifyCount < t.Count {
+		healthy = int64((1.0 - float64(t.ModifyCount)/float64(t.Count)) * 100.0)
+	} else if t.ModifyCount == 0 {
+		healthy = 100
+	}
+	return healthy, true
+}
+
 type tableColumnID struct {
 	TableID  int64
 	ColumnID int64
