@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -916,8 +915,7 @@ func TestModifyInvalidColumnData(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/parser/charset/latin1EnableInvalidCharacter", "return(true)"))
+	tk.MustExec("set @@tidb_skip_utf8_check = 1")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(20)) charset = latin1")
@@ -948,9 +946,7 @@ func TestModifyInvalidColumnData(t *testing.T) {
 	tk.MustExec("alter table t modify column b varchar(20) charset utf8")
 	// change varchar(20) to varchar(19) will do reorg which uses '?' instead of invalid characters
 	tk.MustQuery("select hex(a), hex(b) from t").Check(testkit.Rows("3F 90"))
-
 	tk.MustExec("set sql_mode=default")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/parser/charset/latin1EnableInvalidCharacter"))
 }
 
 func TestModifyColumnOption(t *testing.T) {
