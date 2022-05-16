@@ -94,6 +94,7 @@ var memUsage *memInfoCache
 // expiration time is 500ms 
 // save the memory usage of the server process
 var serverMemUsage *memInfoCache
+
 // MemTotalCGroup returns the total amount of RAM on this system in container environment.
 func MemTotalCGroup() (uint64, error) {
 	mem, t := memLimit.get()
