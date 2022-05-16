@@ -43,6 +43,11 @@ func (s *SortItem) String() string {
 	return fmt.Sprintf("{%s asc}", s.Col)
 }
 
+// Clone makes a copy of SortItem.
+func (s SortItem) Clone() SortItem {
+	return SortItem{Col: s.Col.Clone().(*expression.Column), Desc: s.Desc}
+}
+
 // MPPPartitionType is the way to partition during mpp data exchanging.
 type MPPPartitionType int
 
@@ -165,6 +170,11 @@ type PhysicalProperty struct {
 	// which types the exchange sender belongs to, only take effects when it's a mpp task.
 	MPPPartitionTp MPPPartitionType
 
+	// SortItemsForPartition means these sort only need to sort the data of one partition, instead of global.
+	// It is added only if it is used to sort the sharded data of the window function.
+	// Non-MPP tasks do not care about it.
+	SortItemsForPartition []SortItem
+
 	// RejectSort means rejecting the sort property from its children, but it only works for MPP tasks.
 	// Non-MPP tasks do not care about it.
 	RejectSort bool
@@ -249,8 +259,21 @@ func (p *PhysicalProperty) IsPrefix(prop *PhysicalProperty) bool {
 	return true
 }
 
-// IsEmpty checks whether the order property is empty.
-func (p *PhysicalProperty) IsEmpty() bool {
+// IsSortItemAllForPartition check whether SortItems is same as SortItemsForPartition
+func (p *PhysicalProperty) IsSortItemAllForPartition() bool {
+	if len(p.SortItemsForPartition) != len(p.SortItems) {
+		return false
+	}
+	for i := range p.SortItemsForPartition {
+		if !p.SortItemsForPartition[i].Col.Equal(nil, p.SortItems[i].Col) || p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
+			return false
+		}
+	}
+	return true
+}
+
+// IsSortItemEmpty checks whether the order property is empty.
+func (p *PhysicalProperty) IsSortItemEmpty() bool {
 	return len(p.SortItems) == 0
 }
 
@@ -294,12 +317,13 @@ func (p *PhysicalProperty) String() string {
 // property, specifically, `CanAddEnforcer` should not be included.
 func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 	prop := &PhysicalProperty{
-		SortItems:        p.SortItems,
-		TaskTp:           p.TaskTp,
-		ExpectedCnt:      p.ExpectedCnt,
-		MPPPartitionTp:   p.MPPPartitionTp,
-		MPPPartitionCols: p.MPPPartitionCols,
-		RejectSort:       p.RejectSort,
+		SortItems:             p.SortItems,
+		SortItemsForPartition: p.SortItemsForPartition,
+		TaskTp:                p.TaskTp,
+		ExpectedCnt:           p.ExpectedCnt,
+		MPPPartitionTp:        p.MPPPartitionTp,
+		MPPPartitionCols:      p.MPPPartitionCols,
+		RejectSort:            p.RejectSort,
 	}
 	return prop
 }

@@ -627,6 +627,12 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_stats_cache_mem_quota").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_stats_cache_mem_quota = 200")
 	tk.MustQuery("select @@global.tidb_stats_cache_mem_quota").Check(testkit.Rows("200"))
+	// assert quota must larger than -1
+	tk.MustExec("set global tidb_stats_cache_mem_quota = -1")
+	tk.MustQuery("select @@global.tidb_stats_cache_mem_quota").Check(testkit.Rows("0"))
+	// assert quota muster smaller than 1TB
+	tk.MustExec("set global tidb_stats_cache_mem_quota = 1099511627777")
+	tk.MustQuery("select @@global.tidb_stats_cache_mem_quota").Check(testkit.Rows("1099511627776"))
 	// for read-only instance scoped system variables.
 	tk.MustGetErrCode("set @@global.plugin_load = ''", errno.ErrIncorrectGlobalLocalVar)
 	tk.MustGetErrCode("set @@global.plugin_dir = ''", errno.ErrIncorrectGlobalLocalVar)

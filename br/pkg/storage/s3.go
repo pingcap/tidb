@@ -481,6 +481,8 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			// which can not be reuse in other API(Open/Read) directly.
 			// so we use TrimPrefix to filter Prefix for next Open/Read.
 			path := strings.TrimPrefix(*r.Key, rs.options.Prefix)
+			// trim the prefix '/' to ensure that the path returned is consistent with the local storage
+			path = strings.TrimPrefix(path, "/")
 			itemSize := *r.Size
 
 			// filter out s3's empty directory items

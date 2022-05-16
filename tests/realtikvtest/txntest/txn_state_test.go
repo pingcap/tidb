@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package realtikvtest
+package txntest
 
 import (
 	"context"
@@ -24,12 +24,13 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBasicTxnState(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -119,7 +120,7 @@ func TestBasicTxnState(t *testing.T) {
 }
 
 func TestEntriesCountAndSize(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -138,7 +139,7 @@ func TestEntriesCountAndSize(t *testing.T) {
 }
 
 func TestRunning(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -161,7 +162,7 @@ func TestRunning(t *testing.T) {
 }
 
 func TestBlocked(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -188,7 +189,7 @@ func TestBlocked(t *testing.T) {
 }
 
 func TestCommitting(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -217,7 +218,7 @@ func TestCommitting(t *testing.T) {
 }
 
 func TestRollbackTxnState(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -239,7 +240,7 @@ func TestRollbackTxnState(t *testing.T) {
 }
 
 func TestTxnInfoWithPreparedStmt(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -271,7 +272,7 @@ func TestTxnInfoWithPreparedStmt(t *testing.T) {
 }
 
 func TestTxnInfoWithScalarSubquery(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -302,7 +303,7 @@ func TestTxnInfoWithScalarSubquery(t *testing.T) {
 }
 
 func TestTxnInfoWithPSProtocol(t *testing.T) {
-	store, clean := createMockStoreAndSetup(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
