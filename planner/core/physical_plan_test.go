@@ -1034,6 +1034,57 @@ func TestLimitToCopHint(t *testing.T) {
 	}
 }
 
+func TestCTEInlineHint(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tc")
+	tk.MustExec("create table tc(a int)")
+	tk.MustExec("insert into tc values (1), (5), (10), (15), (20), (30), (50);")
+	tk.MustExec("with cte(x) as (select /*+ CTE_INLINE()*/ * from tc where a < 60) select * from cte where cte.a <18;")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.GetTestCases(t, &input, &output)
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+
+		comment := fmt.Sprintf("case:%v sql:%s", i, ts)
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		testdata.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = make([]string, len(warnings))
+				for j, warning := range warnings {
+					output[i].Warning[j] = warning.Err.Error()
+				}
+			}
+		})
+		if len(output[i].Warning) == 0 {
+			require.Len(t, warnings, 0)
+		} else {
+			require.Len(t, warnings, len(output[i].Warning), comment)
+			for j, warning := range warnings {
+				require.Equal(t, stmtctx.WarnLevelWarning, warning.Level, comment)
+				require.Equal(t, output[i].Warning[j], warning.Err.Error(), comment)
+			}
+		}
+	}
+}
+
 func TestPushdownDistinctEnable(t *testing.T) {
 	var (
 		input  []string
