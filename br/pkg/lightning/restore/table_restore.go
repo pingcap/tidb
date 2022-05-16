@@ -923,27 +923,23 @@ func (tr *TableRestore) importKV(
 	regionSplitSize := int64(rc.cfg.TikvImporter.RegionSplitSize)
 	regionSplitKeys := int64(rc.cfg.TikvImporter.RegionSplitKeys)
 
-	if rc.taskMgr != nil && (regionSplitSize == 0 || regionSplitKeys == 0) {
+	if regionSplitSize == 0 && rc.taskMgr != nil {
+		regionSplitSize = int64(config.SplitRegionSize)
 		if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 			if len(tasks) > 0 {
-				if regionSplitSize == 0 {
-					regionSplitSize = int64(config.SplitRegionSize) * int64(mathutil.Min(len(tasks), config.MaxSplitRegionSizeRatio))
-				}
-				if regionSplitKeys == 0 {
-					regionSplitKeys = int64(config.SplitRegionKeys) * int64(mathutil.Min(len(tasks), config.MaxSplitRegionSizeRatio))
-				}
+				regionSplitSize = int64(config.SplitRegionSize) * int64(mathutil.Min(len(tasks), config.MaxSplitRegionSizeRatio))
 			}
-
 			return nil, nil
 		}); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	if regionSplitSize == 0 {
-		regionSplitSize = int64(config.SplitRegionSize)
-	}
 	if regionSplitKeys == 0 {
-		regionSplitKeys = int64(config.SplitRegionKeys)
+		if regionSplitSize > int64(config.SplitRegionSize) {
+			regionSplitKeys = int64(float64(regionSplitSize) / float64(config.SplitRegionSize) * float64(config.SplitRegionKeys))
+		} else {
+			regionSplitKeys = int64(config.SplitRegionKeys)
+		}
 	}
 	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusImported)

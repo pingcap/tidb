@@ -1348,9 +1348,6 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		}
 	} else {
 		log.L().Warn("fail to get region split keys and size", zap.Error(err))
-		if regionSplitSize > int64(config.SplitRegionSize) {
-			regionSplitKeys = int64(float64(regionSplitSize) / float64(config.SplitRegionSize) * float64(config.SplitRegionKeys))
-		}
 	}
 
 	// split sorted file into range by 96MB size per file
