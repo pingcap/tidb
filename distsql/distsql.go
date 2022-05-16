@@ -149,6 +149,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}, nil
 }
 
+// SetTiFlashMaxThreadsInContext set the config TiFlash max threads in context.
 func SetTiFlashMaxThreadsInContext(ctx context.Context, sctx sessionctx.Context) context.Context {
 	if sctx.GetSessionVars().TiFlashMaxThreads != -1 {
 		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashThreads, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxThreads, 10))
