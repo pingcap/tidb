@@ -357,12 +357,12 @@ func (c *innerItemLruCache) put(tblID, id int64, isIndex bool, item statistics.T
 			c.evictIfNeeded()
 		}
 	}()
-	isIndex_set, ok := c.elements[tblID]
+	isIndexSet, ok := c.elements[tblID]
 	if !ok {
 		c.elements[tblID] = make(map[bool]map[int64]*list.Element)
-		isIndex_set = c.elements[tblID]
+		isIndexSet = c.elements[tblID]
 	}
-	v, ok := isIndex_set[isIndex]
+	v, ok := isIndexSet[isIndex]
 	if !ok {
 		c.elements[tblID][isIndex] = make(map[int64]*list.Element)
 		v = c.elements[tblID][isIndex]
