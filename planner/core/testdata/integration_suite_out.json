@@ -2355,7 +2355,7 @@
       {
         "SQL": "explain format = 'verbose' select * from t3 order by a",
         "Plan": [
-          "Sort_4 3.00 45.85 root  test.t3.a",
+          "Sort_4 3.00 26.05 root  test.t3.a",
           "└─TableReader_8 3.00 11.78 root  data:TableFullScan_7",
           "  └─TableFullScan_7 3.00 108.00 cop[tikv] table:t3 keep order:false"
         ]
