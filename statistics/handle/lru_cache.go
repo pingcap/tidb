@@ -278,6 +278,17 @@ func (s *statsInnerCache) EnableQuota() bool {
 	return true
 }
 
+// Front implements statsCacheInner
+func (s *statsInnerCache) Front() int64 {
+	s.RLock()
+	defer s.RUnlock()
+	ele := s.lru.cache.Front()
+	if ele == nil {
+		return 0
+	}
+	return s.lru.cache.Front().Value.(*lruCacheItem).tblID
+}
+
 func (s *statsInnerCache) onEvict(tblID int64) {
 	element, exist := s.elements[tblID]
 	if !exist {
