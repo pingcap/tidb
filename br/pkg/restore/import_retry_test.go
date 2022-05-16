@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -268,5 +269,42 @@ func TestRegionSplit(t *testing.T) {
 	printPDRegion("cli", cli.regionsInfo.Regions)
 	assertRegions(t, firstRunRegions, "", "aay")
 	assertRegions(t, secondRunRegions, "", "aay", "aayy", "bba", "bbh", "cca", "")
+	require.NoError(t, err)
+}
+
+func TestRetryBackoff(t *testing.T) {
+	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+	cli := initTestClient()
+	rs := utils.InitialRetryState(2, time.Millisecond, 10 * time.Millisecond)
+	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, rs)
+	ctx := context.Background()
+
+	printPDRegion("cli", cli.regionsInfo.Regions)
+	regions, err := restore.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
+	require.NoError(t, err)
+	require.Len(t, regions, 2)
+	left := regions[0]
+
+	epochNotLeader := &import_sstpb.Error{
+		Message: "leader not found",
+		StoreError: &errorpb.Error{
+			NotLeader: &errorpb.NotLeader{
+				RegionId: 2,
+				Leader: &metapb.Peer{
+					Id: 202,
+				},
+			},
+		}}
+	isSecondRun := false
+	err = ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+		if !isSecondRun && r.Region.Id == left.Region.Id {
+			isSecondRun = true
+			return restore.RPCResultFromPBError(epochNotLeader)
+		}
+		return restore.RPCResultOK()
+	})
+	printPDRegion("cli", cli.regionsInfo.Regions)
+	// we retried leader not found error. so the next backoff should be 2 * initical backoff.
+	require.Equal(t, 2 * time.Millisecond, rs.NextBackoff(nil))
 	require.NoError(t, err)
 }
