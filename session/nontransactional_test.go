@@ -132,6 +132,10 @@ func TestNonTransactionalDeleteSplitOnTiDBRowID(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
+	tk.MustQuery("batch on _tidb_rowid limit 3 dry run delete from t").Check(testkit.Rows(
+		"DELETE FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3",
+		"DELETE FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100",
+	))
 	tk.MustExec("batch on _tidb_rowid limit 3 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
