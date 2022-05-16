@@ -410,7 +410,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			asyncNotify(worker.ddlJobCh)
 		}
 
-		d.ddlSeqNumMu.seqNum, err = d.GetHistoryDDLCount()
+		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
 		if err != nil {
 			return err
 		}
@@ -433,8 +433,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
-// GetHistoryDDLCount the count of done ddl jobs.
-func (d *ddl) GetHistoryDDLCount() (uint64, error) {
+// GetNextDDLSeqNum return the next ddl seq num.
+func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
 	var count uint64
 	err := kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
