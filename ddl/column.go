@@ -1648,9 +1648,7 @@ func (w *worker) doModifyColumn(
 				job.State = model.JobStateRollingback
 				return ver, errors.Trace(err)
 			} else {
-				warn := errors.Cause(err).(*terror.Error)
-				job.ReorgMeta.Warnings[warn.ID()] = warn
-				job.ReorgMeta.WarningsCount[warn.ID()] = 1
+				job.AddWarning(err)
 			}
 		}
 	}

@@ -369,6 +369,17 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 	return job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
 }
 
+// AddWarning add a warning for ddl job
+func (job *Job) AddWarning(warning error) {
+	warn := errors.Cause(warning).(*terror.Error)
+	if _, ok := job.ReorgMeta.Warnings[warn.ID()]; !ok {
+		job.ReorgMeta.Warnings[warn.ID()] = warn
+		job.ReorgMeta.WarningsCount[warn.ID()] = 1
+	} else {
+		job.ReorgMeta.WarningsCount[warn.ID()]++
+	}
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {

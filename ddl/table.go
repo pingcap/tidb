@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	field_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -1061,9 +1060,7 @@ func (w *worker) onModifyTableCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *mo
 					job.State = model.JobStateCancelled
 					return ver, err
 				} else {
-					warn := errors.Cause(err).(*terror.Error)
-					job.ReorgMeta.Warnings[warn.ID()] = warn
-					job.ReorgMeta.WarningsCount[warn.ID()] = 1
+					job.AddWarning(err)
 				}
 			}
 		}
