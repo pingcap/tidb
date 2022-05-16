@@ -143,7 +143,7 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 	for i := 0; i < numCols; i++ {
 		chk.columns[i] = &Column{
 			length:     numRows,
-			nullBitmap: make([]byte, numRows/8+1),
+			NullBitmap: make([]byte, numRows/8+1),
 			data:       make([]byte, numRows*8),
 			elemBuf:    make([]byte, 8),
 		}

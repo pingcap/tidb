@@ -139,8 +139,10 @@ func (b *builtinFromUnixTime2ArgSig) vecEvalString(input *chunk.Chunk, result *c
 	result.ReserveString(n)
 	ds := buf1.Decimals()
 	fsp := b.tp.GetDecimal()
+	_ = buf1.NullBitmap[(n-1)/8]
+	_ = buf2.NullBitmap[(n-1)/8]
 	for i := 0; i < n; i++ {
-		if buf1.IsNull(i) || buf2.IsNull(i) {
+		if buf1.NullBitmap[i/8]&buf2.NullBitmap[i/8]&(1<<(uint(i)&7)) == 0 {
 			result.AppendNull()
 			continue
 		}

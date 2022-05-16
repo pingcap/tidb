@@ -62,7 +62,7 @@ func (c *Column) AppendSet(set types.Set) {
 // See https://arrow.apache.org/docs/format/Columnar.html#format-columnar
 type Column struct {
 	length     int
-	nullBitmap []byte  // bit 0 is null, 1 is not null
+	NullBitmap []byte  // bit 0 is null, 1 is not null
 	offsets    []int64 // used for varLen column. Row i starts from data[offsets[i]]
 	data       []byte
 	elemBuf    []byte
@@ -103,7 +103,7 @@ func newFixedLenColumn(elemLen, capacity int) *Column {
 	return &Column{
 		elemBuf:    make([]byte, elemLen),
 		data:       make([]byte, 0, capacity*elemLen),
-		nullBitmap: make([]byte, 0, (capacity+7)>>3),
+		NullBitmap: make([]byte, 0, (capacity+7)>>3),
 	}
 }
 
@@ -116,7 +116,7 @@ func newVarLenColumn(capacity int) *Column {
 	return &Column{
 		offsets:    make([]int64, 1, capacity+1),
 		data:       make([]byte, 0, capacity*estimatedElemLen),
-		nullBitmap: make([]byte, 0, (capacity+7)>>3),
+		NullBitmap: make([]byte, 0, (capacity+7)>>3),
 	}
 }
 
@@ -157,7 +157,7 @@ func (c *Column) Reset(eType types.EvalType) {
 // reset resets the underlying data of this Column but doesn't modify its data type.
 func (c *Column) reset() {
 	c.length = 0
-	c.nullBitmap = c.nullBitmap[:0]
+	c.NullBitmap = c.NullBitmap[:0]
 	if len(c.offsets) > 0 {
 		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
 		c.offsets = c.offsets[:1]
@@ -167,8 +167,7 @@ func (c *Column) reset() {
 
 // IsNull returns if this row is null.
 func (c *Column) IsNull(rowIdx int) bool {
-	nullByte := c.nullBitmap[rowIdx/8]
-	return nullByte&(1<<(uint(rowIdx)&7)) == 0
+	return c.NullBitmap[rowIdx/8]&(1<<(uint(rowIdx)&7)) == 0
 }
 
 // CopyConstruct copies this Column to dst.
@@ -176,14 +175,14 @@ func (c *Column) IsNull(rowIdx int) bool {
 func (c *Column) CopyConstruct(dst *Column) *Column {
 	if dst != nil {
 		dst.length = c.length
-		dst.nullBitmap = append(dst.nullBitmap[:0], c.nullBitmap...)
+		dst.NullBitmap = append(dst.NullBitmap[:0], c.NullBitmap...)
 		dst.offsets = append(dst.offsets[:0], c.offsets...)
 		dst.data = append(dst.data[:0], c.data...)
 		dst.elemBuf = append(dst.elemBuf[:0], c.elemBuf...)
 		return dst
 	}
 	newCol := &Column{length: c.length}
-	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
+	newCol.NullBitmap = append(newCol.NullBitmap, c.NullBitmap...)
 	newCol.offsets = append(newCol.offsets, c.offsets...)
 	newCol.data = append(newCol.data, c.data...)
 	newCol.elemBuf = append(newCol.elemBuf, c.elemBuf...)
@@ -192,12 +191,12 @@ func (c *Column) CopyConstruct(dst *Column) *Column {
 
 func (c *Column) appendNullBitmap(notNull bool) {
 	idx := c.length >> 3
-	if idx >= len(c.nullBitmap) {
-		c.nullBitmap = append(c.nullBitmap, 0)
+	if idx >= len(c.NullBitmap) {
+		c.NullBitmap = append(c.NullBitmap, 0)
 	}
 	if notNull {
 		pos := uint(c.length) & 7
-		c.nullBitmap[idx] |= byte(1 << pos)
+		c.NullBitmap[idx] |= byte(1 << pos)
 	}
 }
 
@@ -205,13 +204,13 @@ func (c *Column) appendNullBitmap(notNull bool) {
 // notNull means not null.
 // num means the number of bits that should be appended.
 func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
-	numNewBytes := ((c.length + num + 7) >> 3) - len(c.nullBitmap)
+	numNewBytes := ((c.length + num + 7) >> 3) - len(c.NullBitmap)
 	b := byte(0)
 	if notNull {
 		b = 0xff
 	}
 	for i := 0; i < numNewBytes; i++ {
-		c.nullBitmap = append(c.nullBitmap, b)
+		c.NullBitmap = append(c.NullBitmap, b)
 	}
 	if !notNull {
 		return
@@ -219,11 +218,11 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 	// 1. Set all the remaining bits in the last slot of old c.numBitMap to 1.
 	numRemainingBits := uint(c.length % 8)
 	bitMask := byte(^((1 << numRemainingBits) - 1))
-	c.nullBitmap[c.length/8] |= bitMask
+	c.NullBitmap[c.length/8] |= bitMask
 	// 2. Set all the redundant bits in the last slot of new c.numBitMap to 0.
-	numRedundantBits := uint(len(c.nullBitmap)*8 - c.length - num)
+	numRedundantBits := uint(len(c.NullBitmap)*8 - c.length - num)
 	bitMask = byte(1<<(8-numRedundantBits)) - 1
-	c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
+	c.NullBitmap[len(c.NullBitmap)-1] &= bitMask
 }
 
 // AppendNull appends a null value into this Column.
@@ -326,10 +325,10 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 
 	newNulls := false
 	sizeNulls := (n + 7) >> 3
-	if cap(c.nullBitmap) >= sizeNulls {
-		(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = sizeNulls
+	if cap(c.NullBitmap) >= sizeNulls {
+		(*reflect.SliceHeader)(unsafe.Pointer(&c.NullBitmap)).Len = sizeNulls
 	} else {
-		c.nullBitmap = make([]byte, sizeNulls)
+		c.NullBitmap = make([]byte, sizeNulls)
 		newNulls = true
 	}
 	if !isNull || !newNulls {
@@ -337,8 +336,8 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		if !isNull {
 			nullVal = 0xFF
 		}
-		for i := range c.nullBitmap {
-			c.nullBitmap[i] = nullVal
+		for i := range c.NullBitmap {
+			c.NullBitmap[i] = nullVal
 		}
 	}
 
@@ -362,10 +361,10 @@ func (c *Column) reserve(n, estElemSize int) {
 	}
 
 	sizeNulls := (n + 7) >> 3
-	if cap(c.nullBitmap) >= sizeNulls {
-		c.nullBitmap = c.nullBitmap[:0]
+	if cap(c.NullBitmap) >= sizeNulls {
+		c.NullBitmap = c.NullBitmap[:0]
 	} else {
-		c.nullBitmap = make([]byte, 0, sizeNulls)
+		c.NullBitmap = make([]byte, 0, sizeNulls)
 	}
 
 	sizeOffs := n + 1
@@ -382,9 +381,9 @@ func (c *Column) reserve(n, estElemSize int) {
 // SetNull sets the rowIdx to null.
 func (c *Column) SetNull(rowIdx int, isNull bool) {
 	if isNull {
-		c.nullBitmap[rowIdx>>3] &= ^(1 << uint(rowIdx&7))
+		c.NullBitmap[rowIdx>>3] &= ^(1 << uint(rowIdx&7))
 	} else {
-		c.nullBitmap[rowIdx>>3] |= 1 << uint(rowIdx&7)
+		c.NullBitmap[rowIdx>>3] |= 1 << uint(rowIdx&7)
 	}
 }
 
@@ -399,7 +398,7 @@ func (c *Column) SetNulls(begin, end int, isNull bool) {
 		v = (1 << 8) - 1
 	}
 	for ; begin+8 <= end; begin += 8 {
-		c.nullBitmap[begin>>3] = v
+		c.NullBitmap[begin>>3] = v
 	}
 	for ; begin < end; begin++ {
 		c.SetNull(begin, isNull)
@@ -411,7 +410,7 @@ func (c *Column) nullCount() int {
 	var cnt, i int
 	for ; i+8 <= c.length; i += 8 {
 		// 0 is null and 1 is not null
-		cnt += 8 - bits.OnesCount8(c.nullBitmap[i>>3])
+		cnt += 8 - bits.OnesCount8(c.NullBitmap[i>>3])
 	}
 	for ; i < c.length; i++ {
 		if c.IsNull(i) {
@@ -642,10 +641,10 @@ func (c *Column) reconstruct(sel []int) {
 			idx := dst >> 3
 			pos := uint16(dst & 7)
 			if c.IsNull(src) {
-				c.nullBitmap[idx] &= ^byte(1 << pos)
+				c.NullBitmap[idx] &= ^byte(1 << pos)
 			} else {
 				copy(c.data[dst*elemLen:dst*elemLen+elemLen], c.data[src*elemLen:src*elemLen+elemLen])
-				c.nullBitmap[idx] |= byte(1 << pos)
+				c.NullBitmap[idx] |= byte(1 << pos)
 			}
 		}
 		c.data = c.data[:len(sel)*elemLen]
@@ -655,14 +654,14 @@ func (c *Column) reconstruct(sel []int) {
 			idx := dst >> 3
 			pos := uint(dst & 7)
 			if c.IsNull(src) {
-				c.nullBitmap[idx] &= ^byte(1 << pos)
+				c.NullBitmap[idx] &= ^byte(1 << pos)
 				c.offsets[dst+1] = int64(tail)
 			} else {
 				start, end := c.offsets[src], c.offsets[src+1]
 				copy(c.data[tail:], c.data[start:end])
 				tail += int(end - start)
 				c.offsets[dst+1] = int64(tail)
-				c.nullBitmap[idx] |= byte(1 << pos)
+				c.NullBitmap[idx] |= byte(1 << pos)
 			}
 		}
 		c.data = c.data[:tail]
@@ -671,11 +670,11 @@ func (c *Column) reconstruct(sel []int) {
 	c.length = len(sel)
 
 	// clean nullBitmap
-	c.nullBitmap = c.nullBitmap[:(len(sel)+7)>>3]
+	c.NullBitmap = c.NullBitmap[:(len(sel)+7)>>3]
 	idx := len(sel) >> 3
-	if idx < len(c.nullBitmap) {
+	if idx < len(c.NullBitmap) {
 		pos := uint16(len(sel) & 7)
-		c.nullBitmap[idx] &= byte((1 << pos) - 1)
+		c.NullBitmap[idx] &= byte((1 << pos) - 1)
 	}
 }
 
@@ -746,9 +745,9 @@ func (c *Column) MergeNulls(cols ...*Column) {
 		}
 	}
 	for _, col := range cols {
-		for i := range c.nullBitmap {
+		for i := range c.NullBitmap {
 			// bit 0 is null, 1 is not null, so do AND operations here.
-			c.nullBitmap[i] &= col.nullBitmap[i]
+			c.NullBitmap[i] &= col.NullBitmap[i]
 		}
 	}
 }

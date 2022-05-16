@@ -148,7 +148,7 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 		return 0
 	}
 	for _, col := range c.columns {
-		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
+		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.NullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 		sum += curColMemUsage
 	}
 	return
@@ -455,15 +455,15 @@ func (c *Chunk) TruncateTo(numRows int) {
 		}
 		col.length = numRows
 		bitmapLen := (col.length + 7) / 8
-		col.nullBitmap = col.nullBitmap[:bitmapLen]
+		col.NullBitmap = col.NullBitmap[:bitmapLen]
 		if col.length%8 != 0 {
 			// When we append null, we simply increment the nullCount,
 			// so we need to clear the unused bits in the last bitmap byte.
-			lastByte := col.nullBitmap[bitmapLen-1]
+			lastByte := col.NullBitmap[bitmapLen-1]
 			unusedBitsLen := 8 - uint(col.length%8)
 			lastByte <<= unusedBitsLen
 			lastByte >>= unusedBitsLen
-			col.nullBitmap[bitmapLen-1] = lastByte
+			col.NullBitmap[bitmapLen-1] = lastByte
 		}
 	}
 	c.numVirtualRows = numRows

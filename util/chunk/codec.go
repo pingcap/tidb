@@ -61,7 +61,7 @@ func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	// encode nullBitmap.
 	if col.nullCount() > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
-		buffer = append(buffer, col.nullBitmap[:numNullBitmapBytes]...)
+		buffer = append(buffer, col.NullBitmap[:numNullBitmapBytes]...)
 	}
 
 	// encode offsets.
@@ -120,7 +120,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	// decode nullBitmap.
 	if nullCount > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
-		col.nullBitmap = buffer[:numNullBitmapBytes:numNullBitmapBytes]
+		col.NullBitmap = buffer[:numNullBitmapBytes:numNullBitmapBytes]
 		buffer = buffer[numNullBitmapBytes:]
 	} else {
 		c.setAllNotNull(col)
@@ -150,10 +150,10 @@ var allNotNullBitmap [128]byte
 
 func (c *Codec) setAllNotNull(col *Column) {
 	numNullBitmapBytes := (col.length + 7) / 8
-	col.nullBitmap = col.nullBitmap[:0]
+	col.NullBitmap = col.NullBitmap[:0]
 	for i := 0; i < numNullBitmapBytes; {
 		numAppendBytes := mathutil.Min(numNullBitmapBytes-i, cap(allNotNullBitmap))
-		col.nullBitmap = append(col.nullBitmap, allNotNullBitmap[:numAppendBytes]...)
+		col.NullBitmap = append(col.NullBitmap, allNotNullBitmap[:numAppendBytes]...)
 		i += numAppendBytes
 	}
 }
@@ -326,27 +326,27 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 
 	numNullBitmapBytes := (requiredRows + 7) >> 3
 	if destCol.length%8 == 0 {
-		destCol.nullBitmap = append(destCol.nullBitmap, srcCol.nullBitmap[:numNullBitmapBytes]...)
+		destCol.NullBitmap = append(destCol.NullBitmap, srcCol.NullBitmap[:numNullBitmapBytes]...)
 	} else {
 		destCol.appendMultiSameNullBitmap(false, requiredRows)
-		bitMapLen := len(destCol.nullBitmap)
+		bitMapLen := len(destCol.NullBitmap)
 		// bitOffset indicates the number of valid bits in destCol.nullBitmap's last byte.
 		bitOffset := destCol.length % 8
 		startIdx := (destCol.length - 1) >> 3
 		for i := 0; i < numNullBitmapBytes; i++ {
-			destCol.nullBitmap[startIdx+i] |= srcCol.nullBitmap[i] << bitOffset
+			destCol.NullBitmap[startIdx+i] |= srcCol.NullBitmap[i] << bitOffset
 			// The high order 8-bitOffset bits in `srcCol.nullBitmap[i]` should be appended to the low order of the next slot.
 			if startIdx+i+1 < bitMapLen {
-				destCol.nullBitmap[startIdx+i+1] |= srcCol.nullBitmap[i] >> (8 - bitOffset)
+				destCol.NullBitmap[startIdx+i+1] |= srcCol.NullBitmap[i] >> (8 - bitOffset)
 			}
 		}
 	}
 	// Set all the redundant bits in the last slot of destCol.nullBitmap to 0.
-	numRedundantBits := uint(len(destCol.nullBitmap)*8 - destCol.length - requiredRows)
+	numRedundantBits := uint(len(destCol.NullBitmap)*8 - destCol.length - requiredRows)
 	bitMask := byte(1<<(8-numRedundantBits)) - 1
-	destCol.nullBitmap[len(destCol.nullBitmap)-1] &= bitMask
+	destCol.NullBitmap[len(destCol.NullBitmap)-1] &= bitMask
 
-	srcCol.nullBitmap = srcCol.nullBitmap[numNullBitmapBytes:]
+	srcCol.NullBitmap = srcCol.NullBitmap[numNullBitmapBytes:]
 	destCol.length += requiredRows
 
 	destCol.data = append(destCol.data, srcCol.data[:numDataBytes]...)
