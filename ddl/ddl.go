@@ -1549,7 +1549,7 @@ func (s *session) execute(ctx context.Context, query string, label string) ([]ch
 	startTime := time.Now()
 	var err error
 	defer func() {
-		metrics.DDLJobTableDuration.WithLabelValues(label).Observe(time.Since(startTime).Seconds())
+		metrics.DDLJobTableDuration.WithLabelValues(label + "-" + metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	rs, err := s.s.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
 	if err != nil {
