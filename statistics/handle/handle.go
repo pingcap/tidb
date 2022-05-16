@@ -355,9 +355,9 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		oldCache.Put(physicalID, tbl)
 		if newHealthy, ok := tbl.GetStatsHealthy(); ok {
 			healthyChange.add(newHealthy)
-		}  
+		}
 	}
-	h.updateStatsCache(oldCache.update(nil, nil, lastVersion))
+	updated := h.updateStatsCache(oldCache.update(nil, nil, lastVersion))
 	if updated {
 		healthyChange.apply()
 	}
