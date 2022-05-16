@@ -99,10 +99,6 @@ func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, 
 			logutil.CL(ctx).Warn("failed to find leader", logutil.Region(region.Region), logutil.ShortError(err))
 			return false
 		}
-		if leader == nil {
-			logutil.CL(ctx).Warn("failed to find leader, leader is none", logutil.Region(region.Region))
-			return false
-		}
 		region.Leader = leader
 		return true
 	}
