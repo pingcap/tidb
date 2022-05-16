@@ -527,7 +527,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		default:
 			args = append(args, partitionBy[0])
 		}
-		desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args)
+		desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args, false)
 
 		win.WindowFuncDescs = append(win.WindowFuncDescs, desc)
 		winSchema.Append(&expression.Column{
