@@ -139,7 +139,7 @@ func TestAutoIncrementID(t *testing.T) {
 	// The last insert ID doesn't care about primary key, it is set even if its a normal index column.
 	tk.MustExec("create table autoid (id int auto_increment, index (id))")
 	tk.MustExec("insert autoid values ()")
-	require.Greater(t, tk.Session().LastMessage(), uint64(0))
+	require.Greater(t, tk.Session().LastInsertID(), uint64(0))
 	tk.MustExec("insert autoid values (100)")
 	require.Equal(t, uint64(100), tk.Session().LastInsertID())
 
