@@ -611,6 +611,12 @@ type Performance struct {
 	StatsLoadConcurrency     uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
 	StatsLoadQueueSize       uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 	EnableStatsCacheMemQuota bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// TxnEntrySizeLimit and TxnTotalSizeLimit , unused since bootstrap v91
+	TxnEntrySizeLimit uint64 `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
+	TxnTotalSizeLimit uint64 `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -936,8 +942,8 @@ var deprecatedConfig = map[string]struct{}{
 	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
 	"mem-quota-query":                    {},
 	"query-log-max-len":                  {},
-	"performance.txn-total-size-limit":   {},
-	"performance.txn-entry-size-limit":   {},
+	"performance.txn-total-size-limit":   {}, // use tidb_txn_total_size_limit
+	"performance.txn-entry-size-limit":   {}, // use tidb_txn_entry_size_limit
 	"performance.committer-concurrency":  {},
 }
 

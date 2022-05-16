@@ -617,6 +617,8 @@ const (
 	version89 = 89
 	// version90 converts enable-batch-dml to a sysvar
 	version90 = 90
+	// version91 converts txn-total-size-limit and txn-entry-size-limit to a sysvar
+	version91 = 91
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -715,6 +717,7 @@ var (
 		upgradeToVer88,
 		upgradeToVer89,
 		upgradeToVer90,
+		upgradeToVer91,
 	}
 )
 
@@ -1846,6 +1849,15 @@ func upgradeToVer90(s Session, ver int64) {
 	}
 	valStr := variable.BoolToOnOff(config.GetGlobalConfig().EnableBatchDML)
 	importConfigOption(s, "enable-batch-dml", variable.TiDBEnableBatchDML, valStr)
+}
+func upgradeToVer91(s Session, ver int64) {
+	if ver >= version91 {
+		return
+	}
+	valStr := strconv.FormatUint(uint64(config.GetGlobalConfig().Performance.TxnEntrySizeLimit), 10)
+	importConfigOption(s, "txn-entry-size-limit", variable.TiDBTxnEntrySizeLimit, valStr)
+	vStr := strconv.FormatUint(uint64(config.GetGlobalConfig().Performance.TxnTotalSizeLimit), 10)
+	importConfigOption(s, "txn-total-size-limit", variable.TiDBTxnTotalSizeLimit, vStr)
 }
 
 func writeOOMAction(s Session) {
