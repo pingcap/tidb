@@ -199,7 +199,7 @@ func cancelSuccess(rs *testkit.Result) bool {
 	return strings.Contains(rs.Rows()[0][1].(string), "success")
 }
 
-func TestCancel11111(t *testing.T) {
+func TestCancel(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
