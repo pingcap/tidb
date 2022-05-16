@@ -1604,9 +1604,8 @@ func (w *worker) checkLatin1Convert(job *model.Job, schema, t model.CIStr, oldCo
 			if err != nil {
 				if job.ReorgMeta.SQLMode.HasStrictMode() {
 					return errors.Trace(err)
-				} else {
-					job.AddWarning(err)
 				}
+				job.AddWarning(err)
 			}
 		}
 	}
