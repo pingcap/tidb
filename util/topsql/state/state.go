@@ -18,7 +18,7 @@ import "go.uber.org/atomic"
 
 // Default Top-SQL state values.
 const (
-	DefTiDBTopSQLEnable                = true
+	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLPrecisionSeconds      = 1
 	DefTiDBTopSQLMaxTimeSeriesCount    = 100
 	DefTiDBTopSQLMaxMetaCount          = 5000

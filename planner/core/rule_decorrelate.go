@@ -224,7 +224,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 							}
 						case *expression.ScalarFunction:
 							expr.RetType = expr.RetType.Clone()
-							expr.RetType.Flag &= ^mysql.NotNullFlag
+							expr.RetType.DelFlag(mysql.NotNullFlag)
 							aggArgs = append(aggArgs, expr)
 						default:
 							aggArgs = append(aggArgs, expr)

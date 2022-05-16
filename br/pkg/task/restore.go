@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -14,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -21,6 +23,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -44,6 +49,12 @@ const (
 	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
 
+	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
+	FlagStreamStartTS   = "start-ts"
+	FlagStreamRestoreTS = "restored-ts"
+	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
+	FlagStreamFullBackupStorage = "full-backup-storage"
+
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
 	defaultPDConcurrency      = 1
@@ -55,6 +66,7 @@ const (
 	FullRestoreCmd  = "Full Restore"
 	DBRestoreCmd    = "DataBase Restore"
 	TableRestoreCmd = "Table Restore"
+	PointRestoreCmd = "Point Restore"
 	RawRestoreCmd   = "Raw Restore"
 )
 
@@ -73,10 +85,10 @@ type RestoreCommonConfig struct {
 // useful when not starting BR from CLI (e.g. from BRIE in SQL).
 func (cfg *RestoreCommonConfig) adjust() {
 	if cfg.MergeSmallRegionKeyCount == 0 {
-		cfg.MergeSmallRegionKeyCount = restore.DefaultMergeRegionKeyCount
+		cfg.MergeSmallRegionKeyCount = conn.DefaultMergeRegionKeyCount
 	}
 	if cfg.MergeSmallRegionSizeBytes == 0 {
-		cfg.MergeSmallRegionSizeBytes = restore.DefaultMergeRegionSizeBytes
+		cfg.MergeSmallRegionSizeBytes = conn.DefaultMergeRegionSizeBytes
 	}
 }
 
@@ -85,9 +97,9 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
 
-	flags.Uint64(FlagMergeRegionSizeBytes, restore.DefaultMergeRegionSizeBytes,
+	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
 		"the threshold of merging small regions (Default 96MB, region split size)")
-	flags.Uint64(FlagMergeRegionKeyCount, restore.DefaultMergeRegionKeyCount,
+	flags.Uint64(FlagMergeRegionKeyCount, conn.DefaultMergeRegionKeyCount,
 		"the threshold of merging small regions (Default 960_000, region split key count)")
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
 		"concurrency pd-relative operations like split & scatter.")
@@ -132,6 +144,14 @@ type RestoreConfig struct {
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
 
 	WithPlacementPolicy string `json:"with-tidb-placement-mode" toml:"with-tidb-placement-mode"`
+
+	// FullBackupStorage is used to  run `restore full` before `restore log`.
+	// if it is empty, directly take restoring log justly.
+	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
+
+	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
+	StartTS   uint64 `json:"start-ts" toml:"start-ts"`
+	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -142,6 +162,39 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
 
 	DefineRestoreCommonFlags(flags)
+}
+
+// DefineStreamRestoreFlags defines for the restore log command.
+func DefineStreamRestoreFlags(command *cobra.Command) {
+	command.Flags().String(FlagStreamStartTS, "", "the start timestamp which log restore from.\n"+
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for log restore.\n"+
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
+		"fill it if want restore full backup before restore log.")
+}
+
+// ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
+func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
+	tsString, err := flags.GetString(FlagStreamStartTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
+		return errors.Trace(err)
+	}
+	tsString, err = flags.GetString(FlagStreamRestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
@@ -208,6 +261,12 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 	}
 }
 
+func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
+	if cfg.Config.Concurrency == 0 {
+		cfg.Config.Concurrency = 32
+	}
+}
+
 func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
@@ -245,6 +304,10 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 		}
 		schemasMap[utils.EncloseName(dbName)] = struct{}{}
 		for _, table := range db.Tables {
+			if table.Info == nil {
+				// we may back up empty database.
+				continue
+			}
 			tablesMap[utils.EncloseDBAndTable(dbName, table.Info.Name.O)] = struct{}{}
 		}
 	}
@@ -265,14 +328,60 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	return nil
 }
 
+func CheckNewCollationEnable(
+	backupNewCollationEnable string,
+	g glue.Glue,
+	storage kv.Storage,
+	CheckRequirements bool,
+) error {
+	if backupNewCollationEnable == "" {
+		if CheckRequirements {
+			return errors.Annotatef(berrors.ErrUnknown,
+				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
+					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
+					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
+					"use --check-requirements=false to skip this check")
+		} else {
+			log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+			return nil
+		}
+	}
+
+	se, err := g.CreateSession(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
+		return errors.Annotatef(berrors.ErrUnknown,
+			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
+			backupNewCollationEnable, newCollationEnable)
+	}
+	return nil
+}
+
 func isFullRestore(cmdName string) bool {
 	return cmdName == FullRestoreCmd
 }
 
+// IsStreamRestore checks the command is `restore point`
+func IsStreamRestore(cmdName string) bool {
+	return cmdName == PointRestoreCmd
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
-	cfg.adjustRestoreConfig()
+	if IsStreamRestore(cmdName) {
+		cfg.adjustRestoreConfigForStreamRestore()
+		return RunStreamRestore(c, g, cmdName, cfg)
+	}
 
+	cfg.adjustRestoreConfig()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
@@ -291,6 +400,19 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+
+	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
+	mergeRegionCount := cfg.MergeSmallRegionKeyCount
+	if mergeRegionSize == conn.DefaultMergeRegionSizeBytes &&
+		mergeRegionCount == conn.DefaultMergeRegionKeyCount {
+		// according to https://github.com/pingcap/tidb/issues/34167.
+		// we should get the real config from tikv to adapt the dynamic region.
+		httpCli := httputil.NewClient(mgr.GetTLSConfig())
+		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
@@ -315,8 +437,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
+	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+		return errors.Trace(err)
+	}
+
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, s, reader); err != nil {
+	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -359,6 +485,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		newTS = restoreTS
 	}
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
+	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
 	err = client.PreCheckTableTiFlashReplica(ctx, tables)
 	if err != nil {
@@ -425,7 +552,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
 	rangeStream := restore.GoValidateFileRanges(
-		ctx, tableStream, tableFileMap, cfg.MergeSmallRegionSizeBytes, cfg.MergeSmallRegionKeyCount, errCh)
+		ctx, tableStream, tableFileMap, mergeRegionSize, mergeRegionCount, errCh)
 
 	rangeSize := restore.EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
@@ -449,7 +576,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// Restore sst files in batch.
-	batchSize := utils.ClampInt(int(cfg.Concurrency), defaultRestoreConcurrency, maxRestoreBatchSizeLimit)
+	batchSize := mathutil.Clamp(int(cfg.Concurrency), defaultRestoreConcurrency, maxRestoreBatchSizeLimit)
 	failpoint.Inject("small-batch-size", func(v failpoint.Value) {
 		log.Info("failpoint small batch size is on", zap.Int("size", v.(int)))
 		batchSize = v.(int)
@@ -539,18 +666,17 @@ func filterRestoreFiles(
 	cfg *RestoreConfig,
 ) (files []*backuppb.File, tables []*metautil.Table, dbs []*utils.Database) {
 	for _, db := range client.GetDatabases() {
-		createdDatabase := false
 		dbName := db.Info.Name.O
 		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
 			dbName = name
 		}
+		if !cfg.TableFilter.MatchSchema(dbName) {
+			continue
+		}
+		dbs = append(dbs, db)
 		for _, table := range db.Tables {
-			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
+			if table.Info == nil || !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
-			}
-			if !createdDatabase {
-				dbs = append(dbs, db)
-				createdDatabase = true
 			}
 			files = append(files, table.Files...)
 			tables = append(tables, table)

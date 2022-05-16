@@ -18,24 +18,25 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -81,8 +82,12 @@ func (s *chunkRestoreSuite) TearDownTest() {
 }
 
 func (s *chunkRestoreSuite) TestDeliverLoopCancel() {
-	rc := &Controller{backend: importer.NewMockImporter(nil, "")}
+	controller := gomock.NewController(s.T())
+	defer controller.Finish()
+	mockBackend := mock.NewMockBackend(controller)
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 
+	rc := &Controller{backend: backend.MakeBackend(mockBackend)}
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan []deliveredKVs)
 	go cancel()
@@ -107,6 +112,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 	mockWriter.EXPECT().
 		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil).AnyTimes()
+	mockWriter.EXPECT().IsSynced().Return(true).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, 0)
 	require.NoError(s.T(), err)
@@ -120,12 +126,26 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 	// Deliver nothing.
 
 	cfg := &config.Config{}
-	rc := &Controller{cfg: cfg, backend: importer, diskQuotaLock: newDiskQuotaLock()}
+	saveCpCh := make(chan saveCp, 16)
+	rc := &Controller{cfg: cfg, backend: importer, saveCpCh: saveCpCh}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for scp := range saveCpCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
+		}
+	}()
 
 	kvsCh := make(chan []deliveredKVs, 1)
 	kvsCh <- []deliveredKVs{}
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	require.NoError(s.T(), err)
+	close(saveCpCh)
+	wg.Wait()
 }
 
 func (s *chunkRestoreSuite) TestDeliverLoop() {
@@ -211,17 +231,17 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 				rowID:   76,
 			},
 		}
-		kvsCh <- []deliveredKVs{}
+		kvsCh <- []deliveredKVs{{offset: 37}}
 		close(kvsCh)
 	}()
 
 	cfg := &config.Config{}
-	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer, diskQuotaLock: newDiskQuotaLock()}
+	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer}
 
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)
-	require.Equal(s.T(), int64(12), s.cr.chunk.Chunk.Offset)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, s.cr.chunk.Chunk.Offset)
 	require.Equal(s.T(), int64(76), s.cr.chunk.Chunk.PrevRowIDMax)
 	require.Equal(s.T(), uint64(3), s.cr.chunk.Checksum.SumKVS())
 }
@@ -248,7 +268,9 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 	require.Equal(s.T(), []string(nil), kvs[0].columns)
 
 	kvs = <-kvsCh
-	require.Equal(s.T(), 0, len(kvs))
+	require.Equal(s.T(), 1, len(kvs))
+	require.Nil(s.T(), kvs[0].kvs)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
 }
 
 func (s *chunkRestoreSuite) TestEncodeLoopCanceled() {
@@ -338,7 +360,9 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 		if count == 4 {
 			// we will send empty kvs before encodeLoop exists
 			// so, we can receive 4 batch and 1 is empty
-			require.Len(s.T(), kvs, 0)
+			require.Len(s.T(), kvs, 1)
+			require.Nil(s.T(), kvs[0].kvs)
+			require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
 			break
 		}
 	}
@@ -507,61 +531,53 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	require.Equal(s.T(), deliverKV.columns, kvs[0].columns)
 
 	kvs = <-kvsCh
-	require.Equal(s.T(), 0, len(kvs))
+	require.Equal(s.T(), 1, len(kvs))
+	require.Nil(s.T(), kvs[0].kvs)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
 }
+
+type mockEncoder struct{}
+
+func (mockEncoder) Encode(_ log.Logger, _ []types.Datum, rowID int64, _ []int, _ string, _ int64) (kv.Row, error) {
+	return &kv.KvPairs{}, nil
+}
+
+func (mockEncoder) Close() {}
 
 func (s *chunkRestoreSuite) TestRestore() {
 	ctx := context.Background()
 
-	// Open two mock engines
-
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockClient := mock.NewMockImportKVClient(controller)
-	mockDataWriter := mock.NewMockImportKV_WriteEngineClient(controller)
-	mockIndexWriter := mock.NewMockImportKV_WriteEngineClient(controller)
-	importer := importer.NewMockImporter(mockClient, "127.0.0.1:2379")
+	mockBackend := mock.NewMockBackend(controller)
+	importer := backend.MakeBackend(mockBackend)
 
-	mockClient.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil, nil)
-	mockClient.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil, nil)
+	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)
+	// avoid return the same object at each call
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
+	mockWriter := mock.NewMockEngineWriter(controller)
+	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(mockEncoder{}, nil).Times(1)
+	mockWriter.EXPECT().IsSynced().Return(true).AnyTimes()
+	mockWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, 0)
 	require.NoError(s.T(), err)
 	indexEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, -1)
 	require.NoError(s.T(), err)
+
 	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(s.T(), err)
 	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(s.T(), err)
 
-	// Expected API sequence
-	// (we don't care about the actual content, this would be checked in the integrated tests)
-
-	mockClient.EXPECT().WriteEngine(ctx).Return(mockDataWriter, nil)
-	mockDataWriter.EXPECT().Send(gomock.Any()).Return(nil)
-	mockDataWriter.EXPECT().Send(gomock.Any()).DoAndReturn(func(req *import_kvpb.WriteEngineRequest) error {
-		require.Len(s.T(), req.GetBatch().GetMutations(), 1)
-		return nil
-	})
-	mockDataWriter.EXPECT().CloseAndRecv().Return(nil, nil)
-
-	mockClient.EXPECT().WriteEngine(ctx).Return(mockIndexWriter, nil)
-	mockIndexWriter.EXPECT().Send(gomock.Any()).Return(nil)
-	mockIndexWriter.EXPECT().Send(gomock.Any()).DoAndReturn(func(req *import_kvpb.WriteEngineRequest) error {
-		require.Len(s.T(), req.GetBatch().GetMutations(), 1)
-		return nil
-	})
-	mockIndexWriter.EXPECT().CloseAndRecv().Return(nil, nil)
-
-	// Now actually start the restore loop.
-
-	saveCpCh := make(chan saveCp, 2)
+	saveCpCh := make(chan saveCp, 16)
 	err = s.cr.restore(ctx, s.tr, 0, dataWriter, indexWriter, &Controller{
-		cfg:           s.cfg,
-		saveCpCh:      saveCpCh,
-		backend:       importer,
-		pauser:        DeliverPauser,
-		diskQuotaLock: newDiskQuotaLock(),
+		cfg:      s.cfg,
+		saveCpCh: saveCpCh,
+		backend:  importer,
+		pauser:   DeliverPauser,
 	})
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)

@@ -39,7 +39,7 @@ var (
 //
 // it is a way to fix https://github.com/pingcap/tidb/issues/29910.
 type ShowPredicateExtractor interface {
-	// Extracts predicates which can be pushed down and returns whether the extractor can extract predicates.
+	// Extract predicates which can be pushed down and returns whether the extractor can extract predicates.
 	Extract(show *ast.ShowStmt) bool
 	explainInfo() string
 }
@@ -49,6 +49,26 @@ type ShowBaseExtractor struct {
 	Field string
 
 	FieldPatterns string
+}
+
+// Extract implements the ShowPredicateExtractor interface.
+func (e *ShowBaseExtractor) Extract(show *ast.ShowStmt) bool {
+	if show.Pattern != nil && show.Pattern.Pattern != nil {
+		pattern := show.Pattern
+		switch pattern.Pattern.(type) {
+		case *driver.ValueExpr:
+			// It is used in `SHOW XXXX in t LIKE `abc``.
+			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
+			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
+			if stringutil.IsExactMatch(patTypes) {
+				e.Field = strings.ToLower(string(patValue))
+				return true
+			}
+			e.FieldPatterns = strings.ToLower(string(patValue))
+			return true
+		}
+	}
+	return false
 }
 
 // ShowColumnsTableExtractor is used to extract some predicates of tables table.
@@ -107,26 +127,6 @@ type ShowTablesTableExtractor struct {
 	ShowBaseExtractor
 }
 
-// Extract implements the ShowTablesTableExtractor Extract interface
-func (e *ShowTablesTableExtractor) Extract(show *ast.ShowStmt) bool {
-	if show.Pattern != nil && show.Pattern.Pattern != nil {
-		pattern := show.Pattern
-		switch pattern.Pattern.(type) {
-		case *driver.ValueExpr:
-			// It is used in `SHOW TABLE in t LIKE `abc``.
-			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
-			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
-			if stringutil.IsExactMatch(patTypes) {
-				e.Field = strings.ToLower(string(patValue))
-				return true
-			}
-			e.FieldPatterns = strings.ToLower(string(patValue))
-			return true
-		}
-	}
-	return false
-}
-
 func (e *ShowTablesTableExtractor) explainInfo() string {
 	r := new(bytes.Buffer)
 	if len(e.Field) > 0 {
@@ -148,26 +148,6 @@ func (e *ShowTablesTableExtractor) explainInfo() string {
 // ShowVariablesExtractor is used to extract some predicates of variables.
 type ShowVariablesExtractor struct {
 	ShowBaseExtractor
-}
-
-// Extract implements the ShowVariablesExtractor Extract interface
-func (e *ShowVariablesExtractor) Extract(show *ast.ShowStmt) bool {
-	if show.Pattern != nil && show.Pattern.Pattern != nil {
-		pattern := show.Pattern
-		switch pattern.Pattern.(type) {
-		case *driver.ValueExpr:
-			// It is used in `SHOW SESSION VARIABLES LIKE `abc``.
-			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
-			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
-			if stringutil.IsExactMatch(patTypes) {
-				e.Field = strings.ToLower(string(patValue))
-				return true
-			}
-			e.FieldPatterns = strings.ToLower(string(patValue))
-			return true
-		}
-	}
-	return false
 }
 
 func (e *ShowVariablesExtractor) explainInfo() string {

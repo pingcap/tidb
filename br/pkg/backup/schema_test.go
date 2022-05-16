@@ -13,7 +13,6 @@ import (
 	"github.com/golang/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -21,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,7 +100,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	_, backupSchemas, _, err := backup.BuildBackupRangeAndSchema(
 		m.Storage, testFilter, math.MaxUint64, false)
 	require.NoError(t, err)
-	require.Nil(t, backupSchemas)
+	require.NotNil(t, backupSchemas)
 
 	// Database is not exist.
 	fooFilter, err := filter.Parse([]string{"foo.t1"})
@@ -117,7 +117,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	_, backupSchemas, _, err = backup.BuildBackupRangeAndSchema(
 		m.Storage, noFilter, math.MaxUint64, false)
 	require.NoError(t, err)
-	require.Nil(t, backupSchemas)
+	require.NotNil(t, backupSchemas)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
@@ -138,7 +138,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	cipher := backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
-	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, &cipher)
+	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter, m.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
@@ -168,7 +168,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	updateCh.reset()
 
 	es2 := GetRandomStorage(t)
-	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, &cipher)
+	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter2, m.Storage, nil, math.MaxUint64, 2, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.Equal(t, int64(2), updateCh.get())
@@ -222,7 +222,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	}
 
 	es := GetRandomStorage(t)
-	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, &cipher)
+	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter, m.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
@@ -251,7 +251,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	updateCh.reset()
 	statsHandle := m.Domain.StatsHandle()
 	es2 := GetRandomStorage(t)
-	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, &cipher)
+	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter2, m.Storage, statsHandle, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.NoError(t, err)
@@ -296,7 +296,7 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 	}
 	updateCh := new(simpleProgress)
 
-	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, &cipher)
+	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
 	err = backupSchemas.BackupSchemas(ctx, metaWriter2, m.Storage, nil,
 		math.MaxUint64, 1, variable.DefChecksumTableConcurrency, true, updateCh)
 	require.NoError(t, err)

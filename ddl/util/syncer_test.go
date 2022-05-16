@@ -25,7 +25,6 @@ import (
 	. "github.com/pingcap/tidb/ddl"
 	. "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
@@ -162,7 +161,7 @@ func TestSyncerSimple(t *testing.T) {
 	NeededCleanTTL = int64(11)
 	ttlKey := "session_ttl_key"
 	ttlVal := "session_ttl_val"
-	session, err := owner.NewSession(ctx, "", cli, owner.NewSessionDefaultRetryCnt, ttl)
+	session, err := util.NewSession(ctx, "", cli, util.NewSessionDefaultRetryCnt, ttl)
 	require.NoError(t, err)
 	require.NoError(t, PutKVToEtcd(context.Background(), cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease())))
 

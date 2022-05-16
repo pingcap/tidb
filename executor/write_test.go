@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -1857,6 +1858,47 @@ func TestQualifiedDelete(t *testing.T) {
 	require.Error(t, err)
 }
 
+type testCase struct {
+	data1       []byte
+	data2       []byte
+	expected    []string
+	restData    []byte
+	expectedMsg string
+}
+
+func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
+	origin := ld.IgnoreLines
+	for _, tt := range tests {
+		ld.IgnoreLines = origin
+		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
+		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
+		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
+		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
+		require.NoError(t, err1)
+		require.False(t, reachLimit)
+		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
+		require.NoError(t, err1)
+		ld.SetMaxRowsInBatch(20000)
+		comment := fmt.Sprintf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data))
+		if tt.restData == nil {
+			require.Len(t, data, 0, comment)
+		} else {
+			require.Equal(t, tt.restData, data, comment)
+		}
+		ld.SetMessage()
+		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage())
+		ctx.StmtCommit()
+		txn, err := ctx.Txn(true)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
+		tk.MustExec(deleteSQL)
+	}
+}
+
 func TestLoadDataMissingColumn(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -2269,7 +2311,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','")
 	ctx := tk.Session().(sessionctx.Context)
 	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.Nil(t, ctx.NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 
 	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	require.NoError(t, err)
@@ -2627,7 +2669,7 @@ func TestRebaseIfNeeded(t *testing.T) {
 	ctx.Store = store
 	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	require.Nil(t, ctx.NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(ctx, types.MakeDatums(30001, 2))
