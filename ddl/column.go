@@ -1529,7 +1529,6 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 			if err != nil {
 				return errors.Trace(err)
 			}
-
 			taskCtx.addedCount++
 			if rowRecord.warning != nil {
 				if _, ok := warningsCountMap[rowRecord.warning.ID()]; ok {
@@ -1639,9 +1638,15 @@ func (w *worker) doModifyColumn(
 
 	if needCheckLatin1Convert(oldCol, newCol) {
 		err := w.checkLatin1Convert(dbInfo.Name, tblInfo.Name, []*model.ColumnInfo{oldCol}, []*model.ColumnInfo{newCol})
-		if err != nil && job.ReorgMeta.SQLMode.HasStrictMode() {
-			job.State = model.JobStateRollingback
-			return ver, errors.Trace(err)
+		if err != nil {
+			if job.ReorgMeta.SQLMode.HasStrictMode() {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(err)
+			} else {
+				warn := errors.Cause(err).(*terror.Error)
+				job.ReorgMeta.Warnings[warn.ID()] = warn
+				job.ReorgMeta.WarningsCount[warn.ID()] = 1
+			}
 		}
 	}
 
