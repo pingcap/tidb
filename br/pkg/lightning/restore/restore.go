@@ -62,7 +62,6 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"golang.org/x/exp/rand"
 )
 
 const (
@@ -2035,6 +2034,7 @@ type chunkRestore struct {
 	originalRowIDMax int64
 	curRowIDBase     int64
 	curRowIDMax      int64
+	tableRestore     *TableRestore
 }
 
 func newChunkRestore(
@@ -2045,6 +2045,7 @@ func newChunkRestore(
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
 	tableInfo *checkpoints.TidbTableInfo,
+	tableRestore *TableRestore,
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
@@ -2095,6 +2096,7 @@ func newChunkRestore(
 		index:            index,
 		chunk:            chunk,
 		originalRowIDMax: chunk.Chunk.RowIDMax,
+		tableRestore:     tableRestore,
 	}, nil
 }
 
@@ -2147,56 +2149,14 @@ type deliverResult struct {
 	err      error
 }
 
-func (cr *chunkRestore) adjustLocalRowID(rawData *deliveredKVs, t *TableRestore) {
-	data := rawData.kvs.(*kv.KvPairs)
-	curRowIDToKV := data.GetRowIDToKv()
-	illegalIDs := make([]int64, 0)
-	for id := range curRowIDToKV {
-		if id > cr.originalRowIDMax {
-			illegalIDs = append(illegalIDs, id)
-		}
-	}
-	fmt.Printf("illegalIDs: %v\n", illegalIDs)
-	if len(illegalIDs) > 0 {
-		for _, illegalID := range illegalIDs {
-			if cr.curRowIDBase >= cr.curRowIDMax {
-				// reallocate id from tableRestore
-				cr.curRowIDBase, cr.curRowIDMax = t.allocateRowIDs()
-			}
-			newRowID := cr.curRowIDBase
-			cr.curRowIDBase++
-			for _, kv := range curRowIDToKV[illegalID] {
-				// reset rowID
-				kv.RowID = newRowID
-			}
-			rawData.rowID = newRowID
-		}
-	} else if rand.Uint32()%10 < 1 {
-		fmt.Printf("randomly change!\n")
+func (cr *chunkRestore) adjustRowID(rowID *int64) {
+	if *rowID > cr.originalRowIDMax {
 		if cr.curRowIDBase >= cr.curRowIDMax {
-			// reallocate id from tableRestore
-			cr.curRowIDBase, cr.curRowIDMax = t.allocateRowIDs()
+			// reallocate rowID
+			cr.curRowIDBase, cr.curRowIDMax = cr.tableRestore.allocateRowIDs()
 		}
-		newRowID := cr.curRowIDBase
+		*rowID = cr.curRowIDBase
 		cr.curRowIDBase++
-		for id := range curRowIDToKV {
-			for _, ptr := range curRowIDToKV[id] {
-				ptr.RowID = newRowID
-			}
-		}
-		rawData.rowID = newRowID
-	}
-	newData := data.GetRowIDToKv()
-	for id := range newData {
-		for _, kv := range newData[id] {
-			fmt.Printf("new rowID: %d\n", kv.RowID)
-		}
-	}
-}
-
-func (cr *chunkRestore) adjustRowID(rawData *deliveredKVs, t *TableRestore) {
-	if _, ok := rawData.kvs.(*kv.KvPairs); ok {
-		cr.adjustLocalRowID(rawData, t)
 	}
 }
 
@@ -2240,7 +2200,6 @@ func (cr *chunkRestore) deliverLoop(
 					break populate
 				}
 				for _, p := range kvPacket {
-					cr.adjustRowID(&p, t)
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 					columns = p.columns
 					currOffset = p.offset
@@ -2481,6 +2440,8 @@ func (cr *chunkRestore) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			// sql -> kv
+			cr.adjustRowID(&lastRow.RowID)
+			rowID = lastRow.RowID
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 

@@ -1024,14 +1024,14 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		w.writer = writer
 	}
-	// if len(kvs) > 0 && kvs[0].RowID > w.prevRowID+1 {
-	// 	// rowID leap. probably re-alloc id
-	// 	// should write to different sst
-	// 	err := w.flushAndNewWriter()
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
+	if len(kvs) > 0 && kvs[0].RowID > w.prevRowID+1 {
+		// rowID leap. probably re-alloc id
+		// should write to different sst
+		err := w.flushAndNewWriter()
+		if err != nil {
+			return err
+		}
+	}
 
 	keyAdapter := w.engine.keyAdapter
 	totalKeySize := 0
@@ -1056,27 +1056,26 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		kvs = newKvs
 	}
-	// sliceIdx := -1
+	sliceIdx := -1
 	for i := 1; i < len(kvs); i++ {
-		// if kvs[i].RowID > kvs[i-1].RowID+1 {
-		// 	// rowID leap, probably re-alloc id
-		// 	// should write to different sst
-		// 	sliceIdx = i
-		// }
-		// if i == len(kvs)-1 {
-		// 	w.prevRowID = kvs[i].RowID
-		// }
-		fmt.Printf("write kvs rowID: %d\n", kvs[i].RowID)
+		if kvs[i].RowID > kvs[i-1].RowID+1 {
+			// rowID leap, probably re-alloc id
+			// should write to different sst
+			sliceIdx = i
+		}
+		if i == len(kvs)-1 {
+			w.prevRowID = kvs[i].RowID
+		}
 	}
-	// if sliceIdx > 0 {
-	// 	oldKvs := kvs[:sliceIdx]
-	// 	kvs = kvs[sliceIdx:]
-	// 	w.writer.writeKVs(oldKvs)
-	// 	err := w.flushAndNewWriter()
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
+	if sliceIdx > 0 {
+		oldKvs := kvs[:sliceIdx]
+		kvs = kvs[sliceIdx:]
+		w.writer.writeKVs(oldKvs)
+		err := w.flushAndNewWriter()
+		if err != nil {
+			return err
+		}
+	}
 	return w.writer.writeKVs(kvs)
 }
 

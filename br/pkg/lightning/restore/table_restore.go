@@ -500,7 +500,7 @@ func (tr *TableRestore) restoreEngine(
 		// 	2. sql -> kvs
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
-		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
+		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo, tr)
 		if err != nil {
 			setError(err)
 			break
