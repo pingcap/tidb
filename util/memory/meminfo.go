@@ -16,7 +16,7 @@ package memory
 
 import (
 	"os"
-        "runtime"
+    "runtime"
 	"strconv"
 	"strings"
 	"sync"
