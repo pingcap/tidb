@@ -278,6 +278,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBIsolationReadEngines, Value: strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ","), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		engines := strings.Split(normalizedValue, ",")
 		var formatVal string
+		var hasTiFlash bool
+		var hasTiFlashMPP bool
 		for i, engine := range engines {
 			engine = strings.TrimSpace(engine)
 			if i != 0 {
@@ -288,11 +290,18 @@ var defaultSysVars = []*SysVar{
 				formatVal += kv.TiKV.Name()
 			case strings.EqualFold(engine, kv.TiFlash.Name()):
 				formatVal += kv.TiFlash.Name()
+				hasTiFlash = true
 			case strings.EqualFold(engine, kv.TiDB.Name()):
 				formatVal += kv.TiDB.Name()
+			case strings.EqualFold(engine, kv.TiFlashMPP.Name()):
+				formatVal += kv.TiFlashMPP.Name()
+				hasTiFlashMPP = true
 			default:
 				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBIsolationReadEngines, normalizedValue)
 			}
+		}
+		if hasTiFlash && hasTiFlashMPP {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBIsolationReadEngines, "tiflash when tiflash_mpp exists.")
 		}
 		return formatVal, nil
 	}, SetSession: func(s *SessionVars, val string) error {
@@ -305,6 +314,8 @@ var defaultSysVars = []*SysVar{
 				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
 			case kv.TiDB.Name():
 				s.IsolationReadEngines[kv.TiDB] = struct{}{}
+			case kv.TiFlashMPP.Name():
+				s.IsolationReadEngines[kv.TiFlashMPP] = struct{}{}
 			}
 		}
 		return nil

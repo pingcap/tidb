@@ -289,6 +289,8 @@ const (
 	TiFlash
 	// TiDB means the type of a store is TiDB.
 	TiDB
+	// TiFlashMPP means tiflash ReadNodes.
+	TiFlashMPP
 	// UnSpecified means the store type is unknown
 	UnSpecified = 255
 )
@@ -301,6 +303,8 @@ func (t StoreType) Name() string {
 		return "tidb"
 	} else if t == TiKV {
 		return "tikv"
+	} else if t == TiFlashMPP {
+		return "tiflash_mpp"
 	}
 	return "unspecified"
 }

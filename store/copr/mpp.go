@@ -61,7 +61,11 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 }
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context,
+	req *kv.MPPBuildTasksRequest,
+	mppStoreLastFailTime map[string]time.Time,
+	ttl time.Duration,
+	engine kv.StoreType) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	var tasks []*batchCopTask
@@ -79,7 +83,7 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 			return c.selectAllTiFlashStore(), nil
 		}
 		ranges := NewKeyRanges(req.KeyRanges)
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, engine)
 	}
 
 	if err != nil {
@@ -301,8 +305,8 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 				logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
 			}
 			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
-			m.store.GetRegionCache().InvalidateTiFlashMPPStores()
 		}
+		m.store.GetRegionCache().InvalidateTiFlashMPPStores()
 	}
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {

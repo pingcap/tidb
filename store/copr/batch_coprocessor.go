@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/stathat/consistent"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -526,10 +525,22 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	return ret
 }
 
-func buildBatchCopTasksForNonPartitionedTable(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
-	// return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
-	// return buildBatchCopTasksRandomly(bo, store, []*KeyRanges{ranges}, storeType)
-	return buildBatchCopTasksConsistentHash(bo, store, []*KeyRanges{ranges}, storeType)
+func buildBatchCopTasksForNonPartitionedTable(bo *backoff.Backoffer,
+	store *kvStore,
+	ranges *KeyRanges,
+	storeType kv.StoreType,
+	mppStoreLastFailTime map[string]time.Time,
+	ttl time.Duration,
+	balanceWithContinuity bool,
+	balanceContinuousRegionCount int64,
+	engine kv.StoreType) ([]*batchCopTask, error) {
+	if engine == kv.TiFlash {
+		return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
+	} else if engine == kv.TiFlashMPP {
+		return buildBatchCopTasksConsistentHash(bo, store, []*KeyRanges{ranges}, storeType)
+	} else {
+		return nil, errors.New(fmt.Sprint("unexpected engine type for tiflash: %v", engine))
+	}
 }
 
 func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, partitionIDs []int64) ([]*batchCopTask, error) {
@@ -559,6 +570,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 
 		var rangesLen int
 		tasks := make([]*copTask, 0)
+		regionIDs := make([]tikv.RegionVerID, 0)
 
 		for i, ranges := range rangesForEachPhysicalTable {
 			rangesLen += ranges.Len()
@@ -574,82 +586,34 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 					storeType:      storeType,
 					partitionIndex: int64(i),
 				})
+				regionIDs = append(regionIDs, lo.Location.Region)
 			}
 		}
 
-		mppStores, err := cache.GetTiFlashMPPStores(bo.TiKVBackoffer())
+		rpcCtxs, err := cache.GetTiFlashMPPRPCContextByConsistentHash(bo.TiKVBackoffer(), regionIDs)
 		if err != nil {
 			return nil, err
 		}
-		nodeNum := len(mppStores)
-		if nodeNum == 0 {
-			return nil, errors.New("Number of tiflash_mpp node is zero")
+		if rpcCtxs == nil {
+			// retry
+			continue
 		}
-
-		var logMsg string
-		for i, s := range mppStores {
-			logMsg += fmt.Sprintf("store[%d]: %s, ", i, s.GetAddr())
+		if len(rpcCtxs) != len(tasks) {
+			return nil, errors.New(fmt.Sprintf("unexpected length of rpcCtxs, expect: %v, got: %v", len(tasks), len(rpcCtxs)))
 		}
-		logutil.BgLogger().Info(fmt.Sprintf("nodeNum: %v. ", nodeNum) + logMsg)
-
-		hasher := consistent.New()
-		for _, store := range mppStores {
-			hasher.Add(store.GetAddr())
-		}
-
-		taskMap := make(map[string][]*copTask)
-		for _, task := range tasks {
-			addr, err := hasher.Get(strconv.Itoa(int(task.region.GetID())))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if tasks, ok := taskMap[addr]; !ok {
-				taskMap[addr] = []*copTask{task}
-			} else {
-				tasks = append(tasks, task)
-				taskMap[addr] = tasks
-			}
-		}
-
-		var needRetry bool
-		res = res[:0]
-		for addr, tasks := range taskMap {
-			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), tasks[0].region, false)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if rpcCtx == nil {
-				// todo: looks like it happens.
-				logutil.BgLogger().Info(fmt.Sprintf("GetTiFlashRPCContext failed: %v", tasks[0].region))
-				err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				needRetry = true
-				break
-			}
-			rpcCtx.Addr = addr
-			regionInfos := make([]RegionInfo, 0, len(tasks))
-			for _, task := range tasks {
-				regionInfos = append(regionInfos, RegionInfo{
-					Region:         task.region,
+		taskMap := make(map[string]*batchCopTask)
+		for i, rpcCtx := range rpcCtxs {
+			if batchCopTask, ok := taskMap[rpcCtx.Addr]; ok {
+				batchCopTask.regionInfos = append(batchCopTask.regionInfos, RegionInfo{
+					Region:         tasks[i].region,
 					Meta:           rpcCtx.Meta,
-					Ranges:         task.ranges,
-					AllStores:      cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store),
-					PartitionIndex: task.partitionIndex,
-					Addr:           rpcCtx.Addr,
+					Ranges:         tasks[i].ranges,
+					AllStores:      []uint64{rpcCtx.Store.StoreID()},
+					PartitionIndex: tasks[i].partitionIndex,
 				})
 			}
-			res = append(res, &batchCopTask{
-				storeAddr:   rpcCtx.Addr,
-				cmdType:     cmdType,
-				ctx:         rpcCtx,
-				regionInfos: regionInfos,
-			})
 		}
-		if !needRetry {
-			break
-		}
+		break
 	}
 	return res, nil
 }
@@ -787,7 +751,7 @@ func convertRegionInfosToPartitionTableRegions(batchTasks []*batchCopTask, parti
 	}
 }
 
-func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.Variables, option *kv.ClientSendOption) kv.Response {
+func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.Variables, option *kv.ClientSendOption, storeType kv.StoreType) kv.Response {
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
@@ -807,7 +771,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		tasks, err = buildBatchCopTasksForPartitionedTable(bo, c.store.kvStore, keyRanges, req.StoreType, nil, 0, false, 0, partitionIDs)
 	} else {
 		ranges := NewKeyRanges(req.KeyRanges)
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store.kvStore, ranges, req.StoreType, nil, 0, false, 0)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store.kvStore, ranges, req.StoreType, nil, 0, false, 0, storeType)
 	}
 
 	if err != nil {
@@ -820,6 +784,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		vars:                       vars,
 		rpcCancel:                  tikv.NewRPCanceller(),
 		enableCollectExecutionInfo: option.EnableCollectExecutionInfo,
+		storeType:                  storeType,
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	it.tasks = tasks
@@ -849,6 +814,9 @@ type batchCopIterator struct {
 	closed uint32
 
 	enableCollectExecutionInfo bool
+
+	// For tiflash_mpp, will use consistent hashsing to dispatch batchCopTask.
+	storeType kv.StoreType
 }
 
 func (b *batchCopIterator) run(ctx context.Context) {
@@ -954,7 +922,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 				ranges = append(ranges, *ran)
 			})
 		}
-		ret, err := buildBatchCopTasksForNonPartitionedTable(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, nil, 0, false, 0)
+		ret, err := buildBatchCopTasksForNonPartitionedTable(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, nil, 0, false, 0, b.storeType)
 		return ret, err
 	}
 	// Retry Partition Table Scan
@@ -1006,7 +974,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 	if b.req.ResourceGroupTagger != nil {
 		b.req.ResourceGroupTagger(req)
 	}
-	req.StoreTp = tikvrpc.TiFlash
+	req.StoreTp = getEndPointType(b.storeType)
 
 	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.regionInfos)))
 	resp, retry, cancel, err := sender.SendReqToAddr(bo, task.ctx, task.regionInfos, req, readTimeoutUltraLong)

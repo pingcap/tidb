@@ -78,9 +78,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
 	}
-	if req.StoreType == kv.TiFlash && req.BatchCop {
+	if (req.StoreType == kv.TiFlash || req.StoreType == kv.TiFlashMPP) && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
-		return c.sendBatch(ctx, req, vars, option)
+		return c.sendBatch(ctx, req, vars, option, req.StoreType)
 	}
 	if req.Streaming && req.Paging {
 		return copErrorResponse{errors.New("streaming and paging are both on")}

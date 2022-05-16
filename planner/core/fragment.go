@@ -55,20 +55,26 @@ type tasksAndFrags struct {
 }
 
 type mppTaskGenerator struct {
-	ctx     sessionctx.Context
-	startTS uint64
-	is      infoschema.InfoSchema
-	frags   []*Fragment
-	cache   map[int]tasksAndFrags
+	ctx       sessionctx.Context
+	startTS   uint64
+	is        infoschema.InfoSchema
+	frags     []*Fragment
+	cache     map[int]tasksAndFrags
+	storeType kv.StoreType
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context,
+	startTs uint64,
+	sender *PhysicalExchangeSender,
+	is infoschema.InfoSchema,
+	storeType kv.StoreType) ([]*Fragment, error) {
 	g := &mppTaskGenerator{
-		ctx:     ctx,
-		startTS: startTs,
-		is:      is,
-		cache:   make(map[int]tasksAndFrags),
+		ctx:       ctx,
+		startTS:   startTs,
+		is:        is,
+		cache:     make(map[int]tasksAndFrags),
+		storeType: storeType,
 	}
 	return g.generateMPPTasks(sender)
 }
@@ -344,7 +350,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
 		ttl = 30 * time.Second
 	}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
+
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl, e.storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
