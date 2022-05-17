@@ -1821,6 +1821,8 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 		physicalTableID: ds.physicalTableID,
 		Ranges:          s.Ranges,
 		AccessCondition: s.AccessConds,
+		tblCols:         ds.TblCols,
+		tblColHists:     ds.TblColHists,
 	}.Init(s.ctx, s.blockOffset)
 	ts.stats = stats
 	ts.SetSchema(schema.Clone())
@@ -1850,6 +1852,8 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
+		tblColHists:      ds.TblColHists,
+		pkIsHandleCol:    ds.getPKIsHandleCol(),
 	}.Init(ds.ctx, ds.blockOffset)
 	is.stats = stats
 	is.initSchema(s.FullIdxCols, s.IsDoubleRead)
