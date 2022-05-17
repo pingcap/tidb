@@ -1483,7 +1483,7 @@ func TestEnableGlobalKillConfig(t *testing.T) {
 	require.Equal(t, 1, len(rows))
 	configValue := rows[0][1].(string)
 	globalKillVal := "\"enable-global-kill\": true"
-	require.Equal(t, true, strings.Contains(configValue, globalKillVal))
+	require.True(t, strings.Contains(configValue, globalKillVal))
 }
 
 func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
