@@ -45,11 +45,26 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 	if err != nil {
 		return nil, err
 	}
+	var leadingJoinNodes []*jrNode
+	if s.leadingJoinGroup != nil {
+		// We have a leading hint to let some tables join first. The result is stored in the s.leadingJoinGroup.
+		// We generate jrNode separately for it.
+		leadingJoinNodes, err = s.generateJoinOrderNode([]LogicalPlan{s.leadingJoinGroup}, tracer)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// Sort plans by cost
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
 
+	if leadingJoinNodes != nil {
+		// The leadingJoinNodes should be the first element in the s.curJoinGroup.
+		// So it can be joined first.
+		leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)
+		s.curJoinGroup = leadingJoinNodes
+	}
 	var cartesianGroup []LogicalPlan
 	for len(s.curJoinGroup) > 0 {
 		newNode, err := s.constructConnectedJoinTree(tracer)

@@ -933,7 +933,7 @@ func RunStreamRestore(
 	}
 
 	if len(cfg.FullBackupStorage) > 0 {
-		if cfg.StartTS, err = getFullBakcupTS(ctx, cfg); err != nil {
+		if cfg.StartTS, err = getFullBackupTS(ctx, cfg); err != nil {
 			return errors.Trace(err)
 		}
 		if cfg.StartTS < logMinTS {
@@ -1042,6 +1042,10 @@ func restoreStream(
 	updateRewriteRules(rewriteRules, schemasReplace)
 
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
+	if cfg.Concurrency > defaultRestoreStreamConcurrency {
+		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
+		client.SetConcurrency(defaultRestoreConcurrency)
+	}
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
 	})
@@ -1193,8 +1197,8 @@ func getLogRange(
 	return logMinTS, logMaxTS, nil
 }
 
-// getFullBakcupTS gets the snapshot-ts of full bakcup
-func getFullBakcupTS(
+// getFullBackupTS gets the snapshot-ts of full bakcup
+func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, error) {

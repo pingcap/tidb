@@ -34,15 +34,19 @@ import (
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
 func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
-	otherConds []expression.Expression, joinTypes []JoinType) {
+	otherConds []expression.Expression, joinTypes []JoinType, hintInfo *tableHintInfo, hasOuterJoin bool) {
 	join, isJoin := p.(*LogicalJoin)
 	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
-		return []LogicalPlan{p}, nil, nil, nil
+		return []LogicalPlan{p}, nil, nil, nil, nil, false
 	}
+	if join.preferJoinOrder {
+		hintInfo = join.hintInfo
+	}
+	hasOuterJoin = hasOuterJoin || (join.JoinType != InnerJoin)
 	if join.JoinType != RightOuterJoin {
-		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes := extractJoinGroup(join.children[0])
+		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsHintInfo, lhsHasOuterJoin := extractJoinGroup(join.children[0])
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == LeftOuterJoin {
@@ -65,18 +69,22 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			}
 		}
 		if noExpand {
-			return []LogicalPlan{p}, nil, nil, nil
+			return []LogicalPlan{p}, nil, nil, nil, nil, false
 		}
 		group = append(group, lhsGroup...)
 		eqEdges = append(eqEdges, lhsEqualConds...)
 		otherConds = append(otherConds, lhsOtherConds...)
 		joinTypes = append(joinTypes, lhsJoinTypes...)
+		if hintInfo == nil && lhsHintInfo != nil {
+			hintInfo = lhsHintInfo
+		}
+		hasOuterJoin = hasOuterJoin || lhsHasOuterJoin
 	} else {
 		group = append(group, join.children[0])
 	}
 
 	if join.JoinType != LeftOuterJoin {
-		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes := extractJoinGroup(join.children[1])
+		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsHintInfo, rhsHasOuterJoin := extractJoinGroup(join.children[1])
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == RightOuterJoin {
@@ -99,12 +107,16 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			}
 		}
 		if noExpand {
-			return []LogicalPlan{p}, nil, nil, nil
+			return []LogicalPlan{p}, nil, nil, nil, nil, false
 		}
 		group = append(group, rhsGroup...)
 		eqEdges = append(eqEdges, rhsEqualConds...)
 		otherConds = append(otherConds, rhsOtherConds...)
 		joinTypes = append(joinTypes, rhsJoinTypes...)
+		if hintInfo == nil && rhsHintInfo != nil {
+			hintInfo = rhsHintInfo
+		}
+		hasOuterJoin = hasOuterJoin || rhsHasOuterJoin
 	} else {
 		group = append(group, join.children[1])
 	}
@@ -116,7 +128,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	for range join.EqualConditions {
 		joinTypes = append(joinTypes, join.JoinType)
 	}
-	return group, eqEdges, otherConds, joinTypes
+	return group, eqEdges, otherConds, joinTypes, hintInfo, hasOuterJoin
 }
 
 type joinReOrderSolver struct {
@@ -140,7 +152,7 @@ func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	var err error
 
-	curJoinGroup, eqEdges, otherConds, joinTypes := extractJoinGroup(p)
+	curJoinGroup, eqEdges, otherConds, joinTypes, hintInfo, hasOuterJoin := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
@@ -148,13 +160,6 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				return nil, err
 			}
 		}
-		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-			ctx:        ctx,
-			otherConds: otherConds,
-			eqEdges:    eqEdges,
-			joinTypes:  joinTypes,
-		}
-
 		originalSchema := p.Schema()
 
 		// Not support outer join reorder when using the DP algorithm
@@ -165,7 +170,35 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				break
 			}
 		}
-		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP {
+
+		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
+			ctx:        ctx,
+			otherConds: otherConds,
+			eqEdges:    eqEdges,
+			joinTypes:  joinTypes,
+		}
+
+		joinGroupNum := len(curJoinGroup)
+		useGreedy := joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP
+
+		if hintInfo != nil && hintInfo.leadingJoinOrder != nil {
+			if hasOuterJoin {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable when we have outer join"))
+			} else {
+				if useGreedy {
+					ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, hintInfo)
+					if !ok {
+						ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check if the leading hint table is valid"))
+					} else {
+						curJoinGroup = leftJoinGroup
+					}
+				} else {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable for the DP join reorder algorithm"))
+				}
+			}
+		}
+
+		if useGreedy {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
@@ -215,11 +248,45 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 
 // nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
-	ctx          sessionctx.Context
-	curJoinGroup []*jrNode
-	otherConds   []expression.Expression
-	eqEdges      []*expression.ScalarFunction
-	joinTypes    []JoinType
+	ctx              sessionctx.Context
+	curJoinGroup     []*jrNode
+	otherConds       []expression.Expression
+	eqEdges          []*expression.ScalarFunction
+	joinTypes        []JoinType
+	leadingJoinGroup LogicalPlan
+}
+
+func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *tableHintInfo) (bool, []LogicalPlan) {
+	var leadingJoinGroup []LogicalPlan
+	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
+	copy(leftJoinGroup, curJoinGroup)
+	for _, hintTbl := range hintInfo.leadingJoinOrder {
+		for i, joinGroup := range leftJoinGroup {
+			tableAlias := extractTableAlias(joinGroup, joinGroup.SelectBlockOffset())
+			if tableAlias == nil {
+				continue
+			}
+			if hintTbl.dbName.L == tableAlias.dbName.L && hintTbl.tblName.L == tableAlias.tblName.L && hintTbl.selectOffset == tableAlias.selectOffset {
+				leadingJoinGroup = append(leadingJoinGroup, joinGroup)
+				leftJoinGroup = append(leftJoinGroup[:i], leftJoinGroup[i+1:]...)
+				break
+			}
+		}
+	}
+	if len(leadingJoinGroup) != len(hintInfo.leadingJoinOrder) || leadingJoinGroup == nil {
+		return false, nil
+	}
+	leadingJoin := leadingJoinGroup[0]
+	leadingJoinGroup = leadingJoinGroup[1:]
+	for len(leadingJoinGroup) > 0 {
+		var usedEdges []*expression.ScalarFunction
+		var joinType JoinType
+		leadingJoin, leadingJoinGroup[0], usedEdges, joinType = s.checkConnection(leadingJoin, leadingJoinGroup[0])
+		leadingJoin, s.otherConds = s.makeJoin(leadingJoin, leadingJoinGroup[0], usedEdges, joinType)
+		leadingJoinGroup = leadingJoinGroup[1:]
+	}
+	s.leadingJoinGroup = leadingJoin
+	return true, leftJoinGroup
 }
 
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
