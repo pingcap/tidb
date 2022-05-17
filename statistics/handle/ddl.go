@@ -81,8 +81,8 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		return err
 	}
 	sctx := se.(sessionctx.Context)
-	defer h.pool.Put(se)
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	h.pool.Put(se)
 	globalStats, err := h.TableStatsFromStorage(tblInfo, tableID, true, 0)
 	if err != nil {
 		return err
