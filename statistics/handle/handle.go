@@ -425,7 +425,8 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
-			if (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
+			// partition is not empty but column stats(hist, topn) is missing
+			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				errMsg := fmt.Sprintf("`%s`", tableInfo.Name.L)
 				err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(errMsg)
 				return
