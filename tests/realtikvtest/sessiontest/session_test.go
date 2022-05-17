@@ -3400,7 +3400,8 @@ func TestGlobalVarAccessor(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.autocommit=1")
 
-	require.Error(t, tk.ExecToErr("set global time_zone = 'timezone'"))
+	err = tk.ExecToErr("set global time_zone = 'timezone'")
+	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, variable.ErrUnknownTimeZone))
 }
 
