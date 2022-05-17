@@ -249,9 +249,9 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 
 		switch reorgInfo.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String())).Set(100)
+			metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String())).Set(0)
 		case model.ActionModifyColumn:
-			metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String())).Set(100)
+			metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String())).Set(0)
 		}
 		err1 := w.RemoveDDLReorgHandle(t, job, reorgInfo.elements)
 		if err1 != nil {
