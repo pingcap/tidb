@@ -18,13 +18,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/testkit/testmain"
-	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),

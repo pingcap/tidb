@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
@@ -44,7 +44,7 @@ var _ = flag.String("pd-addrs", "", "workaroundGoCheckFlags: pd-addrs")
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
 
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
