@@ -2193,11 +2193,6 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 		return nil
 	}
 
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		_, err := sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS()
-		return err
-	}
-
 	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
 		return nil
 	}
@@ -2212,6 +2207,12 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 			return err
 		}
 		return nil
+	}
+	// The Repeatable Read transaction use Read Committed level to read data for writing (insert, update, delete, select for update),
+	// We should always update/refresh the for-update-ts no matter the isolation level is RR or RC.
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		_, err = sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS()
+		return err
 	}
 	return UpdateForUpdateTS(b.ctx, 0)
 }
