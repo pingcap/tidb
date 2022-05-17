@@ -2242,3 +2242,48 @@ func TestErrorRollback(t *testing.T) {
 	wg.Wait()
 	tk.MustQuery("select c2 from t_rollback where c1 = 0").Check(testkit.Rows(fmt.Sprint(cnt * num)))
 }
+
+func TestDeletePanic(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("delete from `t` where `c` = ?", 1)
+	tk.MustExec("delete from `t` where `c` = ?", 2)
+}
+
+func TestInformationSchemaCreateTime(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c int)")
+	tk.MustExec(`set @@time_zone = 'Asia/Shanghai'`)
+	ret := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	// Make sure t1 is greater than t.
+	time.Sleep(time.Second)
+	tk.MustExec("alter table t modify c int default 11")
+	ret1 := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	ret2 := tk.MustQuery("show table status like 't'")
+	require.Equal(t, ret2.Rows()[0][11].(string), ret1.Rows()[0][0].(string))
+	typ1, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	require.NoError(t, err)
+	typ2, err := types.ParseDatetime(nil, ret1.Rows()[0][0].(string))
+	require.NoError(t, err)
+	r := typ2.Compare(typ1)
+	require.Equal(t, 1, r)
+	// Check that time_zone changes makes the create_time different
+	tk.MustExec(`set @@time_zone = 'Europe/Amsterdam'`)
+	ret = tk.MustQuery(`select create_time from information_schema.tables where table_name='t'`)
+	ret2 = tk.MustQuery(`show table status like 't'`)
+	require.Equal(t, ret2.Rows()[0][11].(string), ret.Rows()[0][0].(string))
+	typ3, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	require.NoError(t, err)
+	// Asia/Shanghai 2022-02-17 17:40:05 > Europe/Amsterdam 2022-02-17 10:40:05
+	r = typ2.Compare(typ3)
+	require.Equal(t, 1, r)
+}
