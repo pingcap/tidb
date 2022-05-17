@@ -633,7 +633,7 @@ func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, index(a), unique index(b), index idx(a, b));")
 	hook = newCancelJobHook(store, dom, func(job *model.Job) bool {
-		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateNone
+		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
 	dom.DDL().SetHook(hook)
 	tk.MustGetErrCode("alter table t drop index a, drop index b, drop index idx;", errno.ErrCancelledDDLJob)
@@ -1057,6 +1057,17 @@ func TestMultiSchemaChangeNonPublicDefaultValue(t *testing.T) {
 	tk.MustExec("insert into t set a = 10;")
 	tk.MustExec("alter table t add column b int not null, change column a c char(5) first;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("10 0"))
+}
+
+func TestMultiSchemaChangeAlterIndexVisibility(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
+	tk.MustExec("create table t (a int, b int, index idx(b));")
+	tk.MustExec("alter table t add index idx2(a), alter index idx visible;")
+	tk.MustQuery("select * from t use index (idx, idx2);").Check(testkit.Rows( /* no rows */ ))
 }
 
 func composeHooks(dom *domain.Domain, cbs ...ddl.Callback) ddl.Callback {
