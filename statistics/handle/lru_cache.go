@@ -21,8 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 var (
@@ -393,8 +391,6 @@ func (c *innerItemLruCache) evictIfNeeded() {
 		if c.onEvict != nil {
 			c.onEvict(item.tblID)
 		}
-		logutil.BgLogger().Info("stats cache lru got evicted", zap.Int64("table-id", item.tblID),
-			zap.Bool("isIndex", true), zap.Int64("id", item.id))
 		curr = prev
 	}
 }
