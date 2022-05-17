@@ -560,7 +560,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	summary.CollectInt("restore ranges", rangeSize)
 	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
 
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr)
+	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -689,13 +689,15 @@ func filterRestoreFiles(
 
 // restorePreWork executes some prepare work before restore.
 // TODO make this function returns a restore post work.
-func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr) (pdutil.UndoFunc, error) {
+func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, error) {
 	if client.IsOnline() {
 		return pdutil.Nop, nil
 	}
 
-	// Switch TiKV cluster to import mode (adjust rocksdb configuration).
-	client.SwitchToImportMode(ctx)
+	if switchToImport {
+		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
+		client.SwitchToImportMode(ctx)
+	}
 
 	return mgr.RemoveSchedulers(ctx)
 }
