@@ -1609,6 +1609,27 @@ func TestIssue34725(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows())
 }
 
+func TestIssue33628(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(false)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int primary key, b int)`)
+	tk.MustExec(`prepare stmt from "select * from t where a=10"`) // point-get plan
+	tk.MustExec(`execute stmt`)
+	tk.MustExec(`execute stmt`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
 func TestIssue28942(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
