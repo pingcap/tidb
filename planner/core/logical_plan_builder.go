@@ -76,6 +76,8 @@ const (
 
 	// HintStraightJoin causes TiDB to join tables in the order in which they appear in the FROM clause.
 	HintStraightJoin = "straight_join"
+	// HintLeading specifies the set of tables to be used as the prefix in the execution plan.
+	HintLeading = "leading"
 
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
@@ -554,7 +556,7 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	return nil
 }
 
-func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
+func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo == nil {
 		return
 	}
@@ -594,8 +596,12 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
+	// set the join order
+	if hintInfo.leadingJoinOrder != nil {
+		p.preferJoinOrder = hintInfo.matchTableName([]*hintTableInfo{lhsAlias, rhsAlias}, hintInfo.leadingJoinOrder)
+	}
 	// set hintInfo for further usage if this hint info can be used.
-	if p.preferJoinType != 0 {
+	if p.preferJoinType != 0 || p.preferJoinOrder {
 		p.hintInfo = hintInfo
 	}
 }
@@ -767,7 +773,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	}
 
 	// Set preferred join algorithm if some join hints is specified by user.
-	joinPlan.setPreferredJoinType(b.TableHints())
+	joinPlan.setPreferredJoinTypeAndOrder(b.TableHints())
 
 	// "NATURAL JOIN" doesn't have "ON" or "USING" conditions.
 	//
@@ -3511,12 +3517,14 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		aggHints                                                                        aggHintInfo
 		timeRangeHint                                                                   ast.HintTimeRange
 		limitHints                                                                      limitHintInfo
+		leadingJoinOrder                                                                []hintTableInfo
+		leadingHintCnt                                                                  int
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
-			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintIndexMerge:
+			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				b.pushHintWithoutTableWarning(hint)
 				continue
@@ -3613,9 +3621,21 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		case HintLimitToCop:
 			limitHints.preferLimitToCop = true
+		case HintLeading:
+			if leadingHintCnt == 0 {
+				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			}
+			leadingHintCnt++
 		default:
 			// ignore hints that not implemented
 		}
+	}
+	if leadingHintCnt > 1 {
+		// If there are more leading hints, all leading hints will be invalid.
+		leadingJoinOrder = leadingJoinOrder[:0]
+		// Append warning if there are invalid index names.
+		errMsg := "We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 		sortMergeJoinTables:       sortMergeTables,
@@ -3629,6 +3649,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		indexMergeHintList:        indexMergeHintList,
 		timeRangeHint:             timeRangeHint,
 		limitHints:                limitHints,
+		leadingJoinOrder:          leadingJoinOrder,
 	})
 }
 
@@ -3649,6 +3670,7 @@ func (b *PlanBuilder) popTableHints() {
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintBCJ, TiDBBroadCastJoin, hintInfo.broadcastJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintLeading, "", hintInfo.leadingJoinOrder)
 	b.appendUnmatchedStorageHintWarning(hintInfo.tiflashTables, hintInfo.tikvTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
 }
