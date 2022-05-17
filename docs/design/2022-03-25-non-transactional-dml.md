@@ -27,7 +27,7 @@ For example, `BATCH ON a LIMIT 1000 DELETE FROM t` can be transformed into `DELE
 
 Users need to do a bulk delete or update using a single statement, while currently TiDB cannot satisfy the requirement because of the performance issue, transaction size limit, and compatibility issues with tools.
 
-A new syntax is proposed to work around the problem. A non-transactional DML contains a DML and information that are used to "split" the statement, thus it is equivalent to a sequence of DMLs which is not transactional since it does not provide atomicity and probably isolation.
+A new syntax is proposed to work around the problem. A non-transactional DML contains a DML and information that are used to "split" the statement, thus it is equivalent to a sequence of DMLs are not transactional since it does not provide atomicity and probably isolation.
 
 Different from the deprecated batch-DML, a non-transactional DML splits SQLs so every split SQL is a normal statement and does not risk data-index consistency.
 
@@ -42,7 +42,7 @@ The syntax:
 
 In the first step only `DELETE` is going to be supported, but `UPDATE` and `INSERT INTO SELECT` are also worth considering.
 
-The split column must be indexed. There are no other constraints on the DML.
+For performance consideration, the shard column must be indexed. 
 
 There can be dry run syntax to show the actual SQLs that will be executed. Query plans are not returned since there is no elegant way to contain both a SQL and a plan in a result set. 
 - `BATCH ON <column_name> LIMIT <batch_size> DRY RUN QUERY <DML>` outputs the `SELECT` statement that will be executed.
@@ -53,12 +53,11 @@ There can be dry run syntax to show the actual SQLs that will be executed. Query
 Users get feedback from SQL return values, logs and process infos.
 
 If all split statement succeed, the non-transactional DML returns a summary: the number of split statements and a success message. 
-If any of the split statement fails, the non-transactional DML returns the details and error messages of all failed jobs. 
-If the non-transactional DML is aborted, e.g. by `KILL TIDB`, it returns the error of context cancellation, and output details of failed jobs in logs.
+If the non-transactional DML is aborted, e.g. by `KILL TIDB`, it returns the error of context cancellation, and output details of failed jobs in logs if there is any.
 
 The `info` field in process info describes not only the current SQL that is executing, but also the progress of all jobs.
 Logs, slow logs and statement summaries will also contain the progress in the SQL text. 
-For example, a split delete statement in slow queries can be like ``/* job 11/41 */: DELETE FROM `test`.`t` WHERE `id` BETWEEN xxx AND yyy;``,
+For example, a split delete statement in slow queries can be like ``/* job 11/41 */DELETE FROM `test`.`t` WHERE `id` BETWEEN xxx AND yyy;``,
 where 11 and 41 are the current job ID and the number of total jobs respectively.
 
 Each split statement logs its detail in the INFO level as well.
@@ -67,11 +66,11 @@ Each split statement logs its detail in the INFO level as well.
 
 Different from most of the statements, the non-transactional DML is handled at the session level. 
 
-Non-transactional statements are treated as `SimplePlan`s and we won't compile them. In `runStmt`, instead of `s.Exec` for most plans, `handleNontransactionalDML` will be called. In `handleNontransactionalDML`, we will split the DML into multiple statements and execute them one by one using `Session.ExecuteStatement`.
+Non-transactional statements are treated as `SimplePlan`s and we won't compile them. In `TiDBContext.ExecuteStmt`, instead of `Session.ExecuteStmt` for most types of statements, `HandleNontransactionalDML` will be called. In `HandleNontransactionalDML`, we will split the DML into multiple statements and execute them one by one using `Session.ExecuteStatement`.
 
 ### How the split works
 
-To find the split keys, a `SELECT` is used to read the split column specified by the user. For example, for `BATCH ON a LIMIT 1000 DELETE FROM t WHERE b < 1000`, the select statement would look like: `SELECT a FROM t WHERE b < 1000 ORDER BY ISNULL(a,0,1), a`. It assures that NULL values are put in the first places. The result set could be large, but we don't need all of them, so results are batched until the size of the batch is greater than or equal to the specified `batchSize`. The interaction of any two batches must be none, since we use `BETWEEN` clauses to split the statement. Only the first and last elements of each batch are kept, thus forming a job. A job specifies a range in the specified column.
+To find the split keys, a `SELECT` is used to read the shard column specified by the user. For example, for `BATCH ON a LIMIT 1000 DELETE FROM t WHERE b < 1000`, the select statement would look like: `SELECT a FROM t WHERE b < 1000 ORDER BY ISNULL(a,0,1), a`. It assures that NULL values are put in the first places. The result set could be large, but we don't need all of them, so results are batched until the size of the batch is greater than or equal to the specified `batchSize`. The interaction of any two batches must be none, since we use `BETWEEN` clauses to split the statement. Only the first and last elements of each batch are kept, thus forming a job. A job specifies a range in the specified column.
 
 Theoretically, jobs can be executed in parallel, but that would require multiple sessions to execute them. There are two kinds of sessions in TiDB: user sessions that must be bound to client connections in a 1-on-1 manner, and internal sessions. Both kinds of sessions are inappropriate for the split statements, so in favor of maintenance, only the current user session will be used to execute the jobs, which is serial. In this way, the main benefit of a non-transactional DML is to overcome the transaction size limit, instead of performance superiority.
 
@@ -81,7 +80,9 @@ a job `{start:1, end:1000}` generates a split SQL `DELETE FROM t WHERE (a BETWEE
 
 ### Error handling
 
-A non-transactional statement obviously cannot roll back, so when one of the split statements fails, it just collects the error and continue on the job until all jobs are finished. At last, a set of errors (if there are) are returned to the user. Users may decide how to deal with these errors.
+A non-transactional statement obviously cannot roll back, when one of the split statement fails, a system variable `tidb_nontransactional_ignore_error` controls what happens next:
+- If `tidb_nontransactional_ignore_error=0`, the non-transactional DML cancels all following jobs and returns an error immediately.
+- Otherwise, the non-transactional DML continues until finishing all jobs and returns the details and error messages of all failed jobs.
 
 If the statement is aborted by the user, it should report its progress and return the errors it has collected.
 
@@ -97,12 +98,14 @@ there are several constraints on the DML.
 Take non-transactional `DELETE` for example, only the `WHERE` clause in the delete statement is supported. 
 `ORDER BY` or `LIMIT` clauses are ignored and will not take effect. An error will be returned if the DML contains them.
 
+There may be other constraints or incompatibilities. They will be demonstrated in the official documentation of the feature. 
+
 ## Test Design
 
 ### Functional Tests
 
 - non-transactional delete can delete everything it should delete, and don't delete anything it should not
-    - multiple split column types: int, varchar(with or without new collation), timestamp, double, decimal
+    - multiple shard column types: int, varchar(with or without new collation), timestamp, double, decimal
     - different delete statements:
         - syntax: `DELETE FROM t`, `DELETE t FROM`
         - table aliases
