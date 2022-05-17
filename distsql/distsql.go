@@ -16,6 +16,7 @@ package distsql
 
 import (
 	"context"
+	"strconv"
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -32,17 +34,18 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/metadata"
 )
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+	ctx = SetTiFlashMaxThreadsInContext(ctx, sctx)
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
-
 	encodeType := tipb.EncodeType_TypeDefault
 	if canUseChunkRPC(sctx) {
 		encodeType = tipb.EncodeType_TypeChunk
@@ -97,6 +100,11 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		EventCb:                    eventCb,
 		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo,
 	}
+
+	if kvReq.StoreType == kv.TiFlash {
+		ctx = SetTiFlashMaxThreadsInContext(ctx, sctx)
+	}
+
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -139,6 +147,14 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		storeType:  kvReq.StoreType,
 		paging:     kvReq.Paging,
 	}, nil
+}
+
+// SetTiFlashMaxThreadsInContext set the config TiFlash max threads in context.
+func SetTiFlashMaxThreadsInContext(ctx context.Context, sctx sessionctx.Context) context.Context {
+	if sctx.GetSessionVars().TiFlashMaxThreads != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashThreads, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxThreads, 10))
+	}
+	return ctx
 }
 
 // SelectWithRuntimeStats sends a DAG request, returns SelectResult.
