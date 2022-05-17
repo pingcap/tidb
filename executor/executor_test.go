@@ -5449,7 +5449,6 @@ func TestHistoryReadInTxn(t *testing.T) {
 					for _, sql := range notAllowedSQLs {
 						err := tk.ExecToErr(sql)
 						require.Errorf(t, err, "can not execute write statement when 'tidb_snapshot' is set")
-						time.Sleep(100 * time.Millisecond)
 					}
 				}
 
