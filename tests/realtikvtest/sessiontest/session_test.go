@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2208,4 +2209,36 @@ func TestSetGlobalTZ(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
+}
+
+func TestErrorRollback(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_rollback")
+	tk.MustExec("create table t_rollback (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("insert into t_rollback values (0, 0)")
+
+	var wg sync.WaitGroup
+	cnt := 4
+	wg.Add(cnt)
+	num := 20
+
+	for i := 0; i < cnt; i++ {
+		go func() {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@session.tidb_retry_limit = 100")
+			for j := 0; j < num; j++ {
+				_, _ = tk.Exec("insert into t_rollback values (1, 1)")
+				tk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")
+			}
+		}()
+	}
+
+	wg.Wait()
+	tk.MustQuery("select c2 from t_rollback where c1 = 0").Check(testkit.Rows(fmt.Sprint(cnt * num)))
 }

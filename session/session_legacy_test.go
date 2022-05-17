@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -183,33 +182,6 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
 		}
 	}
-}
-
-func (s *testSessionSuite2) TestErrorRollback(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t_rollback")
-	tk.MustExec("create table t_rollback (c1 int, c2 int, primary key(c1))")
-	tk.MustExec("insert into t_rollback values (0, 0)")
-
-	var wg sync.WaitGroup
-	cnt := 4
-	wg.Add(cnt)
-	num := 20
-
-	for i := 0; i < cnt; i++ {
-		go func() {
-			defer wg.Done()
-			localTk := testkit.NewTestKitWithInit(c, s.store)
-			localTk.MustExec("set @@session.tidb_retry_limit = 100")
-			for j := 0; j < num; j++ {
-				localTk.Exec("insert into t_rollback values (1, 1)")
-				localTk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")
-			}
-		}()
-	}
-
-	wg.Wait()
-	tk.MustQuery("select c2 from t_rollback where c1 = 0").Check(testkit.Rows(fmt.Sprint(cnt * num)))
 }
 
 func (s *testSessionSuite) TestQueryString(c *C) {
