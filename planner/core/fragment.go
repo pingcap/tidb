@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -55,26 +56,20 @@ type tasksAndFrags struct {
 }
 
 type mppTaskGenerator struct {
-	ctx       sessionctx.Context
-	startTS   uint64
-	is        infoschema.InfoSchema
-	frags     []*Fragment
-	cache     map[int]tasksAndFrags
-	storeType kv.StoreType
+	ctx     sessionctx.Context
+	startTS uint64
+	is      infoschema.InfoSchema
+	frags   []*Fragment
+	cache   map[int]tasksAndFrags
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context,
-	startTs uint64,
-	sender *PhysicalExchangeSender,
-	is infoschema.InfoSchema,
-	storeType kv.StoreType) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
 	g := &mppTaskGenerator{
-		ctx:       ctx,
-		startTS:   startTs,
-		is:        is,
-		cache:     make(map[int]tasksAndFrags),
-		storeType: storeType,
+		ctx:     ctx,
+		startTS: startTs,
+		is:      is,
+		cache:   make(map[int]tasksAndFrags),
 	}
 	return g.generateMPPTasks(sender)
 }
@@ -351,7 +346,12 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		ttl = 30 * time.Second
 	}
 
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl, e.storeType)
+	// If tidb_isolation_read_engine is "tiflash_mpp", then tasks will only be sent to ReadNodes.
+	storeType, err := variable.GetTiFlashEngine(e.ctx.GetSessionVars().GetIsolationReadEngines())
+	if err != nil {
+		return nil, err
+	}
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl, storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -289,8 +289,15 @@ const (
 	TiFlash
 	// TiDB means the type of a store is TiDB.
 	TiDB
+
 	// TiFlashMPP means tiflash ReadNodes.
+	// WATCHOUT: This label should only be used:
+	// 	1. sysvar.go: when user set tidb_isolation_read_engines.
+	// 	2. coprocessor.go/mpp.go: when send copTask/batchCopTask/mppTask to tiflash.
+	// Other modules in TiDB should only use kv.TiFlash, e.g., they don't distinguish ReadNodes/WriteNodes.
+	// So a lot of unnecessary modifications can be omitted.
 	TiFlashMPP
+
 	// UnSpecified means the store type is unknown
 	UnSpecified = 255
 )

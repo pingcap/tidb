@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -314,12 +315,22 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	return result, nil
 }
 
-func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges []*ranger.Range) ([]*kv.Request, error) {
+func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges []*ranger.Range) (_ []*kv.Request, err error) {
 	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
 	if err != nil {
 		return nil, err
 	}
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
+
+	// If storeType is TiFlash and tidb_isolation_read_engine is "tiflash_mpp",
+	// then kvReq wil only be sent to tiflash_mpp nodes.
+	storeType := e.storeType
+	if storeType == kv.TiFlash {
+		storeType, err = variable.GetTiFlashEngine(e.ctx.GetSessionVars().GetIsolationReadEngines())
+		if err != nil {
+			return nil, err
+		}
+	}
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
 		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
@@ -337,7 +348,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(e.memTracker).
-			SetStoreType(e.storeType).
+			SetStoreType(storeType).
 			SetAllowBatchCop(e.batchCop).Build()
 		if err != nil {
 			return nil, err

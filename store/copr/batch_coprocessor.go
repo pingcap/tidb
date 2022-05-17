@@ -554,8 +554,8 @@ func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer, store *kvStore
 }
 
 // 1. Split range by region location to build copTasks.
-// 2. Get all mpp nodes, using hash(copTask.reginoID) to decide which mpp node this copTask will be dispatched to.
-// 3. copTasks that is sent to the same node will be put into one batchCopTask.
+// 2. For each copTask build its rpcCtx , the target ReadNode will be computed using consistent hash.
+// 3. All copTasks that will be sent to one ReadNode are put in one batchCopTask.
 func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType) (res []*batchCopTask, err error) {
 	const cmdType = tikvrpc.CmdBatchCop
 	var retryNum int
@@ -595,7 +595,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 			return nil, err
 		}
 		if rpcCtxs == nil {
-			// retry
+			// Retry.
 			continue
 		}
 		if len(rpcCtxs) != len(tasks) {
@@ -603,14 +603,25 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 		}
 		taskMap := make(map[string]*batchCopTask)
 		for i, rpcCtx := range rpcCtxs {
-			if batchCopTask, ok := taskMap[rpcCtx.Addr]; ok {
-				batchCopTask.regionInfos = append(batchCopTask.regionInfos, RegionInfo{
-					Region:         tasks[i].region,
-					Meta:           rpcCtx.Meta,
-					Ranges:         tasks[i].ranges,
-					AllStores:      []uint64{rpcCtx.Store.StoreID()},
-					PartitionIndex: tasks[i].partitionIndex,
-				})
+			regionInfo := RegionInfo{
+				// tasks and rpcCtxs are correspond to each other.
+				Region:         tasks[i].region,
+				Meta:           rpcCtx.Meta,
+				Ranges:         tasks[i].ranges,
+				AllStores:      []uint64{rpcCtx.Store.StoreID()},
+				PartitionIndex: tasks[i].partitionIndex,
+			}
+			if batchTask, ok := taskMap[rpcCtx.Addr]; ok {
+				batchTask.regionInfos = append(batchTask.regionInfos, regionInfo)
+			} else {
+				batchTask := &batchCopTask{
+					storeAddr:   rpcCtx.Addr,
+					cmdType:     cmdType,
+					ctx:         rpcCtx,
+					regionInfos: []RegionInfo{regionInfo},
+				}
+				taskMap[rpcCtx.Addr] = batchTask
+				res = append(res, batchTask)
 			}
 		}
 		break

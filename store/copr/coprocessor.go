@@ -881,7 +881,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *ti
 			}
 
 			err1 := errors.Errorf("recv stream response error: %v, task: %s", err, task)
-			if task.storeType == kv.TiFlash {
+			if task.storeType == kv.TiFlash || task.storeType == kv.TiFlashMPP {
 				err1 = bo.Backoff(tikv.BoTiFlashRPC(), err1)
 			} else {
 				err1 = bo.Backoff(tikv.BoTiKVRPC(), err1)

@@ -3266,7 +3266,6 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		storeType:    v.StoreType,
 	}
 	return gather
 }

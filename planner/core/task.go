@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1981,15 +1980,9 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender.SetChildren(t.p)
 	sender.cost = t.cost()
 
-	eng, err := variable.GetTiFlashEngine(ctx.GetSessionVars().GetIsolationReadEngines())
-	if err != nil {
-		// This may never happen, because we have already checked if it's valid when user set this sys var.
-		logutil.BgLogger().Error("unexpect tiflash engine", zap.Error(err))
-		return nil
-	}
 	p := PhysicalTableReader{
 		tablePlan: sender,
-		StoreType: eng,
+		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
 	collectPartitionInfosFromMPPPlan(p, t.p)
