@@ -3239,3 +3239,58 @@ PARTITION BY RANGE ( a ) (
 	tbl = h.GetTableStats(tableInfo)
 	require.Equal(t, 3, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
 }
+
+func TestAnalyzePartitionUnderV1Dynamic(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
+PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20)
+)`
+	tk.MustExec(createTable)
+	tk.MustExec("insert into t values (1,1,1,1),(2,1,2,2),(3,1,3,3),(4,1,4,4),(5,1,5,5),(6,1,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9)")
+	tk.MustExec("insert into t values (10,10,10,10),(11,11,11,11),(12,12,12,12),(13,13,13,13),(14,14,14,14)")
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	is := dom.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+
+	// analyze partition with index and with options are allowed under dynamic V1
+	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build table: `t` index: `idx` global-level stats failed due to missing partition-level stats",
+	))
+	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	tbl := h.GetTableStats(tableInfo)
+	lastVersion := tbl.Version
+	require.Equal(t, 3, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
+	require.Equal(t, 3, len(tbl.Columns[tableInfo.Columns[3].ID].Buckets))
+
+	tk.MustExec("analyze table t partition p1 index idx with 1 topn, 2 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tbl = h.GetTableStats(tableInfo)
+	require.Greater(t, tbl.Version, lastVersion)
+	require.Equal(t, 2, len(tbl.Indices[tableInfo.Indices[0].ID].Buckets))
+}
