@@ -99,5 +99,72 @@
       "select /*+ leading(t3, t1, t2) */ * from ((select /*+ leading(t6, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
       "select /*+ leading(t3, t4) */ * from ((select /*+ leading(t5, t7, t8) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;"
     ]
+  },
+  {
+    "name": "TestJoinOrderHint",
+    "cases": [
+      // test cases for using the join order hint and join algorithm hint
+      "select /*+ straight_join() hash_join(t) */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() merge_join(t1) */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t1) hash_join(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2) hash_join(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t1) merge_join(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t1) merge_join(t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;"
+    ]
+  },
+  {
+    "name": "TestJoinOrderHint4StaticPartitionTable",
+    "cases": [
+      "select /*+ straight_join() */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;"
+    ]
+  },
+  {
+    "name": "TestJoinOrderHint4DynamicPartitionTable",
+    "cases": [
+      "select /*+ straight_join() */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;"
+    ]
+  },
+  {
+    "name": "TestJoinOrderHint4DifferentJoinType",
+    "cases": [
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a cross join t3",
+
+      // inner join
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+
+      // left outer join
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+
+      // right outer join
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+
+      // cross join
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a cross join t3"
+    ]
   }
 ]

@@ -129,12 +129,69 @@ func TestJoinOrderHint(t *testing.T) {
 	tk.MustExec("select /*+ straight_join() leading(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
 
-	// test cases for using the join order hint and join algorithm hint
-	tk.MustExec("select /*+ straight_join()  */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
+	// more join order hints appear in the same time
+	tk.MustExec("select /*+ leading(t1) leading(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 
-	tk.MustExec("select /*+ straight_join() leading(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
+	tk.MustExec("select /*+ leading(t1) leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
+
+	tk.MustExec("select /*+ straight_join() straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 STRAIGHT_JOIN() is defined more than once, only the last definition takes effect"))
+
+	// test cases for table name in hint
+	// the same table appears in the leading hint
+	tk.MustExec("select /*+ leading(t1, t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 There are no matching table names for (t1) in optimizer hint /*+ LEADING(t1, t1) */. Maybe you can use the table alias name",
+		"Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"))
+
+	tk.MustExec("select /*+ leading(t1, t2, t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 There are no matching table names for (t1) in optimizer hint /*+ LEADING(t1, t2, t1) */. Maybe you can use the table alias name",
+		"Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"))
+
+	// the wrong table appears in the leading hint
+	tk.MustExec("select /*+ leading(t) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 There are no matching table names for (t) in optimizer hint /*+ LEADING(t) */. Maybe you can use the table alias name"))
+
+	tk.MustExec("select /*+ leading(t1, t2, t) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 There are no matching table names for (t) in optimizer hint /*+ LEADING(t1, t2, t) */. Maybe you can use the table alias name",
+		"Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"))
+
+	// table alias in the leading hint
+	tk.MustExec("select /*+ leading(t) */ * from t1 t join t2 on t.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("select /*+ leading(t1) */ * from t1 t join t2 on t.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 There are no matching table names for (t1) in optimizer hint /*+ LEADING(t1) */. Maybe you can use the table alias name"))
+
+	tk.MustExec("select /*+ leading(t2, t) */ * from t1 t join t2 on t.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("select /*+ leading(t2, t1) */ * from t1 t join t2 on t.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 There are no matching table names for (t1) in optimizer hint /*+ LEADING(t2, t1) */. Maybe you can use the table alias name",
+		"Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"))
+
+	// conflict between table names
+	tk.MustExec("select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
+
+	tk.MustExec("select /*+ leading(t1, t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
+
+	// table name in leading hint cross query block
+	// Todo: Can not handle this case yet. Because when we extract the join group, it will get the join group {t1, t2, t3}.
+	// So the table 't4' can not be used.
+	tk.MustExec("select /*+ leading(t4) */ * from (select t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"))
+
+	tk.MustExec("select /*+ leading(t3, t2@sel_2) */ * from (select t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name"))
+
+	tk.MustExec("select * from (select /*+ leading(t1, t3@sel_1) */ t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name"))
+
+	tk.MustExec("select /*+ leading(t3) */ * from (select /*+ leading(t1) */ t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint")
 }
@@ -172,4 +229,57 @@ func TestJoinOrderHintWithBinding(t *testing.T) {
 	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) join `test` . `t3` on `t2` . `b` = `t3` . `b`")
 
 	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+}
+
+func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec(`create table t(a int, b int) partition by hash(a) partitions 3`)
+	tk.MustExec(`create table t1(a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table t2(a int, b int) partition by hash(a) partitions 5`)
+	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
+
+	tk.MustExec(`set @@tidb_partition_prune_mode="static"`)
+	runJoinReorderTestData(t, tk, "TestJoinOrderHint4StaticPartitionTable")
+}
+
+func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec(`create table t(a int, b int) partition by hash(a) partitions 3`)
+	tk.MustExec(`create table t1(a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table t2(a int, b int) partition by hash(a) partitions 5`)
+	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
+
+	tk.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
+	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DynamicPartitionTable")
+}
+
+func TestJoinOrderHint4DifferentJoinType(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	tk.MustExec("create table t5(a int, b int, key(a));")
+	tk.MustExec("create table t6(a int, b int, key(a));")
+	tk.MustExec("create table t7(a int, b int, key(a));")
+	tk.MustExec("create table t8(a int, b int, key(a));")
+
+	// inner join and outer join have already been tested.
+	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DifferentJoinType")
 }
