@@ -18,14 +18,8 @@ import (
 )
 
 // EncodingLatin1Impl is the instance of encodingLatin1.
-// In TiDB, latin1 is an alias for utf8, so uses utf8mb3 implementation for latin1.
-var EncodingLatin1Impl = &encodingUTF8MB3Strict{
-	encodingUTF8{
-		encodingBase{
-			enc: encoding.Nop,
-		},
-	},
-}
+// In TiDB, latin1 is an alias for utf8, so uses utf8 implementation for latin1.
+var EncodingLatin1Impl = &encodingLatin1{encodingUTF8{encodingBase{enc: encoding.Nop}}}
 
 func init() {
 	EncodingLatin1Impl.self = EncodingLatin1Impl
@@ -33,7 +27,7 @@ func init() {
 
 // encodingLatin1 compatibles with latin1 in old version TiDB.
 type encodingLatin1 struct {
-	encodingUTF8MB3Strict
+	encodingUTF8
 }
 
 // Name implements Encoding interface.
