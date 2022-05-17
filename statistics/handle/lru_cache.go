@@ -16,13 +16,13 @@ package handle
 
 import (
 	"container/list"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"math"
 	"sync"
 
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
