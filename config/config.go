@@ -491,15 +491,14 @@ const (
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable         bool     `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA                  string   `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert                string   `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey                 string   `toml:"ssl-key" json:"ssl-key"`
-	RequireSecureTransport bool     `toml:"require-secure-transport" json:"require-secure-transport"`
-	ClusterSSLCA           string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert         string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey          string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
-	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	SkipGrantTable  bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA           string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert         string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey          string   `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA    string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
@@ -932,6 +931,7 @@ var deprecatedConfig = map[string]struct{}{
 	"alter-primary-key":                  {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":                   {},
 	"performance.mem-profile-interval":   {},
+	"require-secure-transport":           {},
 	"lower-case-table-names":             {},
 	"stmt-summary":                       {},
 	"stmt-summary.enable":                {},

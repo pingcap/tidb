@@ -215,6 +215,9 @@ const (
 
 	// TiDBSysdateIsNow is the name of the `tidb_sysdate_is_now` system variable
 	TiDBSysdateIsNow = "tidb_sysdate_is_now"
+
+	// RequireSecureTransport indicates the secure mode for data transport
+	RequireSecureTransport = "require_secure_transport"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -862,6 +865,7 @@ const (
 	DefTiDBStatsCacheMemQuota                    = 0
 	MaxTiDBStatsCacheMemQuota                    = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                        = 4096
+	DefRequireSecureTransport                    = false
 	DefTiDBCommitterConcurrency                  = 128
 	DefTiDBBatchDMLIgnoreError                   = false
 	DefTiDBMemQuotaAnalyze                       = -1
