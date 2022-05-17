@@ -1506,6 +1506,10 @@ func (s *SessionVars) IsIsolation(isolation string) bool {
 
 // IsolationLevelForNewTxn returns the isolation level if we want to enter a new transaction
 func (s *SessionVars) IsolationLevelForNewTxn() string {
+	if s.InTxn() {
+		s.SetTxnIsolationLevelOneShotStateForNextTxn()
+	}
+
 	isolation := ""
 	if s.txnIsolationLevelOneShot.state == oneShotUse {
 		isolation = s.txnIsolationLevelOneShot.value
