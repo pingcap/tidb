@@ -1047,7 +1047,7 @@ type Column struct {
 	Histogram
 	*CMSketch
 	*TopN
-	*FMSketch
+	FMSketch   *FMSketch
 	PhysicalID int64
 	Count      int64
 	Info       *model.ColumnInfo
