@@ -426,14 +426,9 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 }
 
 func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName string, statsTbl *statistics.Table) {
-	if statsTbl.Pseudo {
+	healthy, ok := statsTbl.GetStatsHealthy()
+	if !ok {
 		return
-	}
-	var healthy int64
-	if statsTbl.ModifyCount < statsTbl.Count {
-		healthy = int64((1.0 - float64(statsTbl.ModifyCount)/float64(statsTbl.Count)) * 100.0)
-	} else if statsTbl.ModifyCount == 0 {
-		healthy = 100
 	}
 	e.appendRow([]interface{}{
 		dbName,

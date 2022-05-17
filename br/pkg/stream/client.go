@@ -270,6 +270,25 @@ func (t *Task) MinNextBackupTS(ctx context.Context, store uint64) (uint64, error
 	return nextBackupTS, nil
 }
 
+// GetGlobalCheckPointTS gets the global checkpoint timestamp according to log task.
+func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
+	checkPointMap, err := t.NextBackupTSList(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	initialized := false
+	checkpoint := t.Info.StartTs
+	for _, ts := range checkPointMap {
+		if !initialized || ts < checkpoint {
+			initialized = true
+			checkpoint = ts
+		}
+	}
+
+	return checkpoint, nil
+}
+
 // Step forwards the progress (next_backup_ts) of some region.
 // The task should be done by TiKV. This function should only be used for test cases.
 func (t *Task) Step(ctx context.Context, store uint64, ts uint64) error {
