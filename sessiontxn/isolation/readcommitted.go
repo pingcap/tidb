@@ -39,12 +39,19 @@ type stmtState struct {
 	stmtTS         uint64
 	stmtTSFuture   oracle.Future
 	stmtHasError   bool
+	onNextRetry    func() error
 }
 
-func (s *stmtState) retry() {
+func (s *stmtState) retry() error {
+	onNextRetry := s.onNextRetry
 	*s = stmtState{
 		stmtInfoSchema: s.stmtInfoSchema,
 	}
+
+	if onNextRetry != nil {
+		return onNextRetry()
+	}
+	return nil
 }
 
 // PessimisticRCTxnContextProvider provides txn context for isolation level read-committed
@@ -148,8 +155,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point session
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
-	p.stmtState.retry()
-	return p.prepareStmtTS()
+	return p.stmtState.retry()
 }
 
 // Advise is used to give advice to provider
@@ -317,5 +323,12 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 	if !retryable {
 		return sessiontxn.ErrorAction(lockErr)
 	}
+
+	// When lock error the ts should be initialized immediately when retry
+	p.onNextRetry = func() error {
+		_, err := p.getStmtTS()
+		return err
+	}
+
 	return sessiontxn.RetryReady()
 }
