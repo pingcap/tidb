@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"math"
 	"sync/atomic"
 	"time"
@@ -176,24 +177,50 @@ type PSTMTPlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
+<<<<<<< HEAD
 	UserVarTypes      FieldSlice
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
 func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType) *PSTMTPlanCacheValue {
+=======
+	TxtVarTypes       FieldSlice // variable types under text protocol
+	BinVarTypes       []byte     // variable types under binary protocol
+	IsBinProto        bool       // whether this plan is under binary protocol
+	BindSQL           string
+}
+
+func (v *PlanCacheValue) varTypesUnchanged(binVarTps []byte, txtVarTps []*types.FieldType) bool {
+	if v.IsBinProto {
+		return bytes.Equal(v.BinVarTypes, binVarTps)
+	}
+	return v.TxtVarTypes.CheckTypesCompatibility4PC(txtVarTps)
+}
+
+// NewPlanCacheValue creates a SQLCacheValue.
+func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
+	isBinProto bool, binVarTypes []byte, txtVarTps []*types.FieldType, bindSQL string) *PlanCacheValue {
+>>>>>>> 0ac659b4f... planner: fix the issue that the optimizer caches wrong TableDual plans under binary protocol (#34709)
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userVarTypes := make([]types.FieldType, len(userVarTps))
-	for i, tp := range userVarTps {
+	userVarTypes := make([]types.FieldType, len(txtVarTps))
+	for i, tp := range txtVarTps {
 		userVarTypes[i] = *tp
 	}
 	return &PSTMTPlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
+<<<<<<< HEAD
 		UserVarTypes:      userVarTypes,
+=======
+		TxtVarTypes:       userVarTypes,
+		BinVarTypes:       binVarTypes,
+		IsBinProto:        isBinProto,
+		BindSQL:           bindSQL,
+>>>>>>> 0ac659b4f... planner: fix the issue that the optimizer caches wrong TableDual plans under binary protocol (#34709)
 	}
 }
 
