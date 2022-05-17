@@ -15,6 +15,8 @@
 package core_test
 
 import (
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -273,6 +275,35 @@ func TestJoinOrderHint4DifferentJoinType(t *testing.T) {
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
 
-	// inner join and outer join have already been tested.
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DifferentJoinType")
+}
+
+func TestJoinOrderHint4TiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		tableName := tblInfo.Name.L
+		if tableName == "t" || tableName == "t1" || tableName == "t2" || tableName == "t3" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	runJoinReorderTestData(t, tk, "TestJoinOrderHint4TiFlash")
 }
