@@ -19,13 +19,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -81,7 +81,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		return err
 	}
 	sctx := se.(sessionctx.Context)
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	h.pool.Put(se)
 	globalStats, err := h.TableStatsFromStorage(tblInfo, tableID, true, 0)
 	if err != nil {
