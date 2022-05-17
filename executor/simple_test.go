@@ -597,7 +597,7 @@ func TestKillStmt(t *testing.T) {
 
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
-	newCfg.Experimental.EnableGlobalKill = true
+	newCfg.EnableGlobalKill = true
 	config.StoreGlobalConfig(&newCfg)
 
 	// ZERO serverID, treated as truncated.
