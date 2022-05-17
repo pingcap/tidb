@@ -1475,15 +1475,15 @@ func TestInvisibleCoprCacheConfig(t *testing.T) {
 	require.Equal(t, true, strings.Contains(configValue, coprCacheVal))
 }
 
-func TestInvisibleGlobalKillConfig(t *testing.T) {
+func TestEnableGlobalKillConfig(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show variables like '%config%'").Rows()
 	require.Equal(t, 1, len(rows))
 	configValue := rows[0][1].(string)
-	globalKillVal := "global-kill"
-	require.Equal(t, false, strings.Contains(configValue, globalKillVal))
+	globalKillVal := "\"enable-global-kill\": true"
+	require.True(t, strings.Contains(configValue, globalKillVal))
 }
 
 func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {

@@ -398,8 +398,8 @@ func (importer *FileImporter) ImportKVFiles(
 		logutil.Key("startKey", startKey),
 		logutil.Key("endKey", endKey))
 
-	rs := utils.InitialRetryState(16, 100*time.Millisecond, 4*time.Second)
-	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, rs)
+	rs := utils.InitialRetryState(32, 100*time.Millisecond, 8*time.Second)
+	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, &rs)
 	err = ctl.Run(ctx, func(ctx context.Context, r *RegionInfo) RPCResult {
 		return importer.ImportKVFileForRegion(ctx, file, rule, restoreTs, r)
 	})
@@ -849,7 +849,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		return RPCResultFromError(errors.Trace(err))
 	}
 	if resp.GetError() != nil {
-		logutil.CL(ctx).Warn("backup meet error", zap.Stringer("error", resp.GetError()))
+		logutil.CL(ctx).Warn("import meet error", zap.Stringer("error", resp.GetError()))
 		return RPCResultFromPBError(resp.GetError())
 	}
 	return RPCResultOK()
