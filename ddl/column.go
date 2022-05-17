@@ -1571,16 +1571,19 @@ func (w *worker) checkLatin1Convert(job *model.Job, schema, t model.CIStr, oldCo
 	defer w.sessPool.put(sctx)
 
 	var buf strings.Builder
+	paramsList := make([]interface{}, 0, 2+4*len(oldCols))
+
 	buf.WriteString("select ")
 	for i, col := range oldCols {
 		if i == 0 {
-			buf.WriteString(col.Name.L)
+			buf.WriteString("%n")
+			paramsList = append(paramsList, col.Name.L)
 		} else {
-			buf.WriteString("," + col.Name.L)
+			buf.WriteString(", %n")
+			paramsList = append(paramsList, col.Name.L)
 		}
 	}
 	buf.WriteString(" from %n.%n where ")
-	paramsList := make([]interface{}, 0, 2+3*len(oldCols))
 	paramsList = append(paramsList, schema.L, t.L)
 	for i, col := range oldCols {
 		if i == 0 {

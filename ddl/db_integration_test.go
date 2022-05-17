@@ -934,6 +934,11 @@ func TestModifyInvalidColumnData(t *testing.T) {
 	tk.MustExec("insert into t values (0x70, 0x61, 0x90)")
 	tk.MustGetErrMsg("alter table t convert to charset utf8mb4", "[table:1366]Incorrect string value '\\x90' for column 'c'")
 
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (`sleep(1), a` char(10) charset latin1, a int)")
+	tk.MustExec("insert into t values (0x90, 1);")
+	tk.MustGetErrMsg("alter table t convert to charset utf8mb4", "[table:1366]Incorrect string value '\\x90' for column 'sleep(1), a'")
+
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(20)) charset = latin1")
