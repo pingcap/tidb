@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/sessiontxn/legacy"
-	"github.com/pingcap/tidb/sessiontxn/readcomitted"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 )
 
@@ -138,7 +138,7 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 	if txnMode == ast.Pessimistic {
 		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
 		case ast.ReadCommitted:
-			return readcomitted.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
 		}
 	}
 

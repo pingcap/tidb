@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package readcomitted
+package isolation
 
 import (
 	"context"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -28,11 +29,23 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pkg/errors"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
+
+type stmtState struct {
+	stmtInfoSchema infoschema.InfoSchema
+	stmtTS         uint64
+	stmtTSFuture   oracle.Future
+	stmtHasError   bool
+}
+
+func (s *stmtState) retry() {
+	*s = stmtState{
+		stmtInfoSchema: s.stmtInfoSchema,
+	}
+}
 
 // PessimisticRCTxnContextProvider provides txn context for isolation level read-committed
 type PessimisticRCTxnContextProvider struct {
@@ -44,10 +57,8 @@ type PessimisticRCTxnContextProvider struct {
 	isTxnPrepared bool
 	isTxnActive   bool
 
-	stmtInfoSchema infoschema.InfoSchema
-	stmtTS         uint64
-	stmtTSFuture   oracle.Future
-	stmtRCCheckTS  uint64
+	stmtState
+	availableRCCheckTS uint64
 }
 
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
@@ -115,19 +126,14 @@ func (p *PessimisticRCTxnContextProvider) OnInitialize(ctx context.Context, tp s
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error {
 	p.ctx = ctx
-	p.stmtTS = 0
-	p.stmtTSFuture = nil
-	p.stmtRCCheckTS = p.stmtTS
-	p.stmtInfoSchema = p.is
+	p.stmtState = stmtState{}
 	return nil
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
-	// reset stmt ts to force fetching statement's ts again from ts for every case
-	p.stmtTS = 0
-	p.stmtTSFuture = nil
-	p.stmtRCCheckTS = 0
+	p.stmtHasError = true
+	p.availableRCCheckTS = 0
 
 	switch point {
 	case sessiontxn.StmtErrAfterQuery:
@@ -142,7 +148,8 @@ func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point session
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
-	return nil
+	p.stmtState.retry()
+	return p.prepareStmtTS()
 }
 
 // Advise is used to give advice to provider
@@ -208,10 +215,10 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() error {
 	switch {
 	case !txn.Valid() && !p.isTxnPrepared:
 		stmtTSFuture = p.getTxnStartTSFuture()
-	case p.stmtRCCheckTS != 0 && sessVars.StmtCtx.RCCheckTS:
-		stmtTSFuture = sessiontxn.ConstantFuture(p.stmtRCCheckTS)
+	case p.availableRCCheckTS != 0 && sessVars.StmtCtx.RCCheckTS:
+		stmtTSFuture = sessiontxn.ConstantFuture(p.availableRCCheckTS)
 	default:
-		stmtTSFuture = sessiontxn.NewOracleFuture(p.ctx, p.sctx, sessVars.CheckAndGetTxnScope())
+		stmtTSFuture = sessiontxn.NewOracleFuture(p.ctx, p.sctx, sessVars.TxnCtx.TxnScope)
 	}
 
 	p.prepareTxn()
@@ -244,6 +251,10 @@ func (p *PessimisticRCTxnContextProvider) getTxnStartTSFuture() sessiontxn.FuncF
 }
 
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
+	if p.stmtHasError {
+		return 0, errors.New("statement should retry when an error occurs")
+	}
+
 	if p.stmtTS != 0 {
 		return p.stmtTS, nil
 	}
@@ -267,6 +278,7 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	txn.SetOption(kv.SnapshotTS, ts)
 
 	p.stmtTS = ts
+	p.availableRCCheckTS = ts
 	return
 }
 
@@ -274,11 +286,12 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 // At this point the query will be retried from the beginning.
 func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) (sessiontxn.StmtErrorAction, error) {
 	sessVars := p.sctx.GetSessionVars()
-	if sessVars.IsRcCheckTsRetryable(queryErr) {
+	if sessVars.StmtCtx.RCCheckTS && errors.ErrorEqual(queryErr, kv.ErrWriteConflict) {
 		logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 			zap.String("sql", sessVars.StmtCtx.OriginalSQL))
 		return sessiontxn.RetryReady()
 	}
+
 	return sessiontxn.NoIdea()
 }
 
@@ -303,11 +316,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 
 	if !retryable {
 		return sessiontxn.ErrorAction(lockErr)
-	}
-
-	// Fetch the ts again immediately because the next retry will use it
-	if _, err := p.getStmtTS(); err != nil {
-		return sessiontxn.ErrorAction(err)
 	}
 	return sessiontxn.RetryReady()
 }

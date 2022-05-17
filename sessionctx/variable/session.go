@@ -2379,12 +2379,3 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 	}
 	return s.seekFactor
 }
-
-// IsRcCheckTsRetryable checks if the current error is retryable for `RcReadCheckTS` path.
-func (s *SessionVars) IsRcCheckTsRetryable(err error) bool {
-	if err == nil {
-		return false
-	}
-	// The `RCCheckTS` flag of `stmtCtx` is set.
-	return s.RcReadCheckTS && s.StmtCtx.RCCheckTS && errors.ErrorEqual(err, kv.ErrWriteConflict)
-}
