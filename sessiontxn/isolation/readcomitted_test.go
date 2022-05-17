@@ -81,6 +81,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	_, err = provider.GetStmtReadTS()
 	require.Error(t, err)
 	compareTS = getOracleTS(t, se)
+	require.Greater(t, compareTS, rcCheckTS)
 	require.NoError(t, provider.OnStmtRetry(context.TODO()))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
@@ -99,6 +100,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 	compareTS = getOracleTS(t, se)
+	require.Greater(t, compareTS, rcCheckTS)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	ts, err = provider.GetStmtReadTS()
@@ -122,6 +124,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.Greater(t, ts, compareTS)
 	rcCheckTS = ts
 	compareTS = getOracleTS(t, se)
+	require.Greater(t, compareTS, rcCheckTS)
 
 	// only read-only stmt can retry for rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, forUpdateStmt))
