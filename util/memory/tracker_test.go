@@ -32,15 +32,27 @@ func TestSetLabel(t *testing.T) {
 	tracker := NewTracker(1, -1)
 	require.Equal(t, 1, tracker.label)
 	require.Equal(t, int64(0), tracker.BytesConsumed())
-	require.Equal(t, int64(-1), tracker.bytesHardLimit)
+	require.Equal(t, int64(-1), tracker.GetBytesLimit())
 	require.Nil(t, tracker.getParent())
 	require.Equal(t, 0, len(tracker.mu.children))
 	tracker.SetLabel(2)
 	require.Equal(t, 2, tracker.label)
 	require.Equal(t, int64(0), tracker.BytesConsumed())
-	require.Equal(t, int64(-1), tracker.bytesHardLimit)
+	require.Equal(t, int64(-1), tracker.GetBytesLimit())
 	require.Nil(t, tracker.getParent())
 	require.Equal(t, 0, len(tracker.mu.children))
+}
+
+func TestSetLabel2(t *testing.T) {
+	tracker := NewTracker(1, -1)
+	tracker2 := NewTracker(2, -1)
+	tracker2.AttachTo(tracker)
+	tracker2.Consume(10)
+	require.Equal(t, tracker.BytesConsumed(), int64(10))
+	tracker2.SetLabel(10)
+	require.Equal(t, tracker.BytesConsumed(), int64(10))
+	tracker2.Detach()
+	require.Equal(t, tracker.BytesConsumed(), int64(0))
 }
 
 func TestConsume(t *testing.T) {

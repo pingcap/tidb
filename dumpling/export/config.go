@@ -632,13 +632,17 @@ func registerTLSConfig(conf *Config) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			conf.Security.SSLCertBytes, err = ioutil.ReadFile(conf.Security.CertPath)
-			if err != nil {
-				return errors.Trace(err)
+			if len(conf.Security.CertPath) > 0 {
+				conf.Security.SSLCertBytes, err = ioutil.ReadFile(conf.Security.CertPath)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
-			conf.Security.SSLKEYBytes, err = ioutil.ReadFile(conf.Security.KeyPath)
-			if err != nil {
-				return errors.Trace(err)
+			if len(conf.Security.KeyPath) > 0 {
+				conf.Security.SSLKEYBytes, err = ioutil.ReadFile(conf.Security.KeyPath)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 		tlsConfig, err = util.ToTLSConfigWithVerifyByRawbytes(conf.Security.SSLCABytes,
@@ -648,7 +652,7 @@ func registerTLSConfig(conf *Config) error {
 		}
 		// NOTE for local test(use a self-signed or invalid certificate), we don't need to check CA file.
 		// see more here https://github.com/go-sql-driver/mysql#tls
-		if conf.Host == "127.0.0.1" {
+		if conf.Host == "127.0.0.1" || len(conf.Security.SSLCertBytes) == 0 || len(conf.Security.SSLKEYBytes) == 0 {
 			tlsConfig.InsecureSkipVerify = true
 		}
 		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)

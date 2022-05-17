@@ -153,6 +153,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
 		}
+		cache.Put(tblID, table)
 	}
 }
 
@@ -417,6 +418,17 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	}
 	cache.FreshMemUsage()
 	h.updateStatsCache(cache)
+	v := h.statsCache.Load()
+	if v == nil {
+		return nil
+	}
+	healthyChange := &statsHealthyChange{}
+	for _, tbl := range v.(statsCache).Values() {
+		if healthy, ok := tbl.GetStatsHealthy(); ok {
+			healthyChange.add(healthy)
+		}
+	}
+	healthyChange.apply()
 	return nil
 }
 
