@@ -1374,32 +1374,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.Len(t, remained, 0)
 }
 
-func TestExprOnlyPushDownToTiKV(t *testing.T) {
-	sc := new(stmtctx.StatementContext)
-	client := new(mock.Client)
-
-	function, err := NewFunction(mock.NewContext(), "from_days", types.NewFieldType(mysql.TypeLonglong), genColumn(mysql.TypeDatetime, 1))
-	require.NoError(t, err)
-	var exprs = make([]Expression, 0)
-	exprs = append(exprs, function)
-
-	pushed, remained := PushDownExprs(sc, exprs, client, kv.UnSpecified)
-	require.Len(t, pushed, 1)
-	require.Len(t, remained, 0)
-
-	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
-	require.Equal(t, false, canPush)
-	canPush = CanExprsPushDown(sc, exprs, client, kv.TiKV)
-	require.Equal(t, true, canPush)
-
-	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
-	require.Len(t, pushed, 0)
-	require.Len(t, remained, 1)
-	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
-	require.Len(t, pushed, 1)
-	require.Len(t, remained, 0)
-}
-
 func TestGroupByItem2Pb(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
