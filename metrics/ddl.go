@@ -149,6 +149,11 @@ const (
 	LblModifyColumn = "modify_column"
 )
 
+// GenerateReorgLabel returns the label with schema name and table name.
+func GenerateReorgLabel(label string, schemaName string, tableName string) string {
+	return label + "_" + schemaName + "_" + tableName
+}
+
 // GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
 func GetBackfillProgressByLabel(lbl string) prometheus.Gauge {
 	return BackfillProgressGauge.WithLabelValues(lbl)
