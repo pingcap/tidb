@@ -177,13 +177,13 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		joinGroupNum := len(curJoinGroup)
 		useGreedy := joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP
 
-		hintInfoNum := len(hintInfo)
+		leadingHintNum := len(hintInfo)
 		var leadingHintInfo *tableHintInfo
-		if hintInfoNum > 0 {
+		if leadingHintNum > 0 {
 			hasDiffLeadingHint := false
 			leadingHintInfo = hintInfo[0]
 			// One join group has one leading hint at most. Check whether there are different join order hints.
-			for i := 1; i < hintInfoNum; i++ {
+			for i := 1; i < leadingHintNum; i++ {
 				if hintInfo[i] != hintInfo[i-1] {
 					hasDiffLeadingHint = true
 					break
