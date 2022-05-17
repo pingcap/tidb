@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -240,6 +242,49 @@ func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
+var statsHealthyGauges = []prometheus.Gauge{
+	metrics.StatsHealthyGauge.WithLabelValues("[0,50)"),
+	metrics.StatsHealthyGauge.WithLabelValues("[50,80)"),
+	metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),
+	metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
+}
+
+type statsHealthyChange struct {
+	bucketDelta [4]int
+}
+
+func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
+	var idx int
+	if statsHealthy < 50 {
+		idx = 0
+	} else if statsHealthy < 80 {
+		idx = 1
+	} else if statsHealthy < 100 {
+		idx = 2
+	} else {
+		idx = 3
+	}
+	if add {
+		c.bucketDelta[idx] += 1
+	} else {
+		c.bucketDelta[idx] -= 1
+	}
+}
+
+func (c *statsHealthyChange) drop(statsHealthy int64) {
+	c.update(false, statsHealthy)
+}
+
+func (c *statsHealthyChange) add(statsHealthy int64) {
+	c.update(true, statsHealthy)
+}
+
+func (c *statsHealthyChange) apply() {
+	for i, val := range c.bucketDelta {
+		statsHealthyGauges[i].Add(float64(val))
+	}
+}
+
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	oldCache := h.statsCache.Load().(statsCache)
@@ -260,6 +305,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	healthyChange := &statsHealthyChange{}
 	option := &tableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
@@ -279,7 +325,8 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		if oldTbl, ok := oldCache.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		oldTbl, ok := oldCache.Get(physicalID)
+		if ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
@@ -287,6 +334,9 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		if err != nil {
 			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
+		}
+		if oldHealthy, ok := oldTbl.GetStatsHealthy(); ok {
+			healthyChange.drop(oldHealthy)
 		}
 		if tbl == nil {
 			oldCache.Del(physicalID)
@@ -302,8 +352,15 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		} else {
 			oldCache.Put(physicalID, tbl)
 		}
+		oldCache.Put(physicalID, tbl)
+		if newHealthy, ok := tbl.GetStatsHealthy(); ok {
+			healthyChange.add(newHealthy)
+		}
 	}
-	h.updateStatsCache(oldCache.update(nil, nil, lastVersion))
+	updated := h.updateStatsCache(oldCache.update(nil, nil, lastVersion))
+	if updated {
+		healthyChange.apply()
+	}
 	return nil
 }
 
