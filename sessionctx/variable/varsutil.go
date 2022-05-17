@@ -514,15 +514,15 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.TiDBShard:  {},
 }
 
-// GetTiFlashEngine retrun kv.TiFlash or kv.TiFlashMPP
-// Assume tiflash/tiflash_mpp is included in tidb_isolation_read_engines, otherwise will give error.
+// GetTiFlashEngine retrun kv.TiFlash or kv.TiFlashMPP.
+// Assume tiflash or tiflash_mpp is included in tidb_isolation_read_engines, otherwise will give error.
 // tiflash_mpp and tiflash cannot exists at the same time, otherwise will give error.
 func GetTiFlashEngine(readEngines map[kv.StoreType]struct{}) (res kv.StoreType, _ error) {
 	_, hasTiFlash := readEngines[kv.TiFlash]
 	_, hasTiFlashMPP := readEngines[kv.TiFlashMPP]
 
 	if hasTiFlash && hasTiFlashMPP {
-		return kv.UnSpecified, errors.New("tiflash and tiflash_mpp cannot exists at the same time in readEngines")
+		return kv.UnSpecified, errors.New("tiflash and tiflash_mpp cannot exist at the same time in readEngines")
 	}
 	if !hasTiFlash && !hasTiFlashMPP {
 		return kv.UnSpecified, errors.New("cannot get tiflash engine, nor tiflash or tiflash_mpp exists in readEngines")

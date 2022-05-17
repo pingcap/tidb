@@ -291,10 +291,10 @@ const (
 	TiDB
 
 	// TiFlashMPP means tiflash ReadNodes.
-	// WATCHOUT: This label should only be used:
+	// WATCHOUT: This label should only be used in:
 	// 	1. sysvar.go: when user set tidb_isolation_read_engines.
 	// 	2. coprocessor.go/mpp.go: when send copTask/batchCopTask/mppTask to tiflash.
-	// Other modules in TiDB should only use kv.TiFlash, e.g., they don't distinguish ReadNodes/WriteNodes.
+	// Other modules in TiDB should only use kv.TiFlash, they don't distinguish ReadNodes and WriteNodes.
 	// So a lot of unnecessary modifications can be omitted.
 	TiFlashMPP
 
