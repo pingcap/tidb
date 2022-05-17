@@ -16,13 +16,13 @@ package aggfuncs_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/hack"
 	"testing"
 
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func TestMergePartialResult4Varpop(t *testing.T) {

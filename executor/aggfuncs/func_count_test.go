@@ -17,7 +17,6 @@ package aggfuncs_test
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/util/hack"
 	"testing"
 
 	"github.com/dgryski/go-farm"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )

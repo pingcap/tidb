@@ -15,12 +15,12 @@
 package aggfuncs_test
 
 import (
-	"github.com/pingcap/tidb/util/hack"
 	"testing"
 
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
 )
 
