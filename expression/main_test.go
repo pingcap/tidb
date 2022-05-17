@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/stretchr/testify/require"
