@@ -120,6 +120,10 @@ deprecate-integer-display-length = false
 # See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
 enable-enum-length-limit = true
 
+# enable-global-kill is used to control global kill feature. When it is enabled, connection ID is globally unique and KILL
+# command can be forwarded to the right TiDB instance to execute.
+enable-global-kill = true
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 	"go.uber.org/zap"
@@ -33,7 +33,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	registerHook()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionLog

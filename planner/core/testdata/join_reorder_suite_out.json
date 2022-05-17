@@ -19,7 +19,8 @@
           "    └─TableReader(Probe) 9990.00 root  data:Selection",
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t2, t1, t3, t where t.a = t1.a and t1.b=t2.b;",
@@ -38,7 +39,8 @@
           "    └─TableReader(Probe) 9990.00 root  data:Selection",
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t3, t2, t1, t where t.a = t1.a and t1.b=t2.b;",
@@ -57,7 +59,8 @@
           "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t3, t1, t, t2 where t.a = t1.a and t1.b=t2.b;",
@@ -76,7 +79,8 @@
           "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
@@ -92,7 +96,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t3 join t1 on t1.b=t3.b join t2 on t2.a=t1.a;",
@@ -108,7 +113,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t3 join t2 on t2.b=t3.b join t1 on t2.a=t1.a;",
@@ -124,7 +130,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
@@ -140,7 +147,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
@@ -156,7 +164,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t1 join (t2 join t3 on t2.a=t3.a) on t1.a=t3.a;",
@@ -172,7 +181,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t3 join (t1 join t2 on t1.a=t2.a) on t2.a=t3.a;",
@@ -188,7 +198,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t2 join t1 on t1.a=t2.a join t3 on t2.b=t3.b;",
@@ -204,7 +215,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
@@ -220,7 +232,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from t2 join t3 on t3.a=t2.a join t1 on t2.a=t1.a;",
@@ -236,7 +249,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
@@ -256,7 +270,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t3.a;",
@@ -276,7 +291,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t1.a=t4.a;",
@@ -296,7 +312,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from (t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t4.a;",
@@ -316,7 +333,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from (t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t3.a;",
@@ -336,7 +354,8 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from ((select t3.a, t3.b from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
@@ -367,7 +386,8 @@
           "        │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "        └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
           "          └─IndexFullScan 9990.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join ((select t3.a, t3.b from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
@@ -398,7 +418,8 @@
           "        │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "        └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
           "          └─IndexFullScan 9990.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join ((select t3.a, t3.b from t1, t3, t2, t where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) on t2.a=t3.a;",
@@ -429,7 +450,8 @@
           "        └─TableReader(Probe) 9990.00 root  data:Selection",
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join ((select t3.a, t3.b from t3, t2, t1, t where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) on t1.a=t4.a;",
@@ -460,7 +482,8 @@
           "        └─TableReader(Probe) 9990.00 root  data:Selection",
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from ((select t3.a, t3.b from t1, t2, t, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t4.a;",
@@ -491,7 +514,8 @@
           "        └─TableReader(Probe) 9990.00 root  data:Selection",
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from ((select t3.a, t3.b from t2, t1, t, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t3.a;",
@@ -522,7 +546,8 @@
           "        └─TableReader(Probe) 9990.00 root  data:Selection",
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Warning": null
       },
       {
         "SQL": "select /*+ straight_join() */ * from ((select t3.a, t3.b from t3, t2, t1, t where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
@@ -553,6 +578,1503 @@
           "        └─TableReader(Probe) 9990.00 root  data:Selection",
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestLeadingJoinHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ leading(t, t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+        "Plan": [
+          "HashJoin 155937656.25 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+        "Plan": [
+          "Projection 155937656.25 root  test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 155937656.25 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9980.01 root  data:Selection",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+        "Plan": [
+          "Projection 155937656.25 root  test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 155937656.25 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 124750125.00 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "      ├─TableReader(Build) 9980.01 root  data:Selection",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+        "Plan": [
+          "Projection 155937656.25 root  test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 155937656.25 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 124750125.00 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 99900000.00 root  CARTESIAN inner join",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t, t1, t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+        "Plan": [
+          "HashJoin 155937656.25 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+        "Plan": [
+          "Projection 155937656.25 root  test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 155937656.25 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 124750125.00 root  CARTESIAN inner join",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9980.01 root  data:Selection",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1, t) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+        "Plan": [
+          "Projection 155937656.25 root  test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 155937656.25 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 124750125.00 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "      ├─TableReader(Build) 9980.01 root  data:Selection",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3, t) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+        "Plan": [
+          "Projection 1246253748750.00 root  test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 1246253748750.00 root  inner join, equal:[eq(test.t.a, test.t1.a) eq(test.t2.b, test.t1.b)]",
+          "  ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 998001000000.00 root  CARTESIAN inner join",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 99900000.00 root  CARTESIAN inner join",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3, t, t4) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+        "Plan": [
+          "Projection 155937656.25 root  test.t.a, test.t.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 155937656.25 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
+          "      ├─TableReader(Build) 9980.01 root  data:Selection",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t4) in optimizer hint /*+ LEADING(t2, t3, t, t4) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3, t2) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+        "Plan": [
+          "Projection 124625374.88 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 124625374.88 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t3.b, test.t1.b)]",
+          "  ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+        "Plan": [
+          "Projection 15593.77 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t1.b)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+        "Plan": [
+          "Projection 15593.77 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+        "Plan": [
+          "Projection 15593.77 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t1.b)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+        "Plan": [
+          "HashJoin 15593.77 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+        "Plan": [
+          "Projection 15593.77 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t2, t1) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+        "Plan": [
+          "Projection 124625374.88 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 124625374.88 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t3.b, test.t1.b)]",
+          "  ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2, t3) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+        "Plan": [
+          "Projection 15593.77 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1, t2) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+        "Plan": [
+          "Projection 15593.77 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t1.b)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+        "Plan": [
+          "HashJoin 124875.00 root  CARTESIAN inner join",
+          "├─IndexLookUp(Build) 10.00 root  ",
+          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+        "Plan": [
+          "Projection 124875.00 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 124875.00 root  CARTESIAN inner join",
+          "  ├─IndexLookUp(Build) 10.00 root  ",
+          "  │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+        "Plan": [
+          "Projection 124875.00 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 124875.00 root  CARTESIAN inner join",
+          "  ├─IndexLookUp(Build) 10.00 root  ",
+          "  │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t1) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+        "Plan": [
+          "HashJoin 124875.00 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 99900.00 root  CARTESIAN inner join",
+          "  ├─IndexLookUp(Build) 10.00 root  ",
+          "  │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+        "Plan": [
+          "Projection 124875.00 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 124875.00 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 99900.00 root  CARTESIAN inner join",
+          "    ├─IndexLookUp(Build) 10.00 root  ",
+          "    │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "    │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+        "Plan": [
+          "Projection 124875.00 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 124875.00 root  CARTESIAN inner join",
+          "  ├─IndexLookUp(Build) 10.00 root  ",
+          "  │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t1, t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+        "Plan": [
+          "HashJoin 124875.00 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 99900.00 root  CARTESIAN inner join",
+          "  ├─IndexLookUp(Build) 10.00 root  ",
+          "  │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3, t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+        "Plan": [
+          "Projection 124875.00 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 124875.00 root  CARTESIAN inner join",
+          "  ├─IndexLookUp(Build) 10.00 root  ",
+          "  │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3, t1) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+        "Plan": [
+          "Projection 124875.00 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 124875.00 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 99900.00 root  CARTESIAN inner join",
+          "    ├─IndexLookUp(Build) 10.00 root  ",
+          "    │ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "    │ └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+        "Plan": [
+          "Projection 15609.38 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+        "Plan": [
+          "Projection 15609.38 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+        "Plan": [
+          "Projection 15609.38 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+        "Plan": [
+          "Projection 124750125.00 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 124750125.00 root  inner join, equal:[eq(test.t1.a, test.t3.a) eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+        "Plan": [
+          "Projection 15609.38 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+        "Plan": [
+          "Projection 15609.38 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2, t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+        "Plan": [
+          "Projection 124750125.00 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 124750125.00 root  inner join, equal:[eq(test.t1.a, test.t3.a) eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1, t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+        "Plan": [
+          "Projection 15609.38 root  test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 19511.72 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 19511.72 root  inner join, equal:[eq(test.t4.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t2.a, test.t4.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 19511.72 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 19511.72 root  inner join, equal:[eq(test.t4.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t2.a, test.t4.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 19511.72 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 19511.72 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 19511.72 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 19511.72 root  inner join, equal:[eq(test.t4.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.a, test.t2.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 19511.72 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 19511.72 root  inner join, equal:[eq(test.t4.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t2.a, test.t4.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 155937656.25 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 155937656.25 root  inner join, equal:[eq(test.t3.a, test.t4.a) eq(test.t2.a, test.t4.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 124750125.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t4, t1) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 155937656.25 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 155937656.25 root  inner join, equal:[eq(test.t4.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 124750125.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t4.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t4, t2) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 19511.72 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 19511.72 root  inner join, equal:[eq(test.t4.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.a, test.t2.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t2) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 155937656.25 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 155937656.25 root  inner join, equal:[eq(test.t3.a, test.t4.a) eq(test.t2.a, test.t4.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 124750125.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t4) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 19511.72 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 19511.72 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2, t3) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "HashJoin 155937656.25 root  inner join, equal:[eq(test.t3.a, test.t4.a) eq(test.t2.a, test.t4.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 124750125.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t4, t3) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 155937656.25 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 155937656.25 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t4.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 124750125.00 root  inner join, equal:[eq(test.t4.a, test.t3.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t4, t2, t3) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "Projection 19511.72 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 19511.72 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t3.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.a, test.t2.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2, t3, t4) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+        "Plan": [
+          "HashJoin 155937656.25 root  inner join, equal:[eq(test.t3.a, test.t4.a) eq(test.t2.a, test.t4.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 124750125.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "Projection 304261169.13 root  test.t8.a, test.t8.b, test.t4.a, test.t4.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+          "└─HashJoin 304261169.13 root  CARTESIAN inner join",
+          "  ├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "  │ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "  │ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "  │   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "  │   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "  │   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "  │       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t8.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.a, test.t4.a)]",
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "Projection 304261169.13 root  test.t8.a, test.t8.b, test.t4.a, test.t4.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+          "└─HashJoin 304261169.13 root  CARTESIAN inner join",
+          "  ├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "  │ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "  │ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "  │   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "  │   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "  │   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "  │       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t4.a, test.t8.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t1.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 304261169.13 root  CARTESIAN inner join",
+          "├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "│ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "│   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "│   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "Projection 304261169.13 root  test.t8.a, test.t8.b, test.t4.a, test.t4.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+          "└─HashJoin 304261169.13 root  CARTESIAN inner join",
+          "  ├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "  │ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "  │ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "  │   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "  │   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "  │   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "  │       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.a, test.t8.a)]",
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t1) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "Projection 304261169.13 root  test.t8.a, test.t8.b, test.t4.a, test.t4.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+          "└─HashJoin 304261169.13 root  CARTESIAN inner join",
+          "  ├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "  │ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "  │ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "  │   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "  │   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "  │   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "  │       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t4.a, test.t8.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t1.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 304261169.13 root  CARTESIAN inner join",
+          "├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "│ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "│   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "│   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4, t1) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "Projection 304261169.13 root  test.t8.a, test.t8.b, test.t4.a, test.t4.b, test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+          "└─HashJoin 304261169.13 root  CARTESIAN inner join",
+          "  ├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "  │ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "  │ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "  │   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "  │   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "  │   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "  │       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t8.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 304261169.13 root  CARTESIAN inner join",
+          "├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "│ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "│   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "│   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select * from ((select /*+ leading(t5) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 304261169.13 root  CARTESIAN inner join",
+          "├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t5.a, test.t6.a)]",
+          "│   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "│   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "│   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "│     └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from ((select /*+ leading(t6) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 304261169.13 root  CARTESIAN inner join",
+          "├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "│ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "│   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "│   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from ((select /*+ leading(t5, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 2431655263674.32 root  CARTESIAN inner join",
+          "├─HashJoin(Build) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "│   ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│   │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│   └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "│     ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "│     │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "│     └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│       └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "│         └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 124625374.88 root  inner join, equal:[eq(test.t7.b, test.t6.b) eq(test.t5.a, test.t6.a)]",
+          "  ├─TableReader(Build) 9980.01 root  data:Selection",
+          "  │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 99800100.00 root  CARTESIAN inner join",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "    └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from ((select /*+ leading(t6, t8, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 304261169.13 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 243408935.30 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 194727148.24 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 155781718.59 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "      ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "      │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 124625374.88 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "        └─HashJoin(Probe) 99700299.90 root  CARTESIAN inner join",
+          "          ├─TableReader(Build) 9980.01 root  data:Selection",
+          "          │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "          │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "          └─TableReader(Probe) 9990.00 root  data:Selection",
+          "            └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "              └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3) */ * from ((select /*+ leading(t5) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 304261169.13 root  CARTESIAN inner join",
+          "├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "│ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "│   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "│   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1) */ * from ((select /*+ leading(t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 304261169.13 root  CARTESIAN inner join",
+          "├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "│ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "│   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "│   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1, t2) */ * from ((select /*+ leading(t6, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 304261169.13 root  CARTESIAN inner join",
+          "├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "│ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "│   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "│   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3, t4) */ * from ((select /*+ leading(t5, t7, t8) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+        "Plan": [
+          "HashJoin 304261169.13 root  CARTESIAN inner join",
+          "├─HashJoin(Build) 15593.77 root  inner join, equal:[eq(test.t6.a, test.t5.a)]",
+          "│ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ │ └─IndexFullScan 9990.00 cop[tikv] table:t5, index:a(a) keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t7.b)]",
+          "│   ├─TableReader(Build) 9980.01 root  data:Selection",
+          "│   │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t6.a)), not(isnull(test.t6.b))",
+          "│   │   └─TableFullScan 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t7.b))",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t8.a, test.t4.a)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t8.a))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       }
     ]

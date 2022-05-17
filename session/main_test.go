@@ -21,16 +21,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
@@ -39,10 +38,15 @@ import (
 
 var testDataMap = make(testdata.BookKeeper, 1)
 
+var WithTiKV = flag.Bool("with-tikv", false, "workaroundGoCheckFlags: with-tikv")
+var _ = flag.String("pd-addrs", "", "workaroundGoCheckFlags: pd-addrs")
+var _ = flag.String("check.exclude", "", "workaroundGoCheckFlags: check.exclude")
+var _ = flag.String("check.f", "", "workaroundGoCheckFlags: check.f")
+
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
 
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
@@ -74,10 +78,6 @@ func TestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func TestT(t *testing.T) {
-	check.TestingT(t)
 }
 
 func GetClusteredIndexSuiteData() testdata.TestData {
