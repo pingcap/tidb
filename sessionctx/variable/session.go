@@ -1511,8 +1511,16 @@ func (s *SessionVars) IsolationLevelForNewTxn() string {
 	}
 
 	isolation := ""
-	if s.txnIsolationLevelOneShot.state == oneShotUse {
-		isolation = s.txnIsolationLevelOneShot.value
+
+	oneShot := s.txnIsolationLevelOneShot
+	if s.InTxn() {
+		if oneShot.state == oneShotDef {
+			isolation = oneShot.value
+		}
+	} else {
+		if oneShot.state == oneShotSet {
+			isolation = oneShot.value
+		}
 	}
 
 	if isolation == "" {
