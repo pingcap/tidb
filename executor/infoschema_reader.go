@@ -692,6 +692,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 				return errors.Trace(err)
 			}); err != nil {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				e.viewMu.Unlock()
 				return
 			}
 			e.viewSchemaMap[tbl.ID] = viewLogicalPlan.Schema()
