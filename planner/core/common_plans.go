@@ -190,8 +190,8 @@ type Execute struct {
 	baseSchemaProducer
 
 	Name          string
-	UsingVars     []expression.Expression
-	PrepareParams []types.Datum // parsed parameter values, only used for binary protocol
+	UsingVars     []expression.Expression // only used for text protocol
+	PrepareParams []types.Datum           // only used for binary protocol
 	ExecID        uint32
 	// Deprecated: SnapshotTS now is only used for asserting after refactoring stale read, it will be removed later.
 	SnapshotTS uint64
