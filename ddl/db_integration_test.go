@@ -770,9 +770,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustGetErrCode("alter table t charset utf8 collate latin1_bin", errno.ErrCollationCharsetMismatch)
 	tk.MustGetErrCode("alter table t charset utf8 collate utf8mb4_bin;", errno.ErrCollationCharsetMismatch)
 	tk.MustGetErrCode("alter table t charset utf8 collate utf8_bin collate utf8mb4_bin collate utf8_bin;", errno.ErrCollationCharsetMismatch)
-
-	tk.MustExec("alter table t charset utf8")
-	tk.MustExec("admin check table t")
+	tk.MustGetErrCode("alter table t charset utf8", errno.ErrUnsupportedDDLOperation)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), index i(a)) charset latin1 collate latin1_bin")
@@ -806,8 +804,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("create table t(a varchar(20), key i(a)) charset=latin1")
 	tk.MustGetErrCode("alter table t convert to charset utf8 collate utf8_unicode_ci", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t convert to charset utf8 collate utf8_general_ci", errno.ErrUnsupportedDDLOperation)
-	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
-	tk.MustGetErrCode("alter table t convert to charset latin1", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t convert to charset utf8 collate utf8_bin", errno.ErrUnsupportedDDLOperation)
 
 	// Test when column charset can not convert to the target charset.
 	tk.MustExec("drop table t;")
