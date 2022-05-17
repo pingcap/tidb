@@ -2950,7 +2950,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl = h.GetTableStats(tableInfo)
-	lastVersion = tbl.Version
+	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
 	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[0].ID].TopN.TopN))
 	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
@@ -3085,7 +3085,6 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
-	lastVersion = tbl.Version
 	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[1].ID].Buckets))
 	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[3].ID].Buckets))
 	require.Equal(t, 1, len(tbl.Columns[tableInfo.Columns[1].ID].TopN.TopN))
