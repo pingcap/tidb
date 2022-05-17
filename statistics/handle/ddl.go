@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -75,7 +76,13 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
 	tableID := tblInfo.ID
-	is := h.mu.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	defer h.pool.Put(se)
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	globalStats, err := h.TableStatsFromStorage(tblInfo, tableID, true, 0)
 	if err != nil {
 		return err
