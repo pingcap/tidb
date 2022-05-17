@@ -410,7 +410,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeInstance, Name: PluginDir, Value: "/data/deploy/plugin", ReadOnly: true, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.PluginDir, nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBConnectionConcurrencyLimit, Value: strconv.Itoa(int(config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit)), Type: TypeInt, MinValue: 1, MaxValue: config.MaxConnectionConcurrencyLimit, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeInstance, Name: TiDBConnectionConcurrencyLimit, Value: strconv.Itoa(int(config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit)), Type: TypeInt, MinValue: 1, MaxValue: config.MaxConnectionConcurrencyLimit, SetGlobal: func(s *SessionVars, val string) error {
 		ival := tidbOptPositiveInt32(val, int(config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit))
 		atomic.StoreUint32(&config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit, uint32(ival))
 		return nil
