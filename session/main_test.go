@@ -38,7 +38,7 @@ import (
 
 var testDataMap = make(testdata.BookKeeper, 1)
 
-var _ = flag.Bool("with-tikv", false, "workaroundGoCheckFlags: with-tikv")
+var WithTiKV = flag.Bool("with-tikv", false, "workaroundGoCheckFlags: with-tikv")
 var _ = flag.String("pd-addrs", "", "workaroundGoCheckFlags: pd-addrs")
 
 func TestMain(m *testing.M) {
