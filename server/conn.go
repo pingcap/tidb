@@ -1466,17 +1466,21 @@ func (cc *clientConn) flush(ctx context.Context) error {
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
 	msg := cc.ctx.LastMessage()
-	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount())
+	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), false)
 }
 
-func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16) error {
+func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16, eof bool) error {
 	enclen := 0
 	if len(msg) > 0 {
 		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
 	}
 
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
-	data = append(data, mysql.OKHeader)
+	if eof {
+		data = append(data, mysql.EOFHeader)
+	} else {
+		data = append(data, mysql.OKHeader)
+	}
 	data = dumpLengthEncodedInt(data, affectedRows)
 	data = dumpLengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -1494,6 +1498,9 @@ func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows,
 		return err
 	}
 
+	if eof {
+		return nil
+	}
 	return cc.flush(ctx)
 }
 
@@ -1541,6 +1548,11 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 // serverStatus, a flag bit represents server information
 // in the packet.
 func (cc *clientConn) writeEOF(serverStatus uint16) error {
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		logutil.Logger(context.Background()).Error("Attempt to write EOF to client that has the ClientDeprecateEOF flag set", zap.Stack("stack"))
+		// return errors.New("Attempt to write EOF to client that has the ClientDeprecateEOF flag set")
+	}
+
 	data := cc.alloc.AllocWithLen(4, 9)
 
 	data = append(data, mysql.EOFHeader)
@@ -2093,7 +2105,7 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
-	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
+	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount(), false)
 }
 
 // handleFieldList returns the field list for a table.
@@ -2162,7 +2174,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
+func (cc *clientConn) writeColumnInfo(ctx context.Context, columns []*ColumnInfo, serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
@@ -2174,6 +2186,11 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
+	}
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		// return cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
+		//	cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), true)
+		return nil
 	}
 	return cc.writeEOF(serverStatus)
 }
@@ -2213,7 +2230,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
-			if err = cc.writeColumnInfo(columns, serverStatus); err != nil {
+			if err = cc.writeColumnInfo(ctx, columns, serverStatus); err != nil {
 				return false, err
 			}
 			gotColumnInfo = true
@@ -2244,6 +2261,11 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if stmtDetail != nil {
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
+	}
+
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		return false, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
+			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), true)
 	}
 	return false, cc.writeEOF(serverStatus)
 }
