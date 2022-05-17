@@ -189,10 +189,10 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name          string
-	UsingVars     []expression.Expression // only used for text protocol
-	PrepareParams []types.Datum           // only used for binary protocol
-	ExecID        uint32
+	Name         string
+	TxtProtoVars []expression.Expression // parsed variables under text protocol
+	BinProtoVars []types.Datum           // parsed variables under binary protocol
+	ExecID       uint32
 	// Deprecated: SnapshotTS now is only used for asserting after refactoring stale read, it will be removed later.
 	SnapshotTS uint64
 	// Deprecated: IsStaleness now is only used for asserting after refactoring stale read, it will be removed later.
@@ -236,25 +236,25 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
 
-	paramLen := len(e.PrepareParams)
+	paramLen := len(e.BinProtoVars)
 	if paramLen > 0 {
-		// for binary protocol execute, argument is placed in vars.PrepareParams
+		// for binary protocol execute, argument is placed in vars.BinProtoVars
 		if len(prepared.Params) != paramLen {
 			return errors.Trace(ErrWrongParamCount)
 		}
-		vars.PreparedParams = e.PrepareParams
+		vars.PreparedParams = e.BinProtoVars
 		for i, val := range vars.PreparedParams {
 			param := prepared.Params[i].(*driver.ParamMarkerExpr)
 			param.Datum = val
 			param.InExecute = true
 		}
 	} else {
-		// for `execute stmt using @a, @b, @c`, using value in e.UsingVars
-		if len(prepared.Params) != len(e.UsingVars) {
+		// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
+		if len(prepared.Params) != len(e.TxtProtoVars) {
 			return errors.Trace(ErrWrongParamCount)
 		}
 
-		for i, usingVar := range e.UsingVars {
+		for i, usingVar := range e.TxtProtoVars {
 			val, err := usingVar.Eval(chunk.Row{})
 			if err != nil {
 				return err
@@ -460,15 +460,15 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	var varsNum int
 	var binVarTypes []byte
 	var txtVarTypes []*types.FieldType
-	isBinProtocol := len(e.PrepareParams) > 0
+	isBinProtocol := len(e.BinProtoVars) > 0
 	if isBinProtocol { // binary protocol
-		varsNum = len(e.PrepareParams)
-		for _, param := range e.PrepareParams {
+		varsNum = len(e.BinProtoVars)
+		for _, param := range e.BinProtoVars {
 			binVarTypes = append(binVarTypes, param.Kind())
 		}
 	} else { // txt protocol
-		varsNum = len(e.UsingVars)
-		for _, param := range e.UsingVars {
+		varsNum = len(e.TxtProtoVars)
+		for _, param := range e.TxtProtoVars {
 			name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 			tp := sctx.GetSessionVars().UserVarTypes[name]
 			if tp == nil {
