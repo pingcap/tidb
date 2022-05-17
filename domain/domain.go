@@ -1325,9 +1325,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	do.SetStatsUpdating(true)
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
-	if variable.RunAutoAnalyze.Load() {
-		do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
-	}
+	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
 	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
 	return nil
 }
@@ -1506,7 +1504,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if owner.IsOwner() {
+			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
 		case <-do.exit:
