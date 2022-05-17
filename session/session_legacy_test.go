@@ -48,8 +48,6 @@ var withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster starte
 var _ = flag.String("pd-addrs", "127.0.0.1:2379", "workaroundGoCheckFlags: pd-addrs")
 
 var _ = Suite(&testSessionSuite{})
-var _ = Suite(&testSessionSuite2{})
-var _ = Suite(&testSessionSuite3{})
 
 type testSessionSuiteBase struct {
 	cluster testutils.Cluster
@@ -58,14 +56,6 @@ type testSessionSuiteBase struct {
 }
 
 type testSessionSuite struct {
-	testSessionSuiteBase
-}
-
-type testSessionSuite2 struct {
-	testSessionSuiteBase
-}
-
-type testSessionSuite3 struct {
 	testSessionSuiteBase
 }
 
@@ -273,49 +263,6 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	tk.MustExec(`INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
 	tk.MustExec(`UPDATE t set id = 1 where data = 0;`)
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
-}
-
-func (s *testSessionSuite3) TestLastMessage(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id TEXT)")
-
-	// Insert
-	tk.MustExec(`INSERT INTO t VALUES ("a");`)
-	tk.CheckLastMessage("")
-	tk.MustExec(`INSERT INTO t VALUES ("b"), ("c");`)
-	tk.CheckLastMessage("Records: 2  Duplicates: 0  Warnings: 0")
-
-	// Update
-	tk.MustExec(`UPDATE t set id = 'c' where id = 'a';`)
-	c.Assert(int(tk.Se.AffectedRows()), Equals, 1)
-	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
-	tk.MustExec(`UPDATE t set id = 'a' where id = 'a';`)
-	c.Assert(int(tk.Se.AffectedRows()), Equals, 0)
-	tk.CheckLastMessage("Rows matched: 0  Changed: 0  Warnings: 0")
-
-	// Replace
-	tk.MustExec(`drop table if exists t, t1;
-        create table t (c1 int PRIMARY KEY, c2 int);
-        create table t1 (a1 int, a2 int);`)
-	tk.MustExec(`INSERT INTO t VALUES (1,1)`)
-	tk.MustExec(`REPLACE INTO t VALUES (2,2)`)
-	tk.CheckLastMessage("")
-	tk.MustExec(`INSERT INTO t1 VALUES (1,10), (3,30);`)
-	tk.CheckLastMessage("Records: 2  Duplicates: 0  Warnings: 0")
-	tk.MustExec(`REPLACE INTO t SELECT * from t1`)
-	tk.CheckLastMessage("Records: 2  Duplicates: 1  Warnings: 0")
-
-	// Check insert with CLIENT_FOUND_ROWS is set
-	tk.Se.SetClientCapability(mysql.ClientFoundRows)
-	tk.MustExec(`drop table if exists t, t1;
-        create table t (c1 int PRIMARY KEY, c2 int);
-        create table t1 (a1 int, a2 int);`)
-	tk.MustExec(`INSERT INTO t1 VALUES (1, 10), (2, 2), (3, 30);`)
-	tk.MustExec(`INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);`)
-	tk.MustExec(`INSERT INTO t SELECT * FROM t1 ON DUPLICATE KEY UPDATE c2=a2;`)
-	tk.CheckLastMessage("Records: 6  Duplicates: 3  Warnings: 0")
 }
 
 // TestRowLock . See http://dev.mysql.com/doc/refman/5.7/en/commit.html.

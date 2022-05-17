@@ -3012,3 +3012,49 @@ func TestCaseInsensitive(t *testing.T) {
 	tk.MustExec("update T set B = b + 1")
 	tk.MustQuery("select b from T").Check(testkit.Rows("3"))
 }
+
+func TestLastMessage(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id TEXT)")
+
+	// Insert
+	tk.MustExec(`INSERT INTO t VALUES ("a");`)
+	tk.CheckLastMessage("")
+	tk.MustExec(`INSERT INTO t VALUES ("b"), ("c");`)
+	tk.CheckLastMessage("Records: 2  Duplicates: 0  Warnings: 0")
+
+	// Update
+	tk.MustExec(`UPDATE t set id = 'c' where id = 'a';`)
+	require.Equal(t, uint64(1), tk.Session().AffectedRows())
+	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
+	tk.MustExec(`UPDATE t set id = 'a' where id = 'a';`)
+	require.Equal(t, uint64(0), tk.Session().AffectedRows())
+	tk.CheckLastMessage("Rows matched: 0  Changed: 0  Warnings: 0")
+
+	// Replace
+	tk.MustExec(`drop table if exists t, t1;
+        create table t (c1 int PRIMARY KEY, c2 int);
+        create table t1 (a1 int, a2 int);`)
+	tk.MustExec(`INSERT INTO t VALUES (1,1)`)
+	tk.MustExec(`REPLACE INTO t VALUES (2,2)`)
+	tk.CheckLastMessage("")
+	tk.MustExec(`INSERT INTO t1 VALUES (1,10), (3,30);`)
+	tk.CheckLastMessage("Records: 2  Duplicates: 0  Warnings: 0")
+	tk.MustExec(`REPLACE INTO t SELECT * from t1`)
+	tk.CheckLastMessage("Records: 2  Duplicates: 1  Warnings: 0")
+
+	// Check insert with CLIENT_FOUND_ROWS is set
+	tk.Session().SetClientCapability(mysql.ClientFoundRows)
+	tk.MustExec(`drop table if exists t, t1;
+        create table t (c1 int PRIMARY KEY, c2 int);
+        create table t1 (a1 int, a2 int);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (1, 10), (2, 2), (3, 30);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);`)
+	tk.MustExec(`INSERT INTO t SELECT * FROM t1 ON DUPLICATE KEY UPDATE c2=a2;`)
+	tk.CheckLastMessage("Records: 6  Duplicates: 3  Warnings: 0")
+}
