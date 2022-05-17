@@ -2192,7 +2192,6 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 	if !txnCtx.IsPessimistic {
 		return nil
 	}
-
 	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
 		return nil
 	}
