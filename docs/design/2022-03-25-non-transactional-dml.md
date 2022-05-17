@@ -38,7 +38,7 @@ Different from the deprecated batch-DML, a non-transactional DML splits SQLs so 
 #### Syntax
 The syntax: 
 - `BATCH ON <column_name> LIMIT <batch_size> <DML>` is the complete form
-- `SPLIT LIMIT <batch_size> <DML>` is the shorter form. The shard column will be automatically selected from a PK column if possible. But it may return an error and require the user to specify the shard column.
+- `BATCH LIMIT <batch_size> <DML>` is the shorter form. The shard column will be automatically selected from a PK column if possible. But it may return an error and require the user to specify the shard column.
 
 In the first step only `DELETE` is going to be supported, but `UPDATE` and `INSERT INTO SELECT` are also worth considering.
 
