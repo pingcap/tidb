@@ -1588,11 +1588,6 @@ func TestShowVar(t *testing.T) {
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), len(globalVars))
 
-	// Test a known hidden variable.
-	res = tk.MustQuery("show variables like '" + variable.TiDBPartitionPruneMode + "'")
-	require.Len(t, res.Rows(), 0)
-	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
-	require.Len(t, res.Rows(), 0)
 	// Test Hidden tx_read_ts
 	res = tk.MustQuery("show variables like '%tx_read_ts'")
 	require.Len(t, res.Rows(), 0)

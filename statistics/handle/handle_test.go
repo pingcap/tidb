@@ -1070,18 +1070,6 @@ partition by range (a) (
 	checkHealthy(60, 50, 66)
 }
 
-func TestHideGlobalStatsSwitch(t *testing.T) {
-	// NOTICE: remove this test when this global-stats is GA.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		require.NotEqual(t, "tidb_partition_prune_mode", strings.ToLower(r[0].(string)))
-	}
-	require.Len(t, tk.MustQuery("show variables where variable_name like '%tidb_partition_prune_mode%'").Rows(), 0)
-}
-
 func TestGlobalStatsData(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
