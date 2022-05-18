@@ -323,6 +323,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 			},
 		},
 	}
+	tc.SetPessimisticLockCache([]byte{'a'}, []byte{'a'})
 
 	tc.AddSavepoint("S1", nil)
 	require.Equal(t, 1, len(tc.Savepoints))
@@ -341,6 +342,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		InitTime: time.Now(),
 		TableID:  9,
 	}
+	tc.SetPessimisticLockCache([]byte{'b'}, []byte{'b'})
 
 	tc.AddSavepoint("S2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
@@ -357,6 +359,7 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		InitTime: time.Now(),
 		TableID:  13,
 	}
+	tc.SetPessimisticLockCache([]byte{'c'}, []byte{'c'})
 
 	tc.AddSavepoint("s2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
@@ -367,6 +370,12 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	require.Equal(t, 1, len(tc.Savepoints))
 	require.Equal(t, 1, len(tc.Savepoints[0].TableDeltaMap))
 	require.Equal(t, "s1", tc.Savepoints[0].Name)
+	val, ok := tc.GetKeyInPessimisticLockCache([]byte{'a'})
+	require.True(t, ok)
+	require.Equal(t, []byte{'a'}, val)
+	val, ok = tc.GetKeyInPessimisticLockCache([]byte{'b'})
+	require.False(t, ok)
+	require.Nil(t, val)
 
 	succ = tc.DeleteSavepoint("s1")
 	require.True(t, succ)

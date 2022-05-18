@@ -138,6 +138,8 @@ type SavepointRecord struct {
 	Savepoint interface{}
 	// TableDeltaMap is the savepoint of TransactionContext.TableDeltaMap
 	TableDeltaMap map[int64]TableDelta
+	// pessimisticLockCache is the savepoint of TransactionContext.pessimisticLockCache
+	pessimisticLockCache map[string][]byte
 }
 
 // TransactionContext is used to store variables that has transaction scope.
@@ -340,10 +342,15 @@ func (tc *TransactionContext) AddSavepoint(name string, savepoint interface{}) {
 	for k, v := range tc.TableDeltaMap {
 		tableDeltaMap[k] = v.Clone()
 	}
+	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
+	for k, v := range tc.pessimisticLockCache {
+		pessimisticLockCache[k] = v
+	}
 	tc.Savepoints = append(tc.Savepoints, SavepointRecord{
-		Name:          name,
-		Savepoint:     savepoint,
-		TableDeltaMap: tableDeltaMap,
+		Name:                 name,
+		Savepoint:            savepoint,
+		TableDeltaMap:        tableDeltaMap,
+		pessimisticLockCache: pessimisticLockCache,
 	})
 }
 
@@ -371,9 +378,10 @@ func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 // RollbackToSavepoint rollbacks to the specify savepoint by name.
 func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord {
 	name = strings.ToLower(name)
-	for idx := range tc.Savepoints {
-		if name == tc.Savepoints[idx].Name {
-			tc.TableDeltaMap = tc.Savepoints[idx].TableDeltaMap
+	for idx, sp := range tc.Savepoints {
+		if name == sp.Name {
+			tc.TableDeltaMap = sp.TableDeltaMap
+			tc.pessimisticLockCache = sp.pessimisticLockCache
 			tc.Savepoints = tc.Savepoints[:idx+1]
 			return &tc.Savepoints[idx]
 		}

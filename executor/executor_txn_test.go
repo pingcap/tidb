@@ -658,6 +658,23 @@ func TestSavepointInBigTxn(t *testing.T) {
 	tk1.MustQuery("select * from t order by id").Check(testkit.Rows("0 0", "1 1"))
 }
 
+func TestSavepointRandTestIssue0(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (a enum('B','C') NOT NULL,UNIQUE KEY idx_1 (a),KEY idx_2 (a));")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint sp0;")
+	tk.MustExec("insert ignore into t values ( 'B' ),( 'C' );")
+	err := tk.ExecToErr("update t set a = 'C' where a = 'B';")
+	require.Error(t, err)
+	tk.MustExec("select * from t where a = 'B' for update;")
+	tk.MustExec("rollback to sp0;")
+	tk.MustExec("delete from t where a = 'B' ;")
+}
+
 func TestSavepointWithBinlog(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
