@@ -177,22 +177,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		joinGroupNum := len(curJoinGroup)
 		useGreedy := joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP
 
-		leadingHintNum := len(hintInfo)
-		var leadingHintInfo *tableHintInfo
-		if leadingHintNum > 0 {
-			hasDiffLeadingHint := false
-			leadingHintInfo = hintInfo[0]
-			// One join group has one leading hint at most. Check whether there are different join order hints.
-			for i := 1; i < leadingHintNum; i++ {
-				if hintInfo[i] != hintInfo[i-1] {
-					hasDiffLeadingHint = true
-					break
-				}
-			}
-			if hasDiffLeadingHint {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
-				leadingHintInfo = nil
-			}
+		leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(hintInfo)
+		if hasDiffLeadingHint {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 		}
 
 		if leadingHintInfo != nil && leadingHintInfo.leadingJoinOrder != nil {
@@ -258,6 +245,29 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
+}
+
+// checkAndGenerateLeadingHint used to check and generate the valid leading hint.
+// We are allowed to use at most one leading hint in a join group. When more than one,
+// all leading hints in the current join group will be invalid.
+func checkAndGenerateLeadingHint(hintInfo []*tableHintInfo) (*tableHintInfo, bool) {
+	leadingHintNum := len(hintInfo)
+	var leadingHintInfo *tableHintInfo
+	hasDiffLeadingHint := false
+	if leadingHintNum > 0 {
+		leadingHintInfo = hintInfo[0]
+		// One join group has one leading hint at most. Check whether there are different join order hints.
+		for i := 1; i < leadingHintNum; i++ {
+			if hintInfo[i] != hintInfo[i-1] {
+				hasDiffLeadingHint = true
+				break
+			}
+		}
+		if hasDiffLeadingHint {
+			leadingHintInfo = nil
+		}
+	}
+	return leadingHintInfo, hasDiffLeadingHint
 }
 
 // nolint:structcheck
