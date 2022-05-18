@@ -236,9 +236,6 @@ cross-join = true
 # Stats lease duration, which influences the time of analyze and stats load.
 stats-lease = "3s"
 
-# Run auto analyze worker on this tidb-server.
-run-auto-analyze = true
-
 # Probability to use the query feedback to update stats, 0.0 or 1.0 for always false/true.
 feedback-probability = 0.0
 

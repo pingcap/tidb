@@ -830,7 +830,6 @@ var defaultConf = Config{
 		TCPNoDelay:            true,
 		CrossJoin:             true,
 		StatsLease:            "3s",
-		RunAutoAnalyze:        true,
 		StmtCountLimit:        5000,
 		FeedbackProbability:   0.0,
 		QueryFeedbackLimit:    512,
@@ -957,6 +956,8 @@ var deprecatedConfig = map[string]struct{}{
 	"log.query-log-max-len":              {},
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
+	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
+
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
