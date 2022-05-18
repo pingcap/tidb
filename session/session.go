@@ -1658,6 +1658,9 @@ func ParseWithParams4Test(ctx context.Context, s Session,
 	return s.(*session).ParseWithParams(ctx, sql, args)
 }
 
+var _ sqlexec.RestrictedSQLExecutor = &session{}
+var _ sqlexec.SQLExecutor = &session{}
+
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {

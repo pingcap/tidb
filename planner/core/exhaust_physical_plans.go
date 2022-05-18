@@ -1657,7 +1657,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			case hasINLMJHint:
 				errMsg = "Optimizer Hint INL_MERGE_JOIN is inapplicable"
 			}
-			if p.hintInfo != nil {
+			if p.hintInfo != nil && p.preferJoinType > 0 {
 				t := p.hintInfo.indexNestedLoopJoinTables
 				switch {
 				case len(t.inljTables) != 0:
