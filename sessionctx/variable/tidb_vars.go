@@ -688,6 +688,10 @@ const (
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
+	// TiDBPrepPlanCacheSize indicates the number of cached statements.
+	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
+	// TiDBPrepPlanCacheMemoryGuardRatio is used to prevent [performance.max-memory] from being exceeded
+	TiDBPrepPlanCacheMemoryGuardRatio = "tidb_prepared_plan_cache_memory_guard_ratio"
 )
 
 // TiDB intentional limits
@@ -869,6 +873,8 @@ const (
 	DefTiDBCommitterConcurrency                  = 128
 	DefTiDBBatchDMLIgnoreError                   = false
 	DefTiDBMemQuotaAnalyze                       = -1
+	DefTiDBPrepPlanCacheSize                     = 1000
+	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 )
 
 // Process global variables.
@@ -907,6 +913,9 @@ var (
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	// variables for plan cache
+	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
+	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 )
 
 var (
