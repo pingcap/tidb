@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
@@ -35,9 +34,6 @@ import (
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	registerHook()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionLog
-	})
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),

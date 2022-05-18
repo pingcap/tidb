@@ -1396,10 +1396,6 @@ func TestCoprocessorOOMAction(t *testing.T) {
 			sql:  "select id from t5",
 		},
 	}
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert"))
@@ -1409,6 +1405,8 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		t.Logf("enable OOM, testcase: %v", name)
 		// larger than 4 copResponse, smaller than 5 copResponse
 		quota := 5*copr.MockResponseSizeForTest - 100
+		defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
