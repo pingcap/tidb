@@ -173,13 +173,15 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 	for _, col := range tableName.TableInfo.Columns {
 		if col.Name.L == stmt.ShardColumn.Name.L {
 			shardColumnRefer = &ast.ResultField{
-				Column: col,
-				Table:  tableName.TableInfo,
+				Column:    col,
+				Table:     tableName.TableInfo,
+				DBName:    tableName.Schema,
+				TableName: tableName,
 			}
 			shardColumnType = col.FieldType
 		}
 	}
-	if shardColumnRefer == nil && stmt.ShardColumn.Name.O != "_tidb_rowid" {
+	if shardColumnRefer == nil && stmt.ShardColumn.Name.L != model.ExtraHandleName.L {
 		return nil, errors.New("Non-transactional delete, column not found")
 	}
 
@@ -204,6 +206,16 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 		default:
 		}
 
+		// _tidb_rowid
+		if shardColumnRefer == nil {
+			shardColumnType = *types.NewFieldType(mysql.TypeLonglong)
+			shardColumnRefer = &ast.ResultField{
+				Column:    model.NewExtraHandleColInfo(),
+				Table:     tableName.TableInfo,
+				DBName:    tableName.Schema,
+				TableName: tableName,
+			}
+		}
 		stmtBuildInfo := statementBuildInfo{
 			stmt:              stmt,
 			shardColumnType:   shardColumnType,
@@ -495,10 +507,10 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 				if index.Primary {
 					if len(index.Columns) == 1 {
 						shardColumnInfo = tableInfo.Columns[index.Columns[0].Offset]
-					} else {
-						// if the clustered index contains multiple columns, we cannot automatically choose a column as the shard column
-						return false, nil, errors.New("Non-transactional delete, the clustered index contains multiple columns. Please specify a shard column")
+						break
 					}
+					// if the clustered index contains multiple columns, we cannot automatically choose a column as the shard column
+					return false, nil, errors.New("Non-transactional delete, the clustered index contains multiple columns. Please specify a shard column")
 				}
 			}
 			if shardColumnInfo == nil {
@@ -506,20 +518,25 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 			}
 		}
 
-		shardColumnName := "_tidb_rowid"
+		shardColumnName := model.ExtraHandleName.L
 		if shardColumnInfo != nil {
 			shardColumnName = shardColumnInfo.Name.L
 		}
+
+		outputTableName := tableName.Name
+		if tableAsName.L != "" {
+			outputTableName = tableAsName
+		}
 		stmt.ShardColumn = &ast.ColumnName{
 			Schema: tableName.Schema,
-			Table:  tableAsName, // so that table alias works
+			Table:  outputTableName, // so that table alias works
 			Name:   model.NewCIStr(shardColumnName),
 		}
 		return true, shardColumnInfo, nil
 	}
 	shardColumnName = stmt.ShardColumn.Name.L
 
-	if shardColumnName == "_tidb_rowid" && !tableInfo.HasClusteredIndex() {
+	if shardColumnName == model.ExtraHandleName.L && !tableInfo.HasClusteredIndex() {
 		return true, nil, nil
 	}
 

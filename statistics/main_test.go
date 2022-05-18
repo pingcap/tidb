@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -32,7 +32,7 @@ import (
 var testDataMap = make(testdata.BookKeeper, 3)
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	if !flag.Parsed() {
 		flag.Parse()
