@@ -15,10 +15,10 @@
 package core_test
 
 import (
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/parser/model"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
