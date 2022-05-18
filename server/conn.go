@@ -86,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	tlsutil "github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
@@ -686,7 +687,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 				return err
 			}
 		}
-	} else if config.GetGlobalConfig().Security.RequireSecureTransport {
+	} else if tlsutil.RequireSecureTransport.Load() && !cc.isUnixSocket {
+		// If it's not a socket connection, we should reject the connection
+		// because TLS is required.
 		err := errSecureTransportRequired.FastGenByArgs()
 		terror.Log(err)
 		return err
