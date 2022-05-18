@@ -40,7 +40,7 @@ type ListInDisk struct {
 	dataFile   diskFileReaderWriter
 	offsetFile diskFileReaderWriter
 
-	chk *Chunk
+	chk *Chunk // Buffer a batch data to the same chunk to avoid constructing a chunk structure for each GetRow()
 }
 
 // diskFileReaderWriter represents a Reader and a Writer for the temporary disk file.
