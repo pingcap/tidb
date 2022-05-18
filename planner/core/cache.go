@@ -17,7 +17,6 @@ package core
 import (
 	"bytes"
 	"math"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
