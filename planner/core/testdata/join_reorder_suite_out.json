@@ -2785,7 +2785,9 @@
           "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint"
+        ]
       },
       {
         "SQL": "select /*+ leading(t3) */ * from t1 straight_join t2 straight_join t3",
@@ -2799,7 +2801,9 @@
           "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint"
+        ]
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t1 straight_join t2 straight_join t3",
@@ -2813,7 +2817,10 @@
           "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint"
+        ]
       },
       {
         "SQL": "select /*+ leading(t3, t2) */ * from t1 straight_join t2 straight_join t3",
@@ -2827,7 +2834,10 @@
           "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint"
+        ]
       },
       {
         "SQL": "select /*+ leading(t3, t1) */ * from t1 straight_join t2 straight_join t3",
@@ -2841,7 +2851,10 @@
           "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint"
+        ]
       },
       {
         "SQL": "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
