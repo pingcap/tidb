@@ -45,7 +45,6 @@ var (
 		"Performance.PseudoEstimateRatio": {},
 		"Performance.StmtCountLimit":      {},
 		"Performance.TCPKeepAlive":        {},
-		"OOMAction":                       {},
 		"TiKVClient.StoreLimit":           {},
 		"Log.Level":                       {},
 		"Log.ExpensiveThreshold":          {},
