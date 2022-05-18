@@ -41,8 +41,6 @@ import (
 var _ Executor = &CompactTableTiFlashExec{}
 
 const (
-	compactStoreConcurrency = 10 // TODO: Make this a variable.
-
 	compactRequestTimeout         = time.Minute * 60 // A single compact request may take at most 1 hour.
 	compactMaxBackoffSleepMs      = 5 * 1000         // Backoff at most 5 seconds for each request.
 	compactProgressReportInterval = time.Second * 10
@@ -92,7 +90,7 @@ func (e *CompactTableTiFlashExec) doCompact(execCtx context.Context) error {
 	}
 
 	// We will do a TiFlash compact in this way:
-	// For each TiFlash instance (10 concurrency at max):   <--- This is called "storeCompactTask"
+	// For each TiFlash instance (in parallel):   <--- This is called "storeCompactTask"
 	//     For each partition (in series):
 	//         Send a series of compact request for this partition.  <--- Handled by "compactOnePhysicalTable"
 
@@ -102,7 +100,7 @@ func (e *CompactTableTiFlashExec) doCompact(execCtx context.Context) error {
 	}
 
 	g, ctx := errgroup.WithContext(execCtx)
-	g.SetLimit(compactStoreConcurrency)
+	// TODO: We may add concurrency control in future.
 	for _, store := range tiFlashStores {
 		task := &storeCompactTask{
 			ctx:         ctx,
