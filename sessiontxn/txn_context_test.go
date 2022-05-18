@@ -554,7 +554,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	})
 
 	// Test PlanCache
-	path = []string{"assertTxnManagerInCachedPlanExec", "assertTxnManagerInShortPointGetPlan"}
+	path = []string{"assertTxnManagerInShortPointGetPlan"}
 	doWithCheckPath(t, se, path, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
 		require.NoError(t, err)
