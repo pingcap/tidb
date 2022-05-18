@@ -2179,7 +2179,9 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
-	s.PrepareTSFuture(ctx)
+	if err = sessiontxn.WarmUpTxn(s); err != nil {
+		return
+	}
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -2286,15 +2288,19 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		s.PrepareTSFuture(ctx)
-		stmtCtx.Priority = kv.PriorityHigh
-		resultSet, err = runStmt(ctx, s, stmt)
+		if err = sessiontxn.WarmUpTxn(s); err == nil {
+			stmtCtx.Priority = kv.PriorityHigh
+			resultSet, err = runStmt(ctx, s, stmt)
+		}
 	case nil:
 		// cache is invalid
 		if prepareStmt.ForUpdateRead {
-			s.PrepareTSFuture(ctx)
+			err = sessiontxn.WarmUpTxn(s)
 		}
-		resultSet, err = runStmt(ctx, s, stmt)
+
+		if err == nil {
+			resultSet, err = runStmt(ctx, s, stmt)
+		}
 	default:
 		prepared.CachedPlan = nil
 		return nil, false, nil
