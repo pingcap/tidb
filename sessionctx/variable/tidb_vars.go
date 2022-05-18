@@ -16,6 +16,7 @@ package variable
 
 import (
 	"math"
+	syncatomic "sync/atomic"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -915,5 +916,5 @@ var (
 	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
 	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
-	SetStatsCacheCapacity func(c int64) = nil
+	SetStatsCacheCapacity = syncatomic.Value{}
 )
