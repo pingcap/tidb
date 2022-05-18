@@ -15,10 +15,10 @@
 package core_test
 
 import (
-	"github.com/pingcap/failpoint"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
