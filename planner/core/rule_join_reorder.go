@@ -36,13 +36,20 @@ import (
 func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
 	otherConds []expression.Expression, joinTypes []JoinType, hintInfo []*tableHintInfo, hasOuterJoin bool) {
 	join, isJoin := p.(*LogicalJoin)
+	if isJoin && join.preferJoinOrder {
+		// When there is a leading hint, the hint may not take effect for other reasons.
+		// For example, the join type is cross join or straight join, or exists the join algorithm hint, etc.
+		// We need to return the hint information to warn
+		hintInfo = append(hintInfo, join.hintInfo)
+	}
 	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
-		return []LogicalPlan{p}, nil, nil, nil, nil, false
-	}
-	if join.preferJoinOrder {
-		hintInfo = append(hintInfo, join.hintInfo)
+		if hintInfo != nil {
+			// The leading hint can not work for some reasons. So clear it in the join node.
+			join.hintInfo = nil
+		}
+		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false
 	}
 	hasOuterJoin = hasOuterJoin || (join.JoinType != InnerJoin)
 	if join.JoinType != RightOuterJoin {
@@ -234,6 +241,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			p = proj
 		}
 		return p, nil
+	}
+	if len(curJoinGroup) == 1 && hintInfo != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check the join type or the join algorithm hint"))
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
