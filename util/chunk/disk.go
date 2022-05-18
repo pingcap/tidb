@@ -39,6 +39,8 @@ type ListInDisk struct {
 
 	dataFile   diskFileReaderWriter
 	offsetFile diskFileReaderWriter
+
+	chunk *Chunk
 }
 
 // diskFileReaderWriter represents a Reader and a Writer for the temporary disk file.
@@ -194,7 +196,7 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	if err != nil {
 		return row, err
 	}
-	row = format.toMutRow(l.fieldTypes).ToRow()
+	row, l.chunk = format.toRow(l.fieldTypes, l.chunk)
 	return row, err
 }
 
@@ -233,6 +235,7 @@ func (l *ListInDisk) Close() error {
 		terror.Call(l.offsetFile.disk.Close)
 		terror.Log(os.Remove(l.offsetFile.disk.Name()))
 	}
+	l.chunk = nil
 	return nil
 }
 
@@ -348,7 +351,7 @@ type diskFormatRow struct {
 	sizesOfColumns []int64 // -1 means null
 	// cells represents raw data of not-null columns in one row.
 	// In convertFromRow, data from Row is shallow copied to cells.
-	// In toMutRow, data in cells is shallow copied to MutRow.
+	// In toRow, data in cells is shallow copied to MutRow.
 	cells [][]byte
 }
 
@@ -378,35 +381,29 @@ func convertFromRow(row Row, reuse *diskFormatRow) (format *diskFormatRow) {
 	return
 }
 
-// toMutRow deserializes diskFormatRow to MutRow.
-func (format *diskFormatRow) toMutRow(fields []*types.FieldType) MutRow {
-	chk := &Chunk{columns: make([]*Column, 0, len(format.sizesOfColumns))}
+// toRow deserializes diskFormatRow to Row.
+func (format *diskFormatRow) toRow(fields []*types.FieldType, chk *Chunk) (Row, *Chunk) {
+	if chk == nil || chk.IsFull() {
+		chk = NewChunkWithCapacity(fields, 1024)
+	}
 	var cellOff int
 	for colIdx, size := range format.sizesOfColumns {
-		col := &Column{length: 1}
-		elemSize := getFixedLen(fields[colIdx])
+		col := chk.columns[colIdx]
 		if size == -1 { // isNull
-			col.nullBitmap = []byte{0}
-			if elemSize == varElemLen {
-				col.offsets = []int64{0, 0}
-			} else {
-				buf := make([]byte, elemSize)
-				col.data = buf
-				col.elemBuf = buf
-			}
+			col.AppendNull()
 		} else {
-			col.nullBitmap = []byte{1}
-			col.data = format.cells[cellOff]
+			col.AppendBytes(format.cells[cellOff])
 			cellOff++
-			if elemSize == varElemLen {
-				col.offsets = []int64{0, int64(len(col.data))}
-			} else {
-				col.elemBuf = col.data
-			}
 		}
-		chk.columns = append(chk.columns, col)
 	}
-	return MutRow{c: chk}
+	for colIdx := range format.sizesOfColumns {
+		elemSize := getFixedLen(fields[colIdx])
+		if elemSize != varElemLen {
+			chk.columns[colIdx].offsets = nil
+		}
+	}
+
+	return Row{c: chk, idx: chk.NumRows() - 1}, chk
 }
 
 // ReaderWithCache helps to read data that has not be flushed to underlying layer.

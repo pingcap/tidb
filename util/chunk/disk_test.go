@@ -189,7 +189,7 @@ func (l *listInDiskWriteDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	if err != nil {
 		return row, err
 	}
-	row = format.toMutRow(l.fieldTypes).ToRow()
+	row, _ = format.toRow(l.fieldTypes, nil)
 	return row, err
 }
 
