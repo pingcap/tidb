@@ -234,7 +234,6 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	}
 
 	p.stmtTSFuture = stmtTSFuture
-	return
 }
 
 func (p *PessimisticRCTxnContextProvider) prepareTxn() {
