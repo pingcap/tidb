@@ -931,7 +931,7 @@ var deprecatedConfig = map[string]struct{}{
 	"alter-primary-key":                  {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":                   {},
 	"performance.mem-profile-interval":   {},
-	"require-secure-transport":           {},
+	"security.require-secure-transport":  {},
 	"lower-case-table-names":             {},
 	"stmt-summary":                       {},
 	"stmt-summary.enable":                {},
@@ -942,7 +942,7 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.history-size":          {},
 	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
 	"mem-quota-query":                    {},
-	"query-log-max-len":                  {},
+	"log.query-log-max-len":              {},
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
 }
