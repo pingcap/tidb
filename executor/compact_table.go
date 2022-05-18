@@ -243,6 +243,7 @@ func (task *storeCompactTask) compactOnePhysicalTable(physicalTableID int64) (st
 		})
 		if err != nil {
 			// Even after backoff, the request is still failed.., or the request is cancelled or timed out
+			// For example, the store is down. Let's simply don't compact other partitions.
 			warn := errors.Errorf("compact on store %s failed: %v", task.targetStore.Address, err)
 			task.parentExec.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 			task.logFailure(
@@ -263,15 +264,25 @@ func (task *storeCompactTask) compactOnePhysicalTable(physicalTableID int64) (st
 				// compacting the same table is a waste of resource.
 				return true, warn
 			case *kvrpcpb.CompactError_ErrTooManyPendingTasks:
-				// The store is already very busy, don't retry.
+				// The store is already very busy, don't retry and don't compact other partitions.
 				warn := errors.Errorf("compact on store %s failed: store is too busy", task.targetStore.Address)
 				task.parentExec.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 				task.logFailure(
 					zap.Int64("physical-table-id", physicalTableID),
 					zap.Error(warn))
 				return false, warn
+			case *kvrpcpb.CompactError_ErrPhysicalTableNotExist:
+				// The physical table does not exist, don't retry this partition, but other partitions should still be compacted.
+				// This may happen when partition or table is dropped during the long compaction.
+				log.Info("Compact physical table skipped",
+					zap.String("table", task.parentExec.tableInfo.Name.O),
+					zap.Int64("table-id", task.parentExec.tableInfo.ID),
+					zap.String("store-address", task.targetStore.Address),
+					zap.Any("response-error", resp.GetError().GetError()))
+				// We don't need to produce any user warnings.
+				return false, nil
 			default:
-				// Others are unexpected errors, don't retry.
+				// Others are unexpected errors, don't retry and don't compact other partitions.
 				warn := errors.Errorf("compact on store %s failed: internal error (check logs for details)", task.targetStore.Address)
 				task.parentExec.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 				task.logFailure(
@@ -314,7 +325,7 @@ func (task *storeCompactTask) sendRequestWithRetry(req *tikvrpc.Request) (resp_ 
 			SendRequest(task.ctx, task.targetStore.Address, req, compactRequestTimeout)
 
 		if err != nil {
-			if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
+			if errors.Cause(err) == context.Canceled || errors.Cause(err) == context.DeadlineExceeded || status.Code(errors.Cause(err)) == codes.Canceled {
 				// The request is timed out, or cancelled because of Killed
 				// No need to retry.
 				return nil, err

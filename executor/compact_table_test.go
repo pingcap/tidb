@@ -21,12 +21,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.uber.org/atomic"
 )
 
 func TestCompactTableNoTiFlashReplica(t *testing.T) {
@@ -380,13 +382,13 @@ func TestCompactTableMultipleTiFlashWithError(t *testing.T) {
 	))
 }
 
-// TestCompactTableWithPartition: 1 TiFlash, table has 4 partitions.
+// TestCompactTableWithRangePartition: 1 TiFlash, table has 4 partitions.
 // Partition 0: 1 Partials
 // Partition 1: 3 Partials
 // Partition 2: 1 Partials
 // Partition 3: 2 Partials
 // There will be 7 requests sent in series.
-func TestCompactTableWithPartition(t *testing.T) {
+func TestCompactTableWithRangePartition(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
 	store, do, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
@@ -499,7 +501,187 @@ func TestCompactTableWithPartition(t *testing.T) {
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
 }
 
-// TODO: Test privilege, test partitions of different types, drop table while compacting, drop partition while compacting, store is not alive, partial network failure.
+// TestCompactTableWithHashPartition: 1 TiFlash, table has 3 partitions (hash partition).
+// During compacting the partition, one partition will return failure PhysicalTableNotExist. The remaining partitions should be still compacted.
+func TestCompactTableWithHashPartitionAndOnePartitionFailed(t *testing.T) {
+	mocker := newCompactRequestMocker(t)
+	defer mocker.RequireAllHandlersHit()
+	store, do, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableId := do.MustGetTableID(t, "test", "employees")
+		pid := do.MustGetPartitionAt(t, "test", "employees", 0)
+		require.Empty(t, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, pid)
+		require.EqualValues(t, req.LogicalTableId, tableId)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      false,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xFF},
+		}, nil
+	})
+	mocker.MockFrom(`tiflash0/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableId := do.MustGetTableID(t, "test", "employees")
+		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
+		require.Empty(t, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, pid)
+		require.EqualValues(t, req.LogicalTableId, tableId)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      true,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xA0},
+		}, nil
+	})
+	mocker.MockFrom(`tiflash0/#3`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableId := do.MustGetTableID(t, "test", "employees")
+		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
+		require.Equal(t, []byte{0xA0}, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, pid)
+		require.EqualValues(t, req.LogicalTableId, tableId)
+		return &kvrpcpb.CompactResponse{
+			Error: &kvrpcpb.CompactError{Error: &kvrpcpb.CompactError_ErrPhysicalTableNotExist{}}, // For example, may be this partition got dropped
+		}, nil
+	})
+	mocker.MockFrom(`tiflash0/#4`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableId := do.MustGetTableID(t, "test", "employees")
+		pid := do.MustGetPartitionAt(t, "test", "employees", 2)
+		require.Empty(t, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, pid)
+		require.EqualValues(t, req.LogicalTableId, tableId)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      false,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xCD},
+		}, nil
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec(`
+	CREATE TABLE employees (
+		id INT NOT NULL,
+		fname VARCHAR(30),
+		lname VARCHAR(30),
+		hired DATE NOT NULL DEFAULT '1970-01-01',
+		separated DATE DEFAULT '9999-12-31',
+		job_code INT,
+		store_id INT
+	)
+	PARTITION BY HASH(store_id)
+	PARTITIONS 3;
+	`)
+	tk.MustExec(`alter table employees set tiflash replica 1;`)
+	tk.MustExec(`alter table employees compact tiflash replica;`)
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
+}
+
+// TestCompactTableWithTiFlashDown: 2 TiFlash stores.
+// Store0 - #1 (remaining=true, takes 3s), #2 (remaining=false)
+// Store1 - #1 (remaining=true), #2+ (down)
+func TestCompactTableWithTiFlashDown(t *testing.T) {
+	mocker := newCompactRequestMocker(t)
+	defer mocker.RequireAllHandlersHit()
+	store, _, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		require.Empty(t, req.StartKey)
+		time.Sleep(time.Second * 3)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      true,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xFF},
+		}, nil
+	})
+	mocker.MockFrom(`tiflash0/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		require.Equal(t, []byte{0xFF}, req.StartKey)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      false,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xFF, 0x00, 0xAA},
+		}, nil
+	})
+
+	mocker.MockFrom(`^tiflash1/#1$`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		require.Empty(t, req.StartKey)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      true,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xA0},
+		}, nil
+	})
+	mocker.MockFrom(`tiflash1/#`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		// For #2~#N requests, always return network errors
+		return nil, errors.New("Bad network")
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec(`alter table t set tiflash replica 1;`)
+	tk.MustExec(`alter table t compact tiflash replica;`)
+	tk.MustQuery(`show warnings;`).Sort().Check(testkit.Rows(
+		"Warning 1105 compact on store tiflash1 failed: Bad network",
+	))
+}
+
+// TestCompactTableWithTiFlashDownAndRestore: 2 TiFlash stores.
+// Store0 - #1 (remaining=true, takes 3s), #2 (remaining=false)
+// Store1 - #1 (remaining=true), #2 (down), #3 (restored, remaining=false)
+func TestCompactTableWithTiFlashDownAndRestore(t *testing.T) {
+	mocker := newCompactRequestMocker(t)
+	defer mocker.RequireAllHandlersHit()
+	store, _, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		require.Empty(t, req.StartKey)
+		time.Sleep(time.Second * 3)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      true,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xFF},
+		}, nil
+	})
+	mocker.MockFrom(`tiflash0/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		require.Equal(t, []byte{0xFF}, req.StartKey)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      false,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xFF, 0x00, 0xAA},
+		}, nil
+	})
+
+	mocker.MockFrom(`tiflash1/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		require.Empty(t, req.StartKey)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      true,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xA0},
+		}, nil
+	})
+	mocker.MockFrom(`tiflash1/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		require.Equal(t, []byte{0xA0}, req.StartKey)
+		time.Sleep(time.Second * 1)
+		return nil, errors.New("Bad Network")
+	})
+	mocker.MockFrom(`tiflash1/#3`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		require.Equal(t, []byte{0xA0}, req.StartKey) // The same request should be sent again.
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      false,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xFF},
+		}, nil
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec(`alter table t set tiflash replica 1;`)
+	tk.MustExec(`alter table t compact tiflash replica;`)
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
+}
 
 // Code below are helper utilities for the test cases.
 
@@ -507,7 +689,7 @@ type compactClientHandler struct {
 	matcher       *regexp.Regexp
 	matcherString string
 	fn            func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error)
-	hit           bool
+	hit           atomic.Bool
 }
 
 type compactRequestMocker struct {
@@ -523,7 +705,7 @@ func (client *compactRequestMocker) SendRequest(ctx context.Context, addr string
 		handlerKey := fmt.Sprintf("%s/#%d", addr, client.receivedRequestsOfAddr[addr])
 		for _, handler := range client.handlers {
 			if handler.matcher.MatchString(handlerKey) {
-				handler.hit = true
+				handler.hit.Store(true)
 				resp, err := handler.fn(req.Compact())
 				if err != nil {
 					return nil, err
@@ -551,14 +733,14 @@ func (client *compactRequestMocker) MockFrom(matchPattern string, fn func(req *k
 		matcher:       m,
 		matcherString: matchPattern,
 		fn:            fn,
-		hit:           false,
+		hit:           atomic.Bool{},
 	})
 	return client
 }
 
 func (client *compactRequestMocker) RequireAllHandlersHit() {
 	for _, handler := range client.handlers {
-		if !handler.hit {
+		if !handler.hit.Load() {
 			require.Fail(client.t, fmt.Sprintf("Request handler %s did not hit, maybe caused by request was missing?", handler.matcherString))
 		}
 	}
