@@ -1634,6 +1634,74 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	return stmts[0], nil
 }
 
+<<<<<<< HEAD
+=======
+// GetAdvisoryLock acquires an advisory lock of lockName.
+// Note that a lock can be acquired multiple times by the same session,
+// in which case we increment a reference count.
+// Each lock needs to be held in a unique session because
+// we need to be able to ROLLBACK in any arbitrary order
+// in order to release the locks.
+func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
+	if lock, ok := s.advisoryLocks[lockName]; ok {
+		lock.IncrReferences()
+		return nil
+	}
+	sess, err := createSession(s.GetStore())
+	if err != nil {
+		return err
+	}
+	lock := &advisoryLock{session: sess, ctx: context.TODO()}
+	err = lock.GetLock(lockName, timeout)
+	if err != nil {
+		return err
+	}
+	s.advisoryLocks[lockName] = lock
+	return nil
+}
+
+// ReleaseAdvisoryLock releases an advisory locks held by the session.
+// It returns FALSE if no lock by this name was held (by this session),
+// and TRUE if a lock was held and "released".
+// Note that the lock is not actually released if there are multiple
+// references to the same lockName by the session, instead the reference
+// count is decremented.
+func (s *session) ReleaseAdvisoryLock(lockName string) (released bool) {
+	if lock, ok := s.advisoryLocks[lockName]; ok {
+		lock.DecrReferences()
+		if lock.ReferenceCount() <= 0 {
+			lock.Close()
+			delete(s.advisoryLocks, lockName)
+		}
+		return true
+	}
+	return false
+}
+
+// ReleaseAllAdvisoryLocks releases all advisory locks held by the session
+// and returns a count of the locks that were released.
+// The count is based on unique locks held, so multiple references
+// to the same lock do not need to be accounted for.
+func (s *session) ReleaseAllAdvisoryLocks() int {
+	var count int
+	for lockName, lock := range s.advisoryLocks {
+		lock.Close()
+		count += lock.ReferenceCount()
+		delete(s.advisoryLocks, lockName)
+	}
+	return count
+}
+
+// ParseWithParams4Test wrapper (s *session) ParseWithParams for test
+func ParseWithParams4Test(ctx context.Context, s Session,
+	sql string, args ...interface{}) (ast.StmtNode, error) {
+	return s.(*session).ParseWithParams(ctx, sql, args)
+}
+
+var _ sqlexec.RestrictedSQLExecutor = &session{}
+var _ sqlexec.SQLExecutor = &session{}
+
+>>>>>>> ba3b2f41a... ddl: fix 'alter table cache' error when SEM is enabled (#34727)
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
