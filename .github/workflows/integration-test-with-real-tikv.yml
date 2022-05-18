@@ -2,9 +2,11 @@ name: Real TiKV Tests
 
 on:
   push:
-    branches: [master]
+    branches:
+      - master
   pull_request:
-    branches: [master]
+    branches:
+      - master
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}
@@ -27,7 +29,7 @@ jobs:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
         with:
-          go-version: 1.18
+          go-version: 1.18.2
       - name: Setup TiKV cluster
         run: |
           # Disable pipelined pessimistic lock temporarily until tikv#11649 is resolved
