@@ -1452,6 +1452,7 @@ func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
 func (rc *Client) PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	tables []*metautil.Table,
+	skipTiflash bool,
 ) error {
 	tiFlashStores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.TiFlashOnly)
 	if err != nil {
@@ -1459,7 +1460,8 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	}
 	tiFlashStoreCount := len(tiFlashStores)
 	for _, table := range tables {
-		if table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount) {
+		if skipTiflash ||
+			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount)) {
 			// we cannot satisfy TiFlash replica in restore cluster. so we should
 			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
 			// see details at https://github.com/pingcap/br/issues/931
@@ -1952,7 +1954,7 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			var e error
-			schemaVersion, e = t.GenSchemaVersion()
+			schemaVersion, e = t.GenSchemaVersions(128)
 			return e
 		},
 	); err != nil {
