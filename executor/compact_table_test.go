@@ -116,10 +116,10 @@ func TestCompactTableNoRemaining(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "t")
+		tableID := do.MustGetTableID(t, "test", "t")
 		require.Empty(t, req.StartKey)
-		require.EqualValues(t, req.PhysicalTableId, tableId)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.PhysicalTableId, tableID)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      false,
 			CompactedStartKey: []byte{},
@@ -143,10 +143,10 @@ func TestCompactTableHasRemaining(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "t")
+		tableID := do.MustGetTableID(t, "test", "t")
 		require.Empty(t, req.StartKey)
-		require.EqualValues(t, req.PhysicalTableId, tableId)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.PhysicalTableId, tableID)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      true,
 			CompactedStartKey: []byte{},
@@ -154,10 +154,10 @@ func TestCompactTableHasRemaining(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "t")
+		tableID := do.MustGetTableID(t, "test", "t")
 		require.Equal(t, []byte{0xFF}, req.StartKey)
-		require.EqualValues(t, req.PhysicalTableId, tableId)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.PhysicalTableId, tableID)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      true,
 			CompactedStartKey: []byte{},
@@ -165,10 +165,10 @@ func TestCompactTableHasRemaining(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#3`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "t")
+		tableID := do.MustGetTableID(t, "test", "t")
 		require.Equal(t, []byte{0xFF, 0x20}, req.StartKey)
-		require.EqualValues(t, req.PhysicalTableId, tableId)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.PhysicalTableId, tableID)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      false,
 			CompactedStartKey: []byte{},
@@ -224,10 +224,10 @@ func TestCompactTableNoRemainingMultipleTiFlash(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "t")
+		tableID := do.MustGetTableID(t, "test", "t")
 		require.Empty(t, req.StartKey)
-		require.EqualValues(t, req.PhysicalTableId, tableId)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.PhysicalTableId, tableID)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      false,
 			CompactedStartKey: []byte{},
@@ -235,10 +235,10 @@ func TestCompactTableNoRemainingMultipleTiFlash(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash1/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "t")
+		tableID := do.MustGetTableID(t, "test", "t")
 		require.Empty(t, req.StartKey)
-		require.EqualValues(t, req.PhysicalTableId, tableId)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.PhysicalTableId, tableID)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      false,
 			CompactedStartKey: []byte{},
@@ -396,11 +396,11 @@ func TestCompactTableWithRangePartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 0)
 		require.Empty(t, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      false,
 			CompactedStartKey: []byte{},
@@ -408,11 +408,11 @@ func TestCompactTableWithRangePartition(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
 		require.Empty(t, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      true,
 			CompactedStartKey: []byte{},
@@ -420,11 +420,11 @@ func TestCompactTableWithRangePartition(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#3`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
 		require.Equal(t, []byte{0xCC}, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      true,
 			CompactedStartKey: []byte{},
@@ -432,11 +432,11 @@ func TestCompactTableWithRangePartition(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#4`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
 		require.Equal(t, []byte{0xFF}, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      false,
 			CompactedStartKey: []byte{},
@@ -444,11 +444,11 @@ func TestCompactTableWithRangePartition(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#5`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 2)
 		require.Empty(t, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      false,
 			CompactedStartKey: []byte{},
@@ -456,11 +456,11 @@ func TestCompactTableWithRangePartition(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#6`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 3)
 		require.Empty(t, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      true,
 			CompactedStartKey: []byte{},
@@ -468,11 +468,11 @@ func TestCompactTableWithRangePartition(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#7`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 3)
 		require.Equal(t, []byte{0xC0}, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      false,
 			CompactedStartKey: []byte{},
@@ -511,11 +511,11 @@ func TestCompactTableWithHashPartitionAndOnePartitionFailed(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 0)
 		require.Empty(t, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      false,
 			CompactedStartKey: []byte{},
@@ -523,11 +523,11 @@ func TestCompactTableWithHashPartitionAndOnePartitionFailed(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
 		require.Empty(t, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      true,
 			CompactedStartKey: []byte{},
@@ -535,21 +535,21 @@ func TestCompactTableWithHashPartitionAndOnePartitionFailed(t *testing.T) {
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#3`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 1)
 		require.Equal(t, []byte{0xA0}, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			Error: &kvrpcpb.CompactError{Error: &kvrpcpb.CompactError_ErrPhysicalTableNotExist{}}, // For example, may be this partition got dropped
 		}, nil
 	})
 	mocker.MockFrom(`tiflash0/#4`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
-		tableId := do.MustGetTableID(t, "test", "employees")
+		tableID := do.MustGetTableID(t, "test", "employees")
 		pid := do.MustGetPartitionAt(t, "test", "employees", 2)
 		require.Empty(t, req.StartKey)
 		require.EqualValues(t, req.PhysicalTableId, pid)
-		require.EqualValues(t, req.LogicalTableId, tableId)
+		require.EqualValues(t, req.LogicalTableId, tableID)
 		return &kvrpcpb.CompactResponse{
 			HasRemaining:      false,
 			CompactedStartKey: []byte{},
