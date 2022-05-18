@@ -137,8 +137,11 @@
     "name": "TestJoinOrderHint4DifferentJoinType",
     "cases": [
       "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ straight_join() */ * from t1 straight join t2 straight join t3",
       "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
       "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a left full join t3 on t2.b=t3.b",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a right full join t3 on t2.b=t3.b",
       "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a cross join t3",
 
       // inner join
@@ -148,12 +151,24 @@
       "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
       "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
 
+      // straight join
+      "select /*+ leading(t2) */ * from t1 straight join t2 straight join t3",
+      "select /*+ leading(t3) */ * from t1 straight join t2 straight join t3",
+      "select /*+ leading(t2, t3) */ * from t1 straight join t2 straight join t3",
+      "select /*+ leading(t3, t2) */ * from t1 straight join t2 straight join t3",
+      "select /*+ leading(t3, t1) */ * from t1 straight join t2 straight join t3",
+
       // left outer join
       "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
       "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
       "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
       "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
       "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left full join t3 on t2.b=t3.b",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a left full join t3 on t2.b=t3.b",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a left full join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a left full join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a left full join t3 on t2.b=t3.b",
 
       // right outer join
       "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
@@ -161,6 +176,11 @@
       "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
       "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
       "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a right full join t3 on t2.b=t3.b",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a right full join t3 on t2.b=t3.b",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a right full join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a right full join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a right full join t3 on t2.b=t3.b",
 
       // cross join
       "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a cross join t3",
