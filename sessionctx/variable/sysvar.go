@@ -612,9 +612,9 @@ var defaultSysVars = []*SysVar{
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			return checkGCTxnMaxWaitTime(vars, normalizedValue, originalValue, scope)
 		}, SetGlobal: func(s *SessionVars, val string) error {
-		GCMaxWaitTime.Store(TidbOptInt64(val, DefTiDBGCMaxWaitTime))
-		return nil
-	}},
+			GCMaxWaitTime.Store(TidbOptInt64(val, DefTiDBGCMaxWaitTime))
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBTableCacheLease, Value: strconv.Itoa(DefTiDBTableCacheLease), Type: TypeUnsigned, MinValue: 1, MaxValue: 10, SetGlobal: func(s *SessionVars, sVal string) error {
 		var val int64
 		val, err := strconv.ParseInt(sVal, 10, 64)
@@ -683,15 +683,15 @@ var defaultSysVars = []*SysVar{
 			tls.RequireSecureTransport.Store(TiDBOptOn(val))
 			return nil
 		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if vars.StmtCtx.StmtType == "Set" && TiDBOptOn(normalizedValue) {
-			// Refuse to set RequireSecureTransport to ON if the connection
-			// issuing the change is not secure. This helps reduce the chance of users being locked out.
-			if vars.TLSConnectionState == nil {
-				return "", errors.New("require_secure_transport can only be set to ON if the connection issuing the change is secure")
+			if vars.StmtCtx.StmtType == "Set" && TiDBOptOn(normalizedValue) {
+				// Refuse to set RequireSecureTransport to ON if the connection
+				// issuing the change is not secure. This helps reduce the chance of users being locked out.
+				if vars.TLSConnectionState == nil {
+					return "", errors.New("require_secure_transport can only be set to ON if the connection issuing the change is secure")
+				}
 			}
-		}
-		return normalizedValue, nil
-	},
+			return normalizedValue, nil
+		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBStatsLoadPseudoTimeout, Value: BoolToOnOff(DefTiDBStatsLoadPseudoTimeout), skipInit: true, Type: TypeBool,
 		GetGlobal: func(s *SessionVars) (string, error) {
@@ -713,14 +713,14 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(vars *SessionVars) (string, error) {
 			return strconv.FormatInt(StatsCacheMemQuota.Load(), 10), nil
 		}, SetGlobal: func(vars *SessionVars, s string) error {
-		v := TidbOptInt64(s, DefTiDBStatsCacheMemQuota)
-		oldv := StatsCacheMemQuota.Load()
-		if v != oldv {
-			StatsCacheMemQuota.Store(v)
-			SetStatsCacheCapacity.Load().(func(int64))(v)
-		}
-		return nil
-	},
+			v := TidbOptInt64(s, DefTiDBStatsCacheMemQuota)
+			oldv := StatsCacheMemQuota.Load()
+			if v != oldv {
+				StatsCacheMemQuota.Store(v)
+				SetStatsCacheCapacity.Load().(func(int64))(v)
+			}
+			return nil
+		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(DefTiDBQueryLogMaxLen), Type: TypeInt, MinValue: 0, MaxValue: 1073741824, SetGlobal: func(s *SessionVars, val string) error {
 		QueryLogMaxLen.Store(int32(TidbOptInt64(val, DefTiDBQueryLogMaxLen)))
