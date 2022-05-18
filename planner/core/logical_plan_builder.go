@@ -1759,7 +1759,6 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, selects []LogicalPlan, aft
 	if err != nil {
 		return nil, err
 	}
-
 	unionDistinctPlan, err := b.buildUnionAll(ctx, distinctSelectPlans)
 	if err != nil {
 		return nil, err
@@ -3996,6 +3995,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
+	if b.buildingCTE {
+		if hints := b.TableHints(); hints != nil {
+			b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.CTEHints.preferInlineToCTE
+		}
+	}
+
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
@@ -4158,11 +4163,8 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			lp := LogicalCTE{cteAsName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat, isOuterMostCTE: !b.buildingCTE}.Init(b.ctx, b.getSelectOffset())
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
-			//make cteinline is ture, that will use merge way to run
-			if hint := b.TableHints(); hint != nil {
-				lp.CTEHints = hint.CTEHints
-			}
-			if lp.CTEHints.preferInlineToCTE {
+			if b.outerCTEs[len(b.outerCTEs)-1].isInline {
+				lp.CTEHints.preferInlineToCTE = b.outerCTEs[len(b.outerCTEs)-1].isInline
 				saveCte := b.outerCTEs[i:]
 				b.outerCTEs = b.outerCTEs[:i]
 				defer func() {

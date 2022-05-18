@@ -433,6 +433,8 @@ type cteInfo struct {
 	seedStat *property.StatsInfo
 	// The LogicalCTEs that reference the same table should share the same CteClass.
 	cteClass *CTEClass
+
+	isInline bool
 }
 
 // PlanBuilder builds Plan from an ast.Node.
