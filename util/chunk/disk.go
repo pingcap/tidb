@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"sync"
 
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -40,7 +41,7 @@ type ListInDisk struct {
 	dataFile   diskFileReaderWriter
 	offsetFile diskFileReaderWriter
 
-	chk *Chunk // Buffer a batch data to the same chunk to avoid constructing a chunk structure for each GetRow()
+	chkPool *sync.Pool // Using a Chunk Pool to avoid constructing a chunk structure for each GetRow()
 }
 
 // diskFileReaderWriter represents a Reader and a Writer for the temporary disk file.
@@ -107,6 +108,9 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 		fieldTypes: fieldTypes,
 		// TODO(fengliyuan): set the quota of disk usage.
 		diskTracker: disk.NewTracker(memory.LabelForChunkListInDisk, -1),
+		chkPool: &sync.Pool{New: func() interface{} {
+			return NewChunkWithCapacity(fieldTypes, 1024)
+		}},
 	}
 	return l
 }
@@ -196,7 +200,9 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	if err != nil {
 		return row, err
 	}
-	row, l.chk = format.toRow(l.fieldTypes, l.chk)
+	chk := l.chkPool.Get().(*Chunk)
+	row, chk = format.toRow(l.fieldTypes, chk)
+	l.chkPool.Put(chk)
 	return row, err
 }
 
@@ -235,7 +241,7 @@ func (l *ListInDisk) Close() error {
 		terror.Call(l.offsetFile.disk.Close)
 		terror.Log(os.Remove(l.offsetFile.disk.Name()))
 	}
-	l.chk = nil
+	l.chkPool = nil
 	return nil
 }
 
