@@ -223,15 +223,11 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	if !sessVars.StmtCtx.RCCheckTS {
-		p.availableRCCheckTS = 0
-	}
-
 	var stmtTSFuture oracle.Future
 	switch {
 	case p.stmtUseStartTS:
 		stmtTSFuture = p.getTxnStartTSFuture()
-	case p.availableRCCheckTS != 0:
+	case p.availableRCCheckTS != 0 && sessVars.StmtCtx.RCCheckTS:
 		stmtTSFuture = sessiontxn.ConstantFuture(p.availableRCCheckTS)
 	default:
 		stmtTSFuture = sessiontxn.NewOracleFuture(p.ctx, p.sctx, sessVars.TxnCtx.TxnScope)
