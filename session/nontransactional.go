@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -114,13 +113,12 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 
 func setMemTracker(se Session) *memory.Tracker {
 	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, se.GetSessionVars().MemQuotaQuery)
-	globalConfig := config.GetGlobalConfig()
-	switch globalConfig.OOMAction {
-	case config.OOMActionCancel:
+	switch variable.OOMAction.Load() {
+	case variable.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: se.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		memTracker.SetActionOnExceed(action)
-	case config.OOMActionLog:
+	case variable.OOMActionLog:
 		fallthrough
 	default:
 		action := &memory.LogOnExceed{ConnID: se.GetSessionVars().ConnectionID}
