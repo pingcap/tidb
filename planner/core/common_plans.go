@@ -458,7 +458,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			tps[i] = types.NewFieldType(mysql.TypeNull)
 		}
 	}
+<<<<<<< HEAD
 	if prepared.CachedPlan != nil {
+=======
+
+	if prepared.UseCache && prepared.CachedPlan != nil { // short path for point-get plans
+>>>>>>> 381e870c5... planner: disable plan-cache short path for point-get plans when plan-cache is disabled (#34739)
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
 		// the expression in the where condition will not be evaluated,
@@ -484,7 +489,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.PointExec = true
 		return nil
 	}
-	if prepared.UseCache {
+	if prepared.UseCache { // for general plans
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
@@ -611,7 +616,7 @@ func containTableDual(p Plan) bool {
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
-	if sctx.GetSessionVars().StmtCtx.SkipPlanCache {
+	if !sctx.GetSessionVars().StmtCtx.UseCache || sctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return nil
 	}
 	var (
