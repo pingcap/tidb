@@ -1010,11 +1010,7 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer func() {
-		if err != nil {
-			mgr.Close()
-		}
-	}()
+	defer mgr.Close()
 
 	client, err := createRestoreClient(ctx, g, cfg, mgr)
 	if err != nil {
