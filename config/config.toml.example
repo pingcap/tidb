@@ -44,10 +44,6 @@ oom-use-tmp-storage = true
 # The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
 tmp-storage-quota = -1
 
-# Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by the memory quota and cannot be spilled over to disk.
-# Valid options: ["log", "cancel"]
-oom-action = "cancel"
-
 # Make "kill query" behavior compatible with MySQL. It's not recommend to
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
