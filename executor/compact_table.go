@@ -223,7 +223,8 @@ func (task *storeCompactTask) logProgressOptionally() {
 // During this function, some "problems" will cause it to early return, e.g. physical table not exist in this
 // store any more (maybe caused by DDL). No errors will be produced so that remaining partitions will continue
 // being compacted.
-func (task *storeCompactTask) compactOnePhysicalTable(physicalTableID int64) (stopAllTasks_ bool, err_ error) {
+// 																	Returns: (stopAllTasks, err)
+func (task *storeCompactTask) compactOnePhysicalTable(physicalTableID int64) (bool, error) {
 	var startKey []byte = nil
 	for { // This loop is to compact incrementally for all data. Each RPC request will only compact a partial of data.
 		if task.ctx.Err() != nil {
@@ -316,7 +317,7 @@ func (task *storeCompactTask) compactOnePhysicalTable(physicalTableID int64) (st
 
 // sendRequestWithRetry sends one Compact request to the remote.
 // It will backoff and retry when encountering network errors.
-func (task *storeCompactTask) sendRequestWithRetry(req *tikvrpc.Request) (resp_ *kvrpcpb.CompactResponse, err_ error) {
+func (task *storeCompactTask) sendRequestWithRetry(req *tikvrpc.Request) (*kvrpcpb.CompactResponse, error) {
 	bo := backoff.NewBackoffer(task.ctx, compactMaxBackoffSleepMs)
 
 	for {
