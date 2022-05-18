@@ -714,7 +714,11 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatInt(StatsCacheMemQuota.Load(), 10), nil
 		}, SetGlobal: func(vars *SessionVars, s string) error {
 			v := TidbOptInt64(s, DefTiDBStatsCacheMemQuota)
-			StatsCacheMemQuota.Store(v)
+			oldv := StatsCacheMemQuota.Load()
+			if v != oldv {
+				StatsCacheMemQuota.Store(v)
+				SetStatsCacheCapacity(v)
+			}
 			return nil
 		},
 	},
