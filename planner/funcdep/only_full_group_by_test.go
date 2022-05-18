@@ -281,7 +281,7 @@ func TestOnlyFullGroupByRefactorLeftJoinCases(t *testing.T) {
 	tk.MustExec("drop table if exists customer1")
 	tk.MustExec("drop table if exists customer2")
 	tk.MustExec("drop view if exists customer")
-	tk.MustExec("create table customer1(pk int primary key, a int);")
+	tk.MustExec("create table customer1(pk int primary key, a int, b int);")
 	tk.MustExec("create table customer2(pk int primary key, b int, c int, unique(c));")
 	// ************************************************** NOTE 3 Lax FD ******************************************************************************//
 	// it has been covered by old cases, ignored here.
@@ -325,6 +325,10 @@ func TestOnlyFullGroupByRefactorLeftJoinCases(t *testing.T) {
 	tk.MustQuery("select c1.a, c2.b, count(*) from (select * from customer1 where a=1) c1 left join customer2 c2 on (c2.b=1) group by c2.b")
 
 	// Constant functional dependency 2: Any constant functional dependency f: {} -> {y} that held in T may be held as: 1 cond-fd, 2 directly null constant.
+	tk.MustQuery("select c2.a from customer2 c3 left join (select * from customer1 c1 where c1.a =1)  c2 on 1 where c2.b > 0 group by c2.b;")
+	tk.MustQuery("select c2.a from customer2 c3 left join (select * from customer1 c1 where c1.a is null)  c2 on 1 group by c2.b;")
+
+	// Constant functional dependency 3: Any constant function dependency f: {} -> {y} that produced from predicate P, decomposing to multi strict FD first, see doc.go.
 	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=1) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
 	// null is a constant as well, so here c1.a is fine, while c3.b's constant fd can't be saved.
 	err = tk.ExecToErr("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a is null) on c3.b=1 group by c2.b;")

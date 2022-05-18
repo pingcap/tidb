@@ -655,11 +655,11 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //			supplied rows. (see NOTE 3 for more details)
 //
 //			Luckily above, condition that c is not null is originated from base inner table. So strict FD {c,d} -> {e} can
-//	 		be saved. Is there any other way to keep this FD? Yes.
-//           c    d     e
+//			be saved. Is there any other way to keep this FD? Yes.
+//			c    d     e
 //			----------------
-//		 	1     NULL   1
-//          NULL  NULL   1
+//			1     NULL   1
+//			NULL  NULL   1
 //
 //			Let's modify the inner like above, the condition that c is not null is no longer existed. But if the join predicate
 //          can guarantee c to be not null like (a=c and b=1 and c>0), c is guaranteed to be greater than 1, and of course to
@@ -850,12 +850,11 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 	// cond-fds from the inner side. (which should be affected by null-supplied row)
 	// 1: equivalence cond-fd: once the join predicate can bring it visible again, the equivalence FD exists regardless of null-supplied row.
 	// 2: constant null fd: once the join predicate can bring it visible again, only the part of constant null FD exists regardless of null-supplied row.
-	for i := 0; i < len(innerFDs.ncEdges); i++ {
+	for i := len(innerFDs.ncEdges) - 1; i >= 0; i-- {
 		fd := innerFDs.ncEdges[i]
 		if fd.conditionNC != nil && fd.conditionNC.Intersects(filterFDs.NotNullCols) {
 			// condition satisfied.
 			innerFDs.ncEdges = append(innerFDs.ncEdges[:i], innerFDs.ncEdges[i+1:]...)
-			i--
 			if fd.isConstant() {
 				// for constant FD
 				// 1: column = definite value; add cond-fd with a NEW null-reject column set. (not in not-null columns join predicate)
