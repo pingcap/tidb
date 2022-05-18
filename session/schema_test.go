@@ -38,7 +38,7 @@ import (
 )
 
 func skipIfWithRealTiKV(t *testing.T) {
-	if *withTiKV {
+	if *session.WithTiKV {
 		t.Skip("Schema tests has nothing to do with real tikv scenario")
 	}
 }

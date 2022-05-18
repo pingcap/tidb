@@ -55,11 +55,12 @@ const (
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
 
-	defaultRestoreConcurrency = 128
-	maxRestoreBatchSizeLimit  = 10240
-	defaultPDConcurrency      = 1
-	defaultBatchFlushInterval = 16 * time.Second
-	defaultFlagDdlBatchSize   = 128
+	defaultRestoreConcurrency       = 128
+	defaultRestoreStreamConcurrency = 64
+	maxRestoreBatchSizeLimit        = 10240
+	defaultPDConcurrency            = 1
+	defaultBatchFlushInterval       = 16 * time.Second
+	defaultFlagDdlBatchSize         = 128
 )
 
 const (
