@@ -307,3 +307,23 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4TiFlash")
 }
+
+func TestJoinOrderHint4Subquery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	tk.MustExec("create table t5(a int, b int, key(a));")
+	tk.MustExec("create table t6(a int, b int, key(a));")
+	tk.MustExec("create table t7(a int, b int, key(a));")
+	tk.MustExec("create table t8(a int, b int, key(a));")
+
+	runJoinReorderTestData(t, tk, "TestJoinOrderHint4Subquery")
+}
