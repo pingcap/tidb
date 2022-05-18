@@ -578,7 +578,7 @@
       "with cte as (select /*+ CTE_INLINE()*/ * from tc where tc.a < 60) select * from cte where cte.a <18",
       "with cte as (select * from tc where tc.a < 60) select * from cte where cte.a <18",
       "WITH cte1 AS (SELECT /*+ CTE_INLINE()*/ a FROM tc), cte2 AS (SELECT /*+ CTE_INLINE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
-     // "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ CTE_INLINE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;"
+      "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ CTE_INLINE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;"
     ]
   },
   {

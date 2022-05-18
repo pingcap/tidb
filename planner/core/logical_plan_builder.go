@@ -4163,8 +4163,8 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			lp := LogicalCTE{cteAsName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat, isOuterMostCTE: !b.buildingCTE}.Init(b.ctx, b.getSelectOffset())
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
-			if b.outerCTEs[len(b.outerCTEs)-1].isInline {
-				lp.CTEHints.preferInlineToCTE = b.outerCTEs[len(b.outerCTEs)-1].isInline
+			if cte.isInline {
+				lp.CTEHints.preferInlineToCTE = cte.isInline
 				saveCte := b.outerCTEs[i:]
 				b.outerCTEs = b.outerCTEs[:i]
 				defer func() {

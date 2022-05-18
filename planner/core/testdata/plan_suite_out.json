@@ -1631,19 +1631,23 @@
     ],
     "Warning": null
   }
-//  {
-//    "SQL": "WITH cte1 AS (SELECT /*+ CTE_INLINE()*/ a FROM tc), cte2 AS (SELECT /*+ CTE_INLINE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
-//    "Plan": [
-//      "HashJoin 8.74 root  inner join, equal:[eq(test.tc.a, test.te.c)]",
-//      "├─TableReader(Build) 6.99 root  data:Selection",
-//      "│ └─Selection 6.99 cop[tikv]  not(isnull(test.tc.a))",
-//      "│   └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo",
-//      "└─TableReader(Probe) 9990.00 root  data:Selection",
-//      "  └─Selection 9990.00 cop[tikv]  not(isnull(test.te.c))",
-//      "    └─TableFullScan 10000.00 cop[tikv] table:te keep order:false, stats:pseudo",
-//        ],
-//    "Warning": null
-//  }
+  {
+    "SQL": "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ CTE_INLINE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
+    "Plan": [
+      "Projection 5.60 root  test.tc.a, test.te.c",
+      "└─HashJoin 5.60 root  inner join, equal:[eq(test.te.c, test.tc.a)]",
+      "  ├─Selection(Build) 4.48 root  not(isnull(test.tc.a))",
+      "  │ └─CTEFullScan 5.60 root CTE:cte1 data:CTE",
+      "  └─TableReader(Probe) 6.99 root  data:Selection",
+      "    └─Selection 6.99 cop[tikv]  not(isnull(test.te.c))",
+      "      └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo",
+      "CTE 5.60 root  Non-Recursive CTE",
+      "└─Selection(Seed Part) 5.60 root  not(isnull(test.tc.a))",
+      "  └─TableReader 7.00 root  data:TableFullScan",
+      "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
+        ],
+    "Warning": null
+  }
     ]
   },
   {
