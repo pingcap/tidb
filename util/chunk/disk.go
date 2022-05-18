@@ -40,7 +40,7 @@ type ListInDisk struct {
 	dataFile   diskFileReaderWriter
 	offsetFile diskFileReaderWriter
 
-	chunk *Chunk
+	chk *Chunk
 }
 
 // diskFileReaderWriter represents a Reader and a Writer for the temporary disk file.
@@ -196,7 +196,7 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	if err != nil {
 		return row, err
 	}
-	row, l.chunk = format.toRow(l.fieldTypes, l.chunk)
+	row, l.chk = format.toRow(l.fieldTypes, l.chk)
 	return row, err
 }
 
@@ -235,7 +235,7 @@ func (l *ListInDisk) Close() error {
 		terror.Call(l.offsetFile.disk.Close)
 		terror.Log(os.Remove(l.offsetFile.disk.Name()))
 	}
-	l.chunk = nil
+	l.chk = nil
 	return nil
 }
 
@@ -351,7 +351,7 @@ type diskFormatRow struct {
 	sizesOfColumns []int64 // -1 means null
 	// cells represents raw data of not-null columns in one row.
 	// In convertFromRow, data from Row is shallow copied to cells.
-	// In toRow, data in cells is shallow copied to MutRow.
+	// In toRow, data in cells is deep copied to Row.
 	cells [][]byte
 }
 
@@ -392,14 +392,13 @@ func (format *diskFormatRow) toRow(fields []*types.FieldType, chk *Chunk) (Row, 
 		if size == -1 { // isNull
 			col.AppendNull()
 		} else {
-			col.AppendBytes(format.cells[cellOff])
+			if col.isFixed() {
+				col.elemBuf = format.cells[cellOff]
+				col.finishAppendFixed()
+			} else {
+				col.AppendBytes(format.cells[cellOff])
+			}
 			cellOff++
-		}
-	}
-	for colIdx := range format.sizesOfColumns {
-		elemSize := getFixedLen(fields[colIdx])
-		if elemSize != varElemLen {
-			chk.columns[colIdx].offsets = nil
 		}
 	}
 
