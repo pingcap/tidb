@@ -252,6 +252,8 @@ type Config struct {
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
+	// EnableGlobalKill indicates whether to enable global kill.
+	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -489,15 +491,14 @@ const (
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable         bool     `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA                  string   `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert                string   `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey                 string   `toml:"ssl-key" json:"ssl-key"`
-	RequireSecureTransport bool     `toml:"require-secure-transport" json:"require-secure-transport"`
-	ClusterSSLCA           string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert         string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey          string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
-	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	SkipGrantTable  bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA           string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert         string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey          string   `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA    string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
@@ -728,8 +729,6 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
-	// Whether enable global kill.
-	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
@@ -871,9 +870,7 @@ var defaultConf = Config{
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
-	Experimental: Experimental{
-		EnableGlobalKill: false,
-	},
+	Experimental:               Experimental{},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
 	Labels:                     make(map[string]string),
@@ -889,6 +886,7 @@ var defaultConf = Config{
 	StoresRefreshInterval:                defTiKVCfg.StoresRefreshInterval,
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,
 	NewCollationsEnabledOnFirstBootstrap: true,
+	EnableGlobalKill:                     true,
 }
 
 var (
@@ -933,6 +931,7 @@ var deprecatedConfig = map[string]struct{}{
 	"alter-primary-key":                  {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":                   {},
 	"performance.mem-profile-interval":   {},
+	"require-secure-transport":           {},
 	"lower-case-table-names":             {},
 	"stmt-summary":                       {},
 	"stmt-summary.enable":                {},

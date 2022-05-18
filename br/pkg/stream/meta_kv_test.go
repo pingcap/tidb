@@ -4,16 +4,13 @@ package stream
 
 import (
 	"bytes"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
 )
-
-type testMetaKVSuite struct{}
-
-var _ = Suite(&testMetaKVSuite{})
 
 func encodeTxnMetaKey(key []byte, field []byte, ts uint64) []byte {
 	k := tablecodec.EncodeMetaKey(key, field)
@@ -21,7 +18,7 @@ func encodeTxnMetaKey(key []byte, field []byte, ts uint64) []byte {
 	return codec.EncodeUintDesc(txnKey, ts)
 }
 
-func (s *testMetaKVSuite) TestRawMetaKeyForDB(c *C) {
+func TestRawMetaKeyForDB(t *testing.T) {
 	var (
 		dbID int64  = 1
 		ts   uint64 = 400036290571534337
@@ -30,18 +27,18 @@ func (s *testMetaKVSuite) TestRawMetaKeyForDB(c *C) {
 
 	txnKey := encodeTxnMetaKey(mDbs, meta.DBkey(dbID), ts)
 
-	rawMetakey, err := ParseTxnMetaKeyFrom(txnKey)
-	c.Assert(err, IsNil)
+	rawMetaKey, err := ParseTxnMetaKeyFrom(txnKey)
+	require.NoError(t, err)
 
-	parseDbID, err := meta.ParseDBKey(rawMetakey.Field)
-	c.Assert(err, IsNil)
-	c.Assert(parseDbID, Equals, dbID)
+	parseDbID, err := meta.ParseDBKey(rawMetaKey.Field)
+	require.NoError(t, err)
+	require.Equal(t, dbID, parseDbID)
 
-	newKey := rawMetakey.EncodeMetaKey()
-	c.Assert(bytes.Equal(txnKey, newKey), IsTrue)
+	newKey := rawMetaKey.EncodeMetaKey()
+	require.Equal(t, string(txnKey), string(newKey))
 }
 
-func (s *testMetaKVSuite) TestRawMetaKeyForTable(c *C) {
+func TestRawMetaKeyForTable(t *testing.T) {
 	var (
 		dbID    int64  = 1
 		tableID int64  = 57
@@ -50,42 +47,41 @@ func (s *testMetaKVSuite) TestRawMetaKeyForTable(c *C) {
 	txnKey := encodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts)
 
 	rawMetakey, err := ParseTxnMetaKeyFrom(txnKey)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	parseDBID, err := meta.ParseDBKey(rawMetakey.Key)
-	c.Assert(err, IsNil)
-	c.Assert(parseDBID, Equals, dbID)
+	require.NoError(t, err)
+	require.Equal(t, dbID, parseDBID)
 
 	parseTableID, err := meta.ParseTableKey(rawMetakey.Field)
-	c.Assert(err, IsNil)
-	c.Assert(parseTableID, Equals, tableID)
+	require.NoError(t, err)
+	require.Equal(t, tableID, parseTableID)
 
 	newKey := rawMetakey.EncodeMetaKey()
-	c.Assert(bytes.Equal(txnKey, newKey), IsTrue)
+	require.True(t, bytes.Equal(txnKey, newKey))
 }
 
-func (s *testMetaKVSuite) TestWriteType(c *C) {
-	t := 'P'
-	wt, err := WriteTypeFrom(byte(t))
-	c.Assert(err, IsNil)
-	c.Assert(wt, Equals, WriteTypePut)
+func TestWriteType(t *testing.T) {
+	wt, err := WriteTypeFrom(byte('P'))
+	require.NoError(t, err)
+	require.Equal(t, WriteTypePut, wt)
 }
 
-func (s *testMetaKVSuite) TestWriteCFValueNoShortValue(c *C) {
+func TestWriteCFValueNoShortValue(t *testing.T) {
 	buff := make([]byte, 0, 9)
 	buff = append(buff, byte('P'))
 	buff = codec.EncodeUvarint(buff, 400036290571534337)
 
 	v := new(RawWriteCFValue)
 	err := v.ParseFrom(buff)
-	c.Assert(err, IsNil)
-	c.Assert(v.HasShortValue(), IsFalse)
+	require.NoError(t, err)
+	require.False(t, v.HasShortValue())
 
 	encodedBuff := v.EncodeTo()
-	c.Assert(bytes.Equal(buff, encodedBuff), IsTrue)
+	require.True(t, bytes.Equal(buff, encodedBuff))
 }
 
-func (s *testMetaKVSuite) TestWriteCFValueWithShortValue(c *C) {
+func TestWriteCFValueWithShortValue(t *testing.T) {
 	var ts uint64 = 400036290571534337
 	shortValue := []byte("pingCAP")
 
@@ -98,12 +94,12 @@ func (s *testMetaKVSuite) TestWriteCFValueWithShortValue(c *C) {
 
 	v := new(RawWriteCFValue)
 	err := v.ParseFrom(buff)
-	c.Assert(err, IsNil)
-	c.Assert(v.HasShortValue(), IsTrue)
-	c.Assert(bytes.Equal(v.GetShortValue(), shortValue), IsTrue)
-	c.Assert(v.hasGCFence, IsFalse)
-	c.Assert(v.hasOverlappedRollback, IsFalse)
+	require.NoError(t, err)
+	require.True(t, v.HasShortValue())
+	require.True(t, bytes.Equal(v.GetShortValue(), shortValue))
+	require.False(t, v.hasGCFence)
+	require.False(t, v.hasOverlappedRollback)
 
 	data := v.EncodeTo()
-	c.Assert(bytes.Equal(data, buff), IsTrue)
+	require.True(t, bytes.Equal(data, buff))
 }

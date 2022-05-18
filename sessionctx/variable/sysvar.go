@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/tikvutil"
+	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -674,6 +675,24 @@ var defaultSysVars = []*SysVar{
 		EnableColumnTracking.Store(v)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: RequireSecureTransport, Value: BoolToOnOff(DefRequireSecureTransport), Type: TypeBool,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(tls.RequireSecureTransport.Load()), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			tls.RequireSecureTransport.Store(TiDBOptOn(val))
+			return nil
+		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			if vars.StmtCtx.StmtType == "Set" && TiDBOptOn(normalizedValue) {
+				// Refuse to set RequireSecureTransport to ON if the connection
+				// issuing the change is not secure. This helps reduce the chance of users being locked out.
+				if vars.TLSConnectionState == nil {
+					return "", errors.New("require_secure_transport can only be set to ON if the connection issuing the change is secure")
+				}
+			}
+			return normalizedValue, nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBStatsLoadPseudoTimeout, Value: BoolToOnOff(DefTiDBStatsLoadPseudoTimeout), skipInit: true, Type: TypeBool,
 		GetGlobal: func(s *SessionVars) (string, error) {
 			return strconv.FormatBool(StatsLoadPseudoTimeout.Load()), nil
