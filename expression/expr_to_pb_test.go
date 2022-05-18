@@ -1399,6 +1399,7 @@ func TestExprOnlyPushDownToTiKV(t *testing.T) {
 	require.Len(t, pushed, 1)
 	require.Len(t, remained, 0)
 }
+
 func TestGroupByItem2Pb(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
