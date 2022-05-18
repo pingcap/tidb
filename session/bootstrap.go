@@ -1999,6 +1999,11 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBEnableMutationChecker {
 				vVal = variable.On
 			}
+			if v.Name == variable.TiDBEnableAutoAnalyze {
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+					vVal = variable.Off
+				}
+			}
 			if v.Name == variable.TiDBTxnAssertionLevel {
 				vVal = variable.AssertionFastStr
 			}

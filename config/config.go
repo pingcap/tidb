@@ -604,7 +604,6 @@ type Performance struct {
 	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
 	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
@@ -618,6 +617,11 @@ type Performance struct {
 	StatsLoadConcurrency     uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
 	StatsLoadQueueSize       uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 	EnableStatsCacheMemQuota bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	RunAutoAnalyze bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -818,7 +822,6 @@ var defaultConf = Config{
 		TCPNoDelay:            true,
 		CrossJoin:             true,
 		StatsLease:            "3s",
-		RunAutoAnalyze:        true,
 		StmtCountLimit:        5000,
 		FeedbackProbability:   0.0,
 		QueryFeedbackLimit:    512,
@@ -945,6 +948,8 @@ var deprecatedConfig = map[string]struct{}{
 	"log.query-log-max-len":              {},
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
+	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
+
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
