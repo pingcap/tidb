@@ -151,8 +151,9 @@ type RestoreConfig struct {
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
-	StartTS   uint64 `json:"start-ts" toml:"start-ts"`
-	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
+	StartTS     uint64 `json:"start-ts" toml:"start-ts"`
+	RestoreTS   uint64 `json:"restore-ts" toml:"restore-ts"`
+	skipTiflash bool   `json:"skip-tiflash" toml:"skip-tiflash"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -488,7 +489,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
-	err = client.PreCheckTableTiFlashReplica(ctx, tables)
+	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.skipTiflash)
 	if err != nil {
 		return errors.Trace(err)
 	}

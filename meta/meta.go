@@ -348,6 +348,7 @@ func (m *Meta) GenSchemaVersion() (int64, error) {
 	return m.txn.Inc(mSchemaVersionKey, 1)
 }
 
+// GenSchemaVersions increases the schema version.
 func (m *Meta) GenSchemaVersions(count int64) (int64, error) {
 	return m.txn.Inc(mSchemaVersionKey, count)
 }

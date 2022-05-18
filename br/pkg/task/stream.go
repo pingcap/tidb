@@ -973,6 +973,7 @@ func RunStreamRestore(
 	if len(cfg.FullBackupStorage) > 0 {
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
+		cfg.skipTiflash = true
 		if err = RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
 			return errors.Trace(err)
 		}
