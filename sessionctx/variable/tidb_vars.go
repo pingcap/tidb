@@ -691,7 +691,7 @@ const (
 	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
 	//TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
-	// the memory quota specifed by tidb_mem_quota_query and cannot be spilled to disk.
+	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
 	TiDBMemOOMAction = "tidb_mem_oom_action"
 )
 
