@@ -38,11 +38,6 @@ import (
 
 var testDataMap = make(testdata.BookKeeper, 1)
 
-var WithTiKV = flag.Bool("with-tikv", false, "workaroundGoCheckFlags: with-tikv")
-var _ = flag.String("pd-addrs", "", "workaroundGoCheckFlags: pd-addrs")
-var _ = flag.String("check.exclude", "", "workaroundGoCheckFlags: check.exclude")
-var _ = flag.String("check.f", "", "workaroundGoCheckFlags: check.f")
-
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
 

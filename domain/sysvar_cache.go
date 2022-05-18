@@ -139,8 +139,6 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 		if sv.HasGlobalScope() {
 			newGlobalCache[sv.Name] = sVal
 
-			oldStatsCacheMemQuota := variable.StatsCacheMemQuota.Load()
-
 			// Call the SetGlobal func for this sysvar if it exists.
 			// SET GLOBAL only calls the SetGlobal func on the calling instances.
 			// This ensures it is run on all tidb servers.
@@ -150,11 +148,6 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 				err = sv.SetGlobal(ctx.GetSessionVars(), sVal)
 				if err != nil {
 					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
-				}
-
-				newStatsCacheMemQuota := variable.StatsCacheMemQuota.Load()
-				if sv.Name == variable.TiDBStatsCacheMemQuota && oldStatsCacheMemQuota != newStatsCacheMemQuota {
-					do.SetStatsCacheCapacity(newStatsCacheMemQuota)
 				}
 			}
 		}
