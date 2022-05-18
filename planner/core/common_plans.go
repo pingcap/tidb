@@ -57,6 +57,7 @@ import (
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
+var planCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("cache_miss")
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -565,6 +566,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
+	planCacheMissCounter.Inc()
 	stmt := prepared.Stmt
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
