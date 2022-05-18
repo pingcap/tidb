@@ -220,6 +220,7 @@ deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
 enable-forwarding = true
+enable-global-kill = true
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
@@ -235,6 +236,7 @@ keys-limit=123
 total-key-size-limit=1024
 [experimental]
 allow-expression-index = true
+enable-global-kill = false
 [isolation-read]
 engines = ["tiflash"]
 [labels]
