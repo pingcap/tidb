@@ -17,7 +17,9 @@ package sessiontest
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
@@ -3057,4 +3060,653 @@ func TestLastMessage(t *testing.T) {
 	tk.MustExec(`INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);`)
 	tk.MustExec(`INSERT INTO t SELECT * FROM t1 ON DUPLICATE KEY UPDATE c2=a2;`)
 	tk.CheckLastMessage("Records: 6  Duplicates: 3  Warnings: 0")
+}
+
+func TestQueryString(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
+	queryStr := tk.Session().Value(sessionctx.QueryString)
+	require.Equal(t, "create table multi2 (a int)", queryStr)
+
+	// Test execution of DDL through the "ExecutePreparedStmt" interface.
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id bigint PRIMARY KEY, age int)")
+	tk.MustExec("show create table t")
+	id, _, _, err := tk.Session().PrepareStmt("CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
+	require.NoError(t, err)
+	var params []types.Datum
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, params)
+	require.NoError(t, err)
+	qs := tk.Session().Value(sessionctx.QueryString)
+	require.Equal(t, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)", qs.(string))
+
+	// Test execution of DDL through the "Execute" interface.
+	tk.MustExec("use test")
+	tk.MustExec("drop table t2")
+	tk.MustExec("prepare stmt from 'CREATE TABLE t2(id bigint PRIMARY KEY, age int)'")
+	tk.MustExec("execute stmt")
+	qs = tk.Session().Value(sessionctx.QueryString)
+	require.Equal(t, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)", qs.(string))
+}
+
+func TestAffectedRows(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id TEXT)")
+	tk.MustExec(`INSERT INTO t VALUES ("a");`)
+	require.Equal(t, 1, int(tk.Session().AffectedRows()))
+	tk.MustExec(`INSERT INTO t VALUES ("b");`)
+	require.Equal(t, 1, int(tk.Session().AffectedRows()))
+	tk.MustExec(`UPDATE t set id = 'c' where id = 'a';`)
+	require.Equal(t, 1, int(tk.Session().AffectedRows()))
+	tk.MustExec(`UPDATE t set id = 'a' where id = 'a';`)
+	require.Equal(t, 0, int(tk.Session().AffectedRows()))
+	tk.MustQuery(`SELECT * from t`).Check(testkit.Rows("c", "b"))
+	require.Equal(t, 0, int(tk.Session().AffectedRows()))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, data int)")
+	tk.MustExec(`INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
+	tk.MustExec(`UPDATE t set id = 1 where data = 0;`)
+	require.Equal(t, 1, int(tk.Session().AffectedRows()))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, c1 timestamp);")
+	tk.MustExec(`insert t(id) values(1);`)
+	tk.MustExec(`UPDATE t set id = 1 where id = 1;`)
+	require.Equal(t, 0, int(tk.Session().AffectedRows()))
+
+	// With ON DUPLICATE KEY UPDATE, the affected-rows value per row is 1 if the row is inserted as a new row,
+	// 2 if an existing row is updated, and 0 if an existing row is set to its current values.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int PRIMARY KEY, c2 int);")
+	tk.MustExec(`insert t values(1, 1);`)
+	tk.MustExec(`insert into t values (1, 1) on duplicate key update c2=2;`)
+	require.Equal(t, 2, int(tk.Session().AffectedRows()))
+	tk.MustExec(`insert into t values (1, 1) on duplicate key update c2=2;`)
+	require.Equal(t, 0, int(tk.Session().AffectedRows()))
+	tk.MustExec("drop table if exists test")
+	createSQL := `CREATE TABLE test (
+	  id        VARCHAR(36) PRIMARY KEY NOT NULL,
+	  factor    INTEGER                 NOT NULL                   DEFAULT 2);`
+	tk.MustExec(createSQL)
+	insertSQL := `INSERT INTO test(id) VALUES('id') ON DUPLICATE KEY UPDATE factor=factor+3;`
+	tk.MustExec(insertSQL)
+	require.Equal(t, 1, int(tk.Session().AffectedRows()))
+	tk.MustExec(insertSQL)
+	require.Equal(t, 2, int(tk.Session().AffectedRows()))
+	tk.MustExec(insertSQL)
+	require.Equal(t, 2, int(tk.Session().AffectedRows()))
+
+	tk.Session().SetClientCapability(mysql.ClientFoundRows)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, data int)")
+	tk.MustExec(`INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
+	tk.MustExec(`UPDATE t set id = 1 where data = 0;`)
+	require.Equal(t, 2, int(tk.Session().AffectedRows()))
+}
+
+// TestRowLock . See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
+func TestRowLock(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	txn, err := tk.Session().Txn(true)
+	require.True(t, kv.ErrInvalidTxn.Equal(err))
+	require.False(t, txn.Valid())
+	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
+	tk.MustExec("insert t values (11, 2, 3)")
+	tk.MustExec("insert t values (12, 2, 3)")
+	tk.MustExec("insert t values (13, 2, 3)")
+
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set c2=21 where c1=11")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=211 where c1=11")
+	tk2.MustExec("commit")
+
+	// tk1 will retry and the final value is 21
+	tk1.MustExec("commit")
+
+	// Check the result is correct
+	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("21"))
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set c2=21 where c1=11")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=22 where c1=12")
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
+}
+
+// TestAutocommit . See https://dev.mysql.com/doc/internals/en/status-flags.html
+func TestAutocommit(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t;")
+	require.Greater(t, int(tk.Session().Status()&mysql.ServerStatusAutocommit), 0)
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	require.Greater(t, int(tk.Session().Status()&mysql.ServerStatusAutocommit), 0)
+	tk.MustExec("insert t values ()")
+	require.Greater(t, int(tk.Session().Status()&mysql.ServerStatusAutocommit), 0)
+	tk.MustExec("begin")
+	require.Greater(t, int(tk.Session().Status()&mysql.ServerStatusAutocommit), 0)
+	tk.MustExec("insert t values ()")
+	require.Greater(t, int(tk.Session().Status()&mysql.ServerStatusAutocommit), 0)
+	tk.MustExec("drop table if exists t")
+	require.Greater(t, int(tk.Session().Status()&mysql.ServerStatusAutocommit), 0)
+
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	require.Greater(t, int(tk.Session().Status()&mysql.ServerStatusAutocommit), 0)
+	tk.MustExec("set autocommit=0")
+	require.Equal(t, 0, int(tk.Session().Status()&mysql.ServerStatusAutocommit))
+	tk.MustExec("insert t values ()")
+	require.Equal(t, 0, int(tk.Session().Status()&mysql.ServerStatusAutocommit))
+	tk.MustExec("commit")
+	require.Equal(t, 0, int(tk.Session().Status()&mysql.ServerStatusAutocommit))
+	tk.MustExec("drop table if exists t")
+	require.Equal(t, 0, int(tk.Session().Status()&mysql.ServerStatusAutocommit))
+	tk.MustExec("set autocommit='On'")
+	require.Greater(t, int(tk.Session().Status()&mysql.ServerStatusAutocommit), 0)
+
+	// When autocommit is 0, transaction start ts should be the first *valid*
+	// statement, rather than *any* statement.
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("rollback")
+	tk.MustExec("set @@autocommit = 0")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("insert into t select 1")
+
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	// TODO: MySQL compatibility for setting global variable.
+	// tk.MustExec("begin")
+	// tk.MustExec("insert into t values (42)")
+	// tk.MustExec("set @@global.autocommit = 1")
+	// tk.MustExec("rollback")
+	// tk.MustQuery("select count(*) from t where id = 42").Check(testkit.Rows("0"))
+	// Even the transaction is rollbacked, the set statement succeed.
+	// tk.MustQuery("select @@global.autocommit").Rows("1")
+}
+
+// TestTxnLazyInitialize tests that when autocommit = 0, not all statement starts
+// a new transaction.
+func TestTxnLazyInitialize(t *testing.T) {
+	testTxnLazyInitialize(t, false)
+	testTxnLazyInitialize(t, true)
+}
+
+func testTxnLazyInitialize(t *testing.T, isPessimistic bool) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+	if isPessimistic {
+		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	}
+
+	tk.MustExec("set @@autocommit = 0")
+	_, err := tk.Session().Txn(true)
+	require.True(t, kv.ErrInvalidTxn.Equal(err))
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.False(t, txn.Valid())
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+
+	// Those statements should not start a new transaction automatically.
+	tk.MustQuery("select 1")
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_general_log = 0")
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+
+	tk.MustQuery("explain select * from t")
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+
+	// Begin statement should start a new transaction.
+	tk.MustExec("begin")
+	txn, err = tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	tk.MustExec("rollback")
+
+	tk.MustExec("select * from t")
+	txn, err = tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	tk.MustExec("rollback")
+
+	tk.MustExec("insert into t values (1)")
+	txn, err = tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	tk.MustExec("rollback")
+}
+
+func TestGlobalVarAccessor(t *testing.T) {
+	varName := "max_allowed_packet"
+	varValue := strconv.FormatUint(variable.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
+
+	// The value of max_allowed_packet should be a multiple of 1024,
+	// so the setting of varValue1 and varValue2 would be truncated to varValue0
+	varValue0 := "4194304"
+	varValue1 := "4194305"
+	varValue2 := "4194306"
+
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	se := tk.Session().(variable.GlobalVarAccessor)
+	// Get globalSysVar twice and get the same value
+	v, err := se.GetGlobalSysVar(varName)
+	require.NoError(t, err)
+	require.Equal(t, varValue, v)
+	v, err = se.GetGlobalSysVar(varName)
+	require.NoError(t, err)
+	require.Equal(t, varValue, v)
+	// Set global var to another value
+	err = se.SetGlobalSysVar(varName, varValue1)
+	require.NoError(t, err)
+	v, err = se.GetGlobalSysVar(varName)
+	require.NoError(t, err)
+	require.Equal(t, varValue0, v)
+	require.NoError(t, tk.Session().CommitTxn(context.TODO()))
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	se1 := tk1.Session().(variable.GlobalVarAccessor)
+	v, err = se1.GetGlobalSysVar(varName)
+	require.NoError(t, err)
+	require.Equal(t, varValue0, v)
+	err = se1.SetGlobalSysVar(varName, varValue2)
+	require.NoError(t, err)
+	v, err = se1.GetGlobalSysVar(varName)
+	require.NoError(t, err)
+	require.Equal(t, varValue0, v)
+	require.NoError(t, tk1.Session().CommitTxn(context.TODO()))
+
+	// Make sure the change is visible to any client that accesses that global variable.
+	v, err = se.GetGlobalSysVar(varName)
+	require.NoError(t, err)
+	require.Equal(t, varValue0, v)
+
+	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
+	tk1.MustExec("set @@global.max_execution_time = 100")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().MaxExecutionTime)
+	tk1.MustExec("set @@global.max_execution_time = 0")
+
+	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	result = tk.MustQuery("show session variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	tk.MustExec("set session sql_select_limit=100000000000;")
+	result = tk.MustQuery("show global variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	result = tk.MustQuery("show session variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 100000000000"))
+	tk.MustExec("set @@global.sql_select_limit = 1")
+	result = tk.MustQuery("show global variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 1"))
+	tk.MustExec("set @@global.sql_select_limit = default")
+	result = tk.MustQuery("show global variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+
+	result = tk.MustQuery("select @@global.autocommit;")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select @@autocommit;")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.autocommit = 0;")
+	result = tk.MustQuery("select @@global.autocommit;")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select @@autocommit;")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.autocommit=1")
+
+	err = tk.ExecToErr("set global time_zone = 'timezone'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, variable.ErrUnknownTimeZone))
+}
+
+func TestUpgradeSysvars(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	se := tk.Session().(variable.GlobalVarAccessor)
+
+	// Set the global var to a non-canonical form of the value
+	// i.e. implying that it was set from an earlier version of TiDB.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', '0')`)
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache() // update cache
+	v, err := se.GetGlobalSysVar("tidb_enable_noop_functions")
+	require.NoError(t, err)
+	require.Equal(t, "OFF", v)
+
+	// Set the global var to ""  which is the invalid version of this from TiDB 4.0.16
+	// the err is quashed by the GetGlobalSysVar, and the default value is restored.
+	// This helps callers of GetGlobalSysVar(), which can't individually be expected
+	// to handle upgrade/downgrade issues correctly.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('rpl_semi_sync_slave_enabled', '')`)
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("rpl_semi_sync_slave_enabled")
+	require.NoError(t, err)
+	require.Equal(t, "OFF", v) // the default value is restored.
+	result := tk.MustQuery("SHOW VARIABLES LIKE 'rpl_semi_sync_slave_enabled'")
+	result.Check(testkit.Rows("rpl_semi_sync_slave_enabled OFF"))
+
+	// Ensure variable out of range is converted to in range after upgrade.
+	// This further helps for https://github.com/pingcap/tidb/pull/28842
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_executor_concurrency', '999')`)
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("tidb_executor_concurrency")
+	require.NoError(t, err)
+	require.Equal(t, "256", v) // the max value is restored.
+
+	// Handle the case of a completely bogus value from an earlier version of TiDB.
+	// This could be the case if an ENUM sysvar removes a value.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', 'SOMEVAL')`)
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
+	require.NoError(t, err)
+	require.Equal(t, "OFF", v) // the default value is restored.
+}
+
+func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
+	varName := "tidb_general_log"
+	defaultValue := "OFF" // This is the default value for tidb_general_log
+
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	se := tk.Session().(variable.GlobalVarAccessor)
+
+	// Get globalSysVar twice and get the same default value
+	v, err := se.GetGlobalSysVar(varName)
+	require.NoError(t, err)
+	require.Equal(t, defaultValue, v)
+	v, err = se.GetGlobalSysVar(varName)
+	require.NoError(t, err)
+	require.Equal(t, defaultValue, v)
+
+	// session.GetGlobalSysVar would not get the value which session.SetGlobalSysVar writes,
+	// because SetGlobalSysVar calls SetGlobalFromHook, which uses TiDBGeneralLog's SetGlobal,
+	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
+
+	// set to "1"
+	err = se.SetGlobalSysVar(varName, "ON")
+	require.NoError(t, err)
+	v, err = se.GetGlobalSysVar(varName)
+	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
+	require.NoError(t, err)
+	require.Equal(t, defaultValue, v)
+
+	// set back to "0"
+	err = se.SetGlobalSysVar(varName, defaultValue)
+	require.NoError(t, err)
+	v, err = se.GetGlobalSysVar(varName)
+	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
+	require.NoError(t, err)
+	require.Equal(t, defaultValue, v)
+}
+
+func TestMatchIdentity(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER `useridentity`@`%`")
+	tk.MustExec("CREATE USER `useridentity`@`localhost`")
+	tk.MustExec("CREATE USER `useridentity`@`192.168.1.1`")
+	tk.MustExec("CREATE USER `useridentity`@`example.com`")
+
+	// The MySQL matching rule is most specific to least specific.
+	// So if I log in from 192.168.1.1 I should match that entry always.
+	identity, err := tk.Session().MatchIdentity("useridentity", "192.168.1.1")
+	require.NoError(t, err)
+	require.Equal(t, "useridentity", identity.Username)
+	require.Equal(t, "192.168.1.1", identity.Hostname)
+
+	// If I log in from localhost, I should match localhost
+	identity, err = tk.Session().MatchIdentity("useridentity", "localhost")
+	require.NoError(t, err)
+	require.Equal(t, "useridentity", identity.Username)
+	require.Equal(t, "localhost", identity.Hostname)
+
+	// If I log in from 192.168.1.2 I should match wildcard.
+	identity, err = tk.Session().MatchIdentity("useridentity", "192.168.1.2")
+	require.NoError(t, err)
+	require.Equal(t, "useridentity", identity.Username)
+	require.Equal(t, "%", identity.Hostname)
+
+	identity, err = tk.Session().MatchIdentity("useridentity", "127.0.0.1")
+	require.NoError(t, err)
+	require.Equal(t, "useridentity", identity.Username)
+	require.Equal(t, "localhost", identity.Hostname)
+
+	// This uses the lookup of example.com to get an IP address.
+	// We then login with that IP address, but expect it to match the example.com
+	// entry in the privileges table (by reverse lookup).
+	ips, err := net.LookupHost("example.com")
+	require.NoError(t, err)
+	identity, err = tk.Session().MatchIdentity("useridentity", ips[0])
+	require.NoError(t, err)
+	require.Equal(t, "useridentity", identity.Username)
+	// FIXME: we *should* match example.com instead
+	// as long as skip-name-resolve is not set (DEFAULT)
+	require.Equal(t, "%", identity.Hostname)
+}
+
+func TestGetSysVariables(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test ScopeSession
+	tk.MustExec("select @@warning_count")
+	tk.MustExec("select @@session.warning_count")
+	tk.MustExec("select @@local.warning_count")
+	err := tk.ExecToErr("select @@global.warning_count")
+	require.True(t, terror.ErrorEqual(err, variable.ErrIncorrectScope), fmt.Sprintf("err %v", err))
+
+	// Test ScopeGlobal
+	tk.MustExec("select @@max_connections")
+	tk.MustExec("select @@global.max_connections")
+	tk.MustGetErrMsg("select @@session.max_connections", "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
+	tk.MustGetErrMsg("select @@local.max_connections", "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
+
+	// Test ScopeNone
+	tk.MustExec("select @@performance_schema_max_mutex_classes")
+	tk.MustExec("select @@global.performance_schema_max_mutex_classes")
+	// For issue 19524, test
+	tk.MustExec("select @@session.performance_schema_max_mutex_classes")
+	tk.MustExec("select @@local.performance_schema_max_mutex_classes")
+	tk.MustGetErrMsg("select @@global.last_insert_id", "[variable:1238]Variable 'last_insert_id' is a SESSION variable")
+}
+
+// TestInTrans . See https://dev.mysql.com/doc/internals/en/status-flags.html
+func TestInTrans(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("begin")
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	tk.MustExec("insert t values ()")
+	require.True(t, txn.Valid())
+	tk.MustExec("drop table if exists t;")
+	require.False(t, txn.Valid())
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	require.False(t, txn.Valid())
+	tk.MustExec("insert t values ()")
+	require.False(t, txn.Valid())
+	tk.MustExec("commit")
+	tk.MustExec("insert t values ()")
+
+	tk.MustExec("set autocommit=0")
+	tk.MustExec("begin")
+	require.True(t, txn.Valid())
+	tk.MustExec("insert t values ()")
+	require.True(t, txn.Valid())
+	tk.MustExec("commit")
+	require.False(t, txn.Valid())
+	tk.MustExec("insert t values ()")
+	require.True(t, txn.Valid())
+	tk.MustExec("commit")
+	require.False(t, txn.Valid())
+
+	tk.MustExec("set autocommit=1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	tk.MustExec("begin")
+	require.True(t, txn.Valid())
+	tk.MustExec("insert t values ()")
+	require.True(t, txn.Valid())
+	tk.MustExec("rollback")
+	require.False(t, txn.Valid())
+}
+
+func TestSession(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("ROLLBACK;")
+	tk.Session().Close()
+}
+
+func TestSessionAuth(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.False(t, tk.Session().Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")))
+}
+
+func TestLastInsertID(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// insert
+	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, PRIMARY KEY (c1))")
+	tk.MustExec("insert into t set c2 = 11")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("1"))
+
+	tk.MustExec("insert into t (c2) values (22), (33), (44)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("2"))
+
+	tk.MustExec("insert into t (c1, c2) values (10, 55)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("2"))
+
+	// replace
+	tk.MustExec("replace t (c2) values(66)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 11", "2 22", "3 33", "4 44", "10 55", "11 66"))
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("11"))
+
+	// update
+	tk.MustExec("update t set c1=last_insert_id(c1 + 100)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("101 11", "102 22", "103 33", "104 44", "110 55", "111 66"))
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("111"))
+	tk.MustExec("insert into t (c2) values (77)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
+
+	// drop
+	tk.MustExec("drop table t")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
+
+	tk.MustExec("create table t (c2 int, c3 int, c1 int not null auto_increment, PRIMARY KEY (c1))")
+	tk.MustExec("insert into t set c2 = 30")
+
+	// insert values
+	lastInsertID := tk.Session().LastInsertID()
+	tk.MustExec("prepare stmt1 from 'insert into t (c2) values (?)'")
+	tk.MustExec("set @v1=10")
+	tk.MustExec("set @v2=20")
+	tk.MustExec("execute stmt1 using @v1")
+	tk.MustExec("execute stmt1 using @v2")
+	tk.MustExec("deallocate prepare stmt1")
+	currLastInsertID := tk.Session().GetSessionVars().StmtCtx.PrevLastInsertID
+	tk.MustQuery("select c1 from t where c2 = 20").Check(testkit.Rows(fmt.Sprint(currLastInsertID)))
+	require.Equal(t, currLastInsertID, lastInsertID+2)
+}
+
+func TestBinaryReadOnly(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key)")
+	id, _, _, err := tk.Session().PrepareStmt("select i from t where i = ?")
+	require.NoError(t, err)
+	id2, _, _, err := tk.Session().PrepareStmt("insert into t values (?)")
+	require.NoError(t, err)
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, []types.Datum{types.NewDatum(1)})
+	require.NoError(t, err)
+	require.Equal(t, 0, session.GetHistory(tk.Session()).Count())
+	tk.MustExec("insert into t values (1)")
+	require.Equal(t, 1, session.GetHistory(tk.Session()).Count())
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id2, []types.Datum{types.NewDatum(2)})
+	require.NoError(t, err)
+	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
+	tk.MustExec("commit")
 }
