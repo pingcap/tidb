@@ -914,4 +914,6 @@ var (
 	SetMemQuotaAnalyze func(quota int64) = nil
 	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
 	GetMemQuotaAnalyze func() int64 = nil
+	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
+	SetStatsCacheCapacity func(c int64) = nil
 )
