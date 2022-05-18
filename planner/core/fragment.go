@@ -346,7 +346,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		ttl = 30 * time.Second
 	}
 
-	// If tidb_isolation_read_engine is "tiflash_mpp", then tasks will only be sent to ReadNodes.
+	// If "tiflash_mpp" is set in tidb_isolation_read_engines, tasks will only be sent to ReadNodes when building batchCopTask.
 	storeType, err := variable.GetTiFlashEngine(e.ctx.GetSessionVars().GetIsolationReadEngines())
 	if err != nil {
 		return nil, err
