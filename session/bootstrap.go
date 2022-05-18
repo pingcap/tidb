@@ -617,13 +617,11 @@ const (
 	version89 = 89
 	// version90 converts enable-batch-dml to a sysvar
 	version90 = 90
-	// version91 converts run-auto-analyze to a sysvar
-	version91 = 91
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version91
+var currentBootstrapVersion int64 = version90
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -717,7 +715,6 @@ var (
 		upgradeToVer88,
 		upgradeToVer89,
 		upgradeToVer90,
-		upgradeToVer91,
 	}
 )
 
@@ -1849,13 +1846,6 @@ func upgradeToVer90(s Session, ver int64) {
 	}
 	valStr := variable.BoolToOnOff(config.GetGlobalConfig().EnableBatchDML)
 	importConfigOption(s, "enable-batch-dml", variable.TiDBEnableBatchDML, valStr)
-}
-func upgradeToVer91(s Session, ver int64) {
-	if ver >= version91 {
-		return
-	}
-	valStr := variable.BoolToOnOff(config.GetGlobalConfig().Performance.RunAutoAnalyze)
-	importConfigOption(s, "run-auto-analyze", variable.TiDBEnableAutoAnalyze, valStr)
 }
 
 func writeOOMAction(s Session) {

@@ -621,7 +621,6 @@ type Performance struct {
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
-	// RunAutoAnalyze, unused since bootstrap v91
 	RunAutoAnalyze bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
@@ -935,7 +934,7 @@ var deprecatedConfig = map[string]struct{}{
 	"alter-primary-key":                  {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":                   {},
 	"performance.mem-profile-interval":   {},
-	"require-secure-transport":           {},
+	"security.require-secure-transport":  {},
 	"lower-case-table-names":             {},
 	"stmt-summary":                       {},
 	"stmt-summary.enable":                {},
@@ -946,9 +945,11 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.history-size":          {},
 	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
 	"mem-quota-query":                    {},
-	"query-log-max-len":                  {},
-	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
+	"log.query-log-max-len":              {},
 	"performance.committer-concurrency":  {},
+	"experimental.enable-global-kill":    {},
+	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
+
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
