@@ -35,15 +35,24 @@ import (
 )
 
 type stmtState struct {
-	stmtInfoSchema infoschema.InfoSchema
-	stmtTS         uint64
-	stmtTSFuture   oracle.Future
-	stmtHasError   bool
-	onNextRetry    func() error
+	stmtInfoSchema    infoschema.InfoSchema
+	stmtTS            uint64
+	stmtTSFuture      oracle.Future
+	stmtHasError      bool
+	onNextRetryOrStmt func() error
+}
+
+func (s *stmtState) nextStmt() error {
+	onNextStmt := s.onNextRetryOrStmt
+	*s = stmtState{}
+	if onNextStmt != nil {
+		return onNextStmt()
+	}
+	return nil
 }
 
 func (s *stmtState) retry() error {
-	onNextRetry := s.onNextRetry
+	onNextRetry := s.onNextRetryOrStmt
 	*s = stmtState{
 		stmtInfoSchema: s.stmtInfoSchema,
 	}
@@ -133,8 +142,7 @@ func (p *PessimisticRCTxnContextProvider) OnInitialize(ctx context.Context, tp s
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error {
 	p.ctx = ctx
-	p.stmtState = stmtState{}
-	return nil
+	return p.nextStmt()
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -155,7 +163,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point session
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
-	return p.stmtState.retry()
+	return p.retry()
 }
 
 // Advise is used to give advice to provider
@@ -302,9 +310,8 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 }
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
-	retryable := false
-
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
 		logutil.Logger(p.ctx).Info("single statement deadlock, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
@@ -320,15 +327,15 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 		retryable = true
 	}
 
-	if !retryable {
-		return sessiontxn.ErrorAction(lockErr)
-	}
-
-	// When lock error the ts should be initialized immediately when retry
-	p.onNextRetry = func() error {
+	// force refresh ts in next retry or statement when lock error occurs
+	p.onNextRetryOrStmt = func() error {
 		_, err := p.getStmtTS()
 		return err
 	}
 
-	return sessiontxn.RetryReady()
+	if retryable {
+		return sessiontxn.RetryReady()
+	}
+
+	return sessiontxn.ErrorAction(lockErr)
 }
