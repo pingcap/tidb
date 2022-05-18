@@ -39,7 +39,6 @@ type stmtState struct {
 	stmtTS            uint64
 	stmtTSFuture      oracle.Future
 	stmtUseStartTS    bool
-	stmtHasError      bool
 	onNextRetryOrStmt func() error
 }
 
@@ -150,7 +149,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
-	p.stmtHasError = true
+	// Invalid rc check for next statement or retry when error occurs
 	p.availableRCCheckTS = 0
 
 	switch point {
@@ -263,10 +262,6 @@ func (p *PessimisticRCTxnContextProvider) getTxnStartTSFuture() sessiontxn.FuncF
 }
 
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
-	if p.stmtHasError {
-		return 0, errors.New("statement should retry when an error occurs")
-	}
-
 	if p.stmtTS != 0 {
 		return p.stmtTS, nil
 	}

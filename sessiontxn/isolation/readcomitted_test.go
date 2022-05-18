@@ -78,8 +78,6 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, kv.ErrWriteConflict)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
-	_, err = provider.GetStmtReadTS()
-	require.Error(t, err)
 	compareTS = getOracleTS(t, se)
 	require.Greater(t, compareTS, rcCheckTS)
 	require.NoError(t, provider.OnStmtRetry(context.TODO()))
