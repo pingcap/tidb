@@ -3025,7 +3025,7 @@ PARTITION BY RANGE ( a ) (
 
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 
-	// analyze table and dynamic mode will ignore partition-level options and use default
+	// analyze table in dynamic mode will ignore partition-level options and use default
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
