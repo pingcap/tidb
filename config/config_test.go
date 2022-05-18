@@ -491,6 +491,25 @@ func TestOOMActionValid(t *testing.T) {
 	}
 }
 
+func TestPessimisticTxnValid(t *testing.T) {
+	t.Parallel()
+
+	c1 := NewConfig()
+	tests := []struct {
+		pessimisticTxn PessimisticTxn
+		valid          bool
+	}{
+		{PessimisticTxn{DeadlockHistoryCapacity: 10}, true},
+		{PessimisticTxn{DeadlockHistoryCapacity: 0}, true},
+		{PessimisticTxn{DeadlockHistoryCapacity: 10000}, true},
+		{PessimisticTxn{DeadlockHistoryCapacity: 10001}, false},
+	}
+	for _, tt := range tests {
+		c1.PessimisticTxn = tt.pessimisticTxn
+		require.Equal(t, tt.valid, c1.Valid() == nil)
+	}
+}
+
 func TestTxnTotalSizeLimitValid(t *testing.T) {
 	conf := NewConfig()
 	tests := []struct {

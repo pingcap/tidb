@@ -710,6 +710,14 @@ func DefaultPessimisticTxn() PessimisticTxn {
 	}
 }
 
+// Valid validates the configuration for PessimisticTxn config.
+func (cfg *PessimisticTxn) Valid() error {
+	if cfg.DeadlockHistoryCapacity > 10000 {
+		return fmt.Errorf("pessimistic-txn.deadlock-history-capacity can not be larger than 10000")
+	}
+	return nil
+}
+
 // Plugin is the config for plugin
 type Plugin struct {
 	Dir  string `toml:"dir" json:"dir"`
@@ -1116,6 +1124,10 @@ func (c *Config) Valid() error {
 
 	// For tikvclient.
 	if err := c.TiKVClient.Valid(); err != nil {
+		return err
+	}
+
+	if err := c.PessimisticTxn.Valid(); err != nil {
 		return err
 	}
 
