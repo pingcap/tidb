@@ -1218,6 +1218,14 @@ type SplitRegionStatus struct {
 	IndexInfo *model.IndexInfo
 }
 
+// CompactTable represents a "ALTER TABLE [NAME] COMPACT ..." plan.
+type CompactTable struct {
+	baseSchemaProducer
+
+	ReplicaKind ast.CompactReplicaKind
+	TableInfo   *model.TableInfo
+}
+
 // DDL represents a DDL statement plan.
 type DDL struct {
 	baseSchemaProducer
