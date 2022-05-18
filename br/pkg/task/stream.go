@@ -18,8 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -29,7 +27,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
@@ -70,6 +67,7 @@ var (
 	StreamResume   = "log resume"
 	StreamStatus   = "log status"
 	StreamTruncate = "log truncate"
+	StreamCheck    = "log check"
 
 	skipSummaryCommandList = map[string]struct{}{
 		StreamStatus:   {},
@@ -78,6 +76,8 @@ var (
 
 	// rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 	rawKVBatchCount = 64
+
+	streamShiftDuration = time.Hour
 )
 
 var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error{
@@ -87,6 +87,7 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamResume:   RunStreamResume,
 	StreamStatus:   RunStreamStatus,
 	StreamTruncate: RunStreamTruncate,
+	StreamCheck:    RunStreamCheck,
 }
 
 // StreamConfig specifies the configure about backup stream
@@ -356,7 +357,7 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context, safePoint uint64) error 
 	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), safePoint)
 	if err != nil {
 		return errors.Annotatef(err,
-			"failed to check gc safePoint, checkpoint ts %v", safePoint)
+			"failed to check gc safePoint, ts %v", safePoint)
 	}
 
 	sp := utils.BRServiceSafePoint{
@@ -371,22 +372,6 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context, safePoint uint64) error 
 
 	log.Info("set stream safePoint", zap.Object("safePoint", sp))
 	return nil
-}
-
-func (s *streamMgr) getGlobalCheckPointTS(ctx context.Context, ti *stream.Task) (uint64, error) {
-	checkPointMap, err := ti.NextBackupTSList(ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	var checkPointTS uint64 = math.MaxUint64
-	for _, nextTS := range checkPointMap {
-		if nextTS < checkPointTS {
-			checkPointTS = nextTS
-		}
-	}
-
-	return checkPointTS, nil
 }
 
 func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
@@ -411,11 +396,6 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 
 // checkRequirements will check some requirements before stream starts.
 func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
-	allStores, err := conn.GetAllTiKVStoresWithRetry(ctx, s.mgr.GetPDClient(), conn.SkipTiFlash)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
 	type backupStream struct {
 		EnableStreaming bool `json:"enable"`
 	}
@@ -423,41 +403,20 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 		BackupStream backupStream `json:"log-backup"`
 	}
 
-	httpPrefix := "http://"
-	if s.mgr.GetTLSConfig() != nil {
-		httpPrefix = "https://"
-	}
 	supportBackupStream := true
 	hasTiKV := false
-	for _, store := range allStores {
-		if store.State != metapb.StoreState_Up {
-			continue
-		}
+	err := s.mgr.GetConfigFromTiKV(ctx, s.httpCli, func(resp *http.Response) error {
 		hasTiKV = true
-		// we need make sure every available store support backup-stream otherwise we might lose data.
-		// so check every store's config
-		addr := fmt.Sprintf("%s/config", store.GetStatusAddress())
-		if !strings.HasPrefix(addr, "http") {
-			addr = httpPrefix + addr
+		c := &config{}
+		e := json.NewDecoder(resp.Body).Decode(c)
+		if e != nil {
+			return e
 		}
-		err = utils.WithRetry(ctx, func() error {
-			resp, e := s.httpCli.Get(addr)
-			if e != nil {
-				return e
-			}
-			c := &config{}
-			e = json.NewDecoder(resp.Body).Decode(c)
-			if e != nil {
-				return e
-			}
-			supportBackupStream = supportBackupStream && c.BackupStream.EnableStreaming
-			_ = resp.Body.Close()
-			return nil
-		}, utils.NewPDReqBackoffer())
-		if err != nil {
-			// if one store failed, break and return error
-			break
-		}
+		supportBackupStream = supportBackupStream && c.BackupStream.EnableStreaming
+		return nil
+	})
+	if err != nil {
+		return false, errors.Trace(err)
 	}
 	return hasTiKV && supportBackupStream, err
 }
@@ -599,6 +558,37 @@ func RunStreamStart(
 	return nil
 }
 
+func RunStreamCheck(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(
+			"task.RunStreamCheckLog",
+			opentracing.ChildOf(span.Context()),
+		)
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	logMinTS, logMaxTS, err := getLogRange(ctx, &cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	summary.Log(cmdName, zap.Uint64("log-min-ts", logMinTS),
+		zap.String("log-min-date", oracle.GetTimeFromTS(logMinTS).String()),
+		zap.Uint64("log-max-ts", logMaxTS),
+		zap.String("log-max-date", oracle.GetTimeFromTS(logMaxTS).String()),
+	)
+	return nil
+}
+
 // RunStreamStop specifies stoping a stream task
 func RunStreamStop(
 	c context.Context,
@@ -624,6 +614,11 @@ func RunStreamStop(
 	}
 	defer streamMgr.close()
 
+	storage, err := cfg.makeStorage(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, err := cli.GetTask(ctx, cfg.TaskName)
@@ -631,8 +626,21 @@ func RunStreamStop(
 		return errors.Trace(err)
 	}
 
-	err = cli.DeleteTask(ctx, cfg.TaskName)
+	globalCheckpointTS, err := ti.GetGlobalCheckPointTS(ctx)
 	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = restore.SetTSToFile(
+		ctx,
+		storage,
+		globalCheckpointTS,
+		restore.GlobalCheckpointFileName,
+	); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = cli.DeleteTask(ctx, cfg.TaskName); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -674,7 +682,7 @@ func RunStreamPause(
 		return errors.Annotatef(berrors.ErrKVUnknown, "The task %s is paused already.", cfg.TaskName)
 	}
 
-	globalCheckPointTS, err := streamMgr.getGlobalCheckPointTS(ctx, ti)
+	globalCheckPointTS, err := ti.GetGlobalCheckPointTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -721,7 +729,18 @@ func RunStreamResume(
 	if err != nil {
 		return errors.Trace(err)
 	} else if !isPaused {
-		return errors.Annotatef(berrors.ErrKVUnknown, "The task %s is active already.", cfg.TaskName)
+		return errors.Annotatef(berrors.ErrKVUnknown,
+			"The task %s is active already.", cfg.TaskName)
+	}
+
+	globalCheckPointTS, err := ti.GetGlobalCheckPointTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = utils.CheckGCSafePoint(ctx, streamMgr.mgr.GetPDClient(), globalCheckPointTS)
+	if err != nil {
+		return errors.Annotatef(err, "the global checkpoint ts: %v(%s) has been gc. ",
+			globalCheckPointTS, oracle.GetTimeFromTS(globalCheckPointTS))
 	}
 
 	err = cli.ResumeTask(ctx, cfg.TaskName)
@@ -798,6 +817,7 @@ func RunStreamStatus(
 	return ctl.PrintStatusOfTask(ctx, cfg.TaskName)
 }
 
+// RunStreamTruncate truncates the log that belong to (0, until-ts)
 func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	console := glue.GetConsole(g)
 	em := color.New(color.Bold).SprintFunc()
@@ -818,7 +838,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return err
 	}
 
-	sp, err := restore.GetTruncateSafepoint(ctx, storage)
+	sp, err := restore.GetTSFromFile(ctx, storage, restore.TruncateSafePointFileName)
 	if err != nil {
 		return err
 	}
@@ -830,7 +850,8 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 	if cfg.Until > sp && !cfg.DryRun {
-		if err := restore.SetTruncateSafepoint(ctx, storage, cfg.Until); err != nil {
+		if err := restore.SetTSToFile(
+			ctx, storage, cfg.Until, restore.TruncateSafePointFileName); err != nil {
 			return err
 		}
 	}
@@ -849,7 +870,8 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	fileCount := 0
 	minTS := oracle.GoTimeToTS(time.Now())
-	metas.IterateFilesFullyBefore(cfg.Until, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+	shiftUntilTS := ShiftTS(cfg.Until)
+	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
 		if d.MaxTs < minTS {
 			minTS = d.MaxTs
 		}
@@ -864,7 +886,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return nil
 	}
 
-	removed := metas.RemoveDataBefore(cfg.Until)
+	removed := metas.RemoveDataBefore(shiftUntilTS)
 
 	console.Print("Removing metadata... ")
 	if !cfg.DryRun {
@@ -873,7 +895,6 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 	console.Println(done("DONE"))
-
 	console.Print("Clearing data files... ")
 	for _, f := range removed {
 		if !cfg.DryRun {
@@ -884,10 +905,10 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 	console.Println(done("DONE"))
-
 	return nil
 }
 
+// RunStreamRestore restores stream log.
 func RunStreamRestore(
 	c context.Context,
 	g glue.Glue,
@@ -903,33 +924,30 @@ func RunStreamRestore(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	logStartTS, truncateTS, err := getLogStartTS(ctx, cfg)
+	logMinTS, logMaxTS, err := getLogRange(ctx, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.RestoreTS == 0 {
+		cfg.RestoreTS = logMaxTS
+	}
 
 	if len(cfg.FullBackupStorage) > 0 {
-		cfg.StartTS, err = getFullBakcupTS(ctx, cfg)
-		if err != nil {
+		if cfg.StartTS, err = getFullBackupTS(ctx, cfg); err != nil {
 			return errors.Trace(err)
 		}
-		if cfg.StartTS < logStartTS {
+		if cfg.StartTS < logMinTS {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
 				"it has gap between full backup ts:%d(%s) and log backup ts:%d(%s). ",
 				cfg.StartTS, oracle.GetTimeFromTS(cfg.StartTS),
-				logStartTS, oracle.GetTimeFromTS(logStartTS))
+				logMinTS, oracle.GetTimeFromTS(logMinTS))
 		}
 	}
 
-	if logStartTS < truncateTS {
-		logStartTS = truncateTS
-	}
-	if cfg.RestoreTS == 0 {
-		cfg.RestoreTS = math.MaxUint64
-	}
-	log.Info("start restore on point", zap.Uint64("restore-from", cfg.StartTS),
-		zap.Uint64("restore-to", cfg.RestoreTS), zap.Uint64("log-start-ts", logStartTS))
-	if err := checkLogRange(cfg.StartTS, cfg.RestoreTS, logStartTS); err != nil {
+	log.Info("start restore on point",
+		zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS),
+		zap.Uint64("log-min-ts", logMinTS), zap.Uint64("log-max-ts", logMaxTS))
+	if err := checkLogRange(cfg.StartTS, cfg.RestoreTS, logMinTS, logMaxTS); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -943,7 +961,7 @@ func RunStreamRestore(
 		cfg.Config.Storage = logStorage
 	}
 	// restore log.
-	if err := restoreStream(ctx, g, cfg, logStartTS); err != nil {
+	if err := restoreStream(ctx, g, cfg, logMinTS, logMaxTS); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -954,7 +972,7 @@ func restoreStream(
 	c context.Context,
 	g glue.Glue,
 	cfg *RestoreConfig,
-	logStartTS uint64,
+	logMinTS, logMaxTS uint64,
 ) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
@@ -978,10 +996,7 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.RestoreTS == 0 || cfg.RestoreTS == math.MaxUint64 {
-		cfg.RestoreTS = currentTS
-	}
-	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS)
+	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, ShiftTS(cfg.StartTS))
 	client.SetCurrentTS(currentTS)
 
 	// read meta by given ts.
@@ -995,7 +1010,7 @@ func restoreStream(
 	}
 
 	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.StartTS, cfg.RestoreTS)
+	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1027,6 +1042,10 @@ func restoreStream(
 	updateRewriteRules(rewriteRules, schemasReplace)
 
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
+	if cfg.Concurrency > defaultRestoreStreamConcurrency {
+		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
+		client.SetConcurrency(defaultRestoreConcurrency)
+	}
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
 	})
@@ -1038,7 +1057,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to clean up")
 	}
 
-	if err = client.SaveSchemas(ctx, schemasReplace, logStartTS, cfg.RestoreTS); err != nil {
+	if err = client.SaveSchemas(ctx, schemasReplace, logMinTS, cfg.RestoreTS); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1101,16 +1120,17 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig) (
 	return client, nil
 }
 
-func checkLogRange(restoreFrom, restoreTo, truncateTS uint64) error {
+func checkLogRange(restoreFrom, restoreTo, logMinTS, logMaxTS uint64) error {
 	// serveral ts constraint：
-	// truncateTS <= restoreFrom <= restoreTo
-	if truncateTS > restoreFrom || restoreFrom > restoreTo {
+	// logMinTS <= restoreFrom <= restoreTo <= logMaxTS
+	if logMinTS > restoreFrom || restoreFrom > restoreTo || restoreTo > logMaxTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"restore log from %d(%s) to %d(%s), "+
-				" but the current existed log from %d(%s)",
+				" but the current existed log from %d(%s) to %d(%s)",
 			restoreFrom, oracle.GetTimeFromTS(restoreFrom),
 			restoreTo, oracle.GetTimeFromTS(restoreTo),
-			truncateTS, oracle.GetTimeFromTS(truncateTS),
+			logMinTS, oracle.GetTimeFromTS(logMinTS),
+			logMaxTS, oracle.GetTimeFromTS(logMaxTS),
 		)
 	}
 	return nil
@@ -1131,16 +1151,17 @@ func countIndices(ts map[int64]*metautil.Table) int64 {
 	return result
 }
 
-// get the start-ts of starting log backup.
-func getLogStartTS(
+// getLogRange gets the log-min-ts and log-max-ts of starting log backup.
+func getLogRange(
 	ctx context.Context,
-	cfg *RestoreConfig,
+	cfg *Config,
 ) (uint64, uint64, error) {
-	_, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
+	_, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
+	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -1149,17 +1170,35 @@ func getLogStartTS(
 	if err = backupMeta.Unmarshal(metaData); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
+	logStartTS := backupMeta.GetStartVersion()
 
-	truncateTS, err := restore.GetTruncateSafepoint(ctx, s)
+	// truncateTS: get log truncate ts from TruncateSafePointFileName.
+	// If truncateTS equals 0, which represents the stream log has never been truncated.
+	truncateTS, err := restore.GetTSFromFile(ctx, s, restore.TruncateSafePointFileName)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	logMinTS := mathutil.Max(logStartTS, truncateTS)
+
+	// get log global checkpoint ts from GlobalCheckpointFileName.
+	// If globalCheckpointTS equals 0, which represents the log task has not been stop.
+	logMaxTS, err := restore.GetTSFromFile(ctx, s, restore.GlobalCheckpointFileName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	return backupMeta.GetStartVersion(), truncateTS, nil
+	// get max global resolved ts from metas.
+	if logMaxTS == 0 {
+		if logMaxTS, err = getGlobalResolvedTS(ctx, s); err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+	}
+
+	return logMinTS, logMaxTS, nil
 }
 
-// getFullBakcupTS gets the snapshot-ts of full bakcup
-func getFullBakcupTS(
+// getFullBackupTS gets the snapshot-ts of full bakcup
+func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, error) {
@@ -1181,13 +1220,33 @@ func getFullBakcupTS(
 	return backupmeta.GetEndVersion(), nil
 }
 
-// nolint: unused, deadcode
-func getGlobalCheckpointTS(ms []*backuppb.Metadata) uint64 {
+func getGlobalResolvedTS(
+	ctx context.Context,
+	s storage.ExternalStorage,
+) (uint64, error) {
 	storeMap := make(map[int64]uint64)
-	for _, m := range ms {
-		if resolveTS, exist := storeMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
-			storeMap[m.StoreId] = m.ResolvedTs
+
+	opt := &storage.WalkOption{SubDir: restore.GetStreamBackupMetaPrefix()}
+	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
+		if strings.Contains(path, restore.GetStreamBackupMetaPrefix()) {
+			m := &backuppb.Metadata{}
+			b, err := s.ReadFile(ctx, path)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = m.Unmarshal(b)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if resolveTS, exist := storeMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
+				storeMap[m.StoreId] = m.ResolvedTs
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
 
 	var globalCheckpointTS uint64 = 0
@@ -1197,7 +1256,7 @@ func getGlobalCheckpointTS(ms []*backuppb.Metadata) uint64 {
 		}
 	}
 
-	return globalCheckpointTS
+	return globalCheckpointTS, nil
 }
 
 func initFullBackupTables(
@@ -1360,4 +1419,18 @@ func newRawBatchClient(
 	}
 
 	return restore.NewRawKVBatchClient(rawkvClient, rawKVBatchCount), nil
+}
+
+// ShiftTS gets a smaller shiftTS than startTS.
+// It has a safe duration between shiftTS and startTS for trasaction.
+func ShiftTS(startTS uint64) uint64 {
+	physical := oracle.ExtractPhysical(startTS)
+	logical := oracle.ExtractLogical(startTS)
+
+	shiftPhysical := physical - streamShiftDuration.Milliseconds()
+	if shiftPhysical < 0 {
+		return 0
+	} else {
+		return oracle.ComposeTS(shiftPhysical, logical)
+	}
 }

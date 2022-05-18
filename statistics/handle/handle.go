@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -240,6 +242,49 @@ func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
+var statsHealthyGauges = []prometheus.Gauge{
+	metrics.StatsHealthyGauge.WithLabelValues("[0,50)"),
+	metrics.StatsHealthyGauge.WithLabelValues("[50,80)"),
+	metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),
+	metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
+}
+
+type statsHealthyChange struct {
+	bucketDelta [4]int
+}
+
+func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
+	var idx int
+	if statsHealthy < 50 {
+		idx = 0
+	} else if statsHealthy < 80 {
+		idx = 1
+	} else if statsHealthy < 100 {
+		idx = 2
+	} else {
+		idx = 3
+	}
+	if add {
+		c.bucketDelta[idx] += 1
+	} else {
+		c.bucketDelta[idx] -= 1
+	}
+}
+
+func (c *statsHealthyChange) drop(statsHealthy int64) {
+	c.update(false, statsHealthy)
+}
+
+func (c *statsHealthyChange) add(statsHealthy int64) {
+	c.update(true, statsHealthy)
+}
+
+func (c *statsHealthyChange) apply() {
+	for i, val := range c.bucketDelta {
+		statsHealthyGauges[i].Add(float64(val))
+	}
+}
+
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	oldCache := h.statsCache.Load().(statsCache)
@@ -260,6 +305,13 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	healthyChange := &statsHealthyChange{}
+	option := &tableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
+	tables := make([]*statistics.Table, 0, len(rows))
+	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		version := row.GetUint64(0)
 		physicalID := row.GetInt64(1)
@@ -271,11 +323,12 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		h.mu.Unlock()
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
-			oldCache.Del(physicalID)
+			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
 		tableInfo := table.Meta()
-		if oldTbl, ok := oldCache.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		oldTbl, ok := oldCache.Get(physicalID)
+		if ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
@@ -284,8 +337,11 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
+		if oldHealthy, ok := oldTbl.GetStatsHealthy(); ok {
+			healthyChange.drop(oldHealthy)
+		}
 		if tbl == nil {
-			oldCache.Del(physicalID)
+			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
 		tbl.Version = version
@@ -293,9 +349,15 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		oldCache.Put(physicalID, tbl)
+		if newHealthy, ok := tbl.GetStatsHealthy(); ok {
+			healthyChange.add(newHealthy)
+		}
+		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache.update(nil, nil, lastVersion, opts...))
+	updated := h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
+	if updated {
+		healthyChange.apply()
+	}
 	return nil
 }
 
@@ -735,10 +797,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	col := table.Columns[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -769,7 +827,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			col = &statistics.Column{
 				PhysicalID: table.PhysicalID,
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				FMSketch:   fmSketch,
 				Info:       colInfo,
 				Count:      count + nullCount,
 				ErrorRate:  errorRate,
@@ -787,6 +844,12 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				return errors.Trace(err)
 			}
 			cms, topN, err := h.cmSketchAndTopNFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+			// we load all the statistics, i.e., loadAll is true. We don't need to read FMSketch from storage in notNeedLoad IF.
+			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2028,8 +2091,13 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, p
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.RestrictedSQLExecutor)
 	ctx := context.TODO()
+	jobInfo := job.JobInfo
+	const textMaxLength = 65535
+	if len(jobInfo) > textMaxLength {
+		jobInfo = jobInfo[:textMaxLength]
+	}
 	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending, instance, procID)
+	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, jobInfo, statistics.AnalyzePending, instance, procID)
 	if err != nil {
 		return err
 	}
@@ -2074,4 +2142,18 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	}
 	sc := v.(statsCache)
 	sc.SetCapacity(c)
+}
+
+// GetStatsCacheFrontTable gets front table in statsCacheInner implementation
+// only used for test
+func (h *Handle) GetStatsCacheFrontTable() int64 {
+	if h == nil {
+		return 0
+	}
+	v := h.statsCache.Load()
+	if v == nil {
+		return 0
+	}
+	sc := v.(statsCache)
+	return sc.Front()
 }

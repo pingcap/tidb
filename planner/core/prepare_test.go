@@ -1028,6 +1028,35 @@ func TestPrepareWithWindowFunction(t *testing.T) {
 	tk.MustQuery("execute stmt2 using @a, @b").Check(testkit.Rows("0", "0"))
 }
 
+func TestPrepareWindowFunctionWithoutParamsCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer tk.MustExec("set @@tidb_enable_window_function = 0")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 (d DOUBLE, id INT, sex CHAR(1), n INT NOT NULL AUTO_INCREMENT, PRIMARY KEY(n));")
+	tk.MustExec("insert into t1(d, id, sex) values (1.0, 1, 'M'),(2.0, 2, 'F'),(3.0, 3, 'F'),(4.0, 4, 'F'),(5.0, 5, 'M')")
+	// prepare phase, we don't check the window function args.
+	tk.MustExec("prepare p from \"select id, sex, lead(id, ?) over () from t1\"")
+	// execute phase, we do check the window function args (param is initialized).
+	err := tk.ExecToErr("execute p using @p1")
+	require.NotNil(t, err)
+	require.EqualError(t, err, "[planner:1210]Incorrect arguments to lead")
+	tk.MustExec("set @p1 = 3")
+	// execute phase, we do check the window function args (param is valid).
+	tk.MustQuery("execute p using @p1").Check(testkit.Rows("1 M 4", "2 F 5", "3 F <nil>", "4 F <nil>", "5 M <nil>"))
+
+	// execute phase, we do check the window function args (param is invalid).
+	tk.MustExec("PREPARE p FROM \"SELECT id, sex, LEAD(id, ?) OVER (), ntile(?) over() FROM t1\"")
+	tk.MustExec("set @p2 = 3")
+	tk.MustQuery("execute p using @p1, @p2").Check(testkit.Rows("1 M 4 1", "2 F 5 1", "3 F <nil> 2", "4 F <nil> 2", "5 M <nil> 3"))
+	tk.MustExec("set @p2 = 0") // ntile doesn't allow param to be 0
+	err = tk.ExecToErr("execute p using @p1, @p2")
+	require.NotNil(t, err)
+	require.EqualError(t, err, "[planner:1210]Incorrect arguments to ntile")
+}
+
 func TestPrepareWithSnapshot(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -2804,4 +2833,51 @@ func TestCachedTable(t *testing.T) {
 	tk.MustQuery("execute pointGet using @a").Check(testkit.Rows("1"))
 	require.True(t, lastReadFromCache(tk))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int primary key, c int, index ic (c))")
+	// prepare text protocol
+	tk1.MustExec("prepare s from 'select /*+use_index(t1, ic)*/ * from t1 where 1'")
+	// prepare binary protocol
+	stmtID, _, _, err := tk2.Session().PrepareStmt("select /*+use_index(t1, ic)*/ * from t1 where 1")
+	require.Nil(t, err)
+	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk2.MustExec("begin pessimistic")
+	tk1.MustQuery("execute s").Check(testkit.Rows())
+	rs, err := tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+	tk3.MustExec("alter table t1 drop index ic")
+	tk3.MustExec("insert into t1 values(1, 0)")
+
+	// The execution after schema changed should not hit plan cache.
+	// execute text protocol
+	tk1.MustQuery("execute s").Check(testkit.Rows("1 0"))
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// execute binary protocol
+	rs, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 0"))
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }

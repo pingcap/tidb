@@ -392,6 +392,9 @@ func initTestClient() *TestClient {
 			endKey = codec.EncodeBytes([]byte{}, endKey)
 		}
 		regions[i] = &restore.RegionInfo{
+			Leader: &metapb.Peer{
+				Id: i,
+			},
 			Region: &metapb.Region{
 				Id:       i,
 				Peers:    peers,
