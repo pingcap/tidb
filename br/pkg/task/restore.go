@@ -153,7 +153,7 @@ type RestoreConfig struct {
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
 	StartTS     uint64 `json:"start-ts" toml:"start-ts"`
 	RestoreTS   uint64 `json:"restore-ts" toml:"restore-ts"`
-	skipTiflash bool   `json:"skip-tiflash" toml:"skip-tiflash"`
+	skipTiflash bool   `json:"-" toml:"-"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
