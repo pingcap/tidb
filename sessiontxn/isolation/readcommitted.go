@@ -38,13 +38,16 @@ type stmtState struct {
 	stmtInfoSchema    infoschema.InfoSchema
 	stmtTS            uint64
 	stmtTSFuture      oracle.Future
+	stmtUseStartTS    bool
 	stmtHasError      bool
 	onNextRetryOrStmt func() error
 }
 
-func (s *stmtState) nextStmt() error {
+func (s *stmtState) nextStmt(useStartTS bool) error {
 	onNextStmt := s.onNextRetryOrStmt
-	*s = stmtState{}
+	*s = stmtState{
+		stmtUseStartTS: useStartTS,
+	}
 	if onNextStmt != nil {
 		return onNextStmt()
 	}
@@ -142,7 +145,7 @@ func (p *PessimisticRCTxnContextProvider) OnInitialize(ctx context.Context, tp s
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error {
 	p.ctx = ctx
-	return p.nextStmt()
+	return p.nextStmt(!p.isTxnPrepared)
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -171,7 +174,8 @@ func (p *PessimisticRCTxnContextProvider) Advise(tp sessiontxn.AdviceType) error
 	switch tp {
 	case sessiontxn.AdviceWarmUp:
 		if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS == 0 {
-			return p.prepareStmtTS()
+			p.prepareTxn()
+			p.prepareStmtTS()
 		}
 	}
 	return nil
@@ -214,20 +218,15 @@ func (p *PessimisticRCTxnContextProvider) activeTxn() (kv.Transaction, error) {
 	return txn, nil
 }
 
-func (p *PessimisticRCTxnContextProvider) prepareStmtTS() error {
+func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	if p.stmtTSFuture != nil {
-		return nil
+		return
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	txn, err := p.sctx.Txn(false)
-	if err != nil {
-		return err
-	}
-
 	var stmtTSFuture oracle.Future
 	switch {
-	case !txn.Valid() && !p.isTxnPrepared:
+	case p.stmtUseStartTS:
 		stmtTSFuture = p.getTxnStartTSFuture()
 	case p.availableRCCheckTS != 0 && sessVars.StmtCtx.RCCheckTS:
 		stmtTSFuture = sessiontxn.ConstantFuture(p.availableRCCheckTS)
@@ -235,9 +234,8 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() error {
 		stmtTSFuture = sessiontxn.NewOracleFuture(p.ctx, p.sctx, sessVars.TxnCtx.TxnScope)
 	}
 
-	p.prepareTxn()
 	p.stmtTSFuture = stmtTSFuture
-	return nil
+	return
 }
 
 func (p *PessimisticRCTxnContextProvider) prepareTxn() {
@@ -273,15 +271,12 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 		return p.stmtTS, nil
 	}
 
-	if err = p.prepareStmtTS(); err != nil {
-		return 0, err
-	}
-
 	var txn kv.Transaction
 	if txn, err = p.activeTxn(); err != nil {
 		return 0, err
 	}
 
+	p.prepareStmtTS()
 	if ts, err = p.stmtTSFuture.Wait(); err != nil {
 		return 0, err
 	}
