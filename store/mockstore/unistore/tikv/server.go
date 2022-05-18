@@ -864,6 +864,11 @@ func (svr *Server) SplitRegion(ctx context.Context, req *kvrpcpb.SplitRegionRequ
 	return svr.regionManager.SplitRegion(req), nil
 }
 
+// Compact implements the tikvpb.TikvServer interface.
+func (svr *Server) Compact(ctx context.Context, req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+	panic("unimplemented")
+}
+
 // ReadIndex implements implements the tikvpb.TikvServer interface.
 func (svr *Server) ReadIndex(context.Context, *kvrpcpb.ReadIndexRequest) (*kvrpcpb.ReadIndexResponse, error) {
 	// TODO:
