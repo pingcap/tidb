@@ -22,6 +22,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -626,6 +627,29 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 		}
 		break
 	}
+
+	failpoint.Inject("check_only_dispatched_to_tiflash_mpp_nodes", func(val failpoint.Value) {
+		// This failpoint will be tested in test-infra case, because it needs setup a cluster.
+		str := val.(string)
+		addrs := strings.Split(str, ";")
+		if len(addrs) < 1 {
+			panic(fmt.Sprintf("unexpected length of tiflash_mpp node addrs: %v", len(addrs)))
+		}
+		for _, batchTask := range res {
+			var matched bool
+			for _, addr := range addrs {
+				if batchTask.storeAddr == addr {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				panic(fmt.Sprintf("batchCopTask send to node which is not tiflash_mpp: %v(tiflash_mpp nodes: %s)",
+					batchTask.storeAddr, str))
+			}
+		}
+		logutil.BgLogger().Info(fmt.Sprintf("check_only_dispatched_to_tiflash_mpp_nodes checked succeed(tiflash_mpp nodes: %s)", str))
+	})
 	return res, nil
 }
 
