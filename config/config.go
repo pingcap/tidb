@@ -731,9 +731,6 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
-
-	// Deprecated: use Config.EnableGlobalKill instead.
-	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()

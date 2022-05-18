@@ -236,7 +236,6 @@ keys-limit=123
 total-key-size-limit=1024
 [experimental]
 allow-expression-index = true
-enable-global-kill = false
 [isolation-read]
 engines = ["tiflash"]
 [labels]
