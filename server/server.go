@@ -161,6 +161,10 @@ func (s *Server) releaseToken(token *Token) {
 	metrics.TokenGauge.Dec()
 }
 
+func (s *Server) UpdateTokenLimiter() {
+	s.concurrentLimiter.Resize(uint(atomic.LoadUint32(&s.cfg.Instance.ConnectionConcurrencyLimit)))
+}
+
 // SetDomain use to set the server domain.
 func (s *Server) SetDomain(dom *domain.Domain) {
 	s.dom = dom

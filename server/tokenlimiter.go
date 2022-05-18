@@ -14,6 +14,10 @@
 
 package server
 
+import (
+	"sync"
+)
+
 // Token is used as a permission to keep on running.
 type Token struct {
 }
@@ -22,16 +26,35 @@ type Token struct {
 type TokenLimiter struct {
 	count uint
 	ch    chan *Token
+	mutex sync.Mutex // For synchronization.
 }
 
 // Put releases the token.
 func (tl *TokenLimiter) Put(tk *Token) {
+	tl.mutex.Lock()
+	defer tl.mutex.Unlock()
 	tl.ch <- tk
 }
 
 // Get obtains a token.
 func (tl *TokenLimiter) Get() *Token {
+	tl.mutex.Lock()
+	defer tl.mutex.Unlock()
 	return <-tl.ch
+}
+
+func (tl *TokenLimiter) Resize(count uint) {
+	if tl.count < count || tl.count > count && tl.count-uint(len(tl.ch)) <= count {
+		tl.mutex.Lock()
+		defer tl.mutex.Unlock()
+
+		newCh := make(chan *Token, count)
+		for i := uint(0); i < count-tl.count+uint(len(tl.ch)) && i < count; i++ {
+			newCh <- &Token{}
+		}
+		tl.count = count
+		tl.ch = newCh
+	}
 }
 
 // NewTokenLimiter creates a TokenLimiter with count tokens.

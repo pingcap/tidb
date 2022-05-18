@@ -1324,6 +1324,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		}
 
 		cc.server.releaseToken(token)
+		cc.server.UpdateTokenLimiter()
 		span.Finish()
 		cc.lastActive = time.Now()
 	}()
