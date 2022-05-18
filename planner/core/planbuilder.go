@@ -97,6 +97,7 @@ type tableHintInfo struct {
 	indexMergeHintList  []indexHintInfo
 	timeRangeHint       ast.HintTimeRange
 	limitHints          limitHintInfo
+	leadingJoinOrder    []hintTableInfo
 }
 
 type limitHintInfo struct {
@@ -182,7 +183,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 			tableInfo.dbName = defaultDBName
 		}
 		switch hintName {
-		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, TiDBHashJoin, HintHJ:
+		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, TiDBHashJoin, HintHJ, HintLeading:
 			if len(tableInfo.partitions) > 0 {
 				isInapplicable = true
 			}
@@ -730,6 +731,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildChange(x)
 	case *ast.SplitRegionStmt:
 		return b.buildSplitRegion(x)
+	case *ast.CompactTableStmt:
+		return b.buildCompactTable(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -758,9 +761,9 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (Pla
 		}
 		vars = append(vars, newExpr)
 	}
-	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
+	exe := &Execute{Name: v.Name, TxtProtoVars: vars, ExecID: v.ExecID}
 	if v.BinaryArgs != nil {
-		exe.PrepareParams = v.BinaryArgs.([]types.Datum)
+		exe.BinProtoVars = v.BinaryArgs.([]types.Datum)
 	}
 	return exe, nil
 }
@@ -4811,4 +4814,22 @@ func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
 		return x
 	}
 	return nil
+}
+
+// buildCompactTable builds a plan for the "ALTER TABLE [NAME] COMPACT ..." statement.
+func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (Plan, error) {
+	var authErr error
+	if b.ctx.GetSessionVars().User != nil {
+		authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
+			b.ctx.GetSessionVars().User.AuthHostname, node.Table.Name.L)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, node.Table.Schema.L,
+		node.Table.Name.L, "", authErr)
+
+	tblInfo := node.Table.TableInfo
+	p := &CompactTable{
+		ReplicaKind: node.ReplicaKind,
+		TableInfo:   tblInfo,
+	}
+	return p, nil
 }

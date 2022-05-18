@@ -219,6 +219,7 @@ deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
 enable-forwarding = true
+enable-global-kill = true
 [performance]
 tcp-no-delay = false
 [tikv-client]

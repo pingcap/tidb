@@ -742,6 +742,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
+	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
 	return do
 }
 
@@ -817,7 +818,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		}
 	})
 
-	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
+	if config.GetGlobalConfig().EnableGlobalKill {
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
 			if err != nil {
@@ -1833,12 +1834,6 @@ func (do *Domain) serverIDKeeper() {
 			return
 		}
 	}
-}
-
-// MockInfoCacheAndLoadInfoSchema only used in unit test
-func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
-	do.infoCache = infoschema.NewCache(16)
-	do.infoCache.Insert(is, 0)
 }
 
 func init() {

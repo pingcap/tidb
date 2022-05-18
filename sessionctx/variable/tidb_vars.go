@@ -215,6 +215,9 @@ const (
 
 	// TiDBSysdateIsNow is the name of the `tidb_sysdate_is_now` system variable
 	TiDBSysdateIsNow = "tidb_sysdate_is_now"
+
+	// RequireSecureTransport indicates the secure mode for data transport
+	RequireSecureTransport = "require_secure_transport"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -323,6 +326,10 @@ const (
 	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
 	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
 
+	// TiDBMaxTiFlashThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
+	// Default value is -1, means it will not be pushed down to tiflash.
+	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
+	TiDBMaxTiFlashThreads = "tidb_max_tiflash_threads"
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -760,6 +767,7 @@ const (
 	DefTiDBAllowMPPExecution                     = true
 	DefTiDBHashExchangeWithNewCollation          = true
 	DefTiDBEnforceMPPExecution                   = false
+	DefTiFlashMaxThreads                         = -1
 	DefTiDBMPPStoreFailTTL                       = "60s"
 	DefTiDBTxnMode                               = ""
 	DefTiDBRowFormatV1                           = 1
@@ -863,6 +871,7 @@ const (
 	DefTiDBQueryLogMaxLen                        = 4096
 	DefTiDBTxnTotalSizeLimit                     = 100 * 1024 * 1024
 	DefTiDBTxnEntrySizeLimit                     = 6 * 1024 * 1024
+	DefRequireSecureTransport                    = false
 	DefTiDBCommitterConcurrency                  = 128
 	DefTiDBBatchDMLIgnoreError                   = false
 	DefTiDBMemQuotaAnalyze                       = -1
@@ -913,4 +922,6 @@ var (
 	SetMemQuotaAnalyze func(quota int64) = nil
 	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
 	GetMemQuotaAnalyze func() int64 = nil
+	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
+	SetStatsCacheCapacity atomic.Value
 )
