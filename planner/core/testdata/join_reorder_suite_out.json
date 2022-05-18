@@ -3079,7 +3079,9 @@
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table has join conditions with other tables"
+        ]
       },
       {
         "SQL": "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a cross join t3",
