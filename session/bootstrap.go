@@ -1855,9 +1855,10 @@ func upgradeToVer91(s Session, ver int64) {
 	if ver >= version91 {
 		return
 	}
-	// TODO:
+	valStr := variable.BoolToOnOff(config.GetGlobalConfig().PreparedPlanCache.Enabled)
+	importConfigOption(s, "prepared-plan-cache.enable", variable.TiDBEnablePrepPlanCache, valStr)
 
-	valStr := strconv.Itoa(int(config.GetGlobalConfig().PreparedPlanCache.Capacity))
+	valStr = strconv.Itoa(int(config.GetGlobalConfig().PreparedPlanCache.Capacity))
 	importConfigOption(s, "prepared-plan-cache.capacity", variable.TiDBPrepPlanCacheSize, valStr)
 
 	valStr = strconv.FormatFloat(config.GetGlobalConfig().PreparedPlanCache.MemoryGuardRatio, 'f', -1, 64)
