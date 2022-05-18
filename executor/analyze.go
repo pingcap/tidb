@@ -266,7 +266,7 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 	dynamicPrune := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	toSaveMap := make(map[int64]core.V2AnalyzeOptions)
 	for id, opts := range e.OptionsMap {
-		if opts.IsTable || !dynamicPrune {
+		if !opts.IsPartition || !dynamicPrune {
 			toSaveMap[id] = opts
 		}
 	}

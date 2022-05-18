@@ -1115,12 +1115,12 @@ type AnalyzeInfo struct {
 
 // V2AnalyzeOptions is used to hold analyze options information.
 type V2AnalyzeOptions struct {
-	PhyTableID int64
-	RawOpts    map[ast.AnalyzeOptionType]uint64
-	FilledOpts map[ast.AnalyzeOptionType]uint64
-	ColChoice  model.ColumnChoice
-	ColumnList []*model.ColumnInfo
-	IsTable    bool
+	PhyTableID  int64
+	RawOpts     map[ast.AnalyzeOptionType]uint64
+	FilledOpts  map[ast.AnalyzeOptionType]uint64
+	ColChoice   model.ColumnChoice
+	ColumnList  []*model.ColumnInfo
+	IsPartition bool
 }
 
 // AnalyzeColumnsTask is used for analyze columns.

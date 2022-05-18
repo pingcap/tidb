@@ -2203,12 +2203,12 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		return nil, nil, err
 	}
 	tblAnalyzeOptions := V2AnalyzeOptions{
-		PhyTableID: tbl.TableInfo.ID,
-		RawOpts:    tblOpts,
-		FilledOpts: tblFilledOpts,
-		ColChoice:  tblColChoice,
-		ColumnList: tblColList,
-		IsTable:    true,
+		PhyTableID:  tbl.TableInfo.ID,
+		RawOpts:     tblOpts,
+		FilledOpts:  tblFilledOpts,
+		ColChoice:   tblColChoice,
+		ColumnList:  tblColList,
+		IsPartition: false,
 	}
 	optionsMap[tbl.TableInfo.ID] = tblAnalyzeOptions
 	colsInfoMap[tbl.TableInfo.ID] = tblColsInfo
@@ -2216,12 +2216,12 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		if id != tbl.TableInfo.ID {
 			if dynamicPrune {
 				parV2Options := V2AnalyzeOptions{
-					PhyTableID: id,
-					RawOpts:    tblOpts,
-					FilledOpts: tblFilledOpts,
-					ColChoice:  tblColChoice,
-					ColumnList: tblColList,
-					IsTable:    false,
+					PhyTableID:  id,
+					RawOpts:     tblOpts,
+					FilledOpts:  tblFilledOpts,
+					ColChoice:   tblColChoice,
+					ColumnList:  tblColList,
+					IsPartition: true,
 				}
 				optionsMap[id] = parV2Options
 				colsInfoMap[id] = tblColsInfo

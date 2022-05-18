@@ -466,13 +466,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			if isIndex == 0 {
 				errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
 			} else {
-				indexName := ""
-				for _, idx := range tableInfo.Indices {
-					if idx.ID == histIDs[0] {
-						indexName = idx.Name.L
-					}
-				}
-				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, indexName)
+				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[0]))
 			}
 			err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
 			return
@@ -481,7 +475,12 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			// partition is not empty but column stats(hist, topn) is missing
 			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
-				errMsg := fmt.Sprintf("`%s`", tableInfo.Name.L)
+				var errMsg string
+				if isIndex == 0 {
+					errMsg = fmt.Sprintf("`%s` column: `%s`", tableInfo.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
+				} else {
+					errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
+				}
 				err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(errMsg)
 				return
 			}
