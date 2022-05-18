@@ -55,7 +55,15 @@ const (
 	MetaV2
 )
 
+func CreateMetaFileName(ts uint64) string {
+	return fmt.Sprintf("%s_%d", MetaFile, ts)
+}
+
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
+	if len(content) == 0 || cipher == nil {
+		return content, iv, nil
+	}
+
 	switch cipher.CipherType {
 	case encryptionpb.EncryptionMethod_PLAINTEXT:
 		return content, iv, nil
@@ -76,6 +84,10 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 }
 
 func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
+	if len(content) == 0 || cipher == nil {
+		return content, nil
+	}
+
 	switch cipher.CipherType {
 	case encryptionpb.EncryptionMethod_PLAINTEXT:
 		return content, nil
@@ -494,13 +506,24 @@ type MetaWriter struct {
 	// records the total item of in one write meta job.
 	flushedItemNum int
 
+	// the filename that backupmeta has flushed into.
+	metaFileName string
+
 	cipher *backuppb.CipherInfo
 }
 
 // NewMetaWriter creates MetaWriter.
-func NewMetaWriter(storage storage.ExternalStorage,
+func NewMetaWriter(
+	storage storage.ExternalStorage,
 	metafileSizeLimit int,
-	useV2Meta bool, cipher *backuppb.CipherInfo) *MetaWriter {
+	useV2Meta bool,
+	metaFileName string,
+	cipher *backuppb.CipherInfo,
+) *MetaWriter {
+	if len(metaFileName) == 0 {
+		metaFileName = MetaFile
+	}
+
 	return &MetaWriter{
 		start:             time.Now(),
 		storage:           storage,
@@ -512,6 +535,7 @@ func NewMetaWriter(storage storage.ExternalStorage,
 		metafileSizes:  make(map[string]int),
 		metafiles:      NewSizedMetaFile(metafileSizeLimit),
 		metafileSeqNum: make(map[string]int),
+		metaFileName:   metaFileName,
 		cipher:         cipher,
 	}
 }
@@ -636,7 +660,7 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	return writer.storage.WriteFile(ctx, MetaFile, append(iv, encryptBuff...))
+	return writer.storage.WriteFile(ctx, writer.metaFileName, append(iv, encryptBuff...))
 }
 
 // fillMetasV1 keep the compatibility for old version.

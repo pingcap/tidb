@@ -19,7 +19,18 @@ import (
 	"math"
 	"sync"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/statistics"
+)
+
+var (
+	missCounter   = metrics.StatsCacheLRUCounter.WithLabelValues("miss")
+	hitCounter    = metrics.StatsCacheLRUCounter.WithLabelValues("hit")
+	updateCounter = metrics.StatsCacheLRUCounter.WithLabelValues("update")
+	delCounter    = metrics.StatsCacheLRUCounter.WithLabelValues("del")
+	evictCounter  = metrics.StatsCacheLRUCounter.WithLabelValues("evict")
+	costGauge     = metrics.StatsCacheLRUGauge.WithLabelValues("track")
+	capacityGauge = metrics.StatsCacheLRUGauge.WithLabelValues("capacity")
 )
 
 type statsInnerCache struct {
@@ -50,6 +61,7 @@ func newInnerLruCache(c int64) *innerItemLruCache {
 	if c < 1 {
 		c = math.MaxInt64
 	}
+	capacityGauge.Set(float64(c))
 	return &innerItemLruCache{
 		capacity: c,
 		cache:    list.New(),
@@ -261,6 +273,22 @@ func (s *statsInnerCache) SetCapacity(c int64) {
 	s.lru.setCapacity(c)
 }
 
+// EnableQuota implements statsCacheInner
+func (s *statsInnerCache) EnableQuota() bool {
+	return true
+}
+
+// Front implements statsCacheInner
+func (s *statsInnerCache) Front() int64 {
+	s.RLock()
+	defer s.RUnlock()
+	ele := s.lru.cache.Front()
+	if ele == nil {
+		return 0
+	}
+	return s.lru.cache.Front().Value.(*lruCacheItem).tblID
+}
+
 func (s *statsInnerCache) onEvict(tblID int64) {
 	element, exist := s.elements[tblID]
 	if !exist {
@@ -283,12 +311,15 @@ func (s *statsInnerCache) capacity() int64 {
 func (c *innerItemLruCache) get(tblID, id int64) (*lruCacheItem, bool) {
 	v, ok := c.elements[tblID]
 	if !ok {
+		missCounter.Inc()
 		return nil, false
 	}
 	ele, ok := v[id]
 	if !ok {
+		missCounter.Inc()
 		return nil, false
 	}
+	hitCounter.Inc()
 	c.cache.MoveToFront(ele)
 	return ele.Value.(*lruCacheItem), true
 }
@@ -302,6 +333,7 @@ func (c *innerItemLruCache) del(tblID, id int64) {
 	if !ok {
 		return
 	}
+	delCounter.Inc()
 	delete(c.elements[tblID], id)
 	c.cache.Remove(ele)
 }
@@ -309,6 +341,7 @@ func (c *innerItemLruCache) del(tblID, id int64) {
 func (c *innerItemLruCache) put(tblID, id int64, item statistics.TableCacheItem, itemMem statistics.CacheItemMemoryUsage,
 	needEvict, needMove bool) {
 	defer func() {
+		updateCounter.Inc()
 		if needEvict {
 			c.evictIfNeeded()
 		}
@@ -344,6 +377,7 @@ func (c *innerItemLruCache) put(tblID, id int64, item statistics.TableCacheItem,
 func (c *innerItemLruCache) evictIfNeeded() {
 	curr := c.cache.Back()
 	for c.trackingCost > c.capacity {
+		evictCounter.Inc()
 		prev := curr.Prev()
 		item := curr.Value.(*lruCacheItem)
 		oldMem := item.innerMemUsage
@@ -381,5 +415,6 @@ func (c *innerItemLruCache) setCapacity(capacity int64) {
 		capacity = math.MaxInt64
 	}
 	c.capacity = capacity
+	capacityGauge.Set(float64(c.capacity))
 	c.evictIfNeeded()
 }

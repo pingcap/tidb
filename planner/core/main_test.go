@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
@@ -29,7 +29,7 @@ var indexMergeSuiteData testdata.TestData
 var planSuiteUnexportedData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	flag.Parse()
 
@@ -45,6 +45,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
+	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
 
@@ -111,4 +112,8 @@ func GetIntegrationSuiteData() testdata.TestData {
 
 func GetAnalyzeSuiteData() testdata.TestData {
 	return testDataMap["analyze_suite"]
+}
+
+func GetWindowPushDownSuiteData() testdata.TestData {
+	return testDataMap["window_push_down_suite"]
 }
