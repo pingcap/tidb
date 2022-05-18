@@ -152,7 +152,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		return errors.Trace(err)
 	}
 
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr)
+	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
