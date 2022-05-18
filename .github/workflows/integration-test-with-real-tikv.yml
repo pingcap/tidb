@@ -1,13 +1,5 @@
 name: Real TiKV Tests
 
-on:
-  push:
-    branches:
-      - master
-  pull_request:
-    branches:
-      - master
-
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: true
