@@ -1952,7 +1952,7 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			var e error
-			schemaVersion, e = t.GenSchemaVersion()
+			schemaVersion, e = t.GenSchemaVersions(128)
 			return e
 		},
 	); err != nil {
