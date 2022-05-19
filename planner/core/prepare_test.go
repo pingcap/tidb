@@ -1031,6 +1031,9 @@ func TestPrepareWithWindowFunction(t *testing.T) {
 func TestPrepareWindowFunctionWithoutParamsCheck(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(false)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_window_function = 1")
 	defer tk.MustExec("set @@tidb_enable_window_function = 0")
