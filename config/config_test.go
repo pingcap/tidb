@@ -220,6 +220,7 @@ deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
 enable-forwarding = true
+enable-global-kill = true
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
@@ -469,24 +470,6 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	for i := 0; i < st.NumField(); i++ {
 		field := st.Field(i)
 		require.Equal(t, field.Tag.Get("json"), field.Tag.Get("toml"))
-	}
-}
-
-func TestOOMActionValid(t *testing.T) {
-	c1 := NewConfig()
-	tests := []struct {
-		oomAction string
-		valid     bool
-	}{
-		{"log", true},
-		{"Log", true},
-		{"Cancel", true},
-		{"cANceL", true},
-		{"quit", false},
-	}
-	for _, tt := range tests {
-		c1.OOMAction = tt.oomAction
-		require.Equal(t, tt.valid, c1.Valid() == nil)
 	}
 }
 

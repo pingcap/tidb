@@ -615,7 +615,7 @@ const (
 	version88 = 88
 	// version89 adds the tables mysql.advisory_locks
 	version89 = 89
-	// version90 converts enable-batch-dml to a sysvar
+	// version90 converts enable-batch-dml, mem-quota-query, query-log-max-len, committer-concurrency, run-auto-analyze, and oom-action to a sysvar
 	version90 = 90
 )
 
@@ -1846,12 +1846,22 @@ func upgradeToVer90(s Session, ver int64) {
 	}
 	valStr := variable.BoolToOnOff(config.GetGlobalConfig().EnableBatchDML)
 	importConfigOption(s, "enable-batch-dml", variable.TiDBEnableBatchDML, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().MemQuotaQuery)
+	importConfigOption(s, "mem-quota-query", variable.TiDBMemQuotaQuery, valStr)
+	valStr = fmt.Sprint((config.GetGlobalConfig().Log.QueryLogMaxLen), 10)
+	importConfigOption(s, "query-log-max-len", variable.TiDBQueryLogMaxLen, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Performance.CommitterConcurrency)
+	importConfigOption(s, "committer-concurrency", variable.TiDBCommitterConcurrency, valStr)
+	valStr = variable.BoolToOnOff(config.GetGlobalConfig().Performance.RunAutoAnalyze)
+	importConfigOption(s, "run-auto-analyze", variable.TiDBEnableAutoAnalyze, valStr)
+	valStr = config.GetGlobalConfig().OOMAction
+	importConfigOption(s, "oom-action", variable.TiDBMemOOMAction, valStr)
 }
 
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
-		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, variable.OOMActionLog, comment, variable.OOMActionLog,
 	)
 }
 
@@ -1983,6 +1993,12 @@ func doDMLWorks(s Session) {
 					vVal = string(variable.Dynamic)
 				}
 			}
+			if v.Name == variable.TiDBMemOOMAction {
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+					// Change the OOM action to log for the test suite.
+					vVal = variable.OOMActionLog
+				}
+			}
 			if v.Name == variable.TiDBEnableChangeMultiSchema {
 				vVal = variable.Off
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
@@ -1998,6 +2014,11 @@ func doDMLWorks(s Session) {
 			}
 			if v.Name == variable.TiDBEnableMutationChecker {
 				vVal = variable.On
+			}
+			if v.Name == variable.TiDBEnableAutoAnalyze {
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+					vVal = variable.Off
+				}
 			}
 			if v.Name == variable.TiDBTxnAssertionLevel {
 				vVal = variable.AssertionFastStr

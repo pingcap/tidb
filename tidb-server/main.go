@@ -79,34 +79,33 @@ import (
 
 // Flag Names
 const (
-	nmVersion                = "V"
-	nmConfig                 = "config"
-	nmConfigCheck            = "config-check"
-	nmConfigStrict           = "config-strict"
-	nmStore                  = "store"
-	nmStorePath              = "path"
-	nmHost                   = "host"
-	nmAdvertiseAddress       = "advertise-address"
-	nmPort                   = "P"
-	nmCors                   = "cors"
-	nmSocket                 = "socket"
-	nmEnableBinlog           = "enable-binlog"
-	nmRunDDL                 = "run-ddl"
-	nmLogLevel               = "L"
-	nmLogFile                = "log-file"
-	nmLogSlowQuery           = "log-slow-query"
-	nmReportStatus           = "report-status"
-	nmStatusHost             = "status-host"
-	nmStatusPort             = "status"
-	nmMetricsAddr            = "metrics-addr"
-	nmMetricsInterval        = "metrics-interval"
-	nmDdlLease               = "lease"
-	nmTokenLimit             = "token-limit"
-	nmPluginDir              = "plugin-dir"
-	nmPluginLoad             = "plugin-load"
-	nmRepairMode             = "repair-mode"
-	nmRepairList             = "repair-list"
-	nmRequireSecureTransport = "require-secure-transport"
+	nmVersion          = "V"
+	nmConfig           = "config"
+	nmConfigCheck      = "config-check"
+	nmConfigStrict     = "config-strict"
+	nmStore            = "store"
+	nmStorePath        = "path"
+	nmHost             = "host"
+	nmAdvertiseAddress = "advertise-address"
+	nmPort             = "P"
+	nmCors             = "cors"
+	nmSocket           = "socket"
+	nmEnableBinlog     = "enable-binlog"
+	nmRunDDL           = "run-ddl"
+	nmLogLevel         = "L"
+	nmLogFile          = "log-file"
+	nmLogSlowQuery     = "log-slow-query"
+	nmReportStatus     = "report-status"
+	nmStatusHost       = "status-host"
+	nmStatusPort       = "status"
+	nmMetricsAddr      = "metrics-addr"
+	nmMetricsInterval  = "metrics-interval"
+	nmDdlLease         = "lease"
+	nmTokenLimit       = "token-limit"
+	nmPluginDir        = "plugin-dir"
+	nmPluginLoad       = "plugin-load"
+	nmRepairMode       = "repair-mode"
+	nmRepairList       = "repair-list"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -139,7 +138,6 @@ var (
 	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
 	repairMode       = flagBoolean(nmRepairMode, false, "enable admin repair mode")
 	repairList       = flag.String(nmRepairList, "", "admin repair table list")
-	requireTLS       = flag.Bool(nmRequireSecureTransport, false, "require client use secure transport")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -458,9 +456,7 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmPluginDir] {
 		cfg.Instance.PluginDir = *pluginDir
 	}
-	if actualFlags[nmRequireSecureTransport] {
-		cfg.Security.RequireSecureTransport = *requireTLS
-	}
+
 	if actualFlags[nmRepairMode] {
 		cfg.RepairMode = *repairMode
 	}
@@ -604,7 +600,6 @@ func setGlobalVars() {
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
-	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
 	statistics.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
