@@ -16,11 +16,14 @@ package copr
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -65,6 +68,24 @@ func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client, enableC
 
 // SendReqToAddr send batch cop request
 func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RPCContext, regionInfos []RegionInfo, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
+	failpoint.Inject("check_store_type_of_batch_cop_task", func(val failpoint.Value) {
+		// Will be tested in test-infra.
+		storeTpStr := val.(string)
+		expectStoreTp := tikvrpc.TiFlash
+		switch storeTpStr {
+		case "tiflash":
+			expectStoreTp = tikvrpc.TiFlash
+		case "tiflash_mpp":
+			expectStoreTp = tikvrpc.TiFlashMPP
+		default:
+			panic("unexpected failpoint val, must be tiflash or tiflash_mpp")
+		}
+		if expectStoreTp != req.StoreTp {
+			panic(fmt.Sprintf("unexpected store type, expect: %v, got: %v", expectStoreTp, req.StoreTp))
+		}
+		logutil.BgLogger().Info("failpoint check_store_type_of_batch_cop_task succeed")
+	})
+
 	cancel = func() {}
 	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, cancel, errors.Trace(e)

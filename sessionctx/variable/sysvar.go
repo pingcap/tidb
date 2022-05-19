@@ -269,7 +269,7 @@ var defaultSysVars = []*SysVar{
 			}
 		}
 		if hasTiFlashMPP && !hasTiFlash {
-			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBIsolationReadEngines, "tiflash must be set when tiflash_mpp exists.")
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBIsolationReadEngines, "tiflash_mpp(tiflash must be set at the same time)")
 		}
 		return formatVal, nil
 	}, SetSession: func(s *SessionVars, val string) error {
