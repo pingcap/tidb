@@ -324,6 +324,8 @@ func TestJoinOrderHint4Subquery(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
+	tk.MustExec("insert into t3 values(1, 1), (2, 2), (3, 3);")
+	tk.MustExec("analyze table t3;")
 
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4Subquery")
 }
