@@ -661,7 +661,7 @@ func setGlobalVars() {
 	}
 
 	// For CI environment we default enable prepare-plan-cache.
-	if config.CheckTableBeforeDrop {
+	if config.CheckTableBeforeDrop { // only for test
 		plannercore.SetPreparedPlanCache(true)
 	}
 	// use server-memory-quota as max-plan-cache-memory
