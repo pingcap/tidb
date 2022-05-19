@@ -458,6 +458,7 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
+		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 	s.rwlock.Lock()
