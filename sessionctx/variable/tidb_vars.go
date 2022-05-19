@@ -688,6 +688,11 @@ const (
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
+	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
+	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
+	//TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
+	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
+	TiDBMemOOMAction = "tidb_mem_oom_action"
 )
 
 // TiDB intentional limits
@@ -869,11 +874,14 @@ const (
 	DefTiDBCommitterConcurrency                  = 128
 	DefTiDBBatchDMLIgnoreError                   = false
 	DefTiDBMemQuotaAnalyze                       = -1
+	DefTiDBEnableAutoAnalyze                     = true
+	DefTiDBMemOOMAction                          = "CANCEL"
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog           = atomic.NewBool(false)
+	RunAutoAnalyze              = atomic.NewBool(DefTiDBEnableAutoAnalyze)
 	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
 	QueryLogMaxLen              = atomic.NewInt32(DefTiDBQueryLogMaxLen)
 	EnablePProfSQLCPU           = atomic.NewBool(false)
@@ -907,6 +915,7 @@ var (
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	OOMAction                             = atomic.NewString(DefTiDBMemOOMAction)
 )
 
 var (

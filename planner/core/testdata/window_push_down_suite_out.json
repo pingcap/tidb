@@ -199,26 +199,26 @@
       {
         "SQL": "explain select *, lead(empid) over () FROM employee",
         "Plan": [
-          "TableReader_21 10000.00 root  data:ExchangeSender_20",
-          "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_19 10000.00 mpp[tiflash]  lead(test.employee.empid)->Column#6 over()",
-          "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "Window_8 10000.00 root  lead(test.employee.empid)->Column#6 over()",
+          "└─TableReader_12 10000.00 root  data:TableFullScan_11",
+          "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "MPP mode may be blocked because window function `lead` is not supported now.",
+          "MPP mode may be blocked because window function `lead` is not supported now."
+        ]
       },
       {
         "SQL": "explain select *, lag(empid) over () FROM employee",
         "Plan": [
-          "TableReader_21 10000.00 root  data:ExchangeSender_20",
-          "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_19 10000.00 mpp[tiflash]  lag(test.employee.empid)->Column#6 over()",
-          "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "Window_8 10000.00 root  lag(test.employee.empid)->Column#6 over()",
+          "└─TableReader_12 10000.00 root  data:TableFullScan_11",
+          "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "MPP mode may be blocked because window function `lag` is not supported now.",
+          "MPP mode may be blocked because window function `lag` is not supported now."
+        ]
       },
       {
         "SQL": "explain select *, sum(empid) over () FROM employee -- 2. agg functions",
