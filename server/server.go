@@ -49,9 +49,6 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
-
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -69,6 +66,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 var (

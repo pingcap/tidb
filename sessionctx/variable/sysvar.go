@@ -25,10 +25,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	tikvcfg "github.com/tikv/client-go/v2/config"
-	tikvstore "github.com/tikv/client-go/v2/kv"
-	atomic2 "go.uber.org/atomic"
-
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/charset"
@@ -43,6 +39,9 @@ import (
 	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/versioninfo"
+	tikvcfg "github.com/tikv/client-go/v2/config"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	atomic2 "go.uber.org/atomic"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
