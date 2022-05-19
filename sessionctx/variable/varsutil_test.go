@@ -274,8 +274,23 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	c.Assert(v.OptimizerSelectivityLevel, Equals, DefTiDBOptimizerSelectivityLevel)
 	err = SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, "1")
+<<<<<<< HEAD
 	c.Assert(err, IsNil)
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
+=======
+	require.NoError(t, err)
+	require.Equal(t, 1, v.OptimizerSelectivityLevel)
+
+	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
+	err = SetSessionSystemVar(v, TiDBOptimizerEnableOuterJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.EnableOuterJoinReorder)
+
+	require.Equal(t, DefTiDBOptimizerEnableNewOFGB, v.OptimizerEnableNewOnlyFullGroupByCheck)
+	err = SetSessionSystemVar(v, TiDBOptimizerEnableNewOnlyFullGroupByCheck, "off")
+	require.NoError(t, err)
+	require.Equal(t, false, v.OptimizerEnableNewOnlyFullGroupByCheck)
+>>>>>>> 6a0239362... planner: use variable to control outer join reorder for fallback (#34825)
 
 	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, "4") // wrong scope global only
 	c.Assert(terror.ErrorEqual(err, errGlobalVariable), IsTrue)
