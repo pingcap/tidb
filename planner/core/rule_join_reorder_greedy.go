@@ -73,7 +73,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 		if err != nil {
 			return nil, err
 		}
-		if len(s.curJoinGroup) == joinNodeNum {
+		if joinNodeNum > 0 && len(s.curJoinGroup) == joinNodeNum {
 			// Getting here means that there is no join condition between the table used in the leading hint and other tables
 			// For example: select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3
 			// We can not let table t3 join first.
