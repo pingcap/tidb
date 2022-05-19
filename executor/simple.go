@@ -1561,6 +1561,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 		if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Table.TableInfo, s.PartitionNames); err != nil {
 			return err
 		}
+		statsIDs = append(statsIDs, s.Table.TableInfo.ID)
 	}
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
