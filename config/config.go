@@ -956,7 +956,10 @@ var deprecatedConfig = map[string]struct{}{
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
 	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
-
+	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
+	"prepared-plan-cache.enabled":            {},
+	"prepared-plan-cache.capacity":           {},
+	"prepared-plan-cache.memory-guard-ratio": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -1123,12 +1126,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
-	if c.PreparedPlanCache.Capacity < 1 {
-		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
-	}
-	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
-		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
-	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
 	}

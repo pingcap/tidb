@@ -51,6 +51,10 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		}
 		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false
 	}
+	// If the session var is set to off, we will still reject the outer joins.
+	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) {
+		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false
+	}
 	hasOuterJoin = hasOuterJoin || (join.JoinType != InnerJoin)
 	if join.JoinType != RightOuterJoin {
 		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsHintInfo, lhsHasOuterJoin := extractJoinGroup(join.children[0])
