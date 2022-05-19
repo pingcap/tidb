@@ -143,16 +143,7 @@ var (
 			Name:      "txn_state_seconds",
 			Help:      "Bucketed histogram of different states of a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
-		}, []string{LblType})
-
-	HoldingLockDurationBucket = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "session",
-			Name:      "txn_holding_lock_state_seconds",
-			Help:      "Bucketed histogram of different states of a transaction when it is holding at least one lock.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
-		}, []string{LblType})
+		}, []string{LblType, LblHasLock})
 )
 
 // Label constants.
@@ -184,8 +175,9 @@ const (
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
 	LblIdle        = "idle"
-	LblRunning     = "running"
-	LblLockWaiting = "lock_waiting"
-	LblCommitting  = "committing"
-	LblRollingBack = "rollingback"
+	LblRunning     = "executing_sql"
+	LblLockWaiting = "wait_for_lock"
+	LblCommitting  = "commit"
+	LblRollingBack = "rollback"
+	LblHasLock     = "has_lock"
 )
