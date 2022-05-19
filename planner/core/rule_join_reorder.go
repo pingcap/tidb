@@ -28,8 +28,65 @@ import (
 // results in a join group {a, b, LeftJoin(c, d)}.
 func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) {
 	join, isJoin := p.(*LogicalJoin)
+<<<<<<< HEAD
 	if !isJoin || join.preferJoinType > uint(0) || join.JoinType != InnerJoin || join.StraightJoin {
 		return []LogicalPlan{p}, nil, nil
+=======
+	if isJoin && join.preferJoinOrder {
+		// When there is a leading hint, the hint may not take effect for other reasons.
+		// For example, the join type is cross join or straight join, or exists the join algorithm hint, etc.
+		// We need to return the hint information to warn
+		hintInfo = append(hintInfo, join.hintInfo)
+	}
+	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
+		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
+		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
+		if hintInfo != nil {
+			// The leading hint can not work for some reasons. So clear it in the join node.
+			join.hintInfo = nil
+		}
+		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false
+	}
+	// If the session var is set to off, we will still reject the outer joins.
+	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) {
+		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false
+	}
+	hasOuterJoin = hasOuterJoin || (join.JoinType != InnerJoin)
+	if join.JoinType != RightOuterJoin {
+		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsHintInfo, lhsHasOuterJoin := extractJoinGroup(join.children[0])
+		noExpand := false
+		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
+		if join.JoinType == LeftOuterJoin {
+			extractedCols := make([]*expression.Column, 0, 8)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.LeftConditions, nil)
+			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
+			affectedGroups := 0
+			for i := range lhsGroup {
+				for _, col := range extractedCols {
+					if lhsGroup[i].Schema().Contains(col) {
+						affectedGroups++
+						break
+					}
+				}
+				if affectedGroups > 1 {
+					noExpand = true
+					break
+				}
+			}
+		}
+		if noExpand {
+			return []LogicalPlan{p}, nil, nil, nil, nil, false
+		}
+		group = append(group, lhsGroup...)
+		eqEdges = append(eqEdges, lhsEqualConds...)
+		otherConds = append(otherConds, lhsOtherConds...)
+		joinTypes = append(joinTypes, lhsJoinTypes...)
+		hintInfo = append(hintInfo, lhsHintInfo...)
+		hasOuterJoin = hasOuterJoin || lhsHasOuterJoin
+	} else {
+		group = append(group, join.children[0])
+>>>>>>> 6a0239362... planner: use variable to control outer join reorder for fallback (#34825)
 	}
 
 	lhsGroup, lhsEqualConds, lhsOtherConds := extractJoinGroup(join.children[0])
