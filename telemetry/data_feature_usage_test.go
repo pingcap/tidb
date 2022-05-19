@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
@@ -187,4 +188,60 @@ func TestAutoCapture(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.True(t, usage.AutoCapture)
+}
+
+func TestClusterIndexUsageInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int key clustered);")
+	tk.MustExec("create table t2(a int);")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.NotNil(t, usage.ClusterIndex)
+	require.Equal(t, uint64(1), usage.NewClusterIndex.NumClusteredTables)
+	require.Equal(t, uint64(2), usage.NewClusterIndex.NumTotalTables)
+}
+
+func TestNonTransactionalUsage(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.NonTransactionalUsage.DeleteCount)
+
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("batch limit 1 delete from t")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.NonTransactionalUsage.DeleteCount)
+}
+
+func TestGlobalKillUsageInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.GlobalKill)
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalKill = false
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.GlobalKill)
 }

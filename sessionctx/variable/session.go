@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-	utilMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
@@ -626,6 +626,11 @@ type SessionVars struct {
 	// Note if you want to set `enforceMPPExecution` to `true`, you must set `allowMPPExecution` to `true` first.
 	enforceMPPExecution bool
 
+	// TiFlashMaxThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
+	// Default value is -1, means it will not be pushed down to tiflash.
+	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
+	TiFlashMaxThreads int64
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -730,6 +735,9 @@ type SessionVars struct {
 
 	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
 	EnablePipelinedWindowExec bool
+
+	// AllowProjectionPushDown enables pushdown projection on TiKV.
+	AllowProjectionPushDown bool
 
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
@@ -997,7 +1005,7 @@ type SessionVars struct {
 	}
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
-	Rng *utilMath.MysqlRng
+	Rng *mathutil.MysqlRng
 
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
@@ -1020,12 +1028,20 @@ type SessionVars struct {
 	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
+	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
+	EnableNewCostInterface bool
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
 	RcReadCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
+	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
+	// When set to false, returns immediately when it meets the first error.
+	NonTransactionalIgnoreError bool
+
+	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
+	MaxAllowedPacket uint64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1258,10 +1274,11 @@ func NewSessionVars() *SessionVars {
 		TMPTableSize:                DefTiDBTmpTableMaxSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
-		Rng:                         utilMath.NewWithTime(),
+		Rng:                         mathutil.NewWithTime(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
+		MaxAllowedPacket:            DefMaxAllowedPacket,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1279,7 +1296,7 @@ func NewSessionVars() *SessionVars {
 		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:      config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaQuery:      DefTiDBMemQuotaQuery,
 		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
 	}
 	vars.BatchSize = BatchSize{
@@ -1293,6 +1310,7 @@ func NewSessionVars() *SessionVars {
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
+	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
 	enableChunkRPC := "0"
@@ -1443,6 +1461,7 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 
 // SetUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
+	varName = strings.ToLower(varName)
 	if len(collation) > 0 {
 		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	} else {

@@ -91,7 +91,7 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty)
 func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	plan1 := make([]PhysicalPlan, 0, 1)
 	plan2 := make([]PhysicalPlan, 0, 1)
-	if prop.IsEmpty() && p.canGeneratePlan2 {
+	if prop.IsSortItemEmpty() && p.canGeneratePlan2 {
 		// Generate PhysicalPlan2 when the property is empty.
 		plan2 = append(plan2, p.getPhysicalPlan2(prop))
 		if p.hasHintForPlan2 {
@@ -104,7 +104,7 @@ func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalPrope
 	}
 	if p.hasHintForPlan2 {
 		// The hint cannot work.
-		if prop.IsEmpty() {
+		if prop.IsSortItemEmpty() {
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("the hint is inapplicable for plan2"))
 		}
 		return plan1, false, nil

@@ -18,7 +18,7 @@ type lengthAndDecimal struct {
 	decimal int
 }
 
-// defaultLengthAndDecimal provides default Flen and Decimal for fields
+// defaultLengthAndDecimal provides default flen and decimal for fields
 // from CREATE TABLE when they are unspecified.
 var defaultLengthAndDecimal = map[byte]lengthAndDecimal{
 	TypeBit:        {1, 0},
@@ -58,9 +58,9 @@ func IsIntegerType(tp byte) bool {
 }
 
 // GetDefaultFieldLengthAndDecimal returns the default display length (flen) and decimal length for column.
-// Call this when no Flen assigned in ddl.
+// Call this when no flen assigned in ddl.
 // or column value is calculated from an expression.
-// For example: "select count(*) from t;", the column type is int64 and Flen in ResultField will be 21.
+// For example: "select count(*) from t;", the column type is int64 and flen in ResultField will be 21.
 // See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 func GetDefaultFieldLengthAndDecimal(tp byte) (flen int, decimal int) {
 	val, ok := defaultLengthAndDecimal[tp]
@@ -70,10 +70,10 @@ func GetDefaultFieldLengthAndDecimal(tp byte) (flen int, decimal int) {
 	return -1, -1
 }
 
-// defaultLengthAndDecimal provides default Flen and Decimal for fields
+// defaultLengthAndDecimal provides default flen and decimal for fields
 // from CAST when they are unspecified.
 var defaultLengthAndDecimalForCast = map[byte]lengthAndDecimal{
-	TypeString:     {0, -1}, // Flen & Decimal differs.
+	TypeString:     {0, -1}, // flen & decimal differs.
 	TypeDate:       {10, 0},
 	TypeDatetime:   {19, 0},
 	TypeNewDecimal: {10, 0},
@@ -81,7 +81,7 @@ var defaultLengthAndDecimalForCast = map[byte]lengthAndDecimal{
 	TypeLonglong:   {22, 0},
 	TypeDouble:     {22, -1},
 	TypeFloat:      {12, -1},
-	TypeJSON:       {4194304, 0}, // Flen differs.
+	TypeJSON:       {4194304, 0}, // flen differs.
 }
 
 // GetDefaultFieldLengthAndDecimalForCast returns the default display length (flen) and decimal length for casted column

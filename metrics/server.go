@@ -128,6 +128,14 @@ var (
 			Help:      "Counter of query using plan cache.",
 		}, []string{LblType})
 
+	PlanCacheMissCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_cache_miss_total",
+			Help:      "Counter of plan cache miss.",
+		}, []string{LblType})
+
 	ReadFromTableCacheCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -238,7 +246,7 @@ var (
 			Help:      "Counter of TiFlash queries.",
 		}, []string{LblType, LblResult})
 
-	PDApiExecutionHistogram = prometheus.NewHistogramVec(
+	PDAPIExecutionHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -246,6 +254,14 @@ var (
 			Help:      "Bucketed histogram of all pd api execution time (s)",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType})
+
+	PDAPIRequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "pd_api_request_total",
+			Help:      "Counter of the pd http api requests",
+		}, []string{LblType, LblResult})
 
 	CPUProfileCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
