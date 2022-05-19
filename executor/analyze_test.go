@@ -235,9 +235,16 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
+<<<<<<< HEAD
 	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(tbl.Columns[1].Len(), Equals, 0)
 	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
+=======
+	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+	require.Equal(t, 0, tbl.Columns[1].Len())
+	require.Equal(t, 0, tbl.Columns[1].TopN.Num())
+	require.Equal(t, int64(65559), tbl.Columns[1].TotColSize)
+>>>>>>> d3185cc79... executor, statistics: drop the samples whose length is too long (#32536)
 }
 
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
