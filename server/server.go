@@ -49,6 +49,9 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -66,8 +69,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
 )
 
 var (
@@ -161,9 +162,9 @@ func (s *Server) releaseToken(token *Token) {
 	metrics.TokenGauge.Dec()
 }
 
-// UpdateTokenLimiter updates the size of concurrentLimiter with the value of ConnectionConcurrencyLimit.
-func (s *Server) UpdateTokenLimiter() {
-	s.concurrentLimiter.Resize(uint(atomic.LoadUint32(&s.cfg.Instance.ConnectionConcurrencyLimit)))
+// SetConnectionConcurrencyLimit updates the size of concurrentLimiter.
+func (s *Server) SetConnectionConcurrencyLimit(count uint32) {
+	s.concurrentLimiter.Resize(uint(count))
 }
 
 // SetDomain use to set the server domain.
@@ -307,6 +308,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	variable.RegisterStatistics(s)
+	variable.SetConnectionConcurrencyLimit = s.SetConnectionConcurrencyLimit
 
 	return s, nil
 }

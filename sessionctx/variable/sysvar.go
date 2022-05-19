@@ -25,6 +25,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	tikvcfg "github.com/tikv/client-go/v2/config"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	atomic2 "go.uber.org/atomic"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/charset"
@@ -39,9 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/versioninfo"
-	tikvcfg "github.com/tikv/client-go/v2/config"
-	tikvstore "github.com/tikv/client-go/v2/kv"
-	atomic2 "go.uber.org/atomic"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -416,8 +417,12 @@ var defaultSysVars = []*SysVar{
 		return config.GetGlobalConfig().Instance.PluginDir, nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBConnectionConcurrencyLimit, Value: strconv.Itoa(int(config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit)), Type: TypeInt, MinValue: 1, MaxValue: config.MaxConnectionConcurrencyLimit, SetGlobal: func(s *SessionVars, val string) error {
-		ival := tidbOptPositiveInt32(val, int(config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit))
-		atomic.StoreUint32(&config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit, uint32(ival))
+		oldVal := atomic.LoadUint32(&config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit)
+		ival := uint32(TidbOptInt64(val, int64(config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit)))
+		if oldVal != ival {
+			SetConnectionConcurrencyLimit(ival)
+		}
+		atomic.StoreUint32(&config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit, ival)
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatInt(int64(atomic.LoadUint32(&config.GetGlobalConfig().Instance.ConnectionConcurrencyLimit)), 10), nil
