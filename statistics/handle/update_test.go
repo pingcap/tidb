@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -2308,14 +2307,11 @@ func TestDumpColumnStatsUsage(t *testing.T) {
 func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 	for _, val := range []bool{false, true} {
 		func(planCache bool) {
-			originalVal1 := plannercore.PreparedPlanCacheEnabled()
-			defer func() {
-				plannercore.SetPreparedPlanCache(originalVal1)
-			}()
-			plannercore.SetPreparedPlanCache(planCache)
-
 			store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 			defer clean()
+			tmp := testkit.NewTestKit(t, store)
+			defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
+			tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(planCache))
 			tk := testkit.NewTestKit(t, store)
 
 			originalVal2 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)

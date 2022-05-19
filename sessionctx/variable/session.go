@@ -721,6 +721,9 @@ type SessionVars struct {
 	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
 	OptimizerEnableNewOnlyFullGroupByCheck bool
 
+	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
+	EnableOuterJoinReorder bool
+
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
 
@@ -1211,6 +1214,7 @@ func NewSessionVars() *SessionVars {
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
+		EnableOuterJoinReorder:      DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:            kv.PriorityLow,
