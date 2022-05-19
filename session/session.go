@@ -1943,7 +1943,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
-		return nil, err
+		return recordSet, err
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()

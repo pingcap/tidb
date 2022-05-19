@@ -3132,8 +3132,9 @@ func TestUnknowHintIgnore(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
-	_, err := tk.Exec("select 1 from /*+ test1() */ t")
+	rs, err := tk.Exec("select 1 from /*+ test1() */ t")
 	require.NoError(t, err)
+	rs.Close()
 }
 
 func TestValuesInNonInsertStmt(t *testing.T) {

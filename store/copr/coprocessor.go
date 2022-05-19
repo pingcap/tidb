@@ -129,7 +129,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 				capacity = 2048
 			}
 		}
-		it.respChan = make(chan *copResponse, capacity)
+		it.respChan = make(chan *copResponse)
 		it.sendRate = util.NewRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))

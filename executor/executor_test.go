@@ -1640,12 +1640,14 @@ func TestTimezonePushDown(t *testing.T) {
 		require.NoError(t, proto.Unmarshal(req.Data, dagReq))
 		require.Equal(t, systemTZ.String(), dagReq.GetTimeZoneName())
 	})
-	_, err := tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	rs, err := tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 	require.NoError(t, err)
+	rs[0].Close()
 
 	tk.MustExec(`set time_zone="System"`)
-	_, err = tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	rs, err = tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 	require.NoError(t, err)
+	rs[0].Close()
 
 	require.Equal(t, 2, count) // Make sure the hook function is called.
 }
