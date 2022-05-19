@@ -41,6 +41,14 @@ const (
 	TxnRollingBack
 )
 
+var StateLabel map[TxnRunningState]string = map[TxnRunningState]string{
+	TxnIdle:        "idle",
+	TxnRunning:     "running",
+	TxnLockWaiting: "lock_waiting",
+	TxnCommitting:  "committing",
+	TxnRollingBack: "rollingback",
+}
+
 const (
 	// IDStr is the column name of the TIDB_TRX table's ID column.
 	IDStr = "ID"
@@ -90,6 +98,8 @@ type TxnInfo struct {
 
 	// Current execution state of the transaction.
 	State TxnRunningState
+	// When last time `State` changes, for metrics
+	LastStateChangeTime time.Time
 	// Last trying to block start time. Invalid if State is not TxnLockWaiting.
 	BlockStartTime struct {
 		Valid bool

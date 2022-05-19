@@ -135,6 +135,24 @@ var (
 			Name:      "non_transactional_delete_count",
 			Help:      "Counter of non-transactional delete",
 		})
+
+	TxnDurationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "txn_state_seconds",
+			Help:      "Bucketed histogram of different states of a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblType})
+
+	HoldingLockDurationBucket = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "txn_holding_lock_state_seconds",
+			Help:      "Bucketed histogram of different states of a transaction when it is holding at least one lock.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblType})
 )
 
 // Label constants.
@@ -165,4 +183,9 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
+	LblIdle        = "idle"
+	LblRunning     = "running"
+	LblLockWaiting = "lock_waiting"
+	LblCommitting  = "committing"
+	LblRollingBack = "rollingback"
 )

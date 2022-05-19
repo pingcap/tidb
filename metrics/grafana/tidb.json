@@ -5575,7 +5575,139 @@
             "align": false,
             "alignLevel": null
           }
-        }
+        },
+            {
+              "aliasColors": {},
+              "bars": true,
+              "dashLength": 10,
+              "dashes": false,
+              "datasource": "${DS_TEST-CLUSTER}",
+              "description": "How much percent of time transactions spend on each state",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "percentunit"
+                },
+                "overrides": []
+              },
+              "fill": 1,
+              "fillGradient": 0,
+              "gridPos": {
+                "h": 7,
+                "w": 8,
+                "x": 0,
+                "y": 60
+              },
+              "hiddenSeries": false,
+              "id": 247,
+              "legend": {
+                "avg": false,
+                "current": false,
+                "max": false,
+                "min": false,
+                "rightSide": true,
+                "show": true,
+                "total": false,
+                "values": false
+              },
+              "lines": false,
+              "linewidth": 1,
+              "nullPointMode": "null",
+              "options": {
+                "alertThreshold": true
+              },
+              "percentage": true,
+              "pluginVersion": "7.5.11",
+              "pointradius": 2,
+              "points": false,
+              "renderer": "flot",
+              "seriesOverrides": [],
+              "spaceLength": 10,
+              "stack": true,
+              "steppedLine": false,
+              "targets": [
+                {
+                  "exemplar": true,
+                  "expr": "sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",type=\"idle\"}[1m]))\n/\nsum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+                  "interval": "",
+                  "legendFormat": "idle",
+                  "refId": "A"
+                },
+                {
+                  "exemplar": true,
+                  "expr": "sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",type=\"running\"}[1m]))\n/\nsum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+                  "hide": false,
+                  "interval": "",
+                  "legendFormat": "exec sql",
+                  "refId": "B"
+                },
+                {
+                  "exemplar": true,
+                  "expr": "sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",type=\"lock_waiting\"}[1m]))\n/\nsum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+                  "hide": false,
+                  "interval": "",
+                  "legendFormat": "lock waiting",
+                  "refId": "C"
+                },
+                {
+                  "exemplar": true,
+                  "expr": "sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",type=\"committing\"}[1m]))\n/\nsum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+                  "hide": false,
+                  "interval": "",
+                  "legendFormat": "committing",
+                  "refId": "D"
+                },
+                {
+                  "exemplar": true,
+                  "expr": "sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",type=\"rollingback\"}[1m]))\n/\nsum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+                  "hide": false,
+                  "interval": "",
+                  "legendFormat": "rollingback",
+                  "refId": "E"
+                }
+              ],
+              "thresholds": [],
+              "timeFrom": null,
+              "timeRegions": [],
+              "timeShift": null,
+              "title": "Transaction state percentage",
+              "tooltip": {
+                "shared": true,
+                "sort": 0,
+                "value_type": "individual"
+              },
+              "type": "graph",
+              "xaxis": {
+                "buckets": null,
+                "mode": "time",
+                "name": null,
+                "show": true,
+                "values": []
+              },
+              "yaxes": [
+                {
+                  "$$hashKey": "object:31",
+                  "format": "percentunit",
+                  "label": null,
+                  "logBase": 1,
+                  "max": null,
+                  "min": null,
+                  "show": true
+                },
+                {
+                  "$$hashKey": "object:32",
+                  "format": "short",
+                  "label": null,
+                  "logBase": 1,
+                  "max": null,
+                  "min": null,
+                  "show": true
+                }
+              ],
+              "yaxis": {
+                "align": false,
+                "alignLevel": null
+              }
+            }
       ],
       "repeat": null,
       "title": "Transaction",
