@@ -75,6 +75,10 @@ const (
 	AssertionFastStr = "FAST"
 	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
 	AssertionOffStr = "OFF"
+	// OOMActionCancel constants represents the valid action configurations for OOMAction "CANCEL".
+	OOMActionCancel = "CANCEL"
+	// OOMActionLog constants represents the valid action configurations for OOMAction "LOG".
+	OOMActionLog = "LOG"
 )
 
 // Global config name list.

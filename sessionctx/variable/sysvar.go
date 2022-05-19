@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/tikvutil"
+	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -125,6 +126,10 @@ var defaultSysVars = []*SysVar{
 		return normalizedValue, nil
 	}, SetSession: func(s *SessionVars, val string) error {
 		s.enforceMPPExecution = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxTiFlashThreads, Type: TypeInt, Value: strconv.Itoa(DefTiFlashMaxThreads), MinValue: -1, MaxValue: MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashMaxThreads = TidbOptInt64(val, DefTiFlashMaxThreads)
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
@@ -654,6 +659,15 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableAutoAnalyze, Value: BoolToOnOff(DefTiDBEnableAutoAnalyze), Type: TypeBool,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(RunAutoAnalyze.Load()), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			RunAutoAnalyze.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBEnableColumnTracking, Value: BoolToOnOff(DefTiDBEnableColumnTracking), skipInit: true, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableColumnTracking.Load()), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
@@ -670,6 +684,24 @@ var defaultSysVars = []*SysVar{
 		EnableColumnTracking.Store(v)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: RequireSecureTransport, Value: BoolToOnOff(DefRequireSecureTransport), Type: TypeBool,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(tls.RequireSecureTransport.Load()), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			tls.RequireSecureTransport.Store(TiDBOptOn(val))
+			return nil
+		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			if vars.StmtCtx.StmtType == "Set" && TiDBOptOn(normalizedValue) {
+				// Refuse to set RequireSecureTransport to ON if the connection
+				// issuing the change is not secure. This helps reduce the chance of users being locked out.
+				if vars.TLSConnectionState == nil {
+					return "", errors.New("require_secure_transport can only be set to ON if the connection issuing the change is secure")
+				}
+			}
+			return normalizedValue, nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBStatsLoadPseudoTimeout, Value: BoolToOnOff(DefTiDBStatsLoadPseudoTimeout), skipInit: true, Type: TypeBool,
 		GetGlobal: func(s *SessionVars) (string, error) {
 			return strconv.FormatBool(StatsLoadPseudoTimeout.Load()), nil
@@ -691,7 +723,11 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatInt(StatsCacheMemQuota.Load(), 10), nil
 		}, SetGlobal: func(vars *SessionVars, s string) error {
 			v := TidbOptInt64(s, DefTiDBStatsCacheMemQuota)
-			StatsCacheMemQuota.Store(v)
+			oldv := StatsCacheMemQuota.Load()
+			if v != oldv {
+				StatsCacheMemQuota.Store(v)
+				SetStatsCacheCapacity.Load().(func(int64))(v)
+			}
 			return nil
 		},
 	},
@@ -718,6 +754,14 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBMemOOMAction, Value: DefTiDBMemOOMAction, PossibleValues: []string{"CANCEL", "LOG"}, Type: TypeEnum,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return OOMAction.Load(), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			OOMAction.Store(val)
+			return nil
+		}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {

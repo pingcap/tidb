@@ -585,6 +585,14 @@ func TestSetPwd(t *testing.T) {
 func TestKillStmt(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalKill = false
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	sm := &mockSessionManager{
@@ -595,10 +603,9 @@ func TestKillStmt(t *testing.T) {
 	result := tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
 
-	originCfg := config.GetGlobalConfig()
-	newCfg := *originCfg
-	newCfg.Experimental.EnableGlobalKill = true
-	config.StoreGlobalConfig(&newCfg)
+	newCfg2 := *originCfg
+	newCfg2.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg2)
 
 	// ZERO serverID, treated as truncated.
 	tk.MustExec("kill 1")
@@ -622,7 +629,6 @@ func TestKillStmt(t *testing.T) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
-	config.StoreGlobalConfig(originCfg)
 	// remote kill is tested in `tests/globalkilltest`
 }
 
