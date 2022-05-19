@@ -617,11 +617,13 @@ const (
 	version89 = 89
 	// version90 converts enable-batch-dml, mem-quota-query, query-log-max-len, committer-concurrency, run-auto-analyze, and oom-action to a sysvar
 	version90 = 90
+	// version91 converts prepared-plan-cache to sysvars
+	version91 = 91
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version90
+var currentBootstrapVersion int64 = version91
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -715,6 +717,7 @@ var (
 		upgradeToVer88,
 		upgradeToVer89,
 		upgradeToVer90,
+		upgradeToVer91,
 	}
 )
 
@@ -1856,6 +1859,20 @@ func upgradeToVer90(s Session, ver int64) {
 	importConfigOption(s, "run-auto-analyze", variable.TiDBEnableAutoAnalyze, valStr)
 	valStr = config.GetGlobalConfig().OOMAction
 	importConfigOption(s, "oom-action", variable.TiDBMemOOMAction, valStr)
+}
+
+func upgradeToVer91(s Session, ver int64) {
+	if ver >= version91 {
+		return
+	}
+	valStr := variable.BoolToOnOff(config.GetGlobalConfig().PreparedPlanCache.Enabled)
+	importConfigOption(s, "prepared-plan-cache.enable", variable.TiDBEnablePrepPlanCache, valStr)
+
+	valStr = strconv.Itoa(int(config.GetGlobalConfig().PreparedPlanCache.Capacity))
+	importConfigOption(s, "prepared-plan-cache.capacity", variable.TiDBPrepPlanCacheSize, valStr)
+
+	valStr = strconv.FormatFloat(config.GetGlobalConfig().PreparedPlanCache.MemoryGuardRatio, 'f', -1, 64)
+	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", variable.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
 }
 
 func writeOOMAction(s Session) {
