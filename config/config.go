@@ -257,8 +257,10 @@ type Config struct {
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
-	// EnableBatchDML, unused since bootstrap v90
-	EnableBatchDML bool `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	// EnableBatchDML, MemQuotaQuery, OOMAction unused since bootstrap v90
+	EnableBatchDML bool   `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	MemQuotaQuery  int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	OOMAction      string `toml:"oom-action" json:"oom-action"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -428,6 +430,12 @@ type Log struct {
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint       `toml:"expensive-threshold" json:"expensive-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// QueryLogMaxLen, unused since bootstrap v90
+	QueryLogMaxLen uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -616,11 +624,12 @@ type Performance struct {
 	StatsLoadConcurrency     uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
 	StatsLoadQueueSize       uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 	EnableStatsCacheMemQuota bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
-
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
-	RunAutoAnalyze bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	// CommitterConcurrency, RunAutoAnalyze unused since bootstrap v90
+	CommitterConcurrency int  `toml:"committer-concurrency" json:"committer-concurrency"`
+	RunAutoAnalyze       bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -947,7 +956,10 @@ var deprecatedConfig = map[string]struct{}{
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
 	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
-
+	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
+	"prepared-plan-cache.enabled":            {},
+	"prepared-plan-cache.capacity":           {},
+	"prepared-plan-cache.memory-guard-ratio": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -1114,12 +1126,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
-	if c.PreparedPlanCache.Capacity < 1 {
-		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
-	}
-	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
-		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
-	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
 	}

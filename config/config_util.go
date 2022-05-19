@@ -54,7 +54,6 @@ var (
 		"CompatibleKillQuery":             {},
 		"TreatOldVersionUTF8AsUTF8MB4":    {},
 		"OpenTracing.Enable":              {},
-		"PreparedPlanCache.Enabled":       {},
 	}
 )
 

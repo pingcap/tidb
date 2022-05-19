@@ -275,11 +275,6 @@ networks = ""
 # PROXY protocol header read timeout, unit is second
 header-timeout = 5
 
-[prepared-plan-cache]
-enabled = false
-capacity = 1000
-memory-guard-ratio = 0.1
-
 [opentracing]
 # Enable opentracing.
 enable = false
