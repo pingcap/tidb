@@ -1847,6 +1847,9 @@ func (local *local) EngineFileSizes() (res []backend.EngineFileSize) {
 	return
 }
 
+var getSplitConfFromStoreFunc = getSplitConfFromStore
+
+// return region split size, region split keys, error
 func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
 	var (
 		nested struct {
@@ -1867,6 +1870,7 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (i
 	return splitSize, nested.Coprocessor.RegionSplitKeys, nil
 }
 
+// return region split size, region split keys, error
 func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (int64, int64, error) {
 	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
@@ -1881,7 +1885,7 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 			StatusAddr: store.StatusAddress,
 		}
 		serverInfo.ResolveLoopBackAddr()
-		regionSplitSize, regionSplitKeys, err := getSplitConfFromStore(ctx, serverInfo.StatusAddr, tls)
+		regionSplitSize, regionSplitKeys, err := getSplitConfFromStoreFunc(ctx, serverInfo.StatusAddr, tls)
 		if err == nil {
 			return regionSplitSize, regionSplitKeys, nil
 		}
