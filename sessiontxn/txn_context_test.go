@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
@@ -523,6 +524,9 @@ func TestTxnContextForStaleRead(t *testing.T) {
 func TestTxnContextForPrepareExecute(t *testing.T) {
 	store, do, deferFunc := setupTxnContextTest(t)
 	defer deferFunc()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -550,8 +554,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	})
 
 	// Test PlanCache
-	path = []string{"assertTxnManagerInCachedPlanExec", "assertTxnManagerInShortPointGetPlan"}
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, nil, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
