@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
+	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client"
@@ -52,6 +54,8 @@ const (
 
 	// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
 	hardcodedS3ChunkSize = 5 * 1024 * 1024
+	// to check the cloud type by endpoint tag.
+	domainAliyun = "aliyuncs.com"
 )
 
 var permissionCheckFn = map[Permission]func(*s3.S3, *backuppb.S3) error{
@@ -241,7 +245,34 @@ func NewS3Storage( // revive:disable-line:flag-parameter
 	})
 }
 
-func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storage, error) {
+// auto access without ak / sk.
+func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
+	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
+		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, ""), nil
+	}
+	endpoint := qs.Endpoint
+	// if endpoint is empty,return no error and run default(aws) follow.
+	if endpoint == "" {
+		return nil, nil
+	}
+	// if it Contains 'aliyuncs', fetch the sts token.
+	if strings.Contains(endpoint, domainAliyun) {
+		return createOssRamCred()
+	}
+	// other case ,return no error and run default(aws) follow.
+	return nil, nil
+}
+
+func createOssRamCred() (*credentials.Credentials, error) {
+	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
+	if err != nil {
+		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
+	}
+	ncred := cred.(*alicred.StsTokenCredential)
+	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
+}
+
+func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
@@ -253,9 +284,9 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	if opts.HTTPClient != nil {
 		awsConfig.WithHTTPClient(opts.HTTPClient)
 	}
-	var cred *credentials.Credentials
-	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
-		cred = credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, "")
+	cred, err := autoNewCred(&qs)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if cred != nil {
 		awsConfig.WithCredentials(cred)

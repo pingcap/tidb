@@ -209,7 +209,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
 			if err != nil {
-				if types.ErrPartitionStatsMissing.Equal(err) {
+				if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 					continue
@@ -230,7 +230,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}
-	err = e.saveAnalyzeOptsV2()
+	err = e.saveV2AnalyzeOpts()
 	if err != nil {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
@@ -258,14 +258,22 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 	}
 }
 
-func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
+func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
+	}
+	// only to save table options if dynamic prune mode
+	dynamicPrune := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	toSaveMap := make(map[int64]core.V2AnalyzeOptions)
+	for id, opts := range e.OptionsMap {
+		if !opts.IsPartition || !dynamicPrune {
+			toSaveMap[id] = opts
+		}
 	}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
 	idx := 0
-	for _, opts := range e.OptionsMap {
+	for _, opts := range toSaveMap {
 		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
 		sampleRate := float64(0)
 		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
@@ -283,7 +291,7 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 		}
 		colIDStrs := strings.Join(colIDs, ",")
 		sqlexec.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
-		if idx < len(e.OptionsMap)-1 {
+		if idx < len(toSaveMap)-1 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
 		idx += 1
@@ -2499,8 +2507,13 @@ func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyz
 	// process_id is used to see which process is running the analyze job and kill the analyze job. After the analyze job
 	// is finished(or failed), process_id is useless and we set it to NULL to avoid `kill tidb process_id` wrongly.
 	if analyzeErr != nil {
+		failReason := analyzeErr.Error()
+		const textMaxLength = 65535
+		if len(failReason) > textMaxLength {
+			failReason = failReason[:textMaxLength]
+		}
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, analyzeErr.Error(), *job.ID}
+		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
 	} else {
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
 		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
