@@ -215,6 +215,9 @@ const (
 
 	// TiDBSysdateIsNow is the name of the `tidb_sysdate_is_now` system variable
 	TiDBSysdateIsNow = "tidb_sysdate_is_now"
+
+	// RequireSecureTransport indicates the secure mode for data transport
+	RequireSecureTransport = "require_secure_transport"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -323,6 +326,10 @@ const (
 	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
 	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
 
+	// TiDBMaxTiFlashThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
+	// Default value is -1, means it will not be pushed down to tiflash.
+	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
+	TiDBMaxTiFlashThreads = "tidb_max_tiflash_threads"
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -681,6 +688,17 @@ const (
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
+	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
+	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
+	//TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
+	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
+	TiDBMemOOMAction = "tidb_mem_oom_action"
+	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
+	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
+	// TiDBPrepPlanCacheSize indicates the number of cached statements.
+	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
+	// TiDBPrepPlanCacheMemoryGuardRatio is used to prevent [performance.max-memory] from being exceeded
+	TiDBPrepPlanCacheMemoryGuardRatio = "tidb_prepared_plan_cache_memory_guard_ratio"
 )
 
 // TiDB intentional limits
@@ -756,6 +774,7 @@ const (
 	DefTiDBAllowMPPExecution                     = true
 	DefTiDBHashExchangeWithNewCollation          = true
 	DefTiDBEnforceMPPExecution                   = false
+	DefTiFlashMaxThreads                         = -1
 	DefTiDBMPPStoreFailTTL                       = "60s"
 	DefTiDBTxnMode                               = ""
 	DefTiDBRowFormatV1                           = 1
@@ -857,14 +876,21 @@ const (
 	DefTiDBStatsCacheMemQuota                    = 0
 	MaxTiDBStatsCacheMemQuota                    = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                        = 4096
+	DefRequireSecureTransport                    = false
 	DefTiDBCommitterConcurrency                  = 128
 	DefTiDBBatchDMLIgnoreError                   = false
 	DefTiDBMemQuotaAnalyze                       = -1
+	DefTiDBEnableAutoAnalyze                     = true
+	DefTiDBMemOOMAction                          = "CANCEL"
+	DefTiDBEnablePrepPlanCache                   = false
+	DefTiDBPrepPlanCacheSize                     = 1000
+	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog           = atomic.NewBool(false)
+	RunAutoAnalyze              = atomic.NewBool(DefTiDBEnableAutoAnalyze)
 	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
 	QueryLogMaxLen              = atomic.NewInt32(DefTiDBQueryLogMaxLen)
 	EnablePProfSQLCPU           = atomic.NewBool(false)
@@ -898,6 +924,11 @@ var (
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	OOMAction                             = atomic.NewString(DefTiDBMemOOMAction)
+	// variables for plan cache
+	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
+	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
+	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 )
 
 var (
@@ -905,4 +936,6 @@ var (
 	SetMemQuotaAnalyze func(quota int64) = nil
 	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
 	GetMemQuotaAnalyze func() int64 = nil
+	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
+	SetStatsCacheCapacity atomic.Value
 )

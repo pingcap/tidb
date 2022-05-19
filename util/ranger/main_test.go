@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
@@ -29,7 +29,7 @@ var testDataMap = make(testdata.BookKeeper, 1)
 var rangerSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	flag.Parse()
 

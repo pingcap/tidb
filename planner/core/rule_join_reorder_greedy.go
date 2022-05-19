@@ -45,16 +45,39 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 	if err != nil {
 		return nil, err
 	}
+	var leadingJoinNodes []*jrNode
+	if s.leadingJoinGroup != nil {
+		// We have a leading hint to let some tables join first. The result is stored in the s.leadingJoinGroup.
+		// We generate jrNode separately for it.
+		leadingJoinNodes, err = s.generateJoinOrderNode([]LogicalPlan{s.leadingJoinGroup}, tracer)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// Sort plans by cost
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
 
+	// joinNodeNum indicates the number of join nodes except leading join nodes in the current join group
+	joinNodeNum := len(s.curJoinGroup)
+	if leadingJoinNodes != nil {
+		// The leadingJoinNodes should be the first element in the s.curJoinGroup.
+		// So it can be joined first.
+		leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)
+		s.curJoinGroup = leadingJoinNodes
+	}
 	var cartesianGroup []LogicalPlan
 	for len(s.curJoinGroup) > 0 {
 		newNode, err := s.constructConnectedJoinTree(tracer)
 		if err != nil {
 			return nil, err
+		}
+		if joinNodeNum > 0 && len(s.curJoinGroup) == joinNodeNum {
+			// Getting here means that there is no join condition between the table used in the leading hint and other tables
+			// For example: select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3
+			// We can not let table t3 join first.
+			s.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check if the leading hint table has join conditions with other tables"))
 		}
 		cartesianGroup = append(cartesianGroup, newNode.p)
 	}

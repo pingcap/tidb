@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
@@ -267,4 +269,17 @@ func TestIssue32692(t *testing.T) {
 	// Check no warning message here.
 	tk.MustExec("alter table cache_t2 cache;")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestIssue34069(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	sem.Enable()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t_34069 (t int);")
+	// No error when SEM is enabled.
+	tk.MustExec("alter table t_34069 cache")
 }
