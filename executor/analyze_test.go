@@ -258,6 +258,7 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
 	require.Equal(t, 0, tbl.Columns[1].Len())
+	require.Equal(t, 0, tbl.Columns[1].TopN.Num())
 	require.Equal(t, int64(65559), tbl.Columns[1].TotColSize)
 }
 

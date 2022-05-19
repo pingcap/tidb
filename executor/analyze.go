@@ -1374,12 +1374,24 @@ workLoop:
 						continue
 					}
 					val := row.Columns[task.slicePos]
+<<<<<<< HEAD
 					ft := e.colsInfo[task.slicePos].FieldType
 					// When it's new collation data, we need to use its collate key instead of original value because only
 					// the collate key can ensure the correct ordering.
 					// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
 					if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
 						val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
+=======
+					// If this value is very big, we think that it is not a value that can occur many times. So we don't record it.
+					if len(val.GetBytes()) > statistics.MaxSampleValueLength {
+						continue
+					}
+					if collator != nil {
+						val.SetBytes(collator.Key(val.GetString()))
+						deltaSize := int64(cap(val.GetBytes()))
+						collectorMemSize += deltaSize
+						e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+>>>>>>> d3185cc79... executor, statistics: drop the samples whose length is too long (#32536)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   val,
@@ -1397,7 +1409,17 @@ workLoop:
 				var tmpDatum types.Datum
 				var err error
 				idx := e.indexes[task.slicePos-colLen]
+<<<<<<< HEAD
 				sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
+=======
+				sampleNum := task.rootRowCollector.Base().Samples.Len()
+				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
+				// consume mandatory memory at the beginning, including all SampleItems, if exceeds, fast fail
+				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
+				e.memTracker.Consume(collectorMemSize)
+			indexSampleCollectLoop:
+>>>>>>> d3185cc79... executor, statistics: drop the samples whose length is too long (#32536)
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
 						continue
@@ -1405,6 +1427,10 @@ workLoop:
 
 					b := make([]byte, 0, 8)
 					for _, col := range idx.Columns {
+						// If the index value contains one value which is too long, we think that it's a value that doesn't occur many times.
+						if len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
+							continue indexSampleCollectLoop
+						}
 						if col.Length != types.UnspecifiedLength {
 							row.Columns[col.Offset].Copy(&tmpDatum)
 							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
