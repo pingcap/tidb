@@ -693,6 +693,12 @@ const (
 	//TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
 	TiDBMemOOMAction = "tidb_mem_oom_action"
+	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
+	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
+	// TiDBPrepPlanCacheSize indicates the number of cached statements.
+	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
+	// TiDBPrepPlanCacheMemoryGuardRatio is used to prevent [performance.max-memory] from being exceeded
+	TiDBPrepPlanCacheMemoryGuardRatio = "tidb_prepared_plan_cache_memory_guard_ratio"
 )
 
 // TiDB intentional limits
@@ -876,6 +882,9 @@ const (
 	DefTiDBMemQuotaAnalyze                       = -1
 	DefTiDBEnableAutoAnalyze                     = true
 	DefTiDBMemOOMAction                          = "CANCEL"
+	DefTiDBEnablePrepPlanCache                   = false
+	DefTiDBPrepPlanCacheSize                     = 1000
+	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 )
 
 // Process global variables.
@@ -916,6 +925,10 @@ var (
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
 	OOMAction                             = atomic.NewString(DefTiDBMemOOMAction)
+	// variables for plan cache
+	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
+	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
+	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 )
 
 var (
