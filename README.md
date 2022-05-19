@@ -24,7 +24,7 @@ For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/ti
 
 ### Start with TiDB Cloud
 
-We can run TiDB for you, so you don't have to run your own cluster.
+TiDB Cloud is the fully-managed service of TiDB, currently available on AWS and GCP.
 
 Quickly check out TiDB Cloud with [a free trial](https://tidbcloud.com/signup).
 
