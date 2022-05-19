@@ -161,6 +161,7 @@ func (s *Server) releaseToken(token *Token) {
 	metrics.TokenGauge.Dec()
 }
 
+// UpdateTokenLimiter updates the size of concurrentLimiter with the value of ConnectionConcurrencyLimit.
 func (s *Server) UpdateTokenLimiter() {
 	s.concurrentLimiter.Resize(uint(atomic.LoadUint32(&s.cfg.Instance.ConnectionConcurrencyLimit)))
 }

@@ -43,6 +43,7 @@ func (tl *TokenLimiter) Get() *Token {
 	return <-tl.ch
 }
 
+// Resize adjusts the size of tl.ch
 func (tl *TokenLimiter) Resize(count uint) {
 	if tl.count < count || tl.count > count && tl.count-uint(len(tl.ch)) <= count {
 		tl.mutex.Lock()
