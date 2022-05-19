@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sync/atomic"
 	"time"
@@ -130,6 +131,13 @@ func getEndPointType(t kv.StoreType) tikvrpc.EndpointType {
 	default:
 		return tikvrpc.TiKV
 	}
+}
+func getTiFlashEndPointType(t kv.StoreType) (tikvrpc.EndpointType, error) {
+	tp := getEndPointType(t)
+	if tp != tikvrpc.TiFlash && tp != tikvrpc.TiFlashMPP {
+		return tp, errors.New(fmt.Sprintf("unexpected endpoint tp, expect tiflash or tiflash_mpp, got: %v", tp))
+	}
+	return tp, nil
 }
 
 // Backoffer wraps tikv.Backoffer and converts the error which returns by the functions of tikv.Backoffer to tidb error.

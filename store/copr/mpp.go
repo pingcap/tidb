@@ -239,7 +239,12 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPTask, mppReq, kvrpcpb.Context{})
-	wrappedReq.StoreTp = tikvrpc.TiFlash
+	if tp, err := getTiFlashEndPointType(req.StoreTp); err != nil {
+		m.sendError(err)
+		return
+	} else {
+		wrappedReq.StoreTp = tp
+	}
 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
 	var rpcResp *tikvrpc.Response
@@ -251,6 +256,9 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	if originalTask != nil {
 		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient(), m.enableCollectExecutionInfo)
 		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
+		if err != nil && req.StoreTp == kv.TiFlashMPP {
+			m.store.GetRegionCache().InvalidateTiFlashMPPStoresIfGRPCError(err)
+		}
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
@@ -268,6 +276,9 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 			retry = false
 		} else if err != nil {
+			if req.StoreTp == kv.TiFlashMPP {
+				m.store.GetRegionCache().InvalidateTiFlashMPPStoresIfGRPCError(err)
+			}
 			if bo.Backoff(tikv.BoTiFlashRPC(), err) == nil {
 				retry = true
 			}
@@ -306,7 +317,6 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 			}
 			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
 		}
-		m.store.GetRegionCache().InvalidateTiFlashMPPStores()
 	}
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {
@@ -332,13 +342,19 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
-	wrappedReq.StoreTp = tikvrpc.TiFlash
 
-	usedStoreAddrs := make(map[string]bool)
+	// Value type is kv.StoreType, so we can decide whether to invalid tiflash_mpp store cache or not.
+	usedStoreAddrs := make(map[string]kv.StoreType)
 	for _, task := range m.tasks {
 		// get the store address of running tasks
-		if task.State == kv.MppTaskRunning && !usedStoreAddrs[task.Meta.GetAddress()] {
-			usedStoreAddrs[task.Meta.GetAddress()] = true
+		if _, ok := usedStoreAddrs[task.Meta.GetAddress()]; ok && task.State == kv.MppTaskRunning {
+			usedStoreAddrs[task.Meta.GetAddress()] = task.StoreTp
+			if tp, err := getTiFlashEndPointType(task.StoreTp); err != nil {
+				m.sendError(err)
+				return
+			} else {
+				wrappedReq.StoreTp = tp
+			}
 		} else if task.State == kv.MppTaskCancelled {
 			return
 		}
@@ -346,10 +362,13 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 
 	// send cancel cmd to all stores where tasks run
-	for addr := range usedStoreAddrs {
+	for addr, storeTp := range usedStoreAddrs {
 		_, err := m.store.GetTiKVClient().SendRequest(context.Background(), addr, wrappedReq, tikv.ReadTimeoutShort)
 		logutil.BgLogger().Debug("cancel task ", zap.Uint64("query id ", m.startTs), zap.String(" on addr ", addr))
 		if err != nil {
+			if storeTp == kv.TiFlashMPP {
+				m.store.GetRegionCache().InvalidateTiFlashMPPStoresIfGRPCError(err)
+			}
 			logutil.BgLogger().Error("cancel task error: ", zap.Error(err), zap.Uint64(" for query id ", m.startTs), zap.String(" on addr ", addr))
 		}
 	}
@@ -365,7 +384,12 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPConn, connReq, kvrpcpb.Context{})
-	wrappedReq.StoreTp = tikvrpc.TiFlash
+	if tp, err := getTiFlashEndPointType(req.StoreTp); err != nil {
+		m.sendError(err)
+		return
+	} else {
+		wrappedReq.StoreTp = tp
+	}
 
 	// Drain results from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
@@ -379,7 +403,9 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 		} else {
 			m.sendError(err)
 		}
-		m.store.GetRegionCache().InvalidateTiFlashMPPStores()
+		if req.StoreTp == kv.TiFlashMPP {
+			m.store.GetRegionCache().InvalidateTiFlashMPPStoresIfGRPCError(err)
+		}
 		return
 	}
 

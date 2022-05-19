@@ -65,15 +65,22 @@ const (
 
 // MPPDispatchRequest stands for a dispatching task.
 type MPPDispatchRequest struct {
-	Data    []byte      // data encodes the dag coprocessor request.
-	Meta    MPPTaskMeta // mpp store is the location of tiflash store.
-	IsRoot  bool        // root task returns data to tidb directly.
-	Timeout uint64      // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
+	// data encodes the dag coprocessor request.
+	Data []byte
+	// mpp store is the location of tiflash store.
+	Meta MPPTaskMeta
+	// root task returns data to tidb directly.
+	IsRoot bool
+	// If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
+	Timeout uint64
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
 	SchemaVar int64
 	StartTs   uint64
-	ID        int64 // identify a single task
-	State     MppTaskStates
+	// Identify a single task.
+	ID    int64
+	State MppTaskStates
+	// Check is tiflash or tiflash_mpp.
+	StoreTp StoreType
 }
 
 // MPPClient accepts and processes mpp requests.

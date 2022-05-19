@@ -323,7 +323,8 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 
 	// If storeType is TiFlash and tidb_isolation_read_engine is "tiflash_mpp",
-	// then kvReq wil only be sent to tiflash_mpp nodes.
+	// then copTask will only be sent to tiflash_mpp nodes.
+	// Will be checked when sending copTask.
 	storeType := e.storeType
 	if storeType == kv.TiFlash {
 		storeType, err = variable.GetTiFlashEngine(e.ctx.GetSessionVars().GetIsolationReadEngines())

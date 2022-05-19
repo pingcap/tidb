@@ -78,6 +78,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
 	}
+	// req.StoreType is setup in TableReader.
 	if (req.StoreType == kv.TiFlash || req.StoreType == kv.TiFlashMPP) && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option, req.StoreType)
