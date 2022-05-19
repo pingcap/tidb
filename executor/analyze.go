@@ -209,7 +209,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
 			if err != nil {
-				if types.ErrPartitionStatsMissing.Equal(err) {
+				if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 					continue
@@ -230,7 +230,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}
-	err = e.saveAnalyzeOptsV2()
+	err = e.saveV2AnalyzeOpts()
 	if err != nil {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
@@ -258,14 +258,22 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 	}
 }
 
-func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
+func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
+	}
+	// only to save table options if dynamic prune mode
+	dynamicPrune := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	toSaveMap := make(map[int64]core.V2AnalyzeOptions)
+	for id, opts := range e.OptionsMap {
+		if !opts.IsPartition || !dynamicPrune {
+			toSaveMap[id] = opts
+		}
 	}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
 	idx := 0
-	for _, opts := range e.OptionsMap {
+	for _, opts := range toSaveMap {
 		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
 		sampleRate := float64(0)
 		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
@@ -283,7 +291,7 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 		}
 		colIDStrs := strings.Join(colIDs, ",")
 		sqlexec.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
-		if idx < len(e.OptionsMap)-1 {
+		if idx < len(toSaveMap)-1 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
 		idx += 1

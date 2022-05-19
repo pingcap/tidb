@@ -162,7 +162,6 @@ type Config struct {
 	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
 	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	OOMAction        string `toml:"oom-action" json:"oom-action"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -258,8 +257,10 @@ type Config struct {
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
-	// EnableBatchDML, unused since bootstrap v90
-	EnableBatchDML bool `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	// EnableBatchDML, MemQuotaQuery, OOMAction unused since bootstrap v90
+	EnableBatchDML bool   `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	MemQuotaQuery  int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	OOMAction      string `toml:"oom-action" json:"oom-action"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -429,6 +430,12 @@ type Log struct {
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint       `toml:"expensive-threshold" json:"expensive-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// QueryLogMaxLen, unused since bootstrap v90
+	QueryLogMaxLen uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -604,7 +611,6 @@ type Performance struct {
 	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
 	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
@@ -618,6 +624,12 @@ type Performance struct {
 	StatsLoadConcurrency     uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
 	StatsLoadQueueSize       uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 	EnableStatsCacheMemQuota bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// CommitterConcurrency, RunAutoAnalyze unused since bootstrap v90
+	CommitterConcurrency int  `toml:"committer-concurrency" json:"committer-concurrency"`
+	RunAutoAnalyze       bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -749,7 +761,6 @@ var defaultConf = Config{
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
-	OOMAction:                    OOMActionCancel,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
@@ -818,7 +829,6 @@ var defaultConf = Config{
 		TCPNoDelay:            true,
 		CrossJoin:             true,
 		StatsLease:            "3s",
-		RunAutoAnalyze:        true,
 		StmtCountLimit:        5000,
 		FeedbackProbability:   0.0,
 		QueryFeedbackLimit:    512,
@@ -945,6 +955,7 @@ var deprecatedConfig = map[string]struct{}{
 	"log.query-log-max-len":              {},
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
+	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
 	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
 	"prepared-plan-cache.enabled":            {},
 	"prepared-plan-cache.capacity":           {},
@@ -959,10 +970,6 @@ func isAllDeprecatedConfigItems(items []string) bool {
 	}
 	return true
 }
-
-// IsOOMActionSetByUser indicates whether the config item mem-action is set by
-// the user.
-var IsOOMActionSetByUser bool
 
 // InitializeConfig initialize the global config handler.
 // The function enforceCmdArgs is used to merge the config file with command arguments:
@@ -1021,9 +1028,6 @@ func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
-	}
-	if metaData.IsDefined("oom-action") {
-		IsOOMActionSetByUser = true
 	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
@@ -1099,10 +1103,6 @@ func (c *Config) Valid() error {
 	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
-	}
-	c.OOMAction = strings.ToLower(c.OOMAction)
-	if c.OOMAction != OOMActionLog && c.OOMAction != OOMActionCancel {
-		return fmt.Errorf("unsupported OOMAction %v, TiDB only supports [%v, %v]", c.OOMAction, OOMActionLog, OOMActionCancel)
 	}
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
@@ -1227,15 +1227,6 @@ func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 		CheckTableBeforeDrop = true
 	}
 }
-
-// The following constants represents the valid action configurations for OOMAction.
-// NOTE: Although the values is case-insensitive, we should use lower-case
-// strings because the configuration value will be transformed to lower-case
-// string and compared with these constants in the further usage.
-const (
-	OOMActionCancel = "cancel"
-	OOMActionLog    = "log"
-)
 
 // hideConfig is used to filter a single line of config for hiding.
 var hideConfig = []string{
