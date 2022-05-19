@@ -2181,6 +2181,13 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	if !persist {
 		return optionsMap, colsInfoMap, nil
 	}
+	dynamicPrune := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	if !isAnalyzeTable && dynamicPrune && (len(astOpts) > 0 || astColChoice != model.DefaultChoice) {
+		astOpts = make(map[ast.AnalyzeOptionType]uint64, 0)
+		astColChoice = model.DefaultChoice
+		astColList = make([]*model.ColumnInfo, 0)
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Ignore columns and options when analyze partition in dynamic mode"))
+	}
 	tblSavedOpts, tblSavedColChoice, tblSavedColList, err := b.getSavedAnalyzeOpts(tbl.TableInfo.ID, tbl.TableInfo)
 	if err != nil {
 		return nil, nil, err
@@ -2198,16 +2205,30 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		return nil, nil, err
 	}
 	tblAnalyzeOptions := V2AnalyzeOptions{
-		PhyTableID: tbl.TableInfo.ID,
-		RawOpts:    tblOpts,
-		FilledOpts: tblFilledOpts,
-		ColChoice:  tblColChoice,
-		ColumnList: tblColList,
+		PhyTableID:  tbl.TableInfo.ID,
+		RawOpts:     tblOpts,
+		FilledOpts:  tblFilledOpts,
+		ColChoice:   tblColChoice,
+		ColumnList:  tblColList,
+		IsPartition: false,
 	}
 	optionsMap[tbl.TableInfo.ID] = tblAnalyzeOptions
 	colsInfoMap[tbl.TableInfo.ID] = tblColsInfo
 	for _, id := range physicalIDs {
 		if id != tbl.TableInfo.ID {
+			if dynamicPrune {
+				parV2Options := V2AnalyzeOptions{
+					PhyTableID:  id,
+					RawOpts:     tblOpts,
+					FilledOpts:  tblFilledOpts,
+					ColChoice:   tblColChoice,
+					ColumnList:  tblColList,
+					IsPartition: true,
+				}
+				optionsMap[id] = parV2Options
+				colsInfoMap[id] = tblColsInfo
+				continue
+			}
 			parSavedOpts, parSavedColChoice, parSavedColList, err := b.getSavedAnalyzeOpts(id, tbl.TableInfo)
 			if err != nil {
 				return nil, nil, err

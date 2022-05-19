@@ -655,19 +655,16 @@ func setGlobalVars() {
 	}
 
 	// For CI environment we default enable prepare-plan-cache.
-	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
-	if plannercore.PreparedPlanCacheEnabled() {
-		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
-		plannercore.PreparedPlanCacheMemoryGuardRatio = cfg.PreparedPlanCache.MemoryGuardRatio
-		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
-			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-		}
-		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.ServerMemoryQuota)
-		total, err := memory.MemTotal()
-		terror.MustNil(err)
-		if plannercore.PreparedPlanCacheMaxMemory.Load() > total || plannercore.PreparedPlanCacheMaxMemory.Load() <= 0 {
-			plannercore.PreparedPlanCacheMaxMemory.Store(total)
-		}
+	if config.CheckTableBeforeDrop { // only for test
+		plannercore.SetPreparedPlanCache(true)
+	}
+	// use server-memory-quota as max-plan-cache-memory
+	plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.ServerMemoryQuota)
+	total, err := memory.MemTotal()
+	terror.MustNil(err)
+	// if server-memory-quota is larger than max-system-memory or not set, use max-system-memory as max-plan-cache-memory
+	if plannercore.PreparedPlanCacheMaxMemory.Load() > total || plannercore.PreparedPlanCacheMaxMemory.Load() <= 0 {
+		plannercore.PreparedPlanCacheMaxMemory.Store(total)
 	}
 
 	atomic.StoreUint64(&transaction.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
