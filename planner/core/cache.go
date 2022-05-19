@@ -42,13 +42,13 @@ var (
 // SetPreparedPlanCache sets isEnabled to true, then prepared plan cache is enabled.
 // FIXME: leave it for test, remove it after implementing session-level plan-cache variables.
 func SetPreparedPlanCache(isEnabled bool) {
-	variable.PreparedPlanCacheSize.Store(variable.DefTiDBPrepPlanCacheSize) // only for test
+	variable.EnablePreparedPlanCache.Store(isEnabled) // only for test
 }
 
 // PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
 // FIXME: leave it for test, remove it after implementing session-level plan-cache variables.
 func PreparedPlanCacheEnabled() bool {
-	return variable.PreparedPlanCacheSize.Load() > 0
+	return variable.EnablePreparedPlanCache.Load()
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
