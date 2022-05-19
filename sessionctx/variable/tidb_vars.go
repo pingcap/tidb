@@ -882,8 +882,8 @@ const (
 	DefTiDBMemQuotaAnalyze                       = -1
 	DefTiDBEnableAutoAnalyze                     = true
 	DefTiDBMemOOMAction                          = "CANCEL"
-	DefTiDBEnablePrepPlanCache                   = false
-	DefTiDBPrepPlanCacheSize                     = 1000
+	DefTiDBEnablePrepPlanCache                   = true
+	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 )
 
