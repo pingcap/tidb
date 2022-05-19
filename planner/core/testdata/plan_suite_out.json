@@ -1595,10 +1595,10 @@
     ]
   },
   {
-    "Name": "TestCTEInlineHint",
+    "Name": "TestCTEMergeHint",
     "Cases": [
   {
-    "SQL": "with cte as (select /*+ CTE_INLINE()*/ * from tc where tc.a < 60) select * from cte where cte.a <18",
+    "SQL": "with cte as (select /*+ MERGE()*/ * from tc where tc.a < 60) select * from cte where cte.a <18",
     "Plan": [
       "TableReader 2.33 root  data:Selection",
       "└─Selection_12 2.33 cop[tikv]  lt(test.tc.a, 18), lt(test.tc.a, 60)",
@@ -1619,7 +1619,7 @@
     "Warning": null
   },
   {
-    "SQL": "WITH cte1 AS (SELECT /*+ CTE_INLINE()*/ a FROM tc), cte2 AS (SELECT /*+ CTE_INLINE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
+    "SQL": "WITH cte1 AS (SELECT /*+ MERGE()*/ a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
     "Plan": [
       "HashJoin 8.74 root  inner join, equal:[eq(test.tc.a, test.te.c)]",
       "├─TableReader(Build) 6.99 root  data:Selection",
@@ -1632,7 +1632,7 @@
     "Warning": null
   }
   {
-    "SQL": "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ CTE_INLINE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
+    "SQL": "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
     "Plan": [
       "Projection 5.60 root  test.tc.a, test.te.c",
       "└─HashJoin 5.60 root  inner join, equal:[eq(test.te.c, test.tc.a)]",

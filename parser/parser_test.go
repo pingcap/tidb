@@ -4193,15 +4193,15 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "limit_to_cop", hints[0].HintName.L)
 	require.Equal(t, "limit_to_cop", hints[1].HintName.L)
 
-	// Test CTE_INLINE
-	stmt, _, err = p.Parse("with cte(x) as (select * from t1) select /*+ CTE_INLINE(), cte_inline() */ * from cte;", "", "")
+	// Test CTE MERGE
+	stmt, _, err = p.Parse("with cte(x) as (select * from t1) select /*+ MERGE(), merge() */ * from cte;", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
-	require.Equal(t, "cte_inline", hints[0].HintName.L)
-	require.Equal(t, "cte_inline", hints[1].HintName.L)
+	require.Equal(t, "merge", hints[0].HintName.L)
+	require.Equal(t, "merge", hints[1].HintName.L)
 
 	// Test STRAIGHT_JOIN
 	stmt, _, err = p.Parse("select /*+ STRAIGHT_JOIN(), straight_join() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")

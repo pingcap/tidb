@@ -1034,7 +1034,7 @@ func TestLimitToCopHint(t *testing.T) {
 	}
 }
 
-func TestCTEInlineHint(t *testing.T) {
+func TestCTEMergeHint(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

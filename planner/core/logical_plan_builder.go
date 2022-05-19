@@ -117,8 +117,8 @@ const (
 	HintIgnorePlanCache = "ignore_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
-	//HintCTEInline is a hint which can switch turning inline or materializing for the CTE.
-	HintCTEInline = "cte_inline"
+	//HintMerge is a hint which can switch turning inline for the CTE.
+	HintMerge = "merge"
 )
 
 const (
@@ -3518,7 +3518,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		aggHints                                                                        aggHintInfo
 		timeRangeHint                                                                   ast.HintTimeRange
 		limitHints                                                                      limitHintInfo
-		CTEHints                                                                        CTEHintInfo
+		MergeHints                                                                      MergeHintInfo
 		leadingJoinOrder                                                                []hintTableInfo
 		leadingHintCnt                                                                  int
 	)
@@ -3623,8 +3623,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		case HintLimitToCop:
 			limitHints.preferLimitToCop = true
-		case HintCTEInline:
-			CTEHints.preferInlineToCTE = true
+		case HintMerge:
+			MergeHints.preferMerge = true
 		case HintLeading:
 			if leadingHintCnt == 0 {
 				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
@@ -3653,7 +3653,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		indexMergeHintList:        indexMergeHintList,
 		timeRangeHint:             timeRangeHint,
 		limitHints:                limitHints,
-		CTEHints:                  CTEHints,
+		MergeHints:                MergeHints,
 		leadingJoinOrder:          leadingJoinOrder,
 	})
 }
@@ -3997,7 +3997,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	if b.buildingCTE {
 		if hints := b.TableHints(); hints != nil {
-			b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.CTEHints.preferInlineToCTE
+			b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
 		}
 	}
 
@@ -4165,13 +4165,13 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
 			if cte.isInline {
-				lp.CTEHints.preferInlineToCTE = cte.isInline
+				lp.MergeHints.preferMerge = cte.isInline
 				saveCte := b.outerCTEs[i:]
 				b.outerCTEs = b.outerCTEs[:i]
 				defer func() {
 					b.outerCTEs = append(b.outerCTEs, saveCte...)
 				}()
-				return b.buildDataSourceFromCTEInline(ctx, cte.def)
+				return b.buildDataSourceFromCTEMerge(ctx, cte.def)
 			}
 
 			for i, col := range lp.schema.Columns {
@@ -4196,7 +4196,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 	return nil, nil
 }
 
-func (b *PlanBuilder) buildDataSourceFromCTEInline(ctx context.Context, cte *ast.CommonTableExpression) (LogicalPlan, error) {
+func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (LogicalPlan, error) {
 	p, err := b.buildResultSetNode(ctx, cte.Query.Query)
 	if err != nil {
 		return nil, err

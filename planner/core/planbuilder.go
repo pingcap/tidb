@@ -97,7 +97,7 @@ type tableHintInfo struct {
 	indexMergeHintList  []indexHintInfo
 	timeRangeHint       ast.HintTimeRange
 	limitHints          limitHintInfo
-	CTEHints            CTEHintInfo
+	MergeHints          MergeHintInfo
 	leadingJoinOrder    []hintTableInfo
 }
 
@@ -105,9 +105,9 @@ type limitHintInfo struct {
 	preferLimitToCop bool
 }
 
-//CTEHintInfo ...one bool flag for cte
-type CTEHintInfo struct {
-	preferInlineToCTE bool
+//MergeHintInfo ...one bool flag for cte
+type MergeHintInfo struct {
+	preferMerge bool
 }
 
 type hintTableInfo struct {
