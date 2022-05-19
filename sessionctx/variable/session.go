@@ -58,20 +58,6 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-var (
-	sessionTxnIdleDuration        = metrics.TxnDurationHistogram.WithLabelValues(metrics.LblIdle)
-	sessionTxnRunningDuration     = metrics.TxnDurationHistogram.WithLabelValues(metrics.LblRunning)
-	sessionTxnLockWaitingDuration = metrics.TxnDurationHistogram.WithLabelValues(metrics.LblLockWaiting)
-	sessionTxnCommittingDuration  = metrics.TxnDurationHistogram.WithLabelValues(metrics.LblCommitting)
-	sessionTxnRollingBackDuration = metrics.TxnDurationHistogram.WithLabelValues(metrics.LblRollingBack)
-
-	sessionHoldingLockIdleDuration        = metrics.HoldingLockDurationBucket.WithLabelValues(metrics.LblIdle)
-	sessionHoldingLockRunningDuration     = metrics.HoldingLockDurationBucket.WithLabelValues(metrics.LblRunning)
-	sessionHoldingLockLockWaitingDuration = metrics.HoldingLockDurationBucket.WithLabelValues(metrics.LblLockWaiting)
-	sessionHoldingLockCommittingDuration  = metrics.HoldingLockDurationBucket.WithLabelValues(metrics.LblCommitting)
-	sessionHoldingLockRollingBackDuration = metrics.HoldingLockDurationBucket.WithLabelValues(metrics.LblRollingBack)
-)
-
 // PreparedStmtCount is exported for test.
 var PreparedStmtCount int64
 

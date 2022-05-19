@@ -95,7 +95,11 @@ func (txn *LazyTxn) updateState(state txninfo.TxnRunningState) {
 	txn.mu.TxnInfo.State = state
 	txn.mu.TxnInfo.LastStateChangeTime = time.Now()
 	if !lastStateChangeTime.IsZero() {
-		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel[lastState]).Observe(time.Since(lastStateChangeTime).Seconds())
+		hasLockLbl := "false"
+		if !txn.mu.TxnInfo.BlockStartTime.IsZero() {
+			hasLockLbl = "true"
+		}
+		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel[lastState], hasLockLbl).Observe(time.Since(lastStateChangeTime).Seconds())
 	}
 }
 
@@ -285,10 +289,15 @@ func (txn *LazyTxn) changeToInvalid() {
 	txn.mu.Lock()
 	lastState := txn.mu.TxnInfo.State
 	lastStateChangeTime := txn.mu.TxnInfo.LastStateChangeTime
+	hasLock := !txn.mu.TxnInfo.BlockStartTime.IsZero()
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.Unlock()
 	if !lastStateChangeTime.IsZero() {
-		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel[lastState]).Observe(time.Since(lastStateChangeTime).Seconds())
+		hasLockLbl := "false"
+		if hasLock {
+			hasLockLbl = "true"
+		}
+		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel[lastState], hasLockLbl).Observe(time.Since(lastStateChangeTime).Seconds())
 	}
 }
 
