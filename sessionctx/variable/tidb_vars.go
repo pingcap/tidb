@@ -940,7 +940,7 @@ var (
 	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
 	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
-	SetStatsCacheCapacity func(c int64) = nil
+	SetStatsCacheCapacity atomic.Value
 	// SetConnectionConcurrencyLimit is the func registered by server to set the limit of connection number.
 	SetConnectionConcurrencyLimit func(c uint32) = nil
 )
