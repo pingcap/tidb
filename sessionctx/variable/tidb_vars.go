@@ -17,9 +17,10 @@ package variable
 import (
 	"math"
 
+	"go.uber.org/atomic"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
-	"go.uber.org/atomic"
 )
 
 /*
@@ -691,6 +692,17 @@ const (
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
+	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
+	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
+	//TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
+	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
+	TiDBMemOOMAction = "tidb_mem_oom_action"
+	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
+	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
+	// TiDBPrepPlanCacheSize indicates the number of cached statements.
+	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
+	// TiDBPrepPlanCacheMemoryGuardRatio is used to prevent [performance.max-memory] from being exceeded
+	TiDBPrepPlanCacheMemoryGuardRatio = "tidb_prepared_plan_cache_memory_guard_ratio"
 )
 
 // TiDB intentional limits
@@ -872,11 +884,17 @@ const (
 	DefTiDBCommitterConcurrency                  = 128
 	DefTiDBBatchDMLIgnoreError                   = false
 	DefTiDBMemQuotaAnalyze                       = -1
+	DefTiDBEnableAutoAnalyze                     = true
+	DefTiDBMemOOMAction                          = "CANCEL"
+	DefTiDBEnablePrepPlanCache                   = true
+	DefTiDBPrepPlanCacheSize                     = 100
+	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog           = atomic.NewBool(false)
+	RunAutoAnalyze              = atomic.NewBool(DefTiDBEnableAutoAnalyze)
 	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
 	QueryLogMaxLen              = atomic.NewInt32(DefTiDBQueryLogMaxLen)
 	EnablePProfSQLCPU           = atomic.NewBool(false)
@@ -910,6 +928,11 @@ var (
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	OOMAction                             = atomic.NewString(DefTiDBMemOOMAction)
+	// variables for plan cache
+	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
+	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
+	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 )
 
 var (
