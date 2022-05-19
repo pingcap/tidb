@@ -137,6 +137,8 @@ const (
 	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
 	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
 
+	TiDBOptimizerEnableOuterJoinReorder = "tidb_enable_outer_join_reorder"
+
 	// TiDBTxnMode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
 
@@ -770,6 +772,7 @@ const (
 	DefBroadcastJoinThresholdCount               = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel             = 0
 	DefTiDBOptimizerEnableNewOFGB                = false
+	DefTiDBEnableOuterJoinReorder                = true
 	DefTiDBAllowBatchCop                         = 1
 	DefTiDBAllowMPPExecution                     = true
 	DefTiDBHashExchangeWithNewCollation          = true
