@@ -1810,6 +1810,13 @@ func (rc *Client) RestoreMetaKVFiles(
 			continue
 		}
 
+		if f.Type == backuppb.FileType_Delete {
+			// this should happen normally.
+			// only do some preventive checks here.
+			log.Warn("detected delete file of meta key, skip it", zap.Any("file", f))
+			continue
+		}
+
 		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
