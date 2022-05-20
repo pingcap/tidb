@@ -492,21 +492,6 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}
 }
 
-func TestPreparePlanCacheValid(t *testing.T) {
-	conf := NewConfig()
-	tests := map[PreparedPlanCache]bool{
-		{Enabled: true, Capacity: 0}:                        false,
-		{Enabled: true, Capacity: 2}:                        true,
-		{Enabled: true, MemoryGuardRatio: -0.1}:             false,
-		{Enabled: true, MemoryGuardRatio: 2.2}:              false,
-		{Enabled: true, Capacity: 2, MemoryGuardRatio: 0.5}: true,
-	}
-	for testCase, res := range tests {
-		conf.PreparedPlanCache = testCase
-		require.Equal(t, res, conf.Valid() == nil)
-	}
-}
-
 func TestConflictInstanceConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)

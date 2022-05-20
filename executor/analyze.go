@@ -1474,6 +1474,10 @@ workLoop:
 						continue
 					}
 					val := row.Columns[task.slicePos]
+					// If this value is very big, we think that it is not a value that can occur many times. So we don't record it.
+					if len(val.GetBytes()) > statistics.MaxSampleValueLength {
+						continue
+					}
 					if collator != nil {
 						val.SetBytes(collator.Key(val.GetString()))
 						deltaSize := int64(cap(val.GetBytes()))
@@ -1504,12 +1508,17 @@ workLoop:
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
+			indexSampleCollectLoop:
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
 						continue
 					}
 					b := make([]byte, 0, 8)
 					for _, col := range idx.Columns {
+						// If the index value contains one value which is too long, we think that it's a value that doesn't occur many times.
+						if len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
+							continue indexSampleCollectLoop
+						}
 						if col.Length != types.UnspecifiedLength {
 							row.Columns[col.Offset].Copy(&tmpDatum)
 							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
