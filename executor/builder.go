@@ -2276,19 +2276,13 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		startTS = uint64(val.(int))
 	})
 
-	isAutoFlag := uint64(0)
-
-	if autoAnalyze != "" {
-		isAutoFlag = model.FlagIsSysSession
-	}
-
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
 		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
-			Flags:          sc.PushDownFlags() | isAutoFlag,
+			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
 		opts:     opts,
@@ -2596,19 +2590,13 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		startTS = uint64(val.(int))
 	})
 
-	isAutoFlag := uint64(0)
-
-	if autoAnalyze != "" {
-		isAutoFlag = model.FlagIsSysSession
-	}
-
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
-			Flags:          sc.PushDownFlags() | isAutoFlag,
+			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
 		opts:     opts,
