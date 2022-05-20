@@ -10,16 +10,15 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb/util/codec"
-
-	"github.com/pingcap/tidb/br/pkg/utils"
-
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -45,7 +44,7 @@ func (ec *startWithComparator) Compare(src, dst []byte) bool {
 type StreamKVInfo struct {
 	Key        string `json:"key"`
 	EncodedKey string `json:"-"`
-	WriteType  byte   `json:"-"`
+	WriteType  byte   `json:"write_type"`
 	StartTs    uint64 `json:"start_ts"`
 	CommitTs   uint64 `json:"commit_ts"`
 	CFName     string `json:"cf_name"`
@@ -119,8 +118,14 @@ func (s *StreamBackupSearch) encodeRawKey(key []byte) []byte {
 
 func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backuppb.DataFileInfo) error {
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
-	return s.storage.WalkDir(ctx, opt, func(path string, size int64) error {
-		if strings.Contains(path, streamBackupMetaPrefix) {
+	pool := utils.NewWorkerPool(64, "read backup meta")
+	eg, _ := errgroup.WithContext(ctx)
+	err := s.storage.WalkDir(ctx, opt, func(path string, size int64) error {
+		if !strings.Contains(path, streamBackupMetaPrefix) {
+			return nil
+		}
+
+		pool.ApplyOnErrorGroup(eg, func() error {
 			m := &backuppb.Metadata{}
 			b, err := s.storage.ReadFile(ctx, path)
 			if err != nil {
@@ -130,13 +135,20 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// TODO find a way to filter some unnecessary meta files.
-			log.Debug("backup stream collect meta file", zap.String("file", path))
 
 			s.resolveMetaData(ctx, m, ch)
-		}
+			log.Debug("read backup meta file", zap.String("path", path))
+			return nil
+		})
+
 		return nil
 	})
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return eg.Wait()
 }
 
 func (s *StreamBackupSearch) resolveMetaData(ctx context.Context, metaData *backuppb.Metadata, ch chan<- *backuppb.DataFileInfo) {
@@ -174,7 +186,9 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 	dataFilesCh := make(chan *backuppb.DataFileInfo, 32)
 	go func() {
 		defer close(dataFilesCh)
-		s.readDataFiles(ctx, dataFilesCh) // TODO deal with error
+		if err := s.readDataFiles(ctx, dataFilesCh); err != nil {
+			log.Error("read data files error", zap.Error(err))
+		}
 	}()
 
 	pool := utils.NewWorkerPool(16, "search key")
