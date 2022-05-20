@@ -50,6 +50,7 @@ func TestMiscVisitorCover(t *testing.T) {
 		&ast.BeginStmt{},
 		&ast.BinlogStmt{},
 		&ast.CommitStmt{},
+		&ast.CompactTableStmt{Table: &ast.TableName{}},
 		&ast.CreateUserStmt{},
 		&ast.DeallocateStmt{},
 		&ast.DoStmt{},
@@ -240,6 +241,15 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"INL_MERGE_JOIN(t1,t2)", "INL_MERGE_JOIN(`t1`, `t2`)"},
 		{"INL_JOIN(t1,t2)", "INL_JOIN(`t1`, `t2`)"},
 		{"HASH_JOIN(t1,t2)", "HASH_JOIN(`t1`, `t2`)"},
+		{"LEADING(t1)", "LEADING(`t1`)"},
+		{"LEADING(t1, c1)", "LEADING(`t1`, `c1`)"},
+		{"LEADING(t1, c1, t2)", "LEADING(`t1`, `c1`, `t2`)"},
+		{"LEADING(@sel1 t1, c1)", "LEADING(@`sel1` `t1`, `c1`)"},
+		{"LEADING(@sel1 t1)", "LEADING(@`sel1` `t1`)"},
+		{"LEADING(@sel1 t1, c1, t2)", "LEADING(@`sel1` `t1`, `c1`, `t2`)"},
+		{"LEADING(t1@sel1)", "LEADING(`t1`@`sel1`)"},
+		{"LEADING(t1@sel1, c1)", "LEADING(`t1`@`sel1`, `c1`)"},
+		{"LEADING(t1@sel1, c1, t2)", "LEADING(`t1`@`sel1`, `c1`, `t2`)"},
 		{"MAX_EXECUTION_TIME(3000)", "MAX_EXECUTION_TIME(3000)"},
 		{"MAX_EXECUTION_TIME(@sel1 3000)", "MAX_EXECUTION_TIME(@`sel1` 3000)"},
 		{"USE_INDEX_MERGE(t1 c1)", "USE_INDEX_MERGE(`t1` `c1`)"},
@@ -265,6 +275,7 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"AGG_TO_COP()", "AGG_TO_COP()"},
 		{"AGG_TO_COP(@sel_1)", "AGG_TO_COP(@`sel_1`)"},
 		{"LIMIT_TO_COP()", "LIMIT_TO_COP()"},
+		{"STRAIGHT_JOIN()", "STRAIGHT_JOIN()"},
 		{"NO_INDEX_MERGE()", "NO_INDEX_MERGE()"},
 		{"NO_INDEX_MERGE(@sel1)", "NO_INDEX_MERGE(@`sel1`)"},
 		{"READ_CONSISTENT_REPLICA()", "READ_CONSISTENT_REPLICA()"},
@@ -327,4 +338,14 @@ func TestBRIESecureText(t *testing.T) {
 		require.Regexp(t, tc.secured, n.SecureText(), comment)
 
 	}
+}
+
+func TestCompactTableStmtRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"alter table abc compact tiflash replica", "ALTER TABLE `abc` COMPACT TIFLASH REPLICA"},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.CompactTableStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }

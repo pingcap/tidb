@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -81,6 +82,9 @@ type Histogram struct {
 	Correlation float64
 }
 
+// EmptyHistogramSize is the size of empty histogram, about 112 = 8*6 for int64 & float64, 24*2 for arrays, 8*2 for references.
+const EmptyHistogramSize = int64(unsafe.Sizeof(Histogram{}))
+
 // Bucket store the bucket count and repeat.
 type Bucket struct {
 	Count  int64
@@ -88,11 +92,17 @@ type Bucket struct {
 	NDV    int64
 }
 
+// EmptyBucketSize is the size of empty bucket, 3*8=24 now.
+const EmptyBucketSize = int64(unsafe.Sizeof(Bucket{}))
+
 type scalar struct {
 	lower        float64
 	upper        float64
 	commonPfxLen int // commonPfxLen is the common prefix length of the lower bound and upper bound when the value type is KindString or KindBytes.
 }
+
+// EmptyScalarSize is the size of empty scalar.
+const EmptyScalarSize = int64(unsafe.Sizeof(scalar{}))
 
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
@@ -128,14 +138,11 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 }
 
 // MemoryUsage returns the total memory usage of this Histogram.
-// everytime changed the Histogram of the table, it will cost O(n)
-// complexity so calculate the memoryUsage might cost little time.
-// We ignore the size of other metadata in Histogram.
 func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
-	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+	sum = EmptyHistogramSize + hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets))*EmptyBucketSize + int64(cap(hg.scalars))*EmptyScalarSize
 	return
 }
 
@@ -1093,7 +1100,7 @@ func (c *Column) GetIncreaseFactor(realtimeRowCount int64) float64 {
 
 // MemoryUsage returns the total memory usage of Histogram, CMSketch, FMSketch in Column.
 // We ignore the size of other metadata in Column
-func (c *Column) MemoryUsage() *ColumnMemUsage {
+func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 	var sum int64
 	columnMemUsage := &ColumnMemUsage{
 		ColumnID: c.Info.ID,
@@ -1272,7 +1279,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
-			cnt = clampRowCount(cnt, c.notNullCount())
+			cnt = mathutil.Clamp(cnt, 0, c.notNullCount())
 		}
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
@@ -1285,7 +1292,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 			cnt += highCnt
 		}
 
-		cnt = clampRowCount(cnt, c.TotalRowCount())
+		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		cnt *= c.GetIncreaseFactor(realtimeRowCount)
@@ -1301,8 +1308,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		rowCount += cnt
 	}
-
-	rowCount = clampRowCount(rowCount, float64(realtimeRowCount))
+	rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
 	return rowCount, nil
 }
 
@@ -1317,6 +1323,22 @@ type Index struct {
 	Info           *model.IndexInfo
 	Flag           int64
 	LastAnalyzePos types.Datum
+}
+
+// ItemID implements TableCacheItem
+func (idx *Index) ItemID() int64 {
+	return idx.Info.ID
+}
+
+// DropEvicted implements TableCacheItem
+// DropEvicted drops evicted structures
+func (idx *Index) DropEvicted() {
+	idx.CMSketch = nil
+}
+
+// IsEvicted returns whether index statistics got evicted
+func (idx *Index) IsEvicted() bool {
+	return idx.CMSketch == nil
 }
 
 func (idx *Index) String() string {
@@ -1338,10 +1360,10 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
 // We ignore the size of other metadata in Index.
-func (idx *Index) MemoryUsage() *IndexMemUsage {
+func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 	var sum int64
 	indexMemUsage := &IndexMemUsage{
-		IndexID: idx.ID,
+		IndexID: idx.Info.ID,
 	}
 	histMemUsage := idx.Histogram.MemoryUsage()
 	indexMemUsage.HistogramMemUsage = histMemUsage
@@ -1503,8 +1525,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
 		}
 	}
-
-	totalCount = clampRowCount(totalCount, float64(realtimeRowCount))
+	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
@@ -1757,16 +1778,6 @@ func (idx *Index) outOfRange(val types.Datum) bool {
 		return false
 	}
 	return true
-}
-
-func clampRowCount(rowCount, upperLimit float64) (clampedRowCount float64) {
-	if rowCount > upperLimit {
-		return upperLimit
-	}
-	if rowCount < 0 {
-		return 0
-	}
-	return rowCount
 }
 
 // matchPrefix checks whether ad is the prefix of value

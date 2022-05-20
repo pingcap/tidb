@@ -26,7 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
@@ -883,14 +883,18 @@ func (b *builtinFromDaysSig) Clone() builtinFunc {
 }
 
 // evalTime evals FROM_DAYS(N).
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-days
+// See https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_from-days
 func (b *builtinFromDaysSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	n, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
 	}
-
-	return types.TimeFromDays(n), false, nil
+	ret := types.TimeFromDays(n)
+	// the maximum date value is 9999-12-31 in mysql 5.8.
+	if ret.Year() > 9999 {
+		return types.ZeroTime, true, nil
+	}
+	return ret, false, nil
 }
 
 type hourFunctionClass struct {
@@ -2908,7 +2912,7 @@ func (du *baseDateArithmetical) getIntervalFromReal(ctx sessionctx.Context, args
 }
 
 func (du *baseDateArithmetical) add(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
-	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
+	year, month, day, nano, _, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2977,7 +2981,7 @@ func (du *baseDateArithmetical) subDuration(ctx sessionctx.Context, d types.Dura
 }
 
 func (du *baseDateArithmetical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
-	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
+	year, month, day, nano, _, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}

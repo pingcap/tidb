@@ -58,4 +58,5 @@ func postReportTelemetryData() {
 	postReportTxnUsage()
 	postReportCTEUsage()
 	postReportSlowQueryStats()
+	postReportNonTransactionalCounter()
 }

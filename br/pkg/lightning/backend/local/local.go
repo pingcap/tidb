@@ -52,11 +52,13 @@ import (
 	split "github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mathutil"
 	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -87,10 +89,6 @@ const (
 	gRPCKeepAliveTimeout = 5 * time.Minute
 	gRPCBackOffMaxDelay  = 10 * time.Minute
 
-	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
-	// lower the max-key-count to avoid tikv trigger region auto split
-	regionMaxKeyCount      = 1_280_000
-	defaultRegionSplitSize = 96 * units.MiB
 	// The max ranges count in a batch to split and scatter.
 	maxBatchSplitRanges = 4096
 
@@ -324,7 +322,7 @@ func NewLocalBackend(
 		dupeConcurrency:   rangeConcurrency * 2,
 		batchWriteKVPairs: cfg.TikvImporter.SendKVPairs,
 		checkpointEnabled: cfg.Checkpoint.Enable,
-		maxOpenFiles:      utils.MaxInt(maxOpenFiles, openFilesLowerThreshold),
+		maxOpenFiles:      mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
@@ -822,7 +820,7 @@ func (local *local) WriteToTiKV(
 	// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
 	// because the range-properties is not 100% accurate
 	regionMaxSize := regionSplitSize
-	if regionSplitSize <= defaultRegionSplitSize {
+	if regionSplitSize <= int64(config.SplitRegionSize) {
 		regionMaxSize = regionSplitSize * 4 / 3
 	}
 
@@ -1105,7 +1103,7 @@ WriteAndIngest:
 			err = local.writeAndIngestPairs(ctx, engine, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
-				if !utils.IsRetryableError(err) {
+				if !common.IsRetryableError(err) {
 					return err
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -1152,7 +1150,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if !utils.IsRetryableError(err) {
+			if !common.IsRetryableError(err) {
 				return err
 			}
 
@@ -1171,7 +1169,7 @@ loopWrite:
 
 		for i := 0; i < len(metas); i += batch {
 			start := i * batch
-			end := utils.MinInt((i+1)*batch, len(metas))
+			end := mathutil.Min((i+1)*batch, len(metas))
 			ingestMetas := metas[start:end]
 			errCnt := 0
 			for errCnt < maxRetryTimes {
@@ -1293,7 +1291,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				if err == nil || common.IsContextCanceledError(err) {
 					return
 				}
-				if !utils.IsRetryableError(err) {
+				if !common.IsRetryableError(err) {
 					break
 				}
 				log.L().Warn("write and ingest by range failed",
@@ -1327,7 +1325,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	return allErr
 }
 
-func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize int64) error {
+func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1341,9 +1339,16 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-	regionSplitKeys := int64(regionMaxKeyCount)
-	if regionSplitSize > defaultRegionSplitSize {
-		regionSplitKeys = int64(float64(regionSplitSize) / float64(defaultRegionSplitSize) * float64(regionMaxKeyCount))
+	kvRegionSplitSize, kvRegionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+	if err == nil {
+		if kvRegionSplitSize > regionSplitSize {
+			regionSplitSize = kvRegionSplitSize
+		}
+		if kvRegionSplitKeys > regionSplitKeys {
+			regionSplitKeys = kvRegionSplitKeys
+		}
+	} else {
+		log.L().Warn("fail to get region split keys and size", zap.Error(err))
 	}
 
 	// split sorted file into range by 96MB size per file
@@ -1761,7 +1766,7 @@ func (local *local) isIngestRetryable(
 		// Thus directly retry ingest may cause TiKV panic. So always return retryWrite here to avoid
 		// this issue.
 		// See: https://github.com/tikv/tikv/issues/9496
-		return retryWrite, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+		return retryWrite, newRegion, common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
@@ -1791,7 +1796,7 @@ func (local *local) isIngestRetryable(
 		if newRegion != nil {
 			retryTy = retryWrite
 		}
-		return retryTy, newRegion, errors.Errorf("epoch not match: %s", errPb.GetMessage())
+		return retryTy, newRegion, common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
 		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
 		newRegion, err = getRegion()
@@ -1799,6 +1804,10 @@ func (local *local) isIngestRetryable(
 			return retryNone, nil, errors.Trace(err)
 		}
 		return retryWrite, newRegion, errors.New(errPb.GetMessage())
+	case errPb.ServerIsBusy != nil:
+		return retryNone, nil, common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
+	case errPb.RegionNotFound != nil:
+		return retryNone, nil, common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
 	}
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
@@ -1836,4 +1845,51 @@ func (local *local) EngineFileSizes() (res []backend.EngineFileSize) {
 		return true
 	})
 	return
+}
+
+var getSplitConfFromStoreFunc = getSplitConfFromStore
+
+// return region split size, region split keys, error
+func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
+	var (
+		nested struct {
+			Coprocessor struct {
+				RegionSplitSize string `json:"region-split-size"`
+				RegionSplitKeys int64  `json:"region-split-keys"`
+			} `json:"coprocessor"`
+		}
+	)
+	if err := tls.WithHost(host).GetJSON(ctx, "/config", &nested); err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	splitSize, err := units.FromHumanSize(nested.Coprocessor.RegionSplitSize)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	return splitSize, nested.Coprocessor.RegionSplitKeys, nil
+}
+
+// return region split size, region split keys, error
+func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (int64, int64, error) {
+	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, store := range stores {
+		if store.StatusAddress == "" || version.IsTiFlash(store) {
+			continue
+		}
+		serverInfo := infoschema.ServerInfo{
+			Address:    store.Address,
+			StatusAddr: store.StatusAddress,
+		}
+		serverInfo.ResolveLoopBackAddr()
+		regionSplitSize, regionSplitKeys, err := getSplitConfFromStoreFunc(ctx, serverInfo.StatusAddr, tls)
+		if err == nil {
+			return regionSplitSize, regionSplitKeys, nil
+		}
+		log.L().Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
+	}
+	return 0, 0, errors.New("get region split size and keys failed")
 }

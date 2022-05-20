@@ -17,11 +17,14 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -173,7 +176,7 @@ func TestConfig(t *testing.T) {
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
-	conf.Log.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
+	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	configFile := "config.toml"
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
@@ -206,7 +209,6 @@ enable-table-lock = true
 alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
-enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
@@ -218,6 +220,7 @@ deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
 enable-forwarding = true
+enable-global-kill = true
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
@@ -280,7 +283,6 @@ grpc-max-send-msg-size = 40960
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
-	require.True(t, conf.EnableBatchDML)
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.MaxServerConnections)
@@ -471,24 +473,6 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	}
 }
 
-func TestOOMActionValid(t *testing.T) {
-	c1 := NewConfig()
-	tests := []struct {
-		oomAction string
-		valid     bool
-	}{
-		{"log", true},
-		{"Log", true},
-		{"Cancel", true},
-		{"cANceL", true},
-		{"quit", false},
-	}
-	for _, tt := range tests {
-		c1.OOMAction = tt.oomAction
-		require.Equal(t, tt.valid, c1.Valid() == nil)
-	}
-}
-
 func TestTxnTotalSizeLimitValid(t *testing.T) {
 	conf := NewConfig()
 	tests := []struct {
@@ -508,18 +492,92 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}
 }
 
-func TestPreparePlanCacheValid(t *testing.T) {
-	conf := NewConfig()
-	tests := map[PreparedPlanCache]bool{
-		{Enabled: true, Capacity: 0}:                        false,
-		{Enabled: true, Capacity: 2}:                        true,
-		{Enabled: true, MemoryGuardRatio: -0.1}:             false,
-		{Enabled: true, MemoryGuardRatio: 2.2}:              false,
-		{Enabled: true, Capacity: 2, MemoryGuardRatio: 0.5}: true,
+func TestConflictInstanceConfig(t *testing.T) {
+	var expectedNewName string
+	conf := new(Config)
+	configFile := "config.toml"
+	_, localFile, _, _ := runtime.Caller(0)
+	configFile = filepath.Join(filepath.Dir(localFile), configFile)
+
+	f, err := os.Create(configFile)
+	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
+
+	// ConflictOptions indicates the options existing in both [instance] and some other sessions.
+	// Just receive a warning and keep their respective values.
+	expectedConflictOptions := map[string]InstanceConfigSection{
+		"": {
+			"", map[string]string{"check-mb4-value-in-utf8": "tidb_check_mb4_value_in_utf8"},
+		},
+		"log": {
+			"log", map[string]string{"enable-slow-log": "tidb_enable_slow_log"},
+		},
+		"performance": {
+			"performance", map[string]string{"force-priority": "tidb_force_priority"},
+		},
 	}
-	for testCase, res := range tests {
-		conf.PreparedPlanCache = testCase
-		require.Equal(t, res, conf.Valid() == nil)
+	_, err = f.WriteString("check-mb4-value-in-utf8 = true \n" +
+		"[log] \nenable-slow-log = true \n" +
+		"[performance] \nforce-priority = \"NO_PRIORITY\"\n" +
+		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"")
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	err = conf.Load(configFile)
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "Conflict configuration options exists on both [instance] section and some other sections."))
+	require.False(t, conf.Instance.CheckMb4ValueInUTF8.Load())
+	require.True(t, conf.CheckMb4ValueInUTF8.Load())
+	require.Equal(t, true, conf.Log.EnableSlowLog.Load())
+	require.Equal(t, false, conf.Instance.EnableSlowLog.Load())
+	require.Equal(t, "NO_PRIORITY", conf.Performance.ForcePriority)
+	require.Equal(t, "LOW_PRIORITY", conf.Instance.ForcePriority)
+	require.Equal(t, 0, len(DeprecatedOptions))
+	for _, conflictOption := range ConflictOptions {
+		expectedConflictOption, ok := expectedConflictOptions[conflictOption.SectionName]
+		require.True(t, ok)
+		for oldName, newName := range conflictOption.NameMappings {
+			expectedNewName, ok = expectedConflictOption.NameMappings[oldName]
+			require.True(t, ok)
+			require.Equal(t, expectedNewName, newName)
+		}
+	}
+
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+
+	// DeprecatedOptions indicates the options that should be moved to [instance] section.
+	// The value in conf.Instance.* would be overwritten by the other sections.
+	expectedDeprecatedOptions := map[string]InstanceConfigSection{
+		"": {
+			"", map[string]string{"enable-collect-execution-info": "tidb_enable_collect_execution_info"},
+		},
+		"log": {
+			"log", map[string]string{"slow-threshold": "tidb_slow_log_threshold"},
+		},
+		"performance": {
+			"performance", map[string]string{"memory-usage-alarm-ratio": "tidb_memory_usage_alarm_ratio"},
+		},
+	}
+	_, err = f.WriteString("enable-collect-execution-info = false \n" +
+		"[log] \nslow-threshold = 100 \n" +
+		"[performance] \nmemory-usage-alarm-ratio = 0.5")
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	err = conf.Load(configFile)
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "Some configuration options should be moved to [instance] section."))
+	for _, deprecatedOption := range DeprecatedOptions {
+		expectedDeprecatedOption, ok := expectedDeprecatedOptions[deprecatedOption.SectionName]
+		require.True(t, ok)
+		for oldName, newName := range deprecatedOption.NameMappings {
+			expectedNewName, ok = expectedDeprecatedOption.NameMappings[oldName]
+			require.True(t, ok, fmt.Sprintf("Get unexpected %s.", oldName))
+			require.Equal(t, expectedNewName, newName)
+		}
 	}
 }
 

@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	tlsutil "github.com/pingcap/tidb/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -70,15 +70,6 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		time.Sleep(sleepTime)
 	}
 	return errors.Trace(err)
-}
-
-// GetStack gets the stacktrace.
-func GetStack() []byte {
-	const size = 4096
-	buf := make([]byte, size)
-	stackSize := runtime.Stack(buf, false)
-	buf = buf[:stackSize]
-	return buf
 }
 
 // WithRecovery wraps goroutine startup call with force recovery.
@@ -119,7 +110,7 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
 		zap.Reflect("r", r),
-		zap.String("stack", string(GetStack())))
+		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
 	if quit {
 		// Wait for metrics to be pushed.
@@ -474,7 +465,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		return
 	}
 
-	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	requireTLS := tlsutil.RequireSecureTransport.Load()
+
 	var minTLSVersion uint16 = tls.VersionTLS11
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
 	case "TLSv1.0":
