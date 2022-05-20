@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,28 +11,15 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build !leak
 
-package testleak
+package brietest
 
 import (
 	"testing"
 
-	"github.com/pingcap/check"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 )
 
-// BeforeTest is a dummy implementation when build tag 'leak' is not set.
-func BeforeTest() {
-}
-
-// AfterTest is a dummy implementation when build tag 'leak' is not set.
-func AfterTest(c *check.C) func() {
-	return func() {
-	}
-}
-
-// AfterTestT is used after all the test cases is finished.
-func AfterTestT(t *testing.T) func() {
-	return func() {
-	}
+func TestMain(m *testing.M) {
+	realtikvtest.RunTestMain(m)
 }

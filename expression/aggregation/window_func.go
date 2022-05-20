@@ -30,29 +30,33 @@ type WindowFuncDesc struct {
 }
 
 // NewWindowFuncDesc creates a window function signature descriptor.
-func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (*WindowFuncDesc, error) {
-	switch strings.ToLower(name) {
-	case ast.WindowFuncNthValue:
-		val, isNull, ok := expression.GetUint64FromConstant(args[1])
-		// nth_value does not allow `0`, but allows `null`.
-		if !ok || (val == 0 && !isNull) {
-			return nil, nil
-		}
-	case ast.WindowFuncNtile:
-		val, isNull, ok := expression.GetUint64FromConstant(args[0])
-		// ntile does not allow `0`, but allows `null`.
-		if !ok || (val == 0 && !isNull) {
-			return nil, nil
-		}
-	case ast.WindowFuncLead, ast.WindowFuncLag:
-		if len(args) < 2 {
-			break
-		}
-		_, isNull, ok := expression.GetUint64FromConstant(args[1])
-		if !ok || isNull {
-			return nil, nil
+func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, skipCheckArgs bool) (*WindowFuncDesc, error) {
+	// if we are in the prepare statement, skip the params check since it's not been initialized.
+	if !skipCheckArgs {
+		switch strings.ToLower(name) {
+		case ast.WindowFuncNthValue:
+			val, isNull, ok := expression.GetUint64FromConstant(args[1])
+			// nth_value does not allow `0`, but allows `null`.
+			if !ok || (val == 0 && !isNull) {
+				return nil, nil
+			}
+		case ast.WindowFuncNtile:
+			val, isNull, ok := expression.GetUint64FromConstant(args[0])
+			// ntile does not allow `0`, but allows `null`.
+			if !ok || (val == 0 && !isNull) {
+				return nil, nil
+			}
+		case ast.WindowFuncLead, ast.WindowFuncLag:
+			if len(args) < 2 {
+				break
+			}
+			_, isNull, ok := expression.GetUint64FromConstant(args[1])
+			if !ok || isNull {
+				return nil, nil
+			}
 		}
 	}
+
 	base, err := newBaseFuncDesc(ctx, name, args)
 	if err != nil {
 		return nil, err
@@ -123,7 +127,7 @@ func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowF
 func (s *WindowFuncDesc) CanPushDownToTiFlash() bool {
 	// window functions
 	switch s.Name {
-	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncLead, ast.WindowFuncLag:
+	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank:
 		return true
 		// TODO: support aggregate functions
 		//case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:

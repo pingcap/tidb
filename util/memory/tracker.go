@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	atomicutil "go.uber.org/atomic"
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -70,8 +71,8 @@ type Tracker struct {
 	label         int   // Label of this "Tracker".
 	bytesConsumed int64 // Consumed bytes.
 	bytesLimit    atomic.Value
-	maxConsumed   int64 // max number of bytes consumed during execution.
-	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
+	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
+	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
@@ -103,7 +104,7 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 		bytesHardLimit: bytesLimit,
 		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
 	})
-	t.maxConsumed = 0
+	t.maxConsumed.Store(0)
 	t.isGlobal = false
 }
 
@@ -353,9 +354,9 @@ func (t *Tracker) Consume(bytes int64) {
 		}
 
 		for {
-			maxNow := atomic.LoadInt64(&tracker.maxConsumed)
+			maxNow := tracker.maxConsumed.Load()
 			consumed := atomic.LoadInt64(&tracker.bytesConsumed)
-			if consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed) {
+			if consumed > maxNow && !tracker.maxConsumed.CAS(maxNow, consumed) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
@@ -400,7 +401,7 @@ func (t *Tracker) BytesConsumed() int64 {
 
 // MaxConsumed returns max number of bytes consumed during execution.
 func (t *Tracker) MaxConsumed() int64 {
-	return atomic.LoadInt64(&t.maxConsumed)
+	return t.maxConsumed.Load()
 }
 
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.

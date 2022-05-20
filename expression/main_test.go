@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -32,7 +32,7 @@ import (
 var testDataMap = make(testdata.BookKeeper)
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	testmain.ShortCircuitForBench(m)
 
 	config.UpdateGlobal(func(conf *config.Config) {
