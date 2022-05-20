@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"sort"
 	"strings"
 	"sync"
 
@@ -42,12 +43,14 @@ func (ec *startWithComparator) Compare(src, dst []byte) bool {
 }
 
 type StreamKVInfo struct {
-	Key       string `json:"key"`
-	WriteType byte   `json:"write_type"`
-	StartTs   uint64 `json:"start_ts"`
-	CommitTs  uint64 `json:"commit_ts"`
-	CFName    string `json:"cf_name"`
-	Value     string `json:"value"`
+	Key        string `json:"key"`
+	EncodedKey string `json:"-"`
+	WriteType  byte   `json:"-"`
+	StartTs    uint64 `json:"start_ts"`
+	CommitTs   uint64 `json:"commit_ts"`
+	CFName     string `json:"cf_name"`
+	Value      string `json:"value,omitempty"`
+	ShortValue string `json:"short_value,omitempty"`
 }
 
 type StreamBackupSearch struct {
@@ -203,10 +206,18 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 		close(errCh)
 	}()
 
-	entries := make([]*StreamKVInfo, 0, 128)
+	defaultCFEntries := make(map[string]*StreamKVInfo, 64)
+	writeCFEntries := make(map[string]*StreamKVInfo, 64)
+
 	for entry := range entriesCh {
-		entries = append(entries, entry)
+		if entry.CFName == writeCFName {
+			writeCFEntries[entry.EncodedKey] = entry
+		} else if entry.CFName == defaultCFName {
+			defaultCFEntries[entry.EncodedKey] = entry
+		}
 	}
+
+	entries := s.mergeCFEntries(defaultCFEntries, writeCFEntries)
 
 	errWg.Wait()
 
@@ -260,20 +271,22 @@ func (s *StreamBackupSearch) searchFromDataFile(ctx context.Context, dataFile *b
 			}
 
 			kvInfo := &StreamKVInfo{
-				WriteType: rawWriteCFValue.GetWriteType(),
-				CFName:    dataFile.Cf,
-				CommitTs:  ts,
-				StartTs:   rawWriteCFValue.GetStartTs(),
-				Key:       strings.ToUpper(hex.EncodeToString(rawKey)),
-				Value:     valueStr,
+				WriteType:  rawWriteCFValue.GetWriteType(),
+				CFName:     dataFile.Cf,
+				CommitTs:   ts,
+				StartTs:    rawWriteCFValue.GetStartTs(),
+				Key:        strings.ToUpper(hex.EncodeToString(rawKey)),
+				EncodedKey: hex.EncodeToString(iter.Key()),
+				ShortValue: valueStr,
 			}
 			ch <- kvInfo
 		} else if dataFile.Cf == defaultCFName {
 			kvInfo := &StreamKVInfo{
-				CFName:  dataFile.Cf,
-				StartTs: ts,
-				Key:     strings.ToUpper(hex.EncodeToString(rawKey)),
-				Value:   base64.StdEncoding.EncodeToString(v),
+				CFName:     dataFile.Cf,
+				StartTs:    ts,
+				Key:        strings.ToUpper(hex.EncodeToString(rawKey)),
+				EncodedKey: hex.EncodeToString(iter.Key()),
+				Value:      base64.StdEncoding.EncodeToString(v),
 			}
 			ch <- kvInfo
 		}
@@ -281,4 +294,45 @@ func (s *StreamBackupSearch) searchFromDataFile(ctx context.Context, dataFile *b
 
 	log.Info("finish search data file", zap.String("file", dataFile.Path))
 	return nil
+}
+
+func (s *StreamBackupSearch) mergeCFEntries(defaultCFEntries, writeCFEntries map[string]*StreamKVInfo) []*StreamKVInfo {
+	entries := make([]*StreamKVInfo, 0, len(defaultCFEntries)+len(writeCFEntries))
+	mergedDefaultCFKeys := make(map[string]struct{}, 16)
+	for _, entry := range writeCFEntries {
+		entries = append(entries, entry)
+		if entry.ShortValue != "" {
+			continue
+		}
+
+		keyBytes, err := hex.DecodeString(entry.Key)
+		if err != nil {
+			log.Warn("hex decode key failed", zap.String("key", entry.Key), zap.String("encode-key", entry.EncodedKey), zap.Error(err))
+			continue
+		}
+
+		encodedKey := codec.EncodeBytes([]byte{}, keyBytes)
+		defaultCFKey := hex.EncodeToString(codec.EncodeUintDesc(encodedKey, entry.StartTs))
+		defaultCFEntry, ok := defaultCFEntries[defaultCFKey]
+		if !ok {
+			continue
+		}
+
+		entry.Value = defaultCFEntry.Value
+		mergedDefaultCFKeys[defaultCFKey] = struct{}{}
+	}
+
+	for key, entry := range defaultCFEntries {
+		if _, ok := mergedDefaultCFKeys[key]; ok {
+			continue
+		}
+
+		entries = append(entries, entry)
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].CommitTs < entries[j].CommitTs
+	})
+
+	return entries
 }
