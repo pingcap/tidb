@@ -210,7 +210,7 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, false, err
 	}
 	if isNullTimeout {
-		timeout = maxTimeout // Observed behavior in MySQL
+		timeout = 0 // Observed in MySQL, gets converted to 1s in TiDB because of min timeout.
 	}
 	// A timeout less than zero is expected to be treated as unlimited.
 	// Because of our implementation being based on pessimistic locks,
@@ -221,6 +221,7 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		timeout = maxTimeout
 	}
+
 	// Lock names are case insensitive. Because we can't rely on collations
 	// being enabled on the internal table, we have to lower it.
 	lockName = strings.ToLower(lockName)
