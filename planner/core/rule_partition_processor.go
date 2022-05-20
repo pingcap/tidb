@@ -33,7 +33,12 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/math"
+=======
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/mathutil"
+>>>>>>> b7aa9faa5... planner: range columns partitioning with explicit collation fix (#32749) (#33742)
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
@@ -1575,13 +1580,23 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 		return 0, len(p.data), false
 	}
 
-	start, end := p.pruneUseBinarySearch(sctx, opName, con, op)
+	// If different collation, we can only prune if:
+	// - expression is binary collation (can only be found in one partition)
+	// - EQ operator, consider values 'a','b','ä' where 'ä' would be in the same partition as 'a' if general_ci, but is binary after 'b'
+	// otherwise return all partitions / no pruning
+	_, exprColl := expr.CharsetAndCollation()
+	colColl := p.partCol.RetType.GetCollate()
+	if exprColl != colColl && (opName != ast.EQ || !collate.IsBinCollation(exprColl)) {
+		return 0, len(p.data), true
+	}
+	start, end := p.pruneUseBinarySearch(sctx, opName, con)
 	return start, end, true
 }
 
-func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant, f *expression.ScalarFunction) (start int, end int) {
+func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
 	var err error
 	var isNull bool
+	charSet, collation := p.partCol.RetType.GetCharset(), p.partCol.RetType.GetCollate()
 	compare := func(ith int, op string, v *expression.Constant) bool {
 		if ith == len(p.data)-1 {
 			if p.maxvalue {
@@ -1590,7 +1605,7 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 		}
 		var expr expression.Expression
 		expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
-		expr.SetCharsetAndCollation(f.CharsetAndCollation())
+		expr.SetCharsetAndCollation(charSet, collation)
 		var val int64
 		val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
 		return val > 0
