@@ -256,7 +256,7 @@ func (c *Context) RollbackTxn(ctx context.Context) {
 	}
 }
 
-// CommitTxn indicates an expected call of CommitTxn
+// CommitTxn indicates an expected call of CommitTxn.
 func (c *Context) CommitTxn(ctx context.Context) error {
 	defer c.sessionVars.SetInTxn(false)
 	if c.txn.Valid() {
