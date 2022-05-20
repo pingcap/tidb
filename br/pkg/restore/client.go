@@ -1811,7 +1811,7 @@ func (rc *Client) RestoreMetaKVFiles(
 		}
 
 		if f.Type == backuppb.FileType_Delete {
-			// this should happen normally.
+			// this should happen abnormally.
 			// only do some preventive checks here.
 			log.Warn("detected delete file of meta key, skip it", zap.Any("file", f))
 			continue
