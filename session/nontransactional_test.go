@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -133,6 +132,20 @@ func TestNonTransactionalDeleteSplitOnTiDBRowID(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 	}
+	// auto select results in full col name
+	tk.MustQuery("batch limit 3 dry run delete from t").Check(testkit.Rows(
+		"DELETE FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 1 AND 3",
+		"DELETE FROM `test`.`t` WHERE `test`.`t`.`_tidb_rowid` BETWEEN 100 AND 100",
+	))
+	// otherwise the name is the same as what is given
+	tk.MustQuery("batch on _tidb_rowid limit 3 dry run delete from t").Check(testkit.Rows(
+		"DELETE FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3",
+		"DELETE FROM `test`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100",
+	))
+	tk.MustQuery("batch on t._tidb_rowid limit 3 dry run delete from t").Check(testkit.Rows(
+		"DELETE FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3",
+		"DELETE FROM `test`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100",
+	))
 	tk.MustExec("batch on _tidb_rowid limit 3 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
@@ -325,15 +338,15 @@ func TestNonTransactionalDeleteCheckConstraint(t *testing.T) {
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
 	tk.MustExec("commit")
 
-	config.GetGlobalConfig().EnableBatchDML = true
-	tk.Session().GetSessionVars().BatchInsert = true
-	tk.Session().GetSessionVars().DMLBatchSize = 1
+	tk.MustExec("SET GLOBAL tidb_enable_batch_dml = 1")
+	tk.MustExec("SET tidb_batch_insert = 1")
+	tk.MustExec("SET tidb_dml_batch_size = 1")
 	err = tk.ExecToErr("batch on a limit 10 delete from t")
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
-	config.GetGlobalConfig().EnableBatchDML = false
-	tk.Session().GetSessionVars().BatchInsert = false
-	tk.Session().GetSessionVars().DMLBatchSize = 0
+	tk.MustExec("SET GLOBAL tidb_enable_batch_dml = 0")
+	tk.MustExec("SET tidb_batch_insert = 0")
+	tk.MustExec("SET tidb_dml_batch_size = 0")
 
 	err = tk.ExecToErr("batch on a limit 10 delete from t limit 10")
 	require.EqualError(t, err, "Non-transactional delete doesn't support limit")

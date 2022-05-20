@@ -209,7 +209,6 @@ enable-table-lock = true
 alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
-enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
@@ -221,6 +220,7 @@ deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
 enable-forwarding = true
+enable-global-kill = true
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
@@ -283,7 +283,6 @@ grpc-max-send-msg-size = 40960
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
-	require.True(t, conf.EnableBatchDML)
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.MaxServerConnections)
@@ -474,24 +473,6 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	}
 }
 
-func TestOOMActionValid(t *testing.T) {
-	c1 := NewConfig()
-	tests := []struct {
-		oomAction string
-		valid     bool
-	}{
-		{"log", true},
-		{"Log", true},
-		{"Cancel", true},
-		{"cANceL", true},
-		{"quit", false},
-	}
-	for _, tt := range tests {
-		c1.OOMAction = tt.oomAction
-		require.Equal(t, tt.valid, c1.Valid() == nil)
-	}
-}
-
 func TestTxnTotalSizeLimitValid(t *testing.T) {
 	conf := NewConfig()
 	tests := []struct {
@@ -508,21 +489,6 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	for _, tt := range tests {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
 		require.Equal(t, tt.valid, conf.Valid() == nil)
-	}
-}
-
-func TestPreparePlanCacheValid(t *testing.T) {
-	conf := NewConfig()
-	tests := map[PreparedPlanCache]bool{
-		{Enabled: true, Capacity: 0}:                        false,
-		{Enabled: true, Capacity: 2}:                        true,
-		{Enabled: true, MemoryGuardRatio: -0.1}:             false,
-		{Enabled: true, MemoryGuardRatio: 2.2}:              false,
-		{Enabled: true, Capacity: 2, MemoryGuardRatio: 0.5}: true,
-	}
-	for testCase, res := range tests {
-		conf.PreparedPlanCache = testCase
-		require.Equal(t, res, conf.Valid() == nil)
 	}
 }
 

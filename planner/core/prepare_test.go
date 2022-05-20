@@ -1028,6 +1028,38 @@ func TestPrepareWithWindowFunction(t *testing.T) {
 	tk.MustQuery("execute stmt2 using @a, @b").Check(testkit.Rows("0", "0"))
 }
 
+func TestPrepareWindowFunctionWithoutParamsCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(false)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer tk.MustExec("set @@tidb_enable_window_function = 0")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 (d DOUBLE, id INT, sex CHAR(1), n INT NOT NULL AUTO_INCREMENT, PRIMARY KEY(n));")
+	tk.MustExec("insert into t1(d, id, sex) values (1.0, 1, 'M'),(2.0, 2, 'F'),(3.0, 3, 'F'),(4.0, 4, 'F'),(5.0, 5, 'M')")
+	// prepare phase, we don't check the window function args.
+	tk.MustExec("prepare p from \"select id, sex, lead(id, ?) over () from t1\"")
+	// execute phase, we do check the window function args (param is initialized).
+	err := tk.ExecToErr("execute p using @p1")
+	require.NotNil(t, err)
+	require.EqualError(t, err, "[planner:1210]Incorrect arguments to lead")
+	tk.MustExec("set @p1 = 3")
+	// execute phase, we do check the window function args (param is valid).
+	tk.MustQuery("execute p using @p1").Check(testkit.Rows("1 M 4", "2 F 5", "3 F <nil>", "4 F <nil>", "5 M <nil>"))
+
+	// execute phase, we do check the window function args (param is invalid).
+	tk.MustExec("PREPARE p FROM \"SELECT id, sex, LEAD(id, ?) OVER (), ntile(?) over() FROM t1\"")
+	tk.MustExec("set @p2 = 3")
+	tk.MustQuery("execute p using @p1, @p2").Check(testkit.Rows("1 M 4 1", "2 F 5 1", "3 F <nil> 2", "4 F <nil> 2", "5 M <nil> 3"))
+	tk.MustExec("set @p2 = 0") // ntile doesn't allow param to be 0
+	err = tk.ExecToErr("execute p using @p1, @p2")
+	require.NotNil(t, err)
+	require.EqualError(t, err, "[planner:1210]Incorrect arguments to ntile")
+}
+
 func TestPrepareWithSnapshot(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1551,6 +1583,53 @@ func TestIssue29303(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
 	tk.MustExec(`set @a="龂", @b="龂", @c="龂", @d="龂"`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("� 龂 � 龂"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
+func TestIssue34725(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (
+		a int(11) DEFAULT NULL,
+		b int(11) GENERATED ALWAYS AS (a) STORED NOT NULL,
+		PRIMARY KEY (b))`)
+	tk.MustExec(`insert into t(a) values(102)`)
+	tk.MustExec(`prepare stmt from "select * from t where b in (?, ?, ?)"`)
+	tk.MustExec(`set @a=102, @b=102, @c=102`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows(`102 102`))
+	tk.MustExec(`set @a=-97, @b=-97, @c=-97`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows())
+}
+
+func TestIssue33628(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(false)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int primary key, b int)`)
+	tk.MustExec(`prepare stmt from "select * from t where a=10"`) // point-get plan
+	tk.MustExec(`execute stmt`)
+	tk.MustExec(`execute stmt`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 

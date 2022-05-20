@@ -57,6 +57,7 @@ import (
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
+var planCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("cache_miss")
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -189,10 +190,10 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name          string
-	UsingVars     []expression.Expression
-	PrepareParams []types.Datum
-	ExecID        uint32
+	Name         string
+	TxtProtoVars []expression.Expression // parsed variables under text protocol
+	BinProtoVars []types.Datum           // parsed variables under binary protocol
+	ExecID       uint32
 	// Deprecated: SnapshotTS now is only used for asserting after refactoring stale read, it will be removed later.
 	SnapshotTS uint64
 	// Deprecated: IsStaleness now is only used for asserting after refactoring stale read, it will be removed later.
@@ -236,25 +237,25 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
 
-	paramLen := len(e.PrepareParams)
+	paramLen := len(e.BinProtoVars)
 	if paramLen > 0 {
-		// for binary protocol execute, argument is placed in vars.PrepareParams
+		// for binary protocol execute, argument is placed in vars.BinProtoVars
 		if len(prepared.Params) != paramLen {
 			return errors.Trace(ErrWrongParamCount)
 		}
-		vars.PreparedParams = e.PrepareParams
+		vars.PreparedParams = e.BinProtoVars
 		for i, val := range vars.PreparedParams {
 			param := prepared.Params[i].(*driver.ParamMarkerExpr)
 			param.Datum = val
 			param.InExecute = true
 		}
 	} else {
-		// for `execute stmt using @a, @b, @c`, using value in e.UsingVars
-		if len(prepared.Params) != len(e.UsingVars) {
+		// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
+		if len(prepared.Params) != len(e.TxtProtoVars) {
 			return errors.Trace(ErrWrongParamCount)
 		}
 
-		for i, usingVar := range e.UsingVars {
+		for i, usingVar := range e.TxtProtoVars {
 			val, err := usingVar.Eval(chunk.Row{})
 			if err != nil {
 				return err
@@ -456,16 +457,29 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			return err
 		}
 	}
-	tps := make([]*types.FieldType, len(e.UsingVars))
-	varsNum := len(e.UsingVars)
-	for i, param := range e.UsingVars {
-		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
-		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
-		if tps[i] == nil {
-			tps[i] = types.NewFieldType(mysql.TypeNull)
+
+	var varsNum int
+	var binVarTypes []byte
+	var txtVarTypes []*types.FieldType
+	isBinProtocol := len(e.BinProtoVars) > 0
+	if isBinProtocol { // binary protocol
+		varsNum = len(e.BinProtoVars)
+		for _, param := range e.BinProtoVars {
+			binVarTypes = append(binVarTypes, param.Kind())
+		}
+	} else { // txt protocol
+		varsNum = len(e.TxtProtoVars)
+		for _, param := range e.TxtProtoVars {
+			name := param.(*expression.ScalarFunction).GetArgs()[0].String()
+			tp := sctx.GetSessionVars().UserVarTypes[name]
+			if tp == nil {
+				tp = types.NewFieldType(mysql.TypeNull)
+			}
+			txtVarTypes = append(txtVarTypes, tp)
 		}
 	}
-	if prepared.CachedPlan != nil {
+
+	if prepared.UseCache && prepared.CachedPlan != nil { // short path for point-get plans
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
 		// the expression in the where condition will not be evaluated,
@@ -491,7 +505,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.PointExec = true
 		return nil
 	}
-	if prepared.UseCache {
+	if prepared.UseCache { // for general plans
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
@@ -505,7 +519,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					sctx.PreparedPlanCache().Delete(cacheKey)
 					break
 				}
-				if !cachedVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
+				if !cachedVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
 					continue
 				}
 				planValid := true
@@ -552,6 +566,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
+	planCacheMissCounter.Inc()
 	stmt := prepared.Stmt
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
@@ -576,13 +591,13 @@ REBUILD:
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, isBinProtocol, binVarTypes, txtVarTypes, sessVars.StmtCtx.BindSQL)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
 			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
-				if cacheVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
+				if cacheVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
 					hitVal = true
 					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
@@ -620,7 +635,7 @@ func containTableDual(p Plan) bool {
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
-	if sctx.GetSessionVars().StmtCtx.SkipPlanCache {
+	if !sctx.GetSessionVars().StmtCtx.UseCache || sctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return nil
 	}
 	var (
@@ -1102,11 +1117,12 @@ type AnalyzeInfo struct {
 
 // V2AnalyzeOptions is used to hold analyze options information.
 type V2AnalyzeOptions struct {
-	PhyTableID int64
-	RawOpts    map[ast.AnalyzeOptionType]uint64
-	FilledOpts map[ast.AnalyzeOptionType]uint64
-	ColChoice  model.ColumnChoice
-	ColumnList []*model.ColumnInfo
+	PhyTableID  int64
+	RawOpts     map[ast.AnalyzeOptionType]uint64
+	FilledOpts  map[ast.AnalyzeOptionType]uint64
+	ColChoice   model.ColumnChoice
+	ColumnList  []*model.ColumnInfo
+	IsPartition bool
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
@@ -1201,6 +1217,14 @@ type SplitRegionStatus struct {
 
 	Table     table.Table
 	IndexInfo *model.IndexInfo
+}
+
+// CompactTable represents a "ALTER TABLE [NAME] COMPACT ..." plan.
+type CompactTable struct {
+	baseSchemaProducer
+
+	ReplicaKind ast.CompactReplicaKind
+	TableInfo   *model.TableInfo
 }
 
 // DDL represents a DDL statement plan.
