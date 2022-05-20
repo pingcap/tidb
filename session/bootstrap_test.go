@@ -41,15 +41,11 @@ func TestBootstrap(t *testing.T) {
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-
-	return
-
 	se := createSessionAndSetID(t, store)
 
 	mustExec(t, se, "use mysql")
 	r := mustExec(t, se, "select * from user")
 	require.NotNil(t, r)
-	r.Close()
 
 	ctx := context.Background()
 	req := r.NewChunk(nil)
@@ -59,6 +55,7 @@ func TestBootstrap(t *testing.T) {
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
 	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
+	r.Close()
 
 	ok := se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""))
 	require.True(t, ok)
