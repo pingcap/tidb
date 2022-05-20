@@ -248,7 +248,7 @@ func (c *Context) RefreshVars(ctx context.Context) error {
 	return nil
 }
 
-// RollbackTxn indicates an expected call of RollbackTxn
+// RollbackTxn indicates an expected call of RollbackTxn.
 func (c *Context) RollbackTxn(ctx context.Context) {
 	defer c.sessionVars.SetInTxn(false)
 	if c.txn.Valid() {
