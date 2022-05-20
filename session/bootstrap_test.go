@@ -219,8 +219,6 @@ func TestUpgrade(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	se := createSessionAndSetID(t, store)
 
-	return
-
 	mustExec(t, se, "USE mysql")
 
 	// bootstrap with currentBootstrapVersion

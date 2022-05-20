@@ -592,10 +592,8 @@ func (c *chunkRowRecordSet) Close() error {
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
-	defer func() {
-		terror.Log(e.Close())
-	}()
 	if snapshotTS := a.Ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		terror.Log(e.Close())
 		return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 	}
 
@@ -612,6 +610,9 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 }
 
 func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
+	defer func() {
+		terror.Log(e.Close())
+	}()
 	var rows []chunk.Row
 	var err error
 	req := newFirstChunk(e)
