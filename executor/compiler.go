@@ -341,6 +341,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Change"
 	case *ast.CommitStmt:
 		return "Commit"
+	case *ast.CompactTableStmt:
+		return "CompactTable"
 	case *ast.CreateDatabaseStmt:
 		return "CreateDatabase"
 	case *ast.CreateIndexStmt:
