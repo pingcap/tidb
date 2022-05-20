@@ -2275,13 +2275,20 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+
+	isAutoFlag := uint64(0)
+
+	if autoAnalyze != "" {
+		isAutoFlag = model.FlagIsSysSession
+	}
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
 		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
-			Flags:          sc.PushDownFlags(),
+			Flags:          sc.PushDownFlags() | isAutoFlag,
 			TimeZoneOffset: offset,
 		},
 		opts:     opts,
@@ -2435,6 +2442,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		TableName:     task.TableName,
 		PartitionName: task.PartitionName,
 	}
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2587,13 +2595,20 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+
+	isAutoFlag := uint64(0)
+
+	if autoAnalyze != "" {
+		isAutoFlag = model.FlagIsSysSession
+	}
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
-			Flags:          sc.PushDownFlags(),
+			Flags:          sc.PushDownFlags() | isAutoFlag,
 			TimeZoneOffset: offset,
 		},
 		opts:     opts,
