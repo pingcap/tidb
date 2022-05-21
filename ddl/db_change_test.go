@@ -37,60 +37,26 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 	"go.uber.org/zap"
 )
 
-type stateChangeSuite struct {
-	suite.Suite
-	store kv.Storage
-	dom   *domain.Domain
-	tk    *testkit.TestKit
-}
-
-func TestStateChange(t *testing.T) {
-	suite.Run(t, new(stateChangeSuite))
-}
-
-func (s *stateChangeSuite) SetupSuite() {
-	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	session.SetSchemaLease(200 * time.Millisecond)
-
-	var err error
-	s.store, err = mockstore.NewMockStore()
-	s.Require().NoError(err)
-	s.dom, err = session.BootstrapSession(s.store)
-	s.Require().NoError(err)
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	tk.MustExec("use test_db_state")
-}
-
-func (s *stateChangeSuite) SetupTest() {
-	s.tk = testkit.NewTestKit(s.T(), s.store)
-	s.tk.MustExec("use test_db_state")
-}
-
-func (s *stateChangeSuite) TearDownSuite() {
-	s.dom.Close()
-	s.Require().NoError(s.store.Close())
-}
-
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
-func (s *stateChangeSuite) TestShowCreateTable() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestShowCreateTable(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create table t2 (a int, b varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci")
 	// tkInternal is used to execute additional sql (here show create table) in ddl change callback.
 	// Using same `tk` in different goroutines may lead to data race.
-	tkInternal := testkit.NewTestKit(s.T(), s.store)
+	tkInternal := testkit.NewTestKit(t, store)
 	tkInternal.MustExec("use test")
 
 	var checkErr error
@@ -121,7 +87,7 @@ func (s *stateChangeSuite) TestShowCreateTable() {
 		}
 		if job.SchemaState != model.StatePublic {
 			var result sqlexec.RecordSet
-			tbl2 := external.GetTableByName(s.T(), tkInternal, "test", "t2")
+			tbl2 := external.GetTableByName(t, tkInternal, "test", "t2")
 			if job.TableID == tbl2.Meta().ID {
 				// Try to do not use mustQuery in hook func, cause assert fail in mustQuery will cause ddl job hung.
 				result, checkErr = tkInternal.Exec("show create table t2")
@@ -147,19 +113,22 @@ func (s *stateChangeSuite) TestShowCreateTable() {
 			terror.Log(result.Close())
 		}
 	}
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	d.SetHook(callback)
 	for _, tc := range testCases {
 		tk.MustExec(tc.sql)
-		s.Require().NoError(checkErr)
+		require.NoError(t, checkErr)
 	}
 }
 
 // TestDropNotNullColumn is used to test issue #8654.
-func (s *stateChangeSuite) TestDropNotNullColumn() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestDropNotNullColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int, a int not null default 11)")
 	tk.MustExec("insert into t values(1, 1)")
@@ -169,11 +138,12 @@ func (s *stateChangeSuite) TestDropNotNullColumn() {
 	tk.MustExec("insert into t2 values(3, '11:22:33')")
 	tk.MustExec("create table t3 (id int, d json not null)")
 	tk.MustExec("insert into t3 values(4, d)")
-	tk1 := testkit.NewTestKit(s.T(), s.store)
+
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
 	var checkErr error
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	callback := &ddl.TestDDLCallback{}
 	sqlNum := 0
@@ -182,7 +152,7 @@ func (s *stateChangeSuite) TestDropNotNullColumn() {
 			return
 		}
 		err := originalCallback.OnChanged(nil)
-		s.Require().NoError(err)
+		require.NoError(t, err)
 		if job.SchemaState == model.StateWriteOnly {
 			switch sqlNum {
 			case 0:
@@ -199,21 +169,27 @@ func (s *stateChangeSuite) TestDropNotNullColumn() {
 
 	d.SetHook(callback)
 	tk.MustExec("alter table t drop column a")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	sqlNum++
 	tk.MustExec("alter table t1 drop column b")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	sqlNum++
 	tk.MustExec("alter table t2 drop column c")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	sqlNum++
 	tk.MustExec("alter table t3 drop column d")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	d.SetHook(originalCallback)
 	tk.MustExec("drop table t, t1, t2, t3")
 }
 
-func (s *stateChangeSuite) TestTwoStates() {
+func TestTwoStates(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+
 	cnt := 5
 	// New the testExecInfo.
 	testInfo := &testExecInfo{
@@ -227,8 +203,8 @@ func (s *stateChangeSuite) TestTwoStates() {
 		}
 		testInfo.sqlInfos[i] = sqlInfo
 	}
-	err := testInfo.createSessions(s.store, "test_db_state")
-	s.Require().NoError(err)
+	require.NoError(t, testInfo.createSessions(store, "test_db_state"))
+
 	// Fill the SQLs and expected error messages.
 	testInfo.sqlInfos[0].sql = "insert into t (c1, c2, c3, c4) value(2, 'b', 'N', '2017-07-02')"
 	testInfo.sqlInfos[1].sql = "insert into t (c1, c2, c3, d3, c4) value(3, 'b', 'N', 'a', '2017-07-03')"
@@ -241,24 +217,17 @@ func (s *stateChangeSuite) TestTwoStates() {
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
 	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[planner:1136]Column count doesn't match value count at row 1"
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
-	s.test(alterTableSQL, testInfo)
-	// TODO: Add more DDL statements.
-}
-
-func (s *stateChangeSuite) test(alterTableSQL string, testInfo *testExecInfo) {
-	s.tk.MustExec(`create table t (
+	tk.MustExec(`create table t (
 		c1 int,
 		c2 varchar(64),
 		c3 enum('N','Y') not null default 'N',
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
-	defer s.tk.MustExec("drop table t")
-
-	s.tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
+	tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
 
 	callback := &ddl.TestDDLCallback{}
 	prevState := model.StateNone
-	s.Require().NoError(testInfo.parseSQLs(parser.New()))
+	require.NoError(t, testInfo.parseSQLs(parser.New()))
 
 	times := 0
 	var checkErr error
@@ -310,16 +279,16 @@ func (s *stateChangeSuite) test(alterTableSQL string, testInfo *testExecInfo) {
 			}
 		}
 	}
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	d.SetHook(callback)
-	s.tk.MustExec(alterTableSQL)
-	s.Require().NoError(testInfo.compileSQL(4))
-	s.Require().NoError(testInfo.execSQL(4))
+	tk.MustExec(alterTableSQL)
+	require.NoError(t, testInfo.compileSQL(4))
+	require.NoError(t, testInfo.execSQL(4))
 	// Mock the server is in `write reorg` state.
-	s.Require().NoError(testInfo.execSQL(3))
-	s.Require().NoError(checkErr)
+	require.NoError(t, testInfo.execSQL(3))
+	require.NoError(t, checkErr)
 }
 
 type stateCase struct {
@@ -447,37 +416,31 @@ type expectQuery struct {
 	rows []string
 }
 
-func (s *stateChangeSuite) TestAppendEnum() {
-	s.tk.MustExec(`create table t (
+func TestAppendEnum(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table t (
 			c1 varchar(64),
 			c2 enum('N','Y') not null default 'N',
 			c3 timestamp on update current_timestamp,
 			c4 int primary key,
 			unique key idx2 (c2, c3))`)
-	defer s.tk.MustExec("drop table t")
-	s.tk.MustExec("insert into t values('a', 'N', '2017-07-01', 8)")
+	tk.MustExec("insert into t values('a', 'N', '2017-07-01', 8)")
 	// Make sure these SQLs use the plan of index scan.
-	s.tk.MustExec("drop stats t")
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
-
-	err := s.tk.ExecToErr("insert into t values('a', 'A', '2018-09-19', 9)")
-	s.Require().EqualError(err, "[types:1265]Data truncated for column 'c2' at row 1")
-
-	s.tk.MustExec("alter table t change c2 c2 enum('N') DEFAULT 'N'")
-	s.tk.MustExec("alter table t change c2 c2 int default 0")
-	s.tk.MustExec("alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'")
-	s.tk.MustExec("insert into t values('a', 'A', '2018-09-20', 10)")
-	s.tk.MustExec("insert into t (c1, c3, c4) values('a', '2018-09-21', 11)")
-
-	tk = testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
+	tk.MustExec("drop stats t")
+	tk.MustGetErrMsg("insert into t values('a', 'A', '2018-09-19', 9)", "[types:1265]Data truncated for column 'c2' at row 1")
+	tk.MustExec("alter table t change c2 c2 enum('N') DEFAULT 'N'")
+	tk.MustExec("alter table t change c2 c2 int default 0")
+	tk.MustExec("alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'")
+	tk.MustExec("insert into t values('a', 'A', '2018-09-20', 10)")
+	tk.MustExec("insert into t (c1, c3, c4) values('a', '2018-09-21', 11)")
 	tk.MustQuery("select c4, c2 from t order by c4 asc").Check(testkit.Rows("8 N", "10 A", "11 A"))
-
 	// fixed
-	s.tk.MustExec("update t set c2='N' where c4 = 10")
+	tk.MustExec("update t set c2='N' where c4 = 10")
 	tk.MustQuery("select c2 from t where c4 = 10").Check(testkit.Rows("N"))
-
 }
 
 // https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
@@ -912,14 +875,16 @@ func runTestInSchemaState(
 	}
 }
 
-func (s *stateChangeSuite) TestShowIndex() {
-	s.tk.MustExec(`create table t(c1 int primary key nonclustered, c2 int)`)
-	defer s.tk.MustExec("drop table t")
+func TestShowIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table t(c1 int primary key nonclustered, c2 int)`)
 
 	callback := &ddl.TestDDLCallback{}
 	prevState := model.StateNone
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
 	showIndexSQL := `show index from t`
 	var checkErr error
 	callback.OnJobUpdatedExported = func(job *model.Job) {
@@ -942,12 +907,12 @@ func (s *stateChangeSuite) TestShowIndex() {
 		}
 	}
 
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
 	alterTableSQL := `alter table t add index c2(c2)`
-	s.tk.MustExec(alterTableSQL)
-	s.Require().NoError(checkErr)
+	tk.MustExec(alterTableSQL)
+	require.NoError(t, checkErr)
 
 	tk.MustQuery(showIndexSQL).Check(testkit.Rows(
 		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO",
@@ -955,7 +920,7 @@ func (s *stateChangeSuite) TestShowIndex() {
 	))
 	d.SetHook(originalCallback)
 
-	s.tk.MustExec(`create table tr(
+	tk.MustExec(`create table tr(
 		id int, name varchar(50),
 		purchased date
 	)
@@ -967,27 +932,26 @@ func (s *stateChangeSuite) TestShowIndex() {
     	partition p4 values less than (2010),
     	partition p5 values less than (2015)
    	);`)
-	defer s.tk.MustExec("drop table tr")
-	s.tk.MustExec("create index idx1 on tr (purchased);")
+	tk.MustExec("create index idx1 on tr (purchased);")
 	tk.MustQuery("show index from tr;").Check(testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 
-	s.tk.MustExec("drop table if exists tr")
-	s.tk.MustExec("create table tr(id int primary key clustered, v int, key vv(v))")
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr(id int primary key clustered, v int, key vv(v))")
 	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES", "tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY YES", "vv NO"))
 
-	s.tk.MustExec("drop table if exists tr")
-	s.tk.MustExec("create table tr(id int primary key nonclustered, v int, key vv(v))")
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr(id int primary key nonclustered, v int, key vv(v))")
 	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
 
-	s.tk.MustExec("drop table if exists tr")
-	s.tk.MustExec("create table tr(id char(100) primary key clustered, v int, key vv(v))")
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr(id char(100) primary key clustered, v int, key vv(v))")
 	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY YES", "vv NO"))
 
-	s.tk.MustExec("drop table if exists tr")
-	s.tk.MustExec("create table tr(id char(100) primary key nonclustered, v int, key vv(v))")
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr(id char(100) primary key nonclustered, v int, key vv(v))")
 	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
 }
@@ -1590,16 +1554,19 @@ func TestDDLIfExists(t *testing.T) {
 // This test is used to simulate the following conditions:
 // In a cluster, TiDB "a" executes the DDL.
 // TiDB "b" fails to load schema, then TiDB "b" executes the DDL statement associated with the DDL statement executed by "a".
-func (s *stateChangeSuite) TestParallelDDLBeforeRunDDLJob() {
-	defer s.tk.MustExec("drop table test_table")
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("create table test_table (c1 int, c2 int default 1, index (c1))")
+func TestParallelDDLBeforeRunDDLJo(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table test_table (c1 int, c2 int default 1, index (c1))")
 
 	// Create two sessions.
-	tk1 := testkit.NewTestKit(s.T(), s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test_db_state")
 
-	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test_db_state")
 
 	intercept := &ddl.TestInterceptor{}
@@ -1639,7 +1606,7 @@ func (s *stateChangeSuite) TestParallelDDLBeforeRunDDLJob() {
 
 		return info
 	}
-	d := s.dom.DDL()
+	d := dom.DDL()
 	d.(ddl.DDLForTest).SetInterceptor(intercept)
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
@@ -1654,9 +1621,7 @@ func (s *stateChangeSuite) TestParallelDDLBeforeRunDDLJob() {
 	})
 	wg.Run(func() {
 		tk2.Session().SetConnectionID(2)
-		err := tk2.ExecToErr("alter table test_table add column c2 int")
-		s.Require().Error(err)
-		s.Require().Contains(err.Error(), "Information schema is changed")
+		tk2.MustMatchErrMsg("alter table test_table add column c2 int", ".*Information schema is changed.*")
 	})
 
 	wg.Wait()
