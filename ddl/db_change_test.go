@@ -1589,16 +1589,18 @@ func (s *stateChangeSuite) TestWriteReorgForColumnTypeChange() {
 	s.runTestInSchemaState(model.StateWriteReorganization, false, dropColumnsSQL, sqls, query)
 }
 
-func (s *stateChangeSuite) TestCreateExpressionIndex() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists t")
+func TestCreateExpressionIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("create table t(a int default 0, b int default 0)")
 	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 
-	tk1 := testkit.NewTestKit(s.T(), s.store)
-	tk1.MustExec("use test_db_state")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 
 	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
 	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
@@ -1607,7 +1609,7 @@ func (s *stateChangeSuite) TestCreateExpressionIndex() {
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
@@ -1616,7 +1618,7 @@ func (s *stateChangeSuite) TestCreateExpressionIndex() {
 			return
 		}
 		err := originalCallback.OnChanged(nil)
-		s.Require().NoError(err)
+		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1652,28 +1654,29 @@ func (s *stateChangeSuite) TestCreateExpressionIndex() {
 
 	d.SetHook(callback)
 	tk.MustExec("alter table t add index idx((b+1))")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
 }
 
-func (s *stateChangeSuite) TestCreateUniqueExpressionIndex() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists t")
+func TestCreateUniqueExpressionIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("create table t(a int default 0, b int default 0)")
-	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 
-	tk1 := testkit.NewTestKit(s.T(), s.store)
-	tk1.MustExec("use test_db_state")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 
 	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
 
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
@@ -1682,7 +1685,7 @@ func (s *stateChangeSuite) TestCreateUniqueExpressionIndex() {
 			return
 		}
 		err := originalCallback.OnChanged(nil)
-		s.Require().NoError(err)
+		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1764,27 +1767,28 @@ func (s *stateChangeSuite) TestCreateUniqueExpressionIndex() {
 
 	d.SetHook(callback)
 	tk.MustExec("alter table t add unique index idx((a*b+1))")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 11", "1 7", "2 7", "5 7", "8 8", "11 10", "13 9"))
 }
 
-func (s *stateChangeSuite) TestDropExpressionIndex() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists t")
+func TestDropExpressionIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("create table t(a int default 0, b int default 0, key idx((b+1)))")
-	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 
-	tk1 := testkit.NewTestKit(s.T(), s.store)
-	tk1.MustExec("use test_db_state")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
 	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
 	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
 	var checkErr error
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
@@ -1793,7 +1797,7 @@ func (s *stateChangeSuite) TestDropExpressionIndex() {
 			return
 		}
 		err := originalCallback.OnChanged(nil)
-		s.Require().NoError(err)
+		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1824,36 +1828,36 @@ func (s *stateChangeSuite) TestDropExpressionIndex() {
 
 	d.SetHook(callback)
 	tk.MustExec("alter table t drop index idx")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10"))
 }
 
-func (s *stateChangeSuite) TestExpressionIndexDDLError() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists t")
+func TestExpressionIndexDDLError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx((a+b)))")
 	tk.MustGetErrCode("alter table t rename column b to b2", errno.ErrDependentByFunctionalIndex)
 	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
-	tk.MustExec("drop table t")
 }
 
-func (s *stateChangeSuite) TestRestrainDropColumnWithIndex() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestRestrainDropColumnWithIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b int, index(a));")
+	tk.MustExec("create table t (a int, b int, index(a))")
 	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=0")
 	tk.MustQuery("select @@tidb_enable_change_multi_schema").Check(testkit.Rows("0"))
-	tk.MustGetErrCode("alter table t drop column a;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t drop column a", errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=1")
-	tk.MustExec("alter table t drop column a;")
-	tk.MustExec("drop table if exists t;")
+	tk.MustExec("alter table t drop column a")
 }
 
 func TestParallelRenameTable(t *testing.T) {
-	store, d, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1871,10 +1875,10 @@ func TestParallelRenameTable(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var checkErr error
-	d2 := d.DDL()
+	d2 := dom.DDL()
 	originalCallback := d2.GetHook()
 	defer d2.SetHook(originalCallback)
-	callback := &ddl.TestDDLCallback{Do: d}
+	callback := &ddl.TestDDLCallback{Do: dom}
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateNone:
