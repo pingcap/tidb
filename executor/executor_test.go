@@ -225,6 +225,9 @@ func TestSelectWithoutFrom(t *testing.T) {
 	tk.MustQuery("select 1 + 2*3;").Check(testkit.Rows("7"))
 	tk.MustQuery(`select _utf8"string";`).Check(testkit.Rows("string"))
 	tk.MustQuery("select 1 order by 1;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT  'a' as f1 having f1 = 'a';").Check(testkit.Rows("a"))
+	tk.MustQuery("SELECT (SELECT * FROM (SELECT 'a') t) AS f1 HAVING (f1 = 'a' OR TRUE);").Check(testkit.Rows("a"))
+	tk.MustQuery("SELECT (SELECT * FROM (SELECT 'a') t) + 1 AS f1 HAVING (f1 = 'a' OR TRUE)").Check(testkit.Rows("1"))
 }
 
 // TestSelectBackslashN Issue 3685.
