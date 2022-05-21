@@ -17,7 +17,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,16 +24,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -45,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -953,7 +948,7 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumn() {
 		s.Require().NoError(err2)
 		s.tk.MustExec("select * from t")
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql, sql, f)
 }
 
 func (s *stateChangeSuite) TestParallelAlterModifyColumnWithData() {
@@ -977,7 +972,7 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnWithData() {
 		s.Require().Equal("33", sRows[1][2])
 		s.Require().NoError(rs.Close())
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql, sql, f)
 
 	// modify column: int -> double
 	// rename column: double -> int
@@ -1000,7 +995,7 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnWithData() {
 		s.Require().Equal("22", sRows[1][1])
 		s.Require().NoError(rs.Close())
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 
 	// modify column: int -> double
 	// modify column: double -> int
@@ -1022,7 +1017,7 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnWithData() {
 		s.Require().Equal("22", sRows[1][1])
 		s.Require().NoError(rs.Close())
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData() {
@@ -1048,7 +1043,7 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData() {
 		s.Require().Equal("33", sRows[1][2])
 		s.Require().NoError(rs.Close())
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql, sql, f)
 
 	// int null -> double not null
 	// double not null -> int null
@@ -1074,7 +1069,7 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData() {
 		s.Require().Equal("22", sRows[2][1])
 		s.Require().NoError(rs.Close())
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColumn() {
@@ -1085,7 +1080,7 @@ func (s *stateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColumn() 
 		s.Require().EqualError(err2, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 		s.tk.MustExec("select * from t")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAlterModifyColumnAndAddPK() {
@@ -1096,7 +1091,7 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnAndAddPK() {
 		s.Require().EqualError(err2, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 		s.tk.MustExec("select * from t")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 // TODO: This test is not a test that performs two DDLs in parallel.
@@ -1110,7 +1105,7 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnAndAddPK() {
 //			s.Require().ErrorEqual(err2, "[ddl:1265]Data truncated for column 'b2' at row 1")
 // 		}
 // 	}
-// 	s.testControlParallelExecSQL("", sql1, sql2, f)
+// 	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 // }
 
 func (s *stateChangeSuite) TestParallelAddColumAndSetDefaultValue() {
@@ -1130,7 +1125,7 @@ func (s *stateChangeSuite) TestParallelAddColumAndSetDefaultValue() {
 		s.Require().NoError(err2)
 		s.tk.MustExec("delete from tx where c1='a'")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelChangeColumnName() {
@@ -1148,7 +1143,7 @@ func (s *stateChangeSuite) TestParallelChangeColumnName() {
 		}
 		s.Require().EqualError(oneErr, "[schema:1060]Duplicate column name 'aa'")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAlterAddIndex() {
@@ -1158,7 +1153,7 @@ func (s *stateChangeSuite) TestParallelAlterAddIndex() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[ddl:1061]index already exist index_b")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAlterAddExpressionIndex() {
@@ -1168,7 +1163,7 @@ func (s *stateChangeSuite) TestParallelAlterAddExpressionIndex() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[ddl:1061]index already exist expr_index_b")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAddPrimaryKey() {
@@ -1178,7 +1173,7 @@ func (s *stateChangeSuite) TestParallelAddPrimaryKey() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[schema:1068]Multiple primary key defined")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAlterAddPartition() {
@@ -1192,7 +1187,7 @@ func (s *stateChangeSuite) TestParallelAlterAddPartition() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelDropColumn() {
@@ -1201,7 +1196,7 @@ func (s *stateChangeSuite) TestParallelDropColumn() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[ddl:1091]column c doesn't exist")
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql, sql, f)
 }
 
 func (s *stateChangeSuite) TestParallelDropColumns() {
@@ -1210,7 +1205,7 @@ func (s *stateChangeSuite) TestParallelDropColumns() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[ddl:1091]column b doesn't exist")
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql, sql, f)
 }
 
 func (s *stateChangeSuite) TestParallelDropIfExistsColumns() {
@@ -1219,7 +1214,7 @@ func (s *stateChangeSuite) TestParallelDropIfExistsColumns() {
 		s.Require().NoError(err1)
 		s.Require().NoError(err2)
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql, sql, f)
 }
 
 func (s *stateChangeSuite) TestParallelDropIndex() {
@@ -1229,7 +1224,7 @@ func (s *stateChangeSuite) TestParallelDropIndex() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelDropPrimaryKey() {
@@ -1239,7 +1234,7 @@ func (s *stateChangeSuite) TestParallelDropPrimaryKey() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[ddl:1091]index PRIMARY doesn't exist")
 	}
-	s.testControlParallelExecSQL("ALTER TABLE t add primary key index_b(c);", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "ALTER TABLE t add primary key index_b(c);", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelCreateAndRename() {
@@ -1250,7 +1245,7 @@ func (s *stateChangeSuite) TestParallelCreateAndRename() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[schema:1050]Table 't_exists' already exists")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAlterAndDropSchema() {
@@ -1261,10 +1256,10 @@ func (s *stateChangeSuite) TestParallelAlterAndDropSchema() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[schema:1008]Can't drop database ''; database doesn't exist")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
+func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain) (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
 	callback.OnJobUpdatedExported = func(job *model.Job) {
@@ -1273,7 +1268,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 		}
 		var qLen int
 		for {
-			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 				jobs, err1 := ddl.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
@@ -1281,7 +1276,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 				qLen = len(jobs)
 				return nil
 			})
-			s.Require().NoError(err)
+			require.NoError(t, err)
 			if qLen == 2 {
 				break
 			}
@@ -1289,21 +1284,21 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 		}
 		times++
 	}
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
 
-	tk1 := testkit.NewTestKit(s.T(), s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test_db_state")
 
-	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test_db_state")
 	ch := make(chan struct{})
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
 		var qLen int
 		for {
-			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 				jobs, err3 := ddl.GetDDLJobs(txn)
 				if err3 != nil {
 					return err3
@@ -1311,7 +1306,7 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 				qLen = len(jobs)
 				return nil
 			})
-			s.Require().NoError(err)
+			require.NoError(t, err)
 			if qLen == 1 {
 				// Make sure sql2 is executed after the sql1.
 				close(ch)
@@ -1323,26 +1318,26 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 	return tk1, tk2, ch, originalCallback
 }
 
-func (s *stateChangeSuite) testControlParallelExecSQL(preSQL, sql1, sql2 string, f func(e1, e2 error)) {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("create table t(a int, b int, c double default null, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
+func testControlParallelExecSQL(t *testing.T, tk *testkit.TestKit, store kv.Storage, dom *domain.Domain, preSQL, sql1, sql2 string, f func(e1, e2 error)) {
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table t(a int, b int, c double default null, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
 	if len(preSQL) != 0 {
-		s.tk.MustExec(preSQL)
+		tk.MustExec(preSQL)
 	}
-	s.tk.MustExec("insert into t values(1, 2, 3.1234, 4, 5)")
+	tk.MustExec("insert into t values(1, 2, 3.1234, 4, 5)")
 
-	defer s.tk.MustExec("drop table t")
+	defer tk.MustExec("drop table t")
 
 	// fixed
-	s.tk.MustExec("drop table if exists t_part")
-	s.tk.MustExec(`create table t_part (a int key)
+	tk.MustExec("drop table if exists t_part")
+	tk.MustExec(`create table t_part (a int key)
 	 	partition by range(a) (
 	 	partition p0 values less than (10),
 	 	partition p1 values less than (20)
 	 	);`)
 
-	tk1, tk2, ch, originalCallback := s.prepareTestControlParallelExecSQL()
-	defer s.dom.DDL().SetHook(originalCallback)
+	tk1, tk2, ch, originalCallback := prepareTestControlParallelExecSQL(t, store, dom)
+	defer dom.DDL().SetHook(originalCallback)
 
 	var err1 error
 	var err2 error
@@ -1351,7 +1346,7 @@ func (s *stateChangeSuite) testControlParallelExecSQL(preSQL, sql1, sql2 string,
 		var rs sqlexec.RecordSet
 		rs, err1 = tk1.Exec(sql1)
 		if err1 == nil && rs != nil {
-			s.Require().NoError(rs.Close())
+			require.NoError(t, rs.Close())
 		}
 	})
 	wg.Run(func() {
@@ -1359,45 +1354,12 @@ func (s *stateChangeSuite) testControlParallelExecSQL(preSQL, sql1, sql2 string,
 		var rs sqlexec.RecordSet
 		rs, err2 = tk2.Exec(sql2)
 		if err2 == nil && rs != nil {
-			s.Require().NoError(rs.Close())
+			require.NoError(t, rs.Close())
 		}
 	})
 
 	wg.Wait()
 	f(err1, err2)
-}
-
-func (s *stateChangeSuite) TestParallelUpdateTableReplica() {
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
-	defer func() {
-		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
-	}()
-
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists t1;")
-	s.tk.MustExec("create table t1 (a int);")
-	s.tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
-
-	tk1, tk2, ch, originalCallback := s.prepareTestControlParallelExecSQL()
-	defer s.dom.DDL().SetHook(originalCallback)
-
-	t1 := external.GetTableByName(s.T(), s.tk, "test_db_state", "t1")
-
-	var err1 error
-	var err2 error
-	var wg util.WaitGroupWrapper
-	wg.Run(func() {
-		// Mock for table tiflash replica was available.
-		err1 = domain.GetDomain(tk1.Session()).DDL().UpdateTableReplicaInfo(tk1.Session(), t1.Meta().ID, true)
-	})
-	wg.Run(func() {
-		<-ch
-		// Mock for table tiflash replica was available.
-		err2 = domain.GetDomain(tk2.Session()).DDL().UpdateTableReplicaInfo(tk2.Session(), t1.Meta().ID, true)
-	})
-	wg.Wait()
-	s.Require().NoError(err1)
-	s.Require().EqualError(err2, "[ddl:-1]the replica available status of table t1 is already updated")
 }
 
 func (s *stateChangeSuite) testParallelExecSQL(sql string) {
@@ -1578,7 +1540,7 @@ func (s *stateChangeSuite) TestParallelAlterSchemaCharsetAndCollate() {
 		s.Require().NoError(err1)
 		s.Require().NoError(err2)
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql, sql, f)
 	sql = `SELECT default_character_set_name, default_collation_name
 			FROM information_schema.schemata
 			WHERE schema_name='test_db_state'`
@@ -1594,7 +1556,7 @@ func (s *stateChangeSuite) TestParallelTruncateTableAndAddColumn() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 // TestParallelTruncateTableAndAddColumns tests add columns when truncate table.
@@ -1605,108 +1567,7 @@ func (s *stateChangeSuite) TestParallelTruncateTableAndAddColumns() {
 		s.Require().NoError(err1)
 		s.Require().EqualError(err2, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
-}
-
-// TestParallelFlashbackTable tests parallel flashback table.
-func (s *stateChangeSuite) TestParallelFlashbackTable() {
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
-	defer func(originGC bool) {
-		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
-		if originGC {
-			ddlutil.EmulatorGCEnable()
-		} else {
-			ddlutil.EmulatorGCDisable()
-		}
-	}(ddlutil.IsEmulatorGCEnable())
-
-	// disable emulator GC.
-	// Disable emulator GC, otherwise, emulator GC will delete table record as soon as possible after executing drop table DDL.
-	ddlutil.EmulatorGCDisable()
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	tk := testkit.NewTestKit(s.T(), s.store)
-	// clear GC variables first.
-	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
-	// set GC safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-	// set GC enable.
-	err := gcutil.EnableGC(tk.Session())
-	s.Require().NoError(err)
-
-	// prepare dropped table.
-	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int);")
-	tk.MustExec("drop table if exists t")
-	// Test parallel flashback table.
-	sql1 := "flashback table t to t_flashback"
-	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[schema:1050]Table 't_flashback' already exists")
-	}
-	s.testControlParallelExecSQL("", sql1, sql1, f)
-
-	// Test parallel flashback table with different name
-	tk.MustExec("drop table t_flashback")
-	sql1 = "flashback table t_flashback"
-	sql2 := "flashback table t_flashback to t_flashback2"
-	s.testControlParallelExecSQL("", sql1, sql2, f)
-}
-
-// TestModifyColumnTypeArgs test job raw args won't be updated when error occurs in `updateVersionAndTableInfo`.
-func (s *stateChangeSuite) TestModifyColumnTypeArgs() {
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(2)`))
-	defer func() {
-		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"))
-	}()
-
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_modify_column_args")
-	tk.MustExec("create table t_modify_column_args(a int, unique(a))")
-
-	err := tk.ExecToErr("alter table t_modify_column_args modify column a tinyint")
-	s.Require().Error(err)
-	// error goes like `mock update version and tableInfo error,jobID=xx`
-	strs := strings.Split(err.Error(), ",")
-	s.Require().Equal("[ddl:-1]mock update version and tableInfo error", strs[0])
-
-	jobID := strings.Split(strs[1], "=")[1]
-	tbl := external.GetTableByName(s.T(), tk, "test", "t_modify_column_args")
-	s.Require().Len(tbl.Meta().Columns, 1)
-	s.Require().Len(tbl.Meta().Indices, 1)
-
-	id, err := strconv.Atoi(jobID)
-	s.Require().NoError(err)
-	var historyJob *model.Job
-	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		historyJob, err = t.GetHistoryDDLJob(int64(id))
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-	s.Require().NoError(err)
-	s.Require().NotNil(historyJob)
-
-	var (
-		newCol                *model.ColumnInfo
-		oldColName            *model.CIStr
-		modifyColumnTp        byte
-		updatedAutoRandomBits uint64
-		changingCol           *model.ColumnInfo
-		changingIdxs          []*model.IndexInfo
-	)
-	pos := &ast.ColumnPosition{}
-	err = historyJob.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
-	s.Require().NoError(err)
-	s.Require().Nil(changingCol)
-	s.Require().Nil(changingIdxs)
+	testControlParallelExecSQL(s.T(), s.tk, s.store, s.dom, "", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestWriteReorgForColumnTypeChange() {
