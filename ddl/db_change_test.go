@@ -481,38 +481,52 @@ func (s *stateChangeSuite) TestAppendEnum() {
 }
 
 // https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
-func (s *stateChangeSuite) TestWriteOnlyWriteNULL() {
+func TestWriteOnlyWriteNULL(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 8 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
 	expectQuery := &expectQuery{"select c4, c5 from t", []string{"8 1"}}
-	s.runTestInSchemaState(model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
-func (s *stateChangeSuite) TestWriteOnlyOnDupUpdate() {
+func TestWriteOnlyOnDupUpdate(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t", nil}
 	sqls[1] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
 	expectQuery := &expectQuery{"select c4, c5 from t", []string{"2 1"}}
-	s.runTestInSchemaState(model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
-func (s *stateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns() {
+func TestWriteOnlyOnDupUpdateForAddColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t", nil}
 	sqls[1] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	addColumnsSQL := "alter table t add column c5 int not null default 1 after c4, add column c44 int not null default 1"
 	expectQuery := &expectQuery{"select c4, c5, c44 from t", []string{"2 1 1"}}
-	s.runTestInSchemaState(model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
 }
 
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnTimestampToInt() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestWriteReorgForModifyColumnTimestampToInt(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists tt")
 	tk.MustExec("create table tt(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
 	tk.MustExec("insert into tt values();")
 	defer tk.MustExec("drop table if exists tt")
@@ -521,7 +535,7 @@ func (s *stateChangeSuite) TestWriteReorgForModifyColumnTimestampToInt() {
 	sqls[0] = sqlWithErr{"insert into tt values();", nil}
 	modifyColumnSQL := "alter table tt modify column c1 bigint;"
 	expectQuery := &expectQuery{"select c1 from tt", []string{"20200710010508", "20200710010508"}}
-	s.runTestInSchemaState(model.StateWriteReorganization, true, modifyColumnSQL, sqls, expectQuery)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteReorganization, true, modifyColumnSQL, sqls, expectQuery)
 }
 
 type idxType byte
@@ -533,27 +547,30 @@ const (
 )
 
 // TestWriteReorgForModifyColumn tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumn() {
+func TestWriteReorgForModifyColumn(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
-	s.testModifyColumn(model.StateWriteReorganization, modifyColumnSQL, noneIdx)
+	testModifyColumn(t, model.StateWriteReorganization, modifyColumnSQL, noneIdx)
 }
 
 // TestWriteReorgForModifyColumnWithUniqIdx tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithUniqIdx() {
+func TestWriteReorgForModifyColumnWithUniqIdx(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint unsigned not null default 1 first"
-	s.testModifyColumn(model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
+	testModifyColumn(t, model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
 }
 
 // TestWriteReorgForModifyColumnWithPKIsHandle tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle() {
+func TestWriteReorgForModifyColumnWithPKIsHandle(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+
 	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
 
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists tt")
-	s.tk.MustExec(`create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a) clustered, index idx2(a, c))`)
-	s.tk.MustExec("insert into tt (a, c) values(-1, -11)")
-	s.tk.MustExec("insert into tt (a, c) values(1, 11)")
-	defer s.tk.MustExec("drop table if exists tt")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a) clustered, index idx2(a, c))`)
+	tk.MustExec("insert into tt (a, c) values(-1, -11)")
+	tk.MustExec("insert into tt (a, c) values(1, 11)")
 
 	sqls := make([]sqlWithErr, 12)
 	sqls[0] = sqlWithErr{"delete from tt where c = -11", nil}
@@ -570,48 +587,51 @@ func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle() {
 	sqls[11] = sqlWithErr{"replace into tt values(6, 66, 56)", nil}
 
 	query := &expectQuery{sql: "admin check table tt;", rows: nil}
-	s.runTestInSchemaState(model.StateWriteReorganization, false, modifyColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteReorganization, false, modifyColumnSQL, sqls, query)
 }
 
 // TestWriteReorgForModifyColumnWithPrimaryIdx tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithPrimaryIdx() {
+func TestWriteReorgForModifyColumnWithPrimaryIdx(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
-	s.testModifyColumn(model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
+	testModifyColumn(t, model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
 }
 
 // TestWriteReorgForModifyColumnWithoutFirst tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithoutFirst() {
+func TestWriteReorgForModifyColumnWithoutFirst(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1"
-	s.testModifyColumn(model.StateWriteReorganization, modifyColumnSQL, noneIdx)
+	testModifyColumn(t, model.StateWriteReorganization, modifyColumnSQL, noneIdx)
 }
 
 // TestWriteReorgForModifyColumnWithoutDefaultVal tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithoutDefaultVal() {
+func TestWriteReorgForModifyColumnWithoutDefaultVal(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint first"
-	s.testModifyColumn(model.StateWriteReorganization, modifyColumnSQL, noneIdx)
+	testModifyColumn(t, model.StateWriteReorganization, modifyColumnSQL, noneIdx)
 }
 
 // TestDeleteOnlyForModifyColumnWithoutDefaultVal tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestDeleteOnlyForModifyColumnWithoutDefaultVal() {
+func TestDeleteOnlyForModifyColumnWithoutDefaultVal(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint first"
-	s.testModifyColumn(model.StateDeleteOnly, modifyColumnSQL, noneIdx)
+	testModifyColumn(t, model.StateDeleteOnly, modifyColumnSQL, noneIdx)
 }
 
-func (s *stateChangeSuite) testModifyColumn(state model.SchemaState, modifyColumnSQL string, idx idxType) {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists tt")
+func testModifyColumn(t *testing.T, state model.SchemaState, modifyColumnSQL string, idx idxType) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+
 	switch idx {
 	case uniqIdx:
-		s.tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, unique index idx(c), unique index idx1(a), index idx2(a, c))`)
+		tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, unique index idx(c), unique index idx1(a), index idx2(a, c))`)
 	case primaryIdx:
 		// TODO: Support modify/change column with the primary key.
-		s.tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), primary index idx1(a), index idx2(a, c))`)
+		tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), primary index idx1(a), index idx2(a, c))`)
 	default:
-		s.tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), index idx1(a), index idx2(a, c))`)
+		tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), index idx1(a), index idx2(a, c))`)
 	}
-	s.tk.MustExec("insert into tt (a, c) values('a', 11)")
-	s.tk.MustExec("insert into tt (a, c) values('b', 22)")
-	defer s.tk.MustExec("drop table if exists tt")
+	tk.MustExec("insert into tt (a, c) values('a', 11)")
+	tk.MustExec("insert into tt (a, c) values('b', 22)")
 
 	sqls := make([]sqlWithErr, 13)
 	sqls[0] = sqlWithErr{"delete from tt where c = 11", nil}
@@ -638,36 +658,46 @@ func (s *stateChangeSuite) testModifyColumn(state model.SchemaState, modifyColum
 	sqls[12] = sqlWithErr{"replace into tt values('a_replace_2', 77, 56)", nil}
 
 	query := &expectQuery{sql: "admin check table tt;", rows: nil}
-	s.runTestInSchemaState(state, false, modifyColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, state, false, modifyColumnSQL, sqls, query)
 }
 
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteOnly() {
+func TestWriteOnly(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t where c1 = 'a'", nil}
 	sqls[1] = sqlWithErr{"update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'", nil}
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 first"
-	s.runTestInSchemaState(model.StateWriteOnly, true, addColumnSQL, sqls, nil)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, addColumnSQL, sqls, nil)
 }
 
 // TestWriteOnlyForAddColumns tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteOnlyForAddColumns() {
+func TestWriteOnlyForAddColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t where c1 = 'a'", nil}
 	sqls[1] = sqlWithErr{"update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'", nil}
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
 	addColumnsSQL := "alter table t add column c5 int not null default 1 first, add column c6 int not null default 1"
-	s.runTestInSchemaState(model.StateWriteOnly, true, addColumnsSQL, sqls, nil)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, addColumnsSQL, sqls, nil)
 }
 
 // TestDeleteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestDeleteOnly() {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists tt")
-	s.tk.MustExec(`create table tt (c varchar(64), c4 int)`)
-	s.tk.MustExec("insert into tt (c, c4) values('a', 8)")
-	defer s.tk.MustExec("drop table if exists tt")
+func TestDeleteOnly(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table tt (c varchar(64), c4 int)`)
+	tk.MustExec("insert into tt (c, c4) values('a', 8)")
 
 	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
@@ -682,12 +712,15 @@ func (s *stateChangeSuite) TestDeleteOnly() {
 		errors.Errorf("[planner:1054]Unknown column 't.c1' in 'on clause'")}
 	query := &expectQuery{sql: "select * from t;", rows: []string{"N 2017-07-01 00:00:00 8"}}
 	dropColumnSQL := "alter table t drop column c1"
-	s.runTestInSchemaState(model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
 }
 
 // TestSchemaChangeForDropColumnWithIndexes test for modify data when a middle-state column with indexes in it.
-func (s *stateChangeSuite) TestSchemaChangeForDropColumnWithIndexes() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestSchemaChangeForDropColumnWithIndexes(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"delete from t1", nil}
@@ -703,16 +736,19 @@ func (s *stateChangeSuite) TestSchemaChangeForDropColumnWithIndexes() {
 	prepare()
 	dropColumnSQL := "alter table t1 drop column b"
 	query := &expectQuery{sql: "select * from t1;", rows: []string{}}
-	s.runTestInSchemaState(model.StateWriteOnly, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, dropColumnSQL, sqls, query)
 	prepare()
-	s.runTestInSchemaState(model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
 	prepare()
-	s.runTestInSchemaState(model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
 }
 
 // TestSchemaChangeForDropColumnWithIndexes test for modify data when some middle-state columns with indexes in it.
-func (s *stateChangeSuite) TestSchemaChangeForDropColumnsWithIndexes() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestSchemaChangeForDropColumnsWithIndexes(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"delete from t1", nil}
@@ -728,45 +764,52 @@ func (s *stateChangeSuite) TestSchemaChangeForDropColumnsWithIndexes() {
 	prepare()
 	dropColumnSQL := "alter table t1 drop column b, drop column d"
 	query := &expectQuery{sql: "select * from t1;", rows: []string{}}
-	s.runTestInSchemaState(model.StateWriteOnly, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, dropColumnSQL, sqls, query)
 	prepare()
-	s.runTestInSchemaState(model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
 	prepare()
-	s.runTestInSchemaState(model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
 }
 
 // TestDeleteOnlyForDropExpressionIndex tests for deleting data when the hidden column is delete-only state.
-func (s *stateChangeSuite) TestDeleteOnlyForDropExpressionIndex() {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists tt")
-	s.tk.MustExec(`create table tt (a int, b int)`)
-	s.tk.MustExec(`alter table tt add index expr_idx((a+1))`)
-	s.tk.MustExec("insert into tt (a, b) values(8, 8)")
-	defer s.tk.MustExec("drop table if exists tt")
+func TestDeleteOnlyForDropExpressionIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table tt (a int, b int)`)
+	tk.MustExec(`alter table tt add index expr_idx((a+1))`)
+	tk.MustExec("insert into tt (a, b) values(8, 8)")
 
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"delete from tt where b=8", nil}
 	dropIdxSQL := "alter table tt drop index expr_idx"
-	s.runTestInSchemaState(model.StateDeleteOnly, true, dropIdxSQL, sqls, nil)
-
-	s.tk.MustExec("admin check table tt")
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropIdxSQL, sqls, nil)
+	tk.MustExec("admin check table tt")
 }
 
 // TestDeleteOnlyForDropColumns tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestDeleteOnlyForDropColumns() {
+func TestDeleteOnlyForDropColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
 		errors.Errorf("Can't find column c1")}
 	dropColumnsSQL := "alter table t drop column c1, drop column c3"
-	s.runTestInSchemaState(model.StateDeleteOnly, true, dropColumnsSQL, sqls, nil)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnsSQL, sqls, nil)
 }
 
-func (s *stateChangeSuite) TestWriteOnlyForDropColumn() {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists tt")
-	s.tk.MustExec(`create table tt (c1 int, c4 int)`)
-	s.tk.MustExec("insert into tt (c1, c4) values(8, 8)")
-	defer s.tk.MustExec("drop table if exists tt")
+func TestWriteOnlyForDropColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table tt (c1 int, c4 int)`)
+	tk.MustExec("insert into tt (c1, c4) values(8, 8)")
 
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
@@ -776,14 +819,17 @@ func (s *stateChangeSuite) TestWriteOnlyForDropColumn() {
 	sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'where clause'")}
 	dropColumnSQL := "alter table t drop column c3"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"a N 8"}}
-	s.runTestInSchemaState(model.StateWriteOnly, false, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, false, dropColumnSQL, sqls, query)
 }
 
-func (s *stateChangeSuite) TestWriteOnlyForDropColumns() {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec(`create table t_drop_columns (c1 int, c4 int)`)
-	s.tk.MustExec("insert into t_drop_columns (c1, c4) values(8, 8)")
-	defer s.tk.MustExec("drop table t_drop_columns")
+func TestWriteOnlyForDropColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table t_drop_columns (c1 int, c4 int)`)
+	tk.MustExec("insert into t_drop_columns (c1, c4) values(8, 8)")
 
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c1' in 'field list'")}
@@ -792,34 +838,39 @@ func (s *stateChangeSuite) TestWriteOnlyForDropColumns() {
 	sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'where clause'")}
 	dropColumnsSQL := "alter table t drop column c3, drop column c1"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"N 8"}}
-	s.runTestInSchemaState(model.StateWriteOnly, false, dropColumnsSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, false, dropColumnsSQL, sqls, query)
 }
 
-func (s *stateChangeSuite) runTestInSchemaState(
+func runTestInSchemaState(
+	t *testing.T,
+	tk *testkit.TestKit,
+	store kv.Storage,
+	dom *domain.Domain,
 	state model.SchemaState,
 	isOnJobUpdated bool,
 	alterTableSQL string,
 	sqlWithErrs []sqlWithErr,
 	expectQuery *expectQuery,
 ) {
-	s.tk.MustExec(`create table t (
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
 	 	c1 varchar(64),
 	 	c2 enum('N','Y') not null default 'N',
 	 	c3 timestamp on update current_timestamp,
 	 	c4 int primary key,
 	 	unique key idx2 (c2))`)
-	defer s.tk.MustExec("drop table t")
-	s.tk.MustExec("insert into t values('a', 'N', '2017-07-01', 8)")
+	tk.MustExec("insert into t values('a', 'N', '2017-07-01', 8)")
 	// Make sure these SQLs use the plan of index scan.
-	s.tk.MustExec("drop stats t")
+	tk.MustExec("drop stats t")
 
-	callback := &ddl.TestDDLCallback{Do: s.dom}
+	callback := &ddl.TestDDLCallback{Do: dom}
 	prevState := model.StateNone
 	var checkErr error
-	se, err := session.CreateSession(s.store)
-	s.Require().NoError(err)
+	se, err := session.CreateSession(store)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "use test_db_state")
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	cbFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
@@ -841,19 +892,19 @@ func (s *stateChangeSuite) runTestInSchemaState(
 	} else {
 		callback.OnJobRunBeforeExported = cbFunc
 	}
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
-	s.tk.MustExec(alterTableSQL)
-	s.Require().NoError(checkErr)
+	tk.MustExec(alterTableSQL)
+	require.NoError(t, checkErr)
 	d.SetHook(originalCallback)
 
 	if expectQuery != nil {
-		tk := testkit.NewTestKit(s.T(), s.store)
+		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test_db_state")
 		rs, _ := tk.Exec(expectQuery.sql)
 		if expectQuery.rows == nil {
-			s.Require().Nil(rs)
+			require.Nil(t, rs)
 		} else {
 			rows := tk.ResultSetToResult(rs, fmt.Sprintf("sql:%s", expectQuery.sql))
 			rows.Check(testkit.Rows(expectQuery.rows...))
@@ -1662,8 +1713,11 @@ func TestParallelTruncateTableAndAddColumns(t *testing.T) {
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestWriteReorgForColumnTypeChange() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestWriteReorgForColumnTypeChange(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec(`CREATE TABLE t_ctc (
   a DOUBLE NULL DEFAULT '1.732088511183121',
@@ -1678,7 +1732,7 @@ func (s *stateChangeSuite) TestWriteReorgForColumnTypeChange() {
 	sqls[1] = sqlWithErr{"DELETE FROM t_ctc;", nil}
 	dropColumnsSQL := "alter table t_ctc change column a ddd TIME NULL DEFAULT '18:21:32' AFTER c;"
 	query := &expectQuery{sql: "admin check table t_ctc;", rows: nil}
-	s.runTestInSchemaState(model.StateWriteReorganization, false, dropColumnsSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteReorganization, false, dropColumnsSQL, sqls, query)
 }
 
 func TestCreateExpressionIndex(t *testing.T) {
