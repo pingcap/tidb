@@ -165,7 +165,7 @@ func TestParallelFlashbackTable(t *testing.T) {
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int);")
+	tk.MustExec("create table t (a int)")
 	tk.MustExec("drop table if exists t")
 	// Test parallel flashback table.
 	sql1 := "flashback table t to t_flashback"
