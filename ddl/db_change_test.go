@@ -1493,11 +1493,10 @@ func testControlParallelExecSQL(t *testing.T, tk *testkit.TestKit, store kv.Stor
 	f(err1, err2)
 }
 
-func (s *stateChangeSuite) testParallelExecSQL(sql string) {
-	tk1 := testkit.NewTestKit(s.T(), s.store)
+func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql string) {
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test_db_state")
-
-	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test_db_state")
 
 	var err2, err3 error
@@ -1512,7 +1511,7 @@ func (s *stateChangeSuite) testParallelExecSQL(sql string) {
 		})
 	}
 
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	d.SetHook(callback)
@@ -1523,67 +1522,68 @@ func (s *stateChangeSuite) testParallelExecSQL(sql string) {
 		err3 = tk2.ExecToErr(sql)
 	})
 	wg.Wait()
-	s.Require().NoError(err2)
-	s.Require().NoError(err3)
+	require.NoError(t, err2)
+	require.NoError(t, err3)
 }
 
 // TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
-func (s *stateChangeSuite) TestCreateTableIfNotExists() {
-	defer s.tk.MustExec("drop table test_not_exists")
-	s.testParallelExecSQL("create table if not exists test_not_exists(a int);")
+func TestCreateTableIfNotExists(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	dbChangeTestParallelExecSQL(t, store, dom, "create table if not exists test_not_exists(a int)")
 }
 
 // TestCreateDBIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
-func (s *stateChangeSuite) TestCreateDBIfNotExists() {
-	defer s.tk.MustExec("drop database test_not_exists")
-	s.testParallelExecSQL("create database if not exists test_not_exists;")
+func TestCreateDBIfNotExists(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	dbChangeTestParallelExecSQL(t, store, dom, "create database if not exists test_not_exists")
 }
 
 // TestDDLIfNotExists parallel exec some DDLs with `if not exists` clause. No error returns is expected.
-func (s *stateChangeSuite) TestDDLIfNotExists() {
-	defer s.tk.MustExec("drop table test_not_exists")
-	s.tk.MustExec("create table if not exists test_not_exists(a int)")
-
+func TestDDLIfNotExists(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table if not exists test_not_exists(a int)")
 	// ADD COLUMN
-	s.testParallelExecSQL("alter table test_not_exists add column if not exists b int")
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add column if not exists b int")
 	// ADD COLUMNS
-	s.testParallelExecSQL("alter table test_not_exists add column if not exists (c11 int, d11 int)")
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add column if not exists (c11 int, d11 int)")
 	// ADD INDEX
-	s.testParallelExecSQL("alter table test_not_exists add index if not exists idx_b (b)")
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add index if not exists idx_b (b)")
 	// CREATE INDEX
-	s.testParallelExecSQL("create index if not exists idx_b on test_not_exists (b)")
+	dbChangeTestParallelExecSQL(t, store, dom, "create index if not exists idx_b on test_not_exists (b)")
 }
 
 // TestDDLIfExists parallel exec some DDLs with `if exists` clause. No error returns is expected.
-func (s *stateChangeSuite) TestDDLIfExists() {
-	defer func() {
-		s.tk.MustExec("drop table test_exists")
-		s.tk.MustExec("drop table test_exists_2")
-	}()
-	s.tk.MustExec("create table if not exists test_exists (a int key, b int)")
-
+func TestDDLIfExists(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table if not exists test_exists (a int key, b int)")
 	// DROP COLUMNS
-	s.testParallelExecSQL("alter table test_exists drop column if exists c, drop column if exists d")
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop column if exists c, drop column if exists d")
 	// DROP COLUMN
-	s.testParallelExecSQL("alter table test_exists drop column if exists b") // only `a` exists now
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop column if exists b") // only `a` exists now
 	// CHANGE COLUMN
-	s.testParallelExecSQL("alter table test_exists change column if exists a c int") // only, `c` exists now
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists change column if exists a c int") // only, `c` exists now
 	// MODIFY COLUMN
-	s.testParallelExecSQL("alter table test_exists modify column if exists a bigint")
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists modify column if exists a bigint")
 	// DROP INDEX
-	s.tk.MustExec("alter table test_exists add index idx_c (c)")
-	s.testParallelExecSQL("alter table test_exists drop index if exists idx_c")
-
+	tk.MustExec("alter table test_exists add index idx_c (c)")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop index if exists idx_c")
 	// DROP PARTITION (ADD PARTITION tested in TestParallelAlterAddPartition)
-	s.tk.MustExec("create table test_exists_2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30))")
-	s.testParallelExecSQL("alter table test_exists_2 drop partition if exists p1")
+	tk.MustExec("create table test_exists_2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30))")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists_2 drop partition if exists p1")
 }
 
 // TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.
