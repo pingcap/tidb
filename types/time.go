@@ -724,6 +724,17 @@ func (t *Time) Add(sc *stmtctx.StatementContext, d Duration) (Time, error) {
 	return ret, ret.Check(sc)
 }
 
+// IsIncompleteDate Several functions are strict when passed a DATE() function value as their argument and reject incomplete dates with a day part of zero:
+// CONVERT_TZ(), DATE_ADD(), DATE_SUB(), DAYOFYEAR(), TIMESTAMPDIFF(),
+// TO_DAYS(), TO_SECONDS(), WEEK(), WEEKDAY(), WEEKOFYEAR(), YEARWEEK().
+// Mysql Doc: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html
+func (t *Time) IsIncompleteDate() bool {
+	if t.Day() == 0 || t.Month() == 0 {
+		return true
+	}
+	return false
+}
+
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
 // The unit for the result (an integer) is given by the unit argument.
 // The legal values for unit are "YEAR" "QUARTER" "MONTH" "DAY" "HOUR" "SECOND" and so on.
