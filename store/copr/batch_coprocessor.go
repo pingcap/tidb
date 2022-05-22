@@ -540,12 +540,27 @@ func buildBatchCopTasksForNonPartitionedTable(bo *backoff.Backoffer,
 	} else if engine == kv.TiFlashMPP {
 		return buildBatchCopTasksConsistentHash(bo, store, []*KeyRanges{ranges}, storeType)
 	} else {
-		return nil, errors.New(fmt.Sprint("unexpected engine type for tiflash: %v", engine))
+		return nil, errors.New(fmt.Sprintf("unexpected engine type: %v", engine))
 	}
 }
 
-func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, partitionIDs []int64) ([]*batchCopTask, error) {
-	batchTasks, err := buildBatchCopTasksCore(bo, store, rangesForEachPhysicalTable, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
+func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer,
+	store *kvStore,
+	rangesForEachPhysicalTable []*KeyRanges,
+	storeType kv.StoreType,
+	mppStoreLastFailTime map[string]time.Time,
+	ttl time.Duration,
+	balanceWithContinuity bool,
+	balanceContinuousRegionCount int64,
+	partitionIDs []int64,
+	engine kv.StoreType) (batchTasks []*batchCopTask, err error) {
+	if engine == kv.TiFlash {
+		batchTasks, err = buildBatchCopTasksCore(bo, store, rangesForEachPhysicalTable, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
+	} else if engine == kv.TiFlashMPP {
+		batchTasks, err = buildBatchCopTasksConsistentHash(bo, store, rangesForEachPhysicalTable, storeType)
+	} else {
+		err = errors.New(fmt.Sprintf("unexpected engine type: %v", engine))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -804,7 +819,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 			keyRanges = append(keyRanges, NewKeyRanges(pi.KeyRanges))
 			partitionIDs = append(partitionIDs, pi.ID)
 		}
-		tasks, err = buildBatchCopTasksForPartitionedTable(bo, c.store.kvStore, keyRanges, req.StoreType, nil, 0, false, 0, partitionIDs)
+		tasks, err = buildBatchCopTasksForPartitionedTable(bo, c.store.kvStore, keyRanges, req.StoreType, nil, 0, false, 0, partitionIDs, storeType)
 	} else {
 		ranges := NewKeyRanges(req.KeyRanges)
 		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store.kvStore, ranges, req.StoreType, nil, 0, false, 0, storeType)
@@ -977,7 +992,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 		}
 		keyRanges = append(keyRanges, NewKeyRanges(ranges))
 	}
-	ret, err := buildBatchCopTasksForPartitionedTable(bo, b.store, keyRanges, b.req.StoreType, nil, 0, false, 0, pid)
+	ret, err := buildBatchCopTasksForPartitionedTable(bo, b.store, keyRanges, b.req.StoreType, nil, 0, false, 0, pid, b.storeType)
 	return ret, err
 }
 

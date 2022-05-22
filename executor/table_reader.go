@@ -193,13 +193,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			// [9734095886065816709 9734095886065816708 9734095886065816707 65535 3  1] => rows reverse in UnionScan
 			firstPartRanges, secondPartRanges = secondPartRanges, firstPartRanges
 		}
-		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
+		storeType, err := e.considerTiFlashMPPStoreType()
+		if err != nil {
+			return err
+		}
+		kvReq, err := e.buildKVReq(ctx, firstPartRanges, storeType)
 		if err != nil {
 			return err
 		}
 		e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 		if len(secondPartRanges) != 0 {
-			kvReq, err = e.buildKVReq(ctx, secondPartRanges)
+			kvReq, err = e.buildKVReq(ctx, secondPartRanges, storeType)
 			if err != nil {
 				return err
 			}
@@ -270,13 +274,29 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
+func (e *TableReaderExecutor) considerTiFlashMPPStoreType() (_ kv.StoreType, err error) {
+	// If storeType is TiFlash and tidb_isolation_read_engine is "tiflash_mpp",
+	// then copTask will only be sent to tiflash_mpp nodes.
+	// Ideally, storeType should be setup ok at the planner phase rather than here.
+	// But this will cause too many changes, so kv.TiFlashMPP will only be considered in TableReader/MPPGather.
+	storeType := e.storeType
+	if storeType == kv.TiFlash {
+		storeType, err = variable.GetTiFlashEngine(e.ctx.GetSessionVars().GetIsolationReadEngines())
+	}
+	return storeType, err
+}
+
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResult returned by the callee
 // to fetch all results.
-func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
+func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (_ distsql.SelectResult, err error) {
+	storeType, err := e.considerTiFlashMPPStoreType()
+	if err != nil {
+		return nil, err
+	}
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
 		if !e.batchCop {
 			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
-			kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
+			kvReqs, err := e.buildKVReqSeparately(ctx, ranges, storeType)
 			if err != nil {
 				return nil, err
 			}
@@ -291,7 +311,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			return distsql.NewSerialSelectResults(results), nil
 		}
 		// Use PartitionTable Scan
-		kvReq, err := e.buildKVReqForPartitionTableScan(ctx, ranges)
+		kvReq, err := e.buildKVReqForPartitionTableScan(ctx, ranges, storeType)
 		if err != nil {
 			return nil, err
 		}
@@ -302,7 +322,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return result, nil
 	}
 
-	kvReq, err := e.buildKVReq(ctx, ranges)
+	kvReq, err := e.buildKVReq(ctx, ranges, storeType)
 	if err != nil {
 		return nil, err
 	}
@@ -315,23 +335,13 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	return result, nil
 }
 
-func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges []*ranger.Range) (_ []*kv.Request, err error) {
+func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges []*ranger.Range, storeType kv.StoreType) (_ []*kv.Request, err error) {
 	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
 	if err != nil {
 		return nil, err
 	}
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 
-	// If storeType is TiFlash and tidb_isolation_read_engine is "tiflash_mpp",
-	// then copTask will only be sent to tiflash_mpp nodes.
-	// Will be checked when sending copTask.
-	storeType := e.storeType
-	if storeType == kv.TiFlash {
-		storeType, err = variable.GetTiFlashEngine(e.ctx.GetSessionVars().GetIsolationReadEngines())
-		if err != nil {
-			return nil, err
-		}
-	}
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
 		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
@@ -359,7 +369,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	return kvReqs, nil
 }
 
-func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
+func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Context, ranges []*ranger.Range, storeType kv.StoreType) (_ *kv.Request, err error) {
 	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
 	if err != nil {
 		return nil, err
@@ -387,7 +397,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
-		SetStoreType(e.storeType).
+		SetStoreType(storeType).
 		SetAllowBatchCop(e.batchCop).Build()
 	if err != nil {
 		return nil, err
@@ -395,7 +405,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 	return kvReq, nil
 }
 
-func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
+func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.Range, storeType kv.StoreType) (_ *kv.Request, err error) {
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.kvRangeBuilder != nil {
@@ -418,7 +428,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
-		SetStoreType(e.storeType).
+		SetStoreType(storeType).
 		SetAllowBatchCop(e.batchCop)
 	return reqBuilder.Build()
 }

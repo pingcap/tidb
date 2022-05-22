@@ -77,7 +77,7 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context,
 			rangesForEachPartition[i] = NewKeyRanges(p.KeyRanges)
 			partitionIDs[i] = p.ID
 		}
-		tasks, err = buildBatchCopTasksForPartitionedTable(bo, c.store, rangesForEachPartition, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, partitionIDs)
+		tasks, err = buildBatchCopTasksForPartitionedTable(bo, c.store, rangesForEachPartition, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, partitionIDs, engine)
 	} else {
 		if req.KeyRanges == nil {
 			return c.selectAllTiFlashStore(), nil
