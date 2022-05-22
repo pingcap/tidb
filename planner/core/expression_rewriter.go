@@ -219,7 +219,6 @@ type expressionRewriter struct {
 	p          LogicalPlan
 	schema     *expression.Schema
 	names      []*types.FieldName
-	oldLen     int
 	err        error
 	aggrMap    map[*ast.AggregateFuncExpr]int
 	windowMap  map[*ast.WindowFuncExpr]int
