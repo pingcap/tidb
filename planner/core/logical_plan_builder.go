@@ -1310,6 +1310,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		schema.Append(col)
 		newNames = append(newNames, name)
 	}
+	schema.OldLen = oldLen
 	proj.SetSchema(schema)
 	proj.names = newNames
 	if expandGenerateColumn {

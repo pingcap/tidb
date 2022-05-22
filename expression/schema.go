@@ -46,6 +46,7 @@ type Schema struct {
 	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
 	// since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
 	UniqueKeys []KeyInfo
+	OldLen     int
 }
 
 // String implements fmt.Stringer interface.
@@ -73,6 +74,7 @@ func (s *Schema) Clone() *Schema {
 	}
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
+	schema.OldLen = s.OldLen
 	return schema
 }
 

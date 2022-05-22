@@ -219,6 +219,7 @@ type expressionRewriter struct {
 	p          LogicalPlan
 	schema     *expression.Schema
 	names      []*types.FieldName
+	oldLen     int
 	err        error
 	aggrMap    map[*ast.AggregateFuncExpr]int
 	windowMap  map[*ast.WindowFuncExpr]int
@@ -1417,7 +1418,11 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 		}
 		er.err = err
 	}
-	if er.err == nil && pos > 0 && pos <= er.schema.Len() && !er.schema.Columns[pos-1].IsHidden {
+	oldSchemaLen := er.schema.Len()
+	if er.schema.OldLen != 0 {
+		oldSchemaLen = er.schema.OldLen
+	}
+	if er.err == nil && pos > 0 && pos <= oldSchemaLen && !er.schema.Columns[pos-1].IsHidden {
 		er.ctxStackAppend(er.schema.Columns[pos-1], er.names[pos-1])
 	} else {
 		er.err = ErrUnknownColumn.GenWithStackByArgs(str, clauseMsg[er.b.curClause])
