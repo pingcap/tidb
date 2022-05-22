@@ -1328,7 +1328,7 @@ func (b *builtinDayOfYearSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofyear
 func (b *builtinDayOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
-	if isNull || err != nil || arg.IsIncompleteDate() {
+	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
@@ -1385,11 +1385,11 @@ func (b *builtinWeekWithModeSig) Clone() builtinFunc {
 func (b *builtinWeekWithModeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 
-	if isNull || err != nil || date.IsIncompleteDate() {
+	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if date.IsZero() {
+	if date.IsZero() || date.InvalidZero() {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
@@ -1417,11 +1417,11 @@ func (b *builtinWeekWithoutModeSig) Clone() builtinFunc {
 func (b *builtinWeekWithoutModeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 
-	if isNull || err != nil || date.IsIncompleteDate() {
+	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if date.IsZero() {
+	if date.IsZero() || date.InvalidZero() {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
@@ -1471,11 +1471,11 @@ func (b *builtinWeekDaySig) Clone() builtinFunc {
 // evalInt evals WEEKDAY(date).
 func (b *builtinWeekDaySig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
-	if isNull || err != nil || date.IsIncompleteDate() {
+	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if date.IsZero() {
+	if date.IsZero() || date.InvalidZero() {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
@@ -1516,11 +1516,11 @@ func (b *builtinWeekOfYearSig) Clone() builtinFunc {
 func (b *builtinWeekOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 
-	if isNull || err != nil || date.IsIncompleteDate() {
+	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if date.IsZero() {
+	if date.IsZero() || date.InvalidZero() {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
@@ -1614,10 +1614,10 @@ func (b *builtinYearWeekWithModeSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 func (b *builtinYearWeekWithModeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
-	if isNull || err != nil || date.IsIncompleteDate() {
+	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
-	if date.IsZero() {
+	if date.IsZero() || date.InvalidZero() {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
@@ -3481,10 +3481,12 @@ func (b *builtinAddDateStringStringSig) evalTime(row chunk.Row) (types.Time, boo
 	}
 
 	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
-	if isNull || err != nil || date.IsIncompleteDate() {
+	if isNull || err != nil {
 		return types.ZeroTime, true, err
 	}
-
+	if date.InvalidZero() {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+	}
 	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
@@ -4270,10 +4272,12 @@ func (b *builtinSubDateStringStringSig) evalTime(row chunk.Row) (types.Time, boo
 	}
 
 	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
-	if isNull || err != nil || date.IsIncompleteDate() {
+	if isNull || err != nil {
 		return types.ZeroTime, true, err
 	}
-
+	if date.InvalidZero() {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+	}
 	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
@@ -4889,11 +4893,11 @@ func (b *builtinTimestampDiffSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 	lhs, isNull, err := b.args[1].EvalTime(b.ctx, row)
-	if isNull || err != nil || lhs.IsIncompleteDate() {
+	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 	rhs, isNull, err := b.args[2].EvalTime(b.ctx, row)
-	if isNull || err != nil || rhs.IsIncompleteDate() {
+	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if invalidLHS, invalidRHS := lhs.InvalidZero(), rhs.InvalidZero(); invalidLHS || invalidRHS {
@@ -5918,10 +5922,12 @@ func (b *builtinConvertTzSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_convert-tz
 func (b *builtinConvertTzSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	dt, isNull, err := b.args[0].EvalTime(b.ctx, row)
-	if isNull || err != nil || dt.IsIncompleteDate() {
+	if isNull || err != nil {
 		return types.ZeroTime, true, nil
 	}
-
+	if dt.InvalidZero() {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dt.String()))
+	}
 	fromTzStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, true, nil
@@ -7049,8 +7055,11 @@ func (b *builtinToDaysSig) Clone() builtinFunc {
 func (b *builtinToDaysSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 
-	if isNull || err != nil || arg.IsIncompleteDate() {
+	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
+	}
+	if arg.InvalidZero() {
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
 	}
 	ret := types.TimestampDiff("DAY", types.ZeroDate, arg)
 	if ret == 0 {
@@ -7090,8 +7099,11 @@ func (b *builtinToSecondsSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
 func (b *builtinToSecondsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
-	if isNull || err != nil || arg.IsIncompleteDate() {
+	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
+	}
+	if arg.InvalidZero() {
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
 	}
 	ret := types.TimestampDiff("SECOND", types.ZeroDate, arg)
 	if ret == 0 {

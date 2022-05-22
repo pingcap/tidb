@@ -393,6 +393,10 @@ func (t Time) IsZero() bool {
 }
 
 // InvalidZero returns a boolean indicating whether the month or day is zero.
+// Several functions are strict when passed a DATE() function value as their argument and reject incomplete dates with a day part of zero:
+// CONVERT_TZ(), DATE_ADD(), DATE_SUB(), DAYOFYEAR(), TIMESTAMPDIFF(),
+// TO_DAYS(), TO_SECONDS(), WEEK(), WEEKDAY(), WEEKOFYEAR(), YEARWEEK().
+// Mysql Doc: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html
 func (t Time) InvalidZero() bool {
 	return t.Month() == 0 || t.Day() == 0
 }
@@ -722,17 +726,6 @@ func (t *Time) Add(sc *stmtctx.StatementContext, d Duration) (Time, error) {
 	}
 	ret := NewTime(tm.coreTime, t.Type(), fsp)
 	return ret, ret.Check(sc)
-}
-
-// IsIncompleteDate Several functions are strict when passed a DATE() function value as their argument and reject incomplete dates with a day part of zero:
-// CONVERT_TZ(), DATE_ADD(), DATE_SUB(), DAYOFYEAR(), TIMESTAMPDIFF(),
-// TO_DAYS(), TO_SECONDS(), WEEK(), WEEKDAY(), WEEKOFYEAR(), YEARWEEK().
-// Mysql Doc: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html
-func (t *Time) IsIncompleteDate() bool {
-	if t.Day() == 0 || t.Month() == 0 {
-		return true
-	}
-	return false
 }
 
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
