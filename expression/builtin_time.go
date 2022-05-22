@@ -883,14 +883,18 @@ func (b *builtinFromDaysSig) Clone() builtinFunc {
 }
 
 // evalTime evals FROM_DAYS(N).
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-days
+// See https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_from-days
 func (b *builtinFromDaysSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	n, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
 	}
-
-	return types.TimeFromDays(n), false, nil
+	ret := types.TimeFromDays(n)
+	// the maximum date value is 9999-12-31 in mysql 5.8.
+	if ret.Year() > 9999 {
+		return types.ZeroTime, true, nil
+	}
+	return ret, false, nil
 }
 
 type hourFunctionClass struct {

@@ -289,6 +289,12 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
 func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
+	if curTask.invalid() {
+		return false, nil
+	}
+	if bestTask.invalid() {
+		return true, nil
+	}
 	if ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
 		curCost, err := getTaskPlanCost(curTask)
 		if err != nil {
@@ -298,9 +304,9 @@ func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBette
 		if err != nil {
 			return false, err
 		}
-		return curCost < bestCost || (bestTask.invalid() && !curTask.invalid()), nil
+		return curCost < bestCost, nil
 	}
-	return curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()), nil
+	return curTask.cost() < bestTask.cost(), nil
 }
 
 func getTaskPlanCost(t task) (float64, error) {
@@ -1815,6 +1821,8 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 		physicalTableID: ds.physicalTableID,
 		Ranges:          s.Ranges,
 		AccessCondition: s.AccessConds,
+		tblCols:         ds.TblCols,
+		tblColHists:     ds.TblColHists,
 	}.Init(s.ctx, s.blockOffset)
 	ts.stats = stats
 	ts.SetSchema(schema.Clone())
@@ -1844,6 +1852,8 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
+		tblColHists:      ds.TblColHists,
+		pkIsHandleCol:    ds.getPKIsHandleCol(),
 	}.Init(ds.ctx, ds.blockOffset)
 	is.stats = stats
 	is.initSchema(s.FullIdxCols, s.IsDoubleRead)
