@@ -2810,35 +2810,6 @@ func loadCollationParameter(se *session) (bool, error) {
 	return false, nil
 }
 
-func updateMemoryConfigAndSysVar(se *session) error {
-	if !config.IsOOMActionSetByUser {
-		newOOMAction, err := loadDefOOMAction(se)
-		if err != nil {
-			return err
-		}
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = newOOMAction
-		})
-	}
-
-	return nil
-}
-
-func loadDefOOMAction(se *session) (string, error) {
-	defOOMAction, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbDefOOMAction)
-	if err != nil {
-		if err == errResultIsEmpty {
-			return config.GetGlobalConfig().OOMAction, nil
-		}
-		return config.GetGlobalConfig().OOMAction, err
-	}
-	if defOOMAction != config.OOMActionLog {
-		logutil.BgLogger().Warn("Unexpected value of 'default_oom_action' in 'mysql.tidb', use 'log' instead",
-			zap.String("value", defOOMAction))
-	}
-	return defOOMAction, nil
-}
-
 var errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 
 // BootstrapSession runs the first time when the TiDB server start.
@@ -2882,11 +2853,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ses[0])
-
-	err = updateMemoryConfigAndSysVar(ses[0])
-	if err != nil {
-		return nil, err
-	}
 
 	dom := domain.GetDomain(ses[0])
 	// We should make the load bind-info loop before other loops which has internal SQL.
@@ -3016,8 +2982,8 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		if opt != nil && opt.PreparedPlanCache != nil {
 			s.preparedPlanCache = opt.PreparedPlanCache
 		} else {
-			s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-				plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
+			s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
 		}
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
@@ -3049,8 +3015,8 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)

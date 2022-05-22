@@ -973,6 +973,8 @@ func RunStreamRestore(
 	if len(cfg.FullBackupStorage) > 0 {
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
+		// TiFlash replica is restored to down-stream on 'pitr' currently.
+		cfg.skipTiflash = true
 		if err = RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
 			return errors.Trace(err)
 		}
@@ -1004,7 +1006,14 @@ func restoreStream(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	client, err := createRestoreClient(ctx, g, cfg)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer mgr.Close()
+
+	client, err := createRestoreClient(ctx, g, cfg, mgr)
 	if err != nil {
 		return errors.Annotate(err, "failed to create restore client")
 	}
@@ -1016,6 +1025,14 @@ func restoreStream(
 	}
 	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, ShiftTS(cfg.StartTS))
 	client.SetCurrentTS(currentTS)
+
+	restoreSchedulers, err := restorePreWork(ctx, client, mgr, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Always run the post-work even on error, so we don't stuck in the import
+	// mode or emptied schedulers
+	defer restorePostWork(ctx, client, restoreSchedulers)
 
 	// read meta by given ts.
 	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
@@ -1081,19 +1098,8 @@ func restoreStream(
 	return nil
 }
 
-func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig) (*restore.Client, error) {
+func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *conn.Mgr) (*restore.Client, error) {
 	var err error
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer func() {
-		if err != nil {
-			mgr.Close()
-		}
-	}()
-
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
