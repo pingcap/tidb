@@ -237,7 +237,7 @@ func testListInDisk(t *testing.T, concurrency int) {
 		}
 	}
 
-	var expectRows []Row
+	expectRows := make([]Row, 0, len(ptrs))
 	for _, rowPtr := range ptrs {
 		row, err := lDisk.GetRow(rowPtr)
 		require.NoError(t, err)
