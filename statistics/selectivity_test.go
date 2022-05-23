@@ -45,7 +45,6 @@ import (
 )
 
 func TestCollationColumnEstimate(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -74,7 +73,6 @@ func TestCollationColumnEstimate(t *testing.T) {
 }
 
 func BenchmarkSelectivity(b *testing.B) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(b)
 	defer clean()
 	testKit := testkit.NewTestKit(b, store)
@@ -113,7 +111,6 @@ func BenchmarkSelectivity(b *testing.B) {
 }
 
 func TestOutOfRangeEstimation(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -164,7 +161,6 @@ func TestOutOfRangeEstimation(t *testing.T) {
 }
 
 func TestEstimationForUnknownValues(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -243,7 +239,6 @@ func TestEstimationForUnknownValues(t *testing.T) {
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -277,7 +272,6 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 }
 
 func TestPrimaryKeySelectivity(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -306,7 +300,6 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 }
 
 func TestStatsVer2(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -375,7 +368,6 @@ func TestStatsVer2(t *testing.T) {
 }
 
 func TestTopNOutOfHist(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -414,7 +406,6 @@ func TestTopNOutOfHist(t *testing.T) {
 }
 
 func TestColumnIndexNullEstimation(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -449,7 +440,6 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 }
 
 func TestUniqCompEqualEst(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -476,7 +466,6 @@ func TestUniqCompEqualEst(t *testing.T) {
 }
 
 func TestSelectivity(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -571,7 +560,6 @@ func TestSelectivity(t *testing.T) {
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
 // consists several columns, and the first column has small NDV.
 func TestDiscreteDistribution(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -602,7 +590,6 @@ func TestDiscreteDistribution(t *testing.T) {
 }
 
 func TestSelectCombinedLowBound(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -629,7 +616,6 @@ func TestSelectCombinedLowBound(t *testing.T) {
 
 // TestDNFCondSelectivity tests selectivity calculation with DNF conditions covered by using independence assumption.
 func TestDNFCondSelectivity(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -699,7 +685,6 @@ func TestDNFCondSelectivity(t *testing.T) {
 }
 
 func TestIndexEstimationCrossValidate(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -729,7 +714,6 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 }
 
 func TestRangeStepOverflow(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -748,7 +732,6 @@ func TestRangeStepOverflow(t *testing.T) {
 }
 
 func TestSmallRangeEstimation(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
