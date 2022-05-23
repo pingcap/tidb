@@ -65,8 +65,9 @@ func NewChunkWithCapacity(fields []*types.FieldType, capacity int) *Chunk {
 //  cap: the limit for the max number of rows.
 //  maxChunkSize: the max limit for the number of rows.
 func New(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
+	columnSize := 0
 	chk := &Chunk{
-		columns:  make([]*Column, 0, len(fields)),
+		columns:  make([]*Column, columnSize, len(fields)),
 		capacity: mathutil.Min(capacity, maxChunkSize),
 		// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
 		// like how we judge whether a chunk is full now, then the statement
