@@ -101,6 +101,6 @@ func (p *StalenessTxnContextProvider) OnStmtRetry(_ context.Context) error {
 }
 
 // Advise is used to give advice to provider
-func (p *StalenessTxnContextProvider) Advise(_ sessiontxn.AdviceType) error {
+func (p *StalenessTxnContextProvider) Advise(_ sessiontxn.AdviceType, _ []any) error {
 	return nil
 }

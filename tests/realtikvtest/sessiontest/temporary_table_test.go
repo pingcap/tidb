@@ -309,9 +309,6 @@ func TestTemporaryTableInterceptor(t *testing.T) {
 		func() error {
 			return tk.Session().NewStaleTxnWithStartTS(context.Background(), 0)
 		},
-		func() error {
-			return tk.Session().InitTxnWithStartTS(0)
-		},
 	}
 
 	for _, initFunc := range initTxnFuncs {

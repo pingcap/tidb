@@ -188,10 +188,32 @@ func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context) error {
 }
 
 // Advise is used to give advice to provider
-func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
+func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
 	switch tp {
 	case sessiontxn.AdviceWarmUp:
-		p.Sctx.PrepareTSFuture(p.Ctx)
+		return p.prepareTSFuture()
+	}
+	return nil
+}
+
+func (p *SimpleTxnContextProvider) prepareTSFuture() error {
+	if p.Sctx.GetSessionVars().SnapshotTS != 0 || p.Sctx.GetPreparedTSFuture() != nil {
+		return nil
+	}
+
+	txn, err := p.Sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+
+	if txn.Valid() {
+		return nil
+	}
+
+	txnScope := p.Sctx.GetSessionVars().CheckAndGetTxnScope()
+	future := sessiontxn.NewOracleFuture(p.Ctx, p.Sctx, txnScope)
+	if err = p.Sctx.PrepareTSFuture(p.Ctx, future, txnScope); err != nil {
+		return err
 	}
 	return nil
 }

@@ -114,9 +114,9 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
-func (m *txnManager) Advise(tp sessiontxn.AdviceType) error {
+func (m *txnManager) Advise(tp sessiontxn.AdviceType, val ...any) error {
 	if m.ctxProvider != nil {
-		return m.ctxProvider.Advise(tp)
+		return m.ctxProvider.Advise(tp, val)
 	}
 	return nil
 }
@@ -135,11 +135,13 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil)
 	}
 
-	if txnMode == ast.Pessimistic {
-		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
-		case ast.ReadCommitted:
-			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
-		}
+	if txnMode == ast.Optimistic {
+		return isolation.NewOptimisticTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+	}
+
+	switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
+	case ast.ReadCommitted:
+		return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
 	}
 
 	return &legacy.SimpleTxnContextProvider{

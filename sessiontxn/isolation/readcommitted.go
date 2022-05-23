@@ -16,10 +16,8 @@ package isolation
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -27,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
@@ -35,14 +32,13 @@ import (
 )
 
 type stmtState struct {
-	stmtInfoSchema    infoschema.InfoSchema
 	stmtTS            uint64
 	stmtTSFuture      oracle.Future
 	stmtUseStartTS    bool
 	onNextRetryOrStmt func() error
 }
 
-func (s *stmtState) nextStmt(useStartTS bool) error {
+func (s *stmtState) resetStmt(useStartTS bool) error {
 	onNextStmt := s.onNextRetryOrStmt
 	*s = stmtState{
 		stmtUseStartTS: useStartTS,
@@ -53,98 +49,40 @@ func (s *stmtState) nextStmt(useStartTS bool) error {
 	return nil
 }
 
-func (s *stmtState) retry() error {
-	onNextRetry := s.onNextRetryOrStmt
-	*s = stmtState{
-		stmtInfoSchema: s.stmtInfoSchema,
-	}
-
-	if onNextRetry != nil {
-		return onNextRetry()
-	}
-	return nil
-}
-
 // PessimisticRCTxnContextProvider provides txn context for isolation level read-committed
 type PessimisticRCTxnContextProvider struct {
-	ctx                   context.Context
-	sctx                  sessionctx.Context
-	causalConsistencyOnly bool
-
-	is            infoschema.InfoSchema
-	isTxnPrepared bool
-	isTxnActive   bool
-
+	baseTxnContextProvider
 	stmtState
 	availableRCCheckTS uint64
 }
 
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
 func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRCTxnContextProvider {
-	return &PessimisticRCTxnContextProvider{
-		sctx:                  sctx,
-		causalConsistencyOnly: causalConsistencyOnly,
-	}
-}
-
-// GetTxnInfoSchema returns the information schema used by txn
-func (p *PessimisticRCTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
-	if is := p.sctx.GetSessionVars().SnapshotInfoschema; is != nil {
-		return is.(infoschema.InfoSchema)
-	}
-
-	if p.stmtInfoSchema != nil {
-		return p.stmtInfoSchema
+	provider := &PessimisticRCTxnContextProvider{
+		baseTxnContextProvider: baseTxnContextProvider{
+			sctx:                  sctx,
+			causalConsistencyOnly: causalConsistencyOnly,
+			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
+				txnCtx.IsPessimistic = true
+				txnCtx.Isolation = ast.ReadCommitted
+			},
+			onTxnActive: func(txn kv.Transaction) {
+				txn.SetOption(kv.Pessimistic, true)
+			},
+		},
 	}
 
-	return p.is
-}
-
-// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
-func (p *PessimisticRCTxnContextProvider) GetStmtReadTS() (ts uint64, err error) {
-	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return snapshotTS, nil
-	}
-	return p.getStmtTS()
-}
-
-// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
-func (p *PessimisticRCTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
-	return p.GetStmtReadTS()
-}
-
-// OnInitialize is the hook that should be called when enter a new txn with this provider
-func (p *PessimisticRCTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) (err error) {
-	p.ctx = ctx
-	p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, domain.GetDomain(p.sctx).InfoSchema())
-	activeNow := false
-	switch tp {
-	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
-		shouldReuseTxn := tp == sessiontxn.EnterNewTxnWithBeginStmt && sessiontxn.CanReuseTxnWhenExplictBegin(p.sctx)
-		if !shouldReuseTxn {
-			if err = p.sctx.NewTxn(ctx); err != nil {
-				return err
-			}
-		}
-		activeNow = true
-	case sessiontxn.EnterNewTxnBeforeStmt:
-		activeNow = false
-	default:
-		return errors.Errorf("Unsupported type: %v", tp)
-	}
-
-	p.sctx.GetSessionVars().TxnCtx = p.newRCTxnCtx(p.is)
-	if activeNow {
-		_, err = p.activeTxn()
-	}
-
-	return err
+	provider.getStmtReadTSFunc = provider.getStmtTS
+	provider.getStmtForUpdateTSFunc = provider.getStmtTS
+	return provider
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error {
-	p.ctx = ctx
-	return p.nextStmt(!p.isTxnPrepared)
+	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
+		return err
+	}
+	return p.resetStmt(!p.isTxnPrepared)
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -164,57 +102,37 @@ func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point session
 
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error {
-	p.ctx = ctx
-	return p.retry()
+	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
+		return err
+	}
+	return p.resetStmt(false)
 }
 
 // Advise is used to give advice to provider
-func (p *PessimisticRCTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
+func (p *PessimisticRCTxnContextProvider) Advise(tp sessiontxn.AdviceType, val []any) error {
 	switch tp {
 	case sessiontxn.AdviceWarmUp:
-		if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS == 0 {
-			p.prepareTxn()
-			p.prepareStmtTS()
-		}
+		return p.warmUp()
+	default:
+		return p.baseTxnContextProvider.Advise(tp, val)
 	}
+}
+
+func (p *PessimisticRCTxnContextProvider) warmUp() error {
+	if p.isTidbSnapshotEnabled() {
+		return nil
+	}
+
+	if err := p.prepareTxn(); err != nil {
+		return err
+	}
+	p.prepareStmtTS()
 	return nil
 }
 
 // ReplaceStmtInfoSchema replaces the current info schema
 func (p *PessimisticRCTxnContextProvider) ReplaceStmtInfoSchema(is infoschema.InfoSchema) {
 	p.stmtInfoSchema = is
-}
-
-func (p *PessimisticRCTxnContextProvider) newRCTxnCtx(is infoschema.InfoSchema) *variable.TransactionContext {
-	sessVars := p.sctx.GetSessionVars()
-	return &variable.TransactionContext{
-		CreateTime:    time.Now(),
-		InfoSchema:    is,
-		ShardStep:     int(sessVars.ShardAllocateStep),
-		TxnScope:      sessVars.CheckAndGetTxnScope(),
-		IsPessimistic: true,
-		Isolation:     ast.ReadCommitted,
-	}
-}
-
-func (p *PessimisticRCTxnContextProvider) activeTxn() (kv.Transaction, error) {
-	p.prepareTxn()
-	txn, err := p.sctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-
-	if p.isTxnActive {
-		return txn, nil
-	}
-
-	txn.SetOption(kv.Pessimistic, true)
-	if p.causalConsistencyOnly {
-		txn.SetOption(kv.GuaranteeLinearizability, false)
-	}
-
-	p.isTxnActive = true
-	return txn, nil
 }
 
 func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
@@ -234,15 +152,6 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	}
 
 	p.stmtTSFuture = stmtTSFuture
-}
-
-func (p *PessimisticRCTxnContextProvider) prepareTxn() {
-	if p.isTxnPrepared {
-		return
-	}
-
-	p.sctx.PrepareTSFuture(p.ctx)
-	p.isTxnPrepared = true
 }
 
 func (p *PessimisticRCTxnContextProvider) getTxnStartTSFuture() sessiontxn.FuncFuture {

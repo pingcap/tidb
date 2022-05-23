@@ -1,0 +1,221 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package isolation
+
+import (
+	"context"
+	"time"
+
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/table/temptable"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/tikv/client-go/v2/oracle"
+)
+
+type baseTxnContextProvider struct {
+	// States that should be initialized when baseTxnContextProvider is created and should not be changed after that
+	sctx                   sessionctx.Context
+	causalConsistencyOnly  bool
+	onInitializeTxnCtx     func(*variable.TransactionContext)
+	onTxnActive            func(kv.Transaction)
+	getStmtReadTSFunc      func() (uint64, error)
+	getStmtForUpdateTSFunc func() (uint64, error)
+
+	// Runtime states
+	ctx            context.Context
+	infoSchema     infoschema.InfoSchema
+	stmtInfoSchema infoschema.InfoSchema
+	txn            kv.Transaction
+	isTxnPrepared  bool
+}
+
+// OnInitialize is the hook that should be called when enter a new txn with this provider
+func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) (err error) {
+	if p.getStmtReadTSFunc == nil || p.getStmtForUpdateTSFunc == nil {
+		return errors.New("ts functions should not be nil")
+	}
+
+	activeNow := false
+	switch tp {
+	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
+		shouldReuseTxn := tp == sessiontxn.EnterNewTxnWithBeginStmt && sessiontxn.CanReuseTxnWhenExplictBegin(p.sctx)
+		if !shouldReuseTxn {
+			if err = p.sctx.NewTxn(ctx); err != nil {
+				return err
+			}
+		}
+		activeNow = true
+	case sessiontxn.EnterNewTxnBeforeStmt:
+		activeNow = false
+	default:
+		return errors.Errorf("Unsupported type: %v", tp)
+	}
+
+	p.ctx = ctx
+	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, domain.GetDomain(p.sctx).InfoSchema())
+	sessVars := p.sctx.GetSessionVars()
+	txnCtx := &variable.TransactionContext{
+		CreateTime: time.Now(),
+		InfoSchema: p.infoSchema,
+		ShardStep:  int(sessVars.ShardAllocateStep),
+		TxnScope:   sessVars.CheckAndGetTxnScope(),
+	}
+	if p.onInitializeTxnCtx != nil {
+		p.onInitializeTxnCtx(txnCtx)
+	}
+	sessVars.TxnCtx = txnCtx
+
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTSFuture() != nil
+	if activeNow {
+		_, err = p.activeTxn()
+	}
+
+	return err
+}
+
+func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
+	if is := p.sctx.GetSessionVars().SnapshotInfoschema; is != nil {
+		return is.(infoschema.InfoSchema)
+	}
+
+	if p.stmtInfoSchema != nil {
+		return p.stmtInfoSchema
+	}
+
+	return p.infoSchema
+}
+
+func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
+	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		return snapshotTS, nil
+	}
+	return p.getStmtReadTSFunc()
+}
+
+func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
+	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		return snapshotTS, nil
+	}
+	return p.getStmtForUpdateTSFunc()
+}
+
+func (p *baseTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
+	switch tp {
+	case sessiontxn.AdviceWarmUp:
+		return p.warmUp()
+	}
+	return nil
+}
+
+func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context) error {
+	p.ctx = ctx
+	return nil
+}
+
+func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
+	p.ctx = ctx
+	return nil
+}
+
+func (p *baseTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.StmtErrorHandlePoint, _ error) (sessiontxn.StmtErrorAction, error) {
+	return sessiontxn.NoIdea()
+}
+
+func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
+	txn, err := p.activeTxn()
+	if err != nil {
+		return 0, err
+	}
+	return txn.StartTS(), nil
+}
+
+func (p *baseTxnContextProvider) activeTxn() (kv.Transaction, error) {
+	if p.txn != nil {
+		return p.txn, nil
+	}
+
+	if err := p.prepareTxn(); err != nil {
+		return nil, err
+	}
+
+	txn, err := p.sctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+
+	if p.causalConsistencyOnly {
+		txn.SetOption(kv.GuaranteeLinearizability, false)
+	}
+
+	if p.onTxnActive != nil {
+		p.onTxnActive(txn)
+	}
+
+	p.txn = txn
+	return txn, nil
+}
+
+func (p *baseTxnContextProvider) prepareTxn() error {
+	if p.isTxnPrepared {
+		return nil
+	}
+
+	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	return p.replaceTxnTsFuture(future)
+}
+
+func (p *baseTxnContextProvider) prepareTxnWithTS(ts uint64) error {
+	return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(ts))
+}
+
+func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+
+	if txn.Valid() {
+		return nil
+	}
+
+	txnScope := p.sctx.GetSessionVars().TxnCtx.TxnScope
+	if err = p.sctx.PrepareTSFuture(p.ctx, future, txnScope); err != nil {
+		return err
+	}
+
+	p.isTxnPrepared = true
+	return nil
+}
+
+func (p *baseTxnContextProvider) isTidbSnapshotEnabled() bool {
+	return p.sctx.GetSessionVars().SnapshotTS != 0
+}
+
+func (p *baseTxnContextProvider) warmUp() error {
+	if p.isTidbSnapshotEnabled() {
+		return nil
+	}
+	return p.prepareTxn()
+}
