@@ -174,6 +174,9 @@ type MemBuffer interface {
 
 	// Size returns sum of keys and values length.
 	Size() int
+
+	// RemoveFromBuffer removes the entry from the buffer. It's used for testing.
+	RemoveFromBuffer(Key)
 }
 
 // LockCtx contains information for LockKeys method.
