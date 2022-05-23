@@ -115,19 +115,19 @@ func TestCast(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(int64(1)), v)
 
-	f.Flag |= mysql.UnsignedFlag
+	f.AddFlag(mysql.UnsignedFlag)
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(uint64(1)), v)
 
-	f.Tp = mysql.TypeString
-	f.Charset = charset.CharsetBin
+	f.SetType(mysql.TypeString)
+	f.SetCharset(charset.CharsetBin)
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum([]byte("1")), v)
 
-	f.Tp = mysql.TypeString
-	f.Charset = charset.CharsetUTF8
+	f.SetType(mysql.TypeString)
+	f.SetCharset(charset.CharsetUTF8)
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum([]byte("1")), v)

@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	tlsutil "github.com/pingcap/tidb/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -70,15 +70,6 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		time.Sleep(sleepTime)
 	}
 	return errors.Trace(err)
-}
-
-// GetStack gets the stacktrace.
-func GetStack() []byte {
-	const size = 4096
-	buf := make([]byte, size)
-	stackSize := runtime.Stack(buf, false)
-	buf = buf[:stackSize]
-	return buf
 }
 
 // WithRecovery wraps goroutine startup call with force recovery.
@@ -119,7 +110,7 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
 		zap.Reflect("r", r),
-		zap.String("stack", string(GetStack())))
+		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
 	if quit {
 		// Wait for metrics to be pushed.
@@ -402,7 +393,7 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 		col := ColumnToProto(c)
 		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
 		// is abandoned.
-		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.GetFlag())) || c.ID == model.ExtraHandleID {
 			col.PkHandle = true
 		} else {
 			col.PkHandle = false
@@ -416,13 +407,13 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
-		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.FieldType.Collate])),
-		ColumnLen: int32(c.FieldType.Flen),
-		Decimal:   int32(c.FieldType.Decimal),
-		Flag:      int32(c.Flag),
-		Elems:     c.Elems,
+		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.GetCollate()])),
+		ColumnLen: int32(c.GetFlen()),
+		Decimal:   int32(c.GetDecimal()),
+		Flag:      int32(c.GetFlag()),
+		Elems:     c.GetElems(),
 	}
-	pc.Tp = int32(c.FieldType.Tp)
+	pc.Tp = int32(c.GetType())
 	return pc
 }
 
@@ -474,7 +465,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		return
 	}
 
-	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	requireTLS := tlsutil.RequireSecureTransport.Load()
+
 	var minTLSVersion uint16 = tls.VersionTLS11
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
 	case "TLSv1.0":

@@ -72,3 +72,15 @@ func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is interface{}) {
 	assertVersion(is)
 	assertVersion(sctx.Value(AssertTxnInfoSchemaKey))
 }
+
+// AssertTxnManagerReadTS is used only for test
+func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
+	actual, err := GetTxnManager(sctx).GetStmtReadTS()
+	if err != nil {
+		panic(err)
+	}
+
+	if actual != expected {
+		panic(fmt.Sprintf("Txn read ts not match, expect:%d, got:%d", expected, actual))
+	}
+}

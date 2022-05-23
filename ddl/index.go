@@ -122,7 +122,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 }
 
 func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
-	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
+	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
 		if col.Hidden {
 			return errors.Trace(dbterror.ErrWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
@@ -130,7 +130,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// JSON column cannot index.
-	if col.FieldType.Tp == mysql.TypeJSON {
+	if col.FieldType.GetType() == mysql.TypeJSON {
 		if col.Hidden {
 			return dbterror.ErrFunctionalIndexOnJSONOrGeometryFunction
 		}
@@ -138,7 +138,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
-	if types.IsTypeBlob(col.FieldType.Tp) {
+	if types.IsTypeBlob(col.FieldType.GetType()) {
 		if indexColumnLen == types.UnspecifiedLength {
 			if col.Hidden {
 				return dbterror.ErrFunctionalIndexOnBlob
@@ -151,14 +151,14 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// Length can only be specified for specifiable types.
-	if indexColumnLen != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
+	if indexColumnLen != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.GetType()) {
 		return errors.Trace(dbterror.ErrIncorrectPrefixKey)
 	}
 
 	// Key length must be shorter or equal to the column length.
 	if indexColumnLen != types.UnspecifiedLength &&
-		types.IsTypeChar(col.FieldType.Tp) {
-		if col.Flen < indexColumnLen {
+		types.IsTypeChar(col.FieldType.GetType()) {
+		if col.GetFlen() < indexColumnLen {
 			return errors.Trace(dbterror.ErrIncorrectPrefixKey)
 		}
 		// Length must be non-zero for char.
@@ -167,8 +167,8 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 		}
 	}
 
-	if types.IsString(col.FieldType.Tp) {
-		desc, err := charset.GetCharsetInfo(col.Charset)
+	if types.IsString(col.FieldType.GetType()) {
+		desc, err := charset.GetCharsetInfo(col.GetCharset())
 		if err != nil {
 			return err
 		}
@@ -186,22 +186,22 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	length := types.UnspecifiedLength
 	if colLen != types.UnspecifiedLength {
 		length = colLen
-	} else if col.Flen != types.UnspecifiedLength {
-		length = col.Flen
+	} else if col.GetFlen() != types.UnspecifiedLength {
+		length = col.GetFlen()
 	}
 
-	switch col.Tp {
+	switch col.GetType() {
 	case mysql.TypeBit:
 		return (length + 7) >> 3, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
 		// Different charsets occupy different numbers of bytes on each character.
-		desc, err := charset.GetCharsetInfo(col.Charset)
+		desc, err := charset.GetCharsetInfo(col.GetCharset())
 		if err != nil {
-			return 0, dbterror.ErrUnsupportedCharset.GenWithStackByArgs(col.Charset, col.Collate)
+			return 0, dbterror.ErrUnsupportedCharset.GenWithStackByArgs(col.GetCharset(), col.GetCollate())
 		}
 		return desc.Maxlen * length, nil
 	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeShort:
-		return mysql.DefaultLengthOfMysqlTypes[col.Tp], nil
+		return mysql.DefaultLengthOfMysqlTypes[col.GetType()], nil
 	case mysql.TypeFloat:
 		if length <= mysql.MaxFloatPrecisionLength {
 			return mysql.DefaultLengthOfMysqlTypes[mysql.TypeFloat], nil
@@ -210,13 +210,13 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	case mysql.TypeNewDecimal:
 		return calcBytesLengthForDecimal(length), nil
 	case mysql.TypeYear, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return mysql.DefaultLengthOfMysqlTypes[col.Tp], nil
+		return mysql.DefaultLengthOfMysqlTypes[col.GetType()], nil
 	default:
 		return length, nil
 	}
 }
 
-// Decimal using a binary format that packs nine decimal (base 10) digits into four bytes.
+// decimal using a binary format that packs nine decimal (base 10) digits into four bytes.
 func calcBytesLengthForDecimal(m int) int {
 	return (m / 9 * 4) + ((m%9)+1)/2
 }
@@ -243,28 +243,28 @@ func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, indexPartSp
 func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	if indexInfo.Primary {
 		for _, col := range indexInfo.Columns {
-			tblInfo.Columns[col.Offset].Flag |= mysql.PriKeyFlag
+			tblInfo.Columns[col.Offset].AddFlag(mysql.PriKeyFlag)
 		}
 		return
 	}
 
 	col := indexInfo.Columns[0]
 	if indexInfo.Unique && len(indexInfo.Columns) == 1 {
-		tblInfo.Columns[col.Offset].Flag |= mysql.UniqueKeyFlag
+		tblInfo.Columns[col.Offset].AddFlag(mysql.UniqueKeyFlag)
 	} else {
-		tblInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
+		tblInfo.Columns[col.Offset].AddFlag(mysql.MultipleKeyFlag)
 	}
 }
 
 func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	if indexInfo.Primary {
 		for _, col := range indexInfo.Columns {
-			tblInfo.Columns[col.Offset].Flag &= ^mysql.PriKeyFlag
+			tblInfo.Columns[col.Offset].DelFlag(mysql.PriKeyFlag)
 		}
 	} else if indexInfo.Unique && len(indexInfo.Columns) == 1 {
-		tblInfo.Columns[indexInfo.Columns[0].Offset].Flag &= ^mysql.UniqueKeyFlag
+		tblInfo.Columns[indexInfo.Columns[0].Offset].DelFlag(mysql.UniqueKeyFlag)
 	} else {
-		tblInfo.Columns[indexInfo.Columns[0].Offset].Flag &= ^mysql.MultipleKeyFlag
+		tblInfo.Columns[indexInfo.Columns[0].Offset].DelFlag(mysql.MultipleKeyFlag)
 	}
 
 	col := indexInfo.Columns[0]
@@ -299,7 +299,7 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 	return false, nil
 }
 
-func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, to, err := checkRenameIndex(t, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
@@ -310,7 +310,7 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	idx := tblInfo.FindIndexByName(from.L)
 	idx.Name = to
-	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
+	if ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -327,14 +327,14 @@ func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *mo
 	return false, nil
 }
 
-func onAlterIndexVisibility(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterIndexVisibility(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, invisible, err := checkAlterIndexVisibility(t, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
 	idx := tblInfo.FindIndexByName(from.L)
 	idx.Invisible = invisible
-	if ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true); err != nil {
+	if ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -346,14 +346,14 @@ func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*m
 	nullCols := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
 	for _, colName := range indexInfo.Columns {
 		col := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
-		if !mysql.HasNotNullFlag(col.Flag) || mysql.HasPreventNullInsertFlag(col.Flag) {
+		if !mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag()) {
 			nullCols = append(nullCols, col)
 		}
 	}
 	return nullCols, nil
 }
 
-func checkPrimaryKeyNotNull(w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job *model.Job,
+func checkPrimaryKeyNotNull(d *ddlCtx, w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job *model.Job,
 	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (warnings []string, err error) {
 	if !indexInfo.Primary {
 		return nil, nil
@@ -375,7 +375,7 @@ func checkPrimaryKeyNotNull(w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job 
 	if err == nil {
 		return nil, nil
 	}
-	_, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
+	_, err = convertAddIdxJob2RollbackJob(d, t, job, tblInfo, indexInfo, err)
 	// TODO: Support non-strict mode.
 	// warnings = append(warnings, ErrWarnDataTruncated.GenWithStackByArgs(oldCol.Name.L, 0).Error())
 	return nil, err
@@ -392,7 +392,7 @@ func updateHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sta
 func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropIndex(t, job)
+		ver, err = onDropIndex(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -518,7 +518,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
 		updateHiddenColumns(tblInfo, indexInfo, model.StatePublic)
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
 		}
@@ -527,11 +527,11 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		indexInfo.State = model.StateWriteOnly
-		_, err = checkPrimaryKeyNotNull(w, sqlMode, t, job, tblInfo, indexInfo)
+		_, err = checkPrimaryKeyNotNull(d, w, sqlMode, t, job, tblInfo, indexInfo)
 		if err != nil {
 			break
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
 		}
@@ -539,11 +539,11 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		indexInfo.State = model.StateWriteReorganization
-		_, err = checkPrimaryKeyNotNull(w, sqlMode, t, job, tblInfo, indexInfo)
+		_, err = checkPrimaryKeyNotNull(d, w, sqlMode, t, job, tblInfo, indexInfo)
 		if err != nil {
 			break
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
 		}
@@ -571,7 +571,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				return ver, errors.Trace(err)
 			}
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -608,7 +608,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
 			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-			ver, err = convertAddIdxJob2RollbackJob(t, job, tbl.Meta(), indexInfo, err)
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 			if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
 			}
@@ -622,7 +622,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	return true, ver, errors.Trace(err)
 }
 
-func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, indexInfo, err := checkDropIndex(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -643,29 +643,27 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StatePublic:
 		// public -> write only
 		indexInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
 		indexInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		indexInfo.State = model.StateDeleteReorganization
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateDeleteReorganization
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
+		indexInfo.State = model.StateNone
 		if len(dependentHiddenCols) > 0 {
 			firstHiddenOffset := dependentHiddenCols[0].Offset
 			for i := 0; i < len(dependentHiddenCols); i++ {
@@ -673,7 +671,6 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 				adjustColumnInfoInDropColumn(tblInfo, firstHiddenOffset)
 			}
 		}
-
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
 			if idx.Name.L != indexInfo.Name.L {
@@ -691,7 +688,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			}
 		})
 
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != model.StateNone)
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -707,8 +704,9 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State))
 	}
+	job.SchemaState = indexInfo.State
 	return ver, errors.Trace(err)
 }
 
@@ -746,7 +744,7 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 	return tblInfo, indexInfo, nil
 }
 
-func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, indexNames, ifExists, err := getSchemaInfos(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -783,7 +781,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		for _, colInfo := range dependentHiddenCols {
 			adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -792,7 +790,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> delete only
 		setIndicesState(indexInfos, model.StateDeleteOnly)
 		setColumnsState(dependentHiddenCols, model.StateDeleteOnly)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -801,7 +799,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// delete only -> reorganization
 		setIndicesState(indexInfos, model.StateDeleteReorganization)
 		setColumnsState(dependentHiddenCols, model.StateDeleteReorganization)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -830,7 +828,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
 
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != model.StateNone)
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -932,7 +930,7 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	cols := tblInfo.Columns
 	for _, idxCol := range indexInfo.Columns {
-		flag := cols[idxCol.Offset].Flag
+		flag := cols[idxCol.Offset].GetFlag()
 		if !mysql.HasAutoIncrementFlag(flag) {
 			continue
 		}

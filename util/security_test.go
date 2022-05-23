@@ -113,6 +113,9 @@ func TestCheckCN(t *testing.T) {
 	clientTLS1, err := util.ToTLSConfigWithVerifyByRawbytes(caData, certData, keyData, []string{})
 	require.NoError(t, err)
 
+	_, err = util.ToTLSConfigWithVerifyByRawbytes(caData, []byte{}, []byte{}, []string{})
+	require.NoError(t, err)
+
 	caPath2, certPath2, keyPath2 := getTestCertFile(dir, "client2")
 	clientTLS2, err := util.ToTLSConfigWithVerify(caPath2, certPath2, keyPath2, nil)
 	require.NoError(t, err)

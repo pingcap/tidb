@@ -47,7 +47,7 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
+	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -111,7 +111,7 @@ func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.D
 	return nil
 }
 
-func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifySchemaCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var toCharset, toCollate string
 	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
 		job.State = model.JobStateCancelled
@@ -134,14 +134,14 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
-	if ver, err = updateSchemaVersion(t, job); err != nil {
+	if ver, err = updateSchemaVersion(d, t, job); err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	return ver, nil
 }
 
-func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifySchemaDefaultPlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var placementPolicyRef *model.PolicyRefInfo
 	if err := job.DecodeArgs(&placementPolicyRef); err != nil {
 		job.State = model.JobStateCancelled
@@ -170,7 +170,7 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
-	if ver, err = updateSchemaVersion(t, job); err != nil {
+	if ver, err = updateSchemaVersion(d, t, job); err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
@@ -183,7 +183,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
+	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -211,9 +211,6 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-
-		// Update the job state when all affairs done.
-		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
 		dbInfo.State = model.StateDeleteOnly
@@ -221,8 +218,6 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// Update the job state when all affairs done.
-		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
 		var tables []*model.TableInfo
@@ -246,9 +241,9 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
 	default:
 		// We can't enter here.
-		err = errors.Errorf("invalid db state %v", dbInfo.State)
+		return ver, errors.Trace(errors.Errorf("invalid db state %v", dbInfo.State))
 	}
-
+	job.SchemaState = dbInfo.State
 	return ver, errors.Trace(err)
 }
 

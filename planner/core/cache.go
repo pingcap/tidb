@@ -15,8 +15,8 @@
 package core
 
 import (
+	"bytes"
 	"math"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -35,35 +35,20 @@ import (
 )
 
 var (
-	// preparedPlanCacheEnabledValue stores the global config "prepared-plan-cache-enabled".
-	// The value is false unless "prepared-plan-cache-enabled" is true in configuration.
-	preparedPlanCacheEnabledValue int32 = 0
-	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
-	PreparedPlanCacheCapacity uint = 1000
-	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
-	PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
 
-const (
-	preparedPlanCacheEnabled = 1
-	preparedPlanCacheUnable  = 0
-)
-
 // SetPreparedPlanCache sets isEnabled to true, then prepared plan cache is enabled.
+// FIXME: leave it for test, remove it after implementing session-level plan-cache variables.
 func SetPreparedPlanCache(isEnabled bool) {
-	if isEnabled {
-		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheEnabled)
-	} else {
-		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheUnable)
-	}
+	variable.EnablePreparedPlanCache.Store(isEnabled) // only for test
 }
 
 // PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
+// FIXME: leave it for test, remove it after implementing session-level plan-cache variables.
 func PreparedPlanCacheEnabled() bool {
-	isEnabled := atomic.LoadInt32(&preparedPlanCacheEnabledValue)
-	return isEnabled == preparedPlanCacheEnabled
+	return variable.EnablePreparedPlanCache.Load()
 }
 
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
@@ -170,19 +155,19 @@ func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 	for i := range tps {
 		// We only use part of logic of `func (ft *FieldType) Equal(other *FieldType)` here because (1) only numeric and
 		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
-		tpEqual := (s[i].Tp == tps[i].Tp) ||
-			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
-			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar) ||
+		tpEqual := (s[i].GetType() == tps[i].GetType()) ||
+			(s[i].GetType() == mysql.TypeVarchar && tps[i].GetType() == mysql.TypeVarString) ||
+			(s[i].GetType() == mysql.TypeVarString && tps[i].GetType() == mysql.TypeVarchar) ||
 			// TypeNull should be considered the same as other types.
-			(s[i].Tp == mysql.TypeNull || tps[i].Tp == mysql.TypeNull)
-		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate ||
-			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].Flag) != mysql.HasUnsignedFlag(tps[i].Flag)) {
+			(s[i].GetType() == mysql.TypeNull || tps[i].GetType() == mysql.TypeNull)
+		if !tpEqual || s[i].GetCharset() != tps[i].GetCharset() || s[i].GetCollate() != tps[i].GetCollate() ||
+			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].GetFlag()) != mysql.HasUnsignedFlag(tps[i].GetFlag())) {
 			return false
 		}
 		// When the type is decimal, we should compare the Flen and Decimal.
 		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
 		// We assume here that there is no correctness problem when the precision of the parameters is less than the precision of the parameters in the cache.
-		if tpEqual && s[i].Tp == mysql.TypeNewDecimal && !(s[i].Flen >= tps[i].Flen && s[i].Decimal >= tps[i].Decimal) {
+		if tpEqual && s[i].GetType() == mysql.TypeNewDecimal && !(s[i].GetFlen() >= tps[i].GetFlen() && s[i].GetDecimal() >= tps[i].GetDecimal()) {
 			return false
 		}
 	}
@@ -194,25 +179,37 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	UserVarTypes      FieldSlice
+	TxtVarTypes       FieldSlice // variable types under text protocol
+	BinVarTypes       []byte     // variable types under binary protocol
+	IsBinProto        bool       // whether this plan is under binary protocol
 	BindSQL           string
 }
 
+func (v *PlanCacheValue) varTypesUnchanged(binVarTps []byte, txtVarTps []*types.FieldType) bool {
+	if v.IsBinProto {
+		return bytes.Equal(v.BinVarTypes, binVarTps)
+	}
+	return v.TxtVarTypes.CheckTypesCompatibility4PC(txtVarTps)
+}
+
 // NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType, bindSQL string) *PlanCacheValue {
+func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
+	isBinProto bool, binVarTypes []byte, txtVarTps []*types.FieldType, bindSQL string) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userVarTypes := make([]types.FieldType, len(userVarTps))
-	for i, tp := range userVarTps {
+	userVarTypes := make([]types.FieldType, len(txtVarTps))
+	for i, tp := range txtVarTps {
 		userVarTypes[i] = *tp
 	}
 	return &PlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
-		UserVarTypes:      userVarTypes,
+		TxtVarTypes:       userVarTypes,
+		BinVarTypes:       binVarTypes,
+		IsBinProto:        isBinProto,
 		BindSQL:           bindSQL,
 	}
 }
@@ -222,6 +219,7 @@ type CachedPrepareStmt struct {
 	PreparedAst         *ast.Prepared
 	StmtDB              string // which DB the statement will be processed over
 	VisitInfos          []visitInfo
+	ColumnInfos         interface{}
 	Executor            interface{}
 	NormalizedSQL       string
 	NormalizedPlan      string

@@ -45,7 +45,7 @@ func TestCreateTables(t *testing.T) {
 	client.SetBatchDdlSize(1)
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
-	intField.Charset = "binary"
+	intField.SetCharset("binary")
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{
 			DB: dbSchema,
@@ -115,7 +115,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
-	intField.Charset = "binary"
+	intField.SetCharset("binary")
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{
 			DB: dbSchema,
@@ -223,7 +223,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables))
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, false))
 
 	for i := 0; i < len(tables); i++ {
 		if i == 0 || i > 2 {
@@ -233,5 +233,10 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 			obtainCount := int(tables[i].Info.TiFlashReplica.Count)
 			require.Equal(t, i, obtainCount)
 		}
+	}
+
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, true))
+	for i := 0; i < len(tables); i++ {
+		require.Nil(t, tables[i].Info.TiFlashReplica)
 	}
 }

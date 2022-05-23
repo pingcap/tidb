@@ -32,6 +32,7 @@ type mockLogicalJoin struct {
 	logicalSchemaProducer
 	involvedNodeSet int
 	statsMap        map[int]*property.StatsInfo
+	JoinType        JoinType
 }
 
 func (mj mockLogicalJoin) init(ctx sessionctx.Context) *mockLogicalJoin {
@@ -46,8 +47,8 @@ func (mj *mockLogicalJoin) recursiveDeriveStats(_ [][]*expression.Column) (*prop
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
 
-func newMockJoin(ctx sessionctx.Context, statsMap map[int]*property.StatsInfo) func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _ []expression.Expression) LogicalPlan {
-	return func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _ []expression.Expression) LogicalPlan {
+func newMockJoin(ctx sessionctx.Context, statsMap map[int]*property.StatsInfo) func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) LogicalPlan {
+	return func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) LogicalPlan {
 		retJoin := mockLogicalJoin{}.init(ctx)
 		retJoin.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
 		retJoin.statsMap = statsMap
@@ -62,6 +63,7 @@ func newMockJoin(ctx sessionctx.Context, statsMap map[int]*property.StatsInfo) f
 			retJoin.involvedNodeSet |= 1 << uint(rChild.ID())
 		}
 		retJoin.SetChildren(lChild, rChild)
+		retJoin.JoinType = joinType
 		return retJoin
 	}
 }
@@ -178,13 +180,21 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 	eqConds = append(eqConds, expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[2].Schema().Columns[0], joinGroups[4].Schema().Columns[0]))
 	eqConds = append(eqConds, expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[3].Schema().Columns[0], joinGroups[4].Schema().Columns[0]))
 	eqConds = append(eqConds, expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[4].Schema().Columns[0], joinGroups[5].Schema().Columns[0]))
-	solver := &joinReorderDPSolver{
-		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
-			ctx: ctx,
-		},
-		newJoin: newMockJoin(ctx, statsMap),
+	eqEdges := make([]*expression.ScalarFunction, 0, len(eqConds))
+	for _, cond := range eqConds {
+		sf, isSF := cond.(*expression.ScalarFunction)
+		require.True(t, isSF)
+		eqEdges = append(eqEdges, sf)
 	}
-	result, err := solver.solve(joinGroups, eqConds, nil)
+	baseGroupSolver := &baseSingleGroupJoinOrderSolver{
+		ctx:     ctx,
+		eqEdges: eqEdges,
+	}
+	solver := &joinReorderDPSolver{
+		baseSingleGroupJoinOrderSolver: baseGroupSolver,
+		newJoin:                        newMockJoin(ctx, statsMap),
+	}
+	result, err := solver.solve(joinGroups, nil)
 	require.NoError(t, err)
 
 	expected := "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}"
@@ -208,7 +218,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 		},
 		newJoin: newMockJoin(ctx, statsMap),
 	}
-	result, err := solver.solve(joinGroup, nil, nil)
+	result, err := solver.solve(joinGroup, nil)
 	require.NoError(t, err)
 
 	expected := "MockJoin{MockJoin{a, b}, MockJoin{c, d}}"
