@@ -15,26 +15,24 @@
 package session_test
 
 import (
-	"context"
+	"reflect"
 	"testing"
 
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInitMetaTable(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	require.NoError(t, session.InitMetaTable(store))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, sql := range session.DdlJobTables {
+		tk.MustExec(sql)
+	}
 
 	tbls := map[string]struct{}{
 		"tidb_ddl_job":     {},
@@ -42,23 +40,15 @@ func TestInitMetaTable(t *testing.T) {
 		"tidb_ddl_history": {},
 	}
 
-	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		exists, err := m.CheckDDLTableExists()
-		require.NoError(t, err)
-		require.True(t, exists)
-		dbs, err := m.ListDatabases()
-		require.NoError(t, err)
-		require.Len(t, dbs, 1)
-		tables, err := m.ListTables(dbs[0].ID)
-		require.NoError(t, err)
-		require.Len(t, tables, 3)
-		for _, tbl := range tables {
-			_, ok := tbls[tbl.Name.L]
-			require.True(t, ok)
-			require.Equal(t, model.StatePublic, tbl.State)
-			require.NotEqual(t, 0, tbl.ID)
-		}
-		return nil
-	}))
+	for tbl := range tbls {
+		metaInMySQL := external.GetTableByName(t, tk, "mysql", tbl).Meta()
+		metaInTest := external.GetTableByName(t, tk, "test", tbl).Meta()
+
+		require.Greater(t, metaInMySQL.ID, 0)
+		require.Greater(t, metaInMySQL.UpdateTS, 0)
+
+		metaInTest.ID = metaInMySQL.ID
+		metaInMySQL.UpdateTS = metaInTest.UpdateTS
+		require.True(t, reflect.DeepEqual(metaInMySQL, metaInTest))
+	}
 }
