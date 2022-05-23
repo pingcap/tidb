@@ -374,6 +374,16 @@ func TestIssue24563(t *testing.T) {
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:1066]Not unique table/alias: 't1'")
 
+	// the following case in preprocess, t1 is duplicate with t1, since they are not base table, so we won't
+	// add schema prefix. so the non-unique table error will be reported first，rather than ambiguous col with 'a'.
+	err = tk.ExecToErr("select * from (select * from t) as t1, (select * from t) as t1;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1066]Not unique table/alias: 't1'")
+
+	err = tk.ExecToErr("select * from (select * from t) as t1, (select a+1 from t) as t1;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1066]Not unique table/alias: 't1'")
+
 	//****************************************************************************************
 
 	tk.MustExec("use db2")
