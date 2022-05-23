@@ -1587,6 +1587,9 @@ func (tr *TableRestore) restoreTable(
 				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
 		}
+		if rowIDMax > tr.curMaxRowID {
+			tr.curMaxRowID = rowIDMax
+		}
 		db, _ := rc.tidbGlue.GetDB()
 		versionStr, err := version.FetchVersion(ctx, db)
 		if err != nil {
@@ -2035,6 +2038,9 @@ type chunkRestore struct {
 	curRowIDBase     int64
 	curRowIDMax      int64
 	tableRestore     *TableRestore
+
+	rowCount   int
+	avgRowSize int
 }
 
 func newChunkRestore(
@@ -2149,15 +2155,36 @@ type deliverResult struct {
 	err      error
 }
 
-func (cr *chunkRestore) adjustRowID(rowID *int64) {
-	if *rowID > cr.originalRowIDMax {
-		if cr.curRowIDBase >= cr.curRowIDMax {
+func (cr *chunkRestore) adjustRowID(rowID int64, rc *Controller) int64 {
+	if rowID > cr.originalRowIDMax {
+		if cr.curRowIDBase == 0 || cr.curRowIDBase > cr.curRowIDMax {
 			// reallocate rowID
-			cr.curRowIDBase, cr.curRowIDMax = cr.tableRestore.allocateRowIDs()
+			pos, _ := cr.parser.Pos()
+			leftFileSize := cr.chunk.Chunk.EndOffset - pos
+			newRowIDCount := leftFileSize/int64(cr.avgRowSize) + 1 // plus the current row
+			newBase, newMax, err := cr.tableRestore.allocateRowIDs(newRowIDCount, rc)
+			if err != nil {
+				logger := cr.tableRestore.logger.With(
+					zap.String("tableName", cr.tableRestore.tableName),
+					zap.Int("fileIndex", cr.index),
+					zap.Stringer("path", &cr.chunk.Key),
+					zap.String("task", "re-allocate rowID"),
+				)
+				logger.Error("fail to re-allocate rowIDs", zap.Error(err))
+				return rowID
+			}
+			cr.curRowIDBase = newBase
+			cr.curRowIDMax = newMax
 		}
-		*rowID = cr.curRowIDBase
+		rowID = cr.curRowIDBase
 		cr.curRowIDBase++
 	}
+	return rowID
+}
+
+func (cr *chunkRestore) updateRowStats(rowSize int) {
+	cr.avgRowSize = (cr.avgRowSize*cr.rowCount + rowSize) / (cr.rowCount + 1)
+	cr.rowCount++
 }
 
 //nolint:nakedret // TODO: refactor
@@ -2440,7 +2467,8 @@ func (cr *chunkRestore) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			// sql -> kv
-			cr.adjustRowID(&lastRow.RowID)
+			lastRow.RowID = cr.adjustRowID(lastRow.RowID, rc)
+			cr.updateRowStats(lastRow.Length)
 			rowID = lastRow.RowID
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
 			encodeDur += time.Since(encodeDurStart)

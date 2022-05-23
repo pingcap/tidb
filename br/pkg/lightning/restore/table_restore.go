@@ -102,9 +102,6 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 			timestamp = int64(v.(int))
 		})
 		for _, chunk := range chunks {
-			if chunk.Chunk.RowIDMax > tr.curMaxRowID {
-				tr.curMaxRowID = chunk.Chunk.RowIDMax
-			}
 			engine, found := cp.Engines[chunk.EngineID]
 			if !found {
 				engine = &checkpoints.EngineCheckpoint{
@@ -150,6 +147,9 @@ func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowID
 		for _, chunk := range engine.Chunks {
 			chunk.Chunk.PrevRowIDMax += rowIDBase
 			chunk.Chunk.RowIDMax += rowIDBase
+			if chunk.Chunk.RowIDMax > tr.curMaxRowID {
+				tr.curMaxRowID = chunk.Chunk.RowIDMax
+			}
 		}
 	}
 }
@@ -1020,10 +1020,21 @@ func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) 
 	return threshold
 }
 
-func (tr *TableRestore) allocateRowIDs() (int64, int64) {
+func (tr *TableRestore) allocateRowIDs(newRowCount int64, rc *Controller) (int64, int64, error) {
 	tr.rowIDLock.Lock()
 	defer tr.rowIDLock.Unlock()
-	newBase := tr.curMaxRowID + 1
-	tr.curMaxRowID += defaultNewAllocIDCnt
-	return newBase, tr.curMaxRowID
+	metaMgr := rc.metaMgrBuilder.TableMetaMgr(tr)
+	_, newBase, err := metaMgr.AllocTableRowIDs(context.Background(), newRowCount)
+	if err != nil {
+		return 0, 0, err
+	}
+	if newBase != 0 {
+		// re-alloc from downstream
+		tr.curMaxRowID = newBase + newRowCount
+		return newBase, newBase + newRowCount, nil
+	} else {
+		prevBase := tr.curMaxRowID + 1
+		tr.curMaxRowID += newRowCount
+		return prevBase, tr.curMaxRowID, nil
+	}
 }
