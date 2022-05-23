@@ -141,7 +141,8 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	return collector
 }
 
-const maxSampleValueLength = mysql.MaxFieldVarCharLength / 2
+// MaxSampleValueLength defines the max length of the useful samples. If one sample value exceeds the max length, we drop it before building the stats.
+const MaxSampleValueLength = mysql.MaxFieldVarCharLength / 2
 
 // SampleCollectorFromProto converts SampleCollector from its protobuf representation.
 func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector {
@@ -156,7 +157,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	s.CMSketch, s.TopN = CMSketchAndTopNFromProto(collector.CmSketch)
 	for _, val := range collector.Samples {
 		// When store the histogram bucket boundaries to kv, we need to limit the length of the value.
-		if len(val) <= maxSampleValueLength {
+		if len(val) <= MaxSampleValueLength {
 			item := &SampleItem{Value: types.NewBytesDatum(val)}
 			s.Samples = append(s.Samples, item)
 		}

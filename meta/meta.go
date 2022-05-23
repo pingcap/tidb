@@ -348,6 +348,11 @@ func (m *Meta) GenSchemaVersion() (int64, error) {
 	return m.txn.Inc(mSchemaVersionKey, 1)
 }
 
+// GenSchemaVersions increases the schema version.
+func (m *Meta) GenSchemaVersions(count int64) (int64, error) {
+	return m.txn.Inc(mSchemaVersionKey, count)
+}
+
 func (m *Meta) checkPolicyExists(policyKey []byte) error {
 	v, err := m.txn.HGet(mPolicies, policyKey)
 	if err == nil && v == nil {
