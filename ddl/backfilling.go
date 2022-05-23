@@ -236,7 +236,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	lastLogCount := 0
 	lastLogTime := time.Now()
 	startTime := lastLogTime
-	rc := w.ddlWorker.getReorgCtx(w.reorgInfo.Job)
+	rc := d.getReorgCtx(w.reorgInfo.Job)
 
 	for {
 		// Give job chance to be canceled, if we not check it here,
