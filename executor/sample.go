@@ -34,8 +34,6 @@ import (
 
 var _ Executor = &TableSampleExecutor{}
 
-const sampleMethodRegionConcurrency = 5
-
 // TableSampleExecutor fetches a few rows through kv.Scan
 // according to the specific sample method.
 type TableSampleExecutor struct {
