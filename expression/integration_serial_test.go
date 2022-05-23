@@ -3752,9 +3752,6 @@ func TestPreparePlanCache(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	// Plan cache should now be off by default
-	require.False(t, plannercore.PreparedPlanCacheEnabled())
-
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)

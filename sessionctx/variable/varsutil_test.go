@@ -238,6 +238,11 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
 
+	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
+	err = SetSessionSystemVar(v, TiDBOptimizerEnableOuterJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.EnableOuterJoinReorder)
+
 	require.Equal(t, DefTiDBOptimizerEnableNewOFGB, v.OptimizerEnableNewOnlyFullGroupByCheck)
 	err = SetSessionSystemVar(v, TiDBOptimizerEnableNewOnlyFullGroupByCheck, "off")
 	require.NoError(t, err)
