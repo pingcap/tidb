@@ -152,7 +152,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if resultFieldType.GetType() == mysql.TypeNull {
 		types.SetBinChsClnFlag(bf.tp)
-		resultFieldType.SetFlen(1)
+		resultFieldType.SetFlen(0)
 		resultFieldType.SetDecimal(0)
 	} else {
 		maxIntLen := 0

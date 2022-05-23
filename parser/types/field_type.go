@@ -147,6 +147,20 @@ func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
 	}
 }
 
+func (ft *FieldType) UpdateFlenAndDecimalUnderLimit(old *FieldType, deltaDecimal int, deltaFlen int) {
+	if old.decimal < 0 {
+		deltaFlen += mysql.MaxDecimalScale
+		ft.decimal = mysql.MaxDecimalScale
+	} else {
+		ft.SetDecimal(old.decimal + deltaDecimal)
+	}
+	if old.flen < 0 {
+		ft.flen = mysql.MaxDecimalWidth
+	} else {
+		ft.SetFlenUnderLimit(old.flen + deltaFlen)
+	}
+}
+
 func (ft *FieldType) SetCharset(charset string) {
 	ft.charset = charset
 }

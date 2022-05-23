@@ -75,7 +75,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		// If both arguments are NULL, make resulting type BINARY(0).
 		if rhs.GetType() == mysql.TypeNull {
 			resultFieldType.SetType(mysql.TypeString)
-			resultFieldType.SetFlen(1)
+			resultFieldType.SetFlen(0)
 			resultFieldType.SetDecimal(0)
 			types.SetBinChsClnFlag(resultFieldType)
 		}
