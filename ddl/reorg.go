@@ -185,6 +185,7 @@ func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 // After that, we can make sure that the worker goroutine is correctly shut down.
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
+	d := reorgInfo.d
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
 	if job.ReorgMeta == nil {
