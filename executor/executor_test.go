@@ -5418,18 +5418,18 @@ func TestHistoryReadInTxn(t *testing.T) {
 	} {
 		for _, setSnapshotBeforeTxn := range []bool{false, true} {
 			t.Run(fmt.Sprintf("[%s] setSnapshotBeforeTxn[%v]", isolation, setSnapshotBeforeTxn), func(t *testing.T) {
-				tk := testkit.NewTestKit(t, store)
-				tk.MustExec("use test")
-				tk.MustExec("rollback")
-				tk.MustExec("set @@tidb_snapshot=''")
+				tkt := testkit.NewTestKit(t, store)
+				tkt.MustExec("use test")
+				tkt.MustExec("rollback")
+				tkt.MustExec("set @@tidb_snapshot=''")
 
 				init(isolation, setSnapshotBeforeTxn)
 				// When tidb_snapshot is set, should use the snapshot info schema
-				tk.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0"))
+				tkt.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0"))
 
 				// When tidb_snapshot is set, select should use select ts
-				tk.MustQuery("select * from his_t0").Check(testkit.Rows("1 10"))
-				tk.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 10"))
+				tkt.MustQuery("select * from his_t0").Check(testkit.Rows("1 10"))
+				tkt.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 10"))
 
 				// When tidb_snapshot is set, write statements should not be allowed
 				if isolation != "none" && isolation != "optimistic" {
@@ -5443,7 +5443,7 @@ func TestHistoryReadInTxn(t *testing.T) {
 					}
 
 					for _, sql := range notAllowedSQLs {
-						err := tk.ExecToErr(sql)
+						err := tkt.ExecToErr(sql)
 						require.Errorf(t, err, "can not execute write statement when 'tidb_snapshot' is set")
 						time.Sleep(20 * time.Millisecond)
 					}
@@ -5451,34 +5451,34 @@ func TestHistoryReadInTxn(t *testing.T) {
 
 				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
 				// See issue: https://github.com/pingcap/tidb/issues/34529
-				exec := tk.Session().(sqlexec.RestrictedSQLExecutor)
+				exec := tkt.Session().(sqlexec.RestrictedSQLExecutor)
 				rows, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
 				require.NoError(t, err)
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, int64(1), rows[0].GetInt64(0))
 				require.Equal(t, int64(11), rows[0].GetInt64(1))
-				tk.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 10"))
-				tk.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0"))
+				tkt.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 10"))
+				tkt.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0"))
 
 				// CLEAR
-				tk.MustExec("set @@tidb_snapshot=''")
+				tkt.MustExec("set @@tidb_snapshot=''")
 
 				// When tidb_snapshot is not set, should use the transaction's info schema
-				tk.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0", "his_t1"))
+				tkt.MustQuery("show tables like 'his_%'").Check(testkit.Rows("his_t0", "his_t1"))
 
 				// When tidb_snapshot is not set, select should use the transaction's ts
-				tk.MustQuery("select * from his_t0").Check(testkit.Rows("1 12"))
-				tk.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 12"))
-				tk.MustQuery("select * from his_t1").Check(testkit.Rows("10 100"))
-				tk.MustQuery("select * from his_t1 where id=10").Check(testkit.Rows("10 100"))
+				tkt.MustQuery("select * from his_t0").Check(testkit.Rows("1 12"))
+				tkt.MustQuery("select * from his_t0 where id=1").Check(testkit.Rows("1 12"))
+				tkt.MustQuery("select * from his_t1").Check(testkit.Rows("10 100"))
+				tkt.MustQuery("select * from his_t1 where id=10").Check(testkit.Rows("10 100"))
 
 				// When tidb_snapshot is not set, select ... for update should not be effected
-				tk.MustQuery("select * from his_t0 for update").Check(testkit.Rows("1 12"))
-				tk.MustQuery("select * from his_t0 where id=1 for update").Check(testkit.Rows("1 12"))
-				tk.MustQuery("select * from his_t1 for update").Check(testkit.Rows("10 100"))
-				tk.MustQuery("select * from his_t1 where id=10 for update").Check(testkit.Rows("10 100"))
+				tkt.MustQuery("select * from his_t0 for update").Check(testkit.Rows("1 12"))
+				tkt.MustQuery("select * from his_t0 where id=1 for update").Check(testkit.Rows("1 12"))
+				tkt.MustQuery("select * from his_t1 for update").Check(testkit.Rows("10 100"))
+				tkt.MustQuery("select * from his_t1 where id=10 for update").Check(testkit.Rows("10 100"))
 
-				tk.MustExec("rollback")
+				tkt.MustExec("rollback")
 			})
 		}
 	}
