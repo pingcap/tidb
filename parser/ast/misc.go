@@ -57,6 +57,7 @@ var (
 	_ StmtNode = &RenameUserStmt{}
 	_ StmtNode = &HelpStmt{}
 	_ StmtNode = &PlanReplayerStmt{}
+	_ StmtNode = &CompactTableStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -357,6 +358,53 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Stmt = node.(StmtNode)
+	return v.Leave(n)
+}
+
+type CompactReplicaKind string
+
+const (
+	// CompactReplicaKindTiFlash means compacting TiFlash replicas.
+	CompactReplicaKindTiFlash = "TIFLASH"
+
+	// CompactReplicaKindTiKV means compacting TiKV replicas.
+	CompactReplicaKindTiKV = "TIKV"
+)
+
+// CompactTableStmt is a statement to manually compact a table.
+type CompactTableStmt struct {
+	stmtNode
+
+	Table       *TableName
+	ReplicaKind CompactReplicaKind
+}
+
+// Restore implements Node interface.
+func (n *CompactTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER TABLE ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while add table")
+	}
+
+	// Note: There is only TiFlash replica available now. TiKV will be added later.
+	ctx.WriteKeyWord(" COMPACT ")
+	ctx.WriteKeyWord(string(n.ReplicaKind))
+	ctx.WriteKeyWord(" REPLICA")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CompactTableStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 

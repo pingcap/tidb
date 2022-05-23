@@ -679,26 +679,26 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	var viewSchema *expression.Schema
-	var viewOutputNames types.NameSlice
 	if tbl.IsView() {
-		var viewLogicalPlan plannercore.Plan
-		// Build plan is not thread safe, there will be concurrency on sessionctx.
-		if err := runWithSystemSession(sctx, func(s sessionctx.Context) error {
-			planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
-			var err error
-			viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl)
-			if err != nil {
+		e.viewMu.Lock()
+		_, ok := e.viewSchemaMap[tbl.ID]
+		if !ok {
+			var viewLogicalPlan plannercore.Plan
+			// Build plan is not thread safe, there will be concurrency on sessionctx.
+			if err := runWithSystemSession(sctx, func(s sessionctx.Context) error {
+				planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
+				var err error
+				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl)
 				return errors.Trace(err)
+			}); err != nil {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				e.viewMu.Unlock()
+				return
 			}
-			return nil
-		}); err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			return
+			e.viewSchemaMap[tbl.ID] = viewLogicalPlan.Schema()
+			e.viewOutputNamesMap[tbl.ID] = viewLogicalPlan.OutputNames()
 		}
-
-		viewSchema = viewLogicalPlan.Schema()
-		viewOutputNames = viewLogicalPlan.OutputNames()
+		e.viewMu.Unlock()
 	}
 
 	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []collate.WildcardPattern
@@ -737,15 +737,18 @@ ForColumnsTag:
 		}
 
 		ft := &col.FieldType
-		if viewSchema != nil {
-			// If this is a view, replace the column with the view column.
-			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
-			if idx >= 0 {
-				col1 := viewSchema.Columns[idx]
-				ft = col1.GetType()
+		if tbl.IsView() {
+			e.viewMu.RLock()
+			if e.viewSchemaMap[tbl.ID] != nil {
+				// If this is a view, replace the column with the view column.
+				idx := expression.FindFieldNameIdxByColName(e.viewOutputNamesMap[tbl.ID], col.Name.L)
+				if idx >= 0 {
+					col1 := e.viewSchemaMap[tbl.ID].Columns[idx]
+					ft = col1.GetType()
+				}
 			}
+			e.viewMu.RUnlock()
 		}
-
 		if !extractor.SkipRequest {
 			if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.Name.L) {
 				continue
@@ -2613,15 +2616,18 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 type hugeMemTableRetriever struct {
 	dummyCloser
-	extractor   *plannercore.ColumnsTableExtractor
-	table       *model.TableInfo
-	columns     []*model.ColumnInfo
-	retrieved   bool
-	initialized bool
-	rows        [][]types.Datum
-	dbs         []*model.DBInfo
-	dbsIdx      int
-	tblIdx      int
+	extractor          *plannercore.ColumnsTableExtractor
+	table              *model.TableInfo
+	columns            []*model.ColumnInfo
+	retrieved          bool
+	initialized        bool
+	rows               [][]types.Datum
+	dbs                []*model.DBInfo
+	dbsIdx             int
+	tblIdx             int
+	viewMu             sync.RWMutex
+	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
+	viewOutputNamesMap map[int64]types.NameSlice    // table id to view output names
 }
 
 // retrieve implements the infoschemaRetriever interface

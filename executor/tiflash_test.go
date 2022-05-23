@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -44,13 +43,14 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-func createTiFlashStore(t *testing.T) (kv.Storage, func()) {
-	store, clean := testkit.CreateMockStore(t,
+// withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
+	return mockstore.WithMultipleOptions(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
 			tiflashIdx := 0
-			for tiflashIdx < 2 {
+			for tiflashIdx < nodes {
 				store2 := c.AllocID()
 				peer2 := c.AllocID()
 				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
@@ -61,11 +61,10 @@ func createTiFlashStore(t *testing.T) (kv.Storage, func()) {
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
-	return store, clean
 }
 
 func TestNonsupportCharsetTable(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -81,7 +80,7 @@ func TestNonsupportCharsetTable(t *testing.T) {
 }
 
 func TestReadPartitionTable(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -119,7 +118,7 @@ func TestReadPartitionTable(t *testing.T) {
 }
 
 func TestReadUnsigedPK(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -159,7 +158,7 @@ func TestReadUnsigedPK(t *testing.T) {
 
 // to fix https://github.com/pingcap/tidb/issues/27952
 func TestJoinRace(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -192,7 +191,7 @@ func TestMppExecution(t *testing.T) {
 	if israce.RaceEnabled {
 		t.Skip("skip race test because of long running")
 	}
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -288,7 +287,7 @@ func TestMppExecution(t *testing.T) {
 }
 
 func TestInjectExtraProj(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -312,7 +311,7 @@ func TestInjectExtraProj(t *testing.T) {
 func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
 	t.Skip("too slow")
 
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`create database tiflash_partition_SHJ`)
@@ -387,7 +386,7 @@ func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
 func TestTiFlashPartitionTableReader(t *testing.T) {
 	t.Skip("too slow")
 
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`create database tiflash_partition_tablereader`)
@@ -451,7 +450,7 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -543,7 +542,7 @@ func TestPartitionTable(t *testing.T) {
 }
 
 func TestMppEnum(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -565,7 +564,7 @@ func TestMppEnum(t *testing.T) {
 }
 
 func TestTiFlashPlanCacheable(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -618,7 +617,7 @@ func TestTiFlashPlanCacheable(t *testing.T) {
 }
 
 func TestDispatchTaskRetry(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -640,7 +639,7 @@ func TestDispatchTaskRetry(t *testing.T) {
 
 func TestCancelMppTasks(t *testing.T) {
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -681,7 +680,7 @@ func TestMppGoroutinesExitFromErrors(t *testing.T) {
 	var mppNonRootTaskError = "github.com/pingcap/tidb/store/copr/mppNonRootTaskError"
 	// mock root tasks hang
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -719,7 +718,7 @@ func TestMppGoroutinesExitFromErrors(t *testing.T) {
 }
 
 func TestMppUnionAll(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -777,7 +776,7 @@ func TestMppUnionAll(t *testing.T) {
 }
 
 func TestUnionWithEmptyDualTable(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -801,7 +800,7 @@ func TestUnionWithEmptyDualTable(t *testing.T) {
 }
 
 func TestAvgOverflow(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -846,7 +845,7 @@ func TestAvgOverflow(t *testing.T) {
 }
 
 func TestMppApply(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -878,7 +877,7 @@ func TestMppApply(t *testing.T) {
 }
 
 func TestTiFlashVirtualColumn(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -918,7 +917,7 @@ func TestTiFlashVirtualColumn(t *testing.T) {
 func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 	t.Skip("too slow")
 
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database tiflash_partition_AGG")
@@ -990,7 +989,7 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	t.Skip("too slow")
 
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database tiflash_partition_BCJ")
@@ -1060,7 +1059,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 }
 
 func TestForbidTiflashDuringStaleRead(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1097,7 +1096,7 @@ func TestForbidTiflashDuringStaleRead(t *testing.T) {
 }
 
 func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1150,7 +1149,7 @@ func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
 }
 
 func TestTiflashPartitionTableScan(t *testing.T) {
-	store, clean := createTiFlashStore(t)
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
