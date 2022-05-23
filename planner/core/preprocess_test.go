@@ -344,6 +344,37 @@ func TestErrKeyPart0(t *testing.T) {
 	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
 }
 
+//https://github.com/pingcap/tidb/issues/24563
+func TestIssue24563(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database db1")
+	tk.MustExec("create database db2")
+	tk.MustExec("use db1")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("use db2")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("use db1")
+	// the name resolution should be db1.t & db2.t, ok.
+	tk.MustQuery("select * from t, db2.t as t;").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("use db2")
+	err := tk.ExecToErr("select * from t, db2.t as t;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1066]Not unique table/alias: 't'")
+
+	// test the capital case.
+	err = tk.ExecToErr("select person.id from Person inner join Person on person.id = person.id")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1066]Not unique table/alias: 'Person'")
+}
+
 // For issue #30328
 func TestLargeVarcharAutoConv(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
