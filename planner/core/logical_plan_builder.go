@@ -342,16 +342,21 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
 	case *ast.TableSource:
-		var isTableName bool
+		var (
+			isTableName bool
+			isSubQuery  bool
+		)
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
 			ci := b.prepareCTECheckForSubQuery()
 			defer resetCTECheckForSubQuery(ci)
 			p, err = b.buildSelect(ctx, v)
+			isSubQuery = true
 		case *ast.SetOprStmt:
 			ci := b.prepareCTECheckForSubQuery()
 			defer resetCTECheckForSubQuery(ci)
 			p, err = b.buildSetOpr(ctx, v)
+			isSubQuery = true
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
 			isTableName = true
@@ -368,6 +373,20 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			}
 			if x.AsName.L != "" {
 				name.TblName = x.AsName
+			}
+			if isSubQuery {
+				// change the derived table's database name.
+				asName := x.AsName
+				x.AsName = model.NewCIStr("")
+				defer func() {
+					x.AsName = asName
+				}()
+				var sb strings.Builder
+				err = x.Restore(format.NewRestoreCtx(0, &sb))
+				if err != nil {
+					return nil, err
+				}
+				name.DBName = model.NewCIStr(sb.String())
 			}
 		}
 		// `TableName` is not a select block, so we do not need to handle it.

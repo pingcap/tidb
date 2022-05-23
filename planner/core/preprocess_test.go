@@ -364,8 +364,20 @@ func TestIssue24563(t *testing.T) {
 	// the name resolution should be db1.t & db2.t, ok.
 	tk.MustQuery("select * from t, db2.t as t;").Check(testkit.Rows("1 1"))
 
+	err := tk.ExecToErr("select * from t, db2.t as t where t.a = t.a")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1052]Column 'a' in field list is ambiguous")
+
+	// test the derived table (may have the special db name for deduplication).
+	tk.MustQuery("select * from db1.t as t1, (select * from t) as t1;")
+	err = tk.ExecToErr("select * from db1.t as t1, t as t1;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1066]Not unique table/alias: 't1'")
+
+	//****************************************************************************************
+
 	tk.MustExec("use db2")
-	err := tk.ExecToErr("select * from t, db2.t as t;")
+	err = tk.ExecToErr("select * from t, db2.t as t;")
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:1066]Not unique table/alias: 't'")
 
