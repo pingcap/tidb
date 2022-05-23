@@ -5,7 +5,7 @@ codecov:
 coverage:
   precision: 4
   round: down
-  range: "65...90"
+  range: "55...90"
 
   status:
     project: 
@@ -13,7 +13,7 @@ coverage:
         threshold: 0.2 #Allow the coverage to drop by threshold%, and posting a success status.
     patch: 
       default:
-        target: 0% # trial operation
+        target: 0% # reza mahendra
     changes: no
 
 parsers:
@@ -26,7 +26,7 @@ parsers:
 
 comment:
   layout: "header, diff"
-  behavior: default
+  behavior: nothing
   require_changes: no
 
 ignore:
