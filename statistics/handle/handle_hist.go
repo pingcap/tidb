@@ -257,10 +257,6 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fms, err := h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ColumnID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -274,7 +270,6 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 		Info:       c.Info,
 		CMSketch:   cms,
 		TopN:       topN,
-		FMSketch:   fms,
 		IsHandle:   c.IsHandle,
 		StatsVer:   rows[0].GetInt64(0),
 		Loaded:     true,
