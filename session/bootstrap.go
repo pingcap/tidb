@@ -1835,6 +1835,15 @@ func upgradeToVer89(s Session, ver int64) {
 // to the error log. The message is important since the behavior is weird
 // (changes to the config file will no longer take effect past this point).
 func importConfigOption(s Session, configName, svName, valStr string) {
+	if valStr == "" || valStr == "0" {
+		// We can't technically detect from config if there was no value set. i.e.
+		// a boolean is true/false, not true/false/null.
+		// *However* if there was no value, it does guarantee that it was
+		// not set in the config file. We don't want to import NULL values,
+		// because the behavior will be wrong.
+		// See: https://github.com/pingcap/tidb/issues/34847
+		return
+	}
 	message := fmt.Sprintf("%s is now configured by the system variable %s. One-time importing the value specified in tidb.toml file", configName, svName)
 	logutil.BgLogger().Warn(message, zap.String("value", valStr))
 	// We use insert ignore, since if its a duplicate we don't want to overwrite any user-set values.
@@ -1851,7 +1860,7 @@ func upgradeToVer90(s Session, ver int64) {
 	importConfigOption(s, "enable-batch-dml", variable.TiDBEnableBatchDML, valStr)
 	valStr = fmt.Sprint(config.GetGlobalConfig().MemQuotaQuery)
 	importConfigOption(s, "mem-quota-query", variable.TiDBMemQuotaQuery, valStr)
-	valStr = fmt.Sprint((config.GetGlobalConfig().Log.QueryLogMaxLen), 10)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Log.QueryLogMaxLen)
 	importConfigOption(s, "query-log-max-len", variable.TiDBQueryLogMaxLen, valStr)
 	valStr = fmt.Sprint(config.GetGlobalConfig().Performance.CommitterConcurrency)
 	importConfigOption(s, "committer-concurrency", variable.TiDBCommitterConcurrency, valStr)
