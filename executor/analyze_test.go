@@ -3293,13 +3293,21 @@ func TestDumpStatsDeltaBeforeAnalyze(t *testing.T) {
 	tk.MustExec("analyze table t")
 	rows := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Rows()
 	require.Equal(t, 1, len(rows))
-	require.Equal(t, "0", rows[0][4])
-	require.Equal(t, "2", rows[0][5])
+	require.Equal(t, "0", rows[0][4]) // modify_count
+	require.Equal(t, "2", rows[0][5]) // row_count
+	rows = tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Rows()
+	require.Equal(t, 2, len(rows))
+	require.Equal(t, "1", rows[0][8]) // avg_col_size
+	require.Equal(t, "1", rows[1][8]) // avg_col_size
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	// We expect that modify_count = 0 and row_count = 2 since stats delta is dumped before analyze.
+	// We expect that nothing changes comparing to the last check since stats delta is dumped before analyze.
 	rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Rows()
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, "0", rows[0][4])
 	require.Equal(t, "2", rows[0][5])
+	rows = tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Rows()
+	require.Equal(t, 2, len(rows))
+	require.Equal(t, "1", rows[0][8]) // avg_col_size
+	require.Equal(t, "1", rows[1][8]) // avg_col_size
 }
