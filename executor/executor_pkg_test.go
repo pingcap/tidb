@@ -400,7 +400,9 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 	vars := variable.NewSessionVars()
 	const tableID int64 = 3
 	vars.TxnCtx = &variable.TransactionContext{
-		TemporaryTables: map[int64]tableutil.TempTable{tableID: nil},
+		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+			TemporaryTables: map[int64]tableutil.TempTable{tableID: nil},
+		},
 	}
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})

@@ -131,31 +131,26 @@ func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 	return id, true
 }
 
-// SavepointRecord is a (savepoint-name, CP) pair.
-type SavepointRecord struct {
-	// name is the name of the savepoint
-	Name string
-	// Savepoint is the transaction savepoint.
-	MemDBCheckpoint *tikv.MemDBCheckpoint
-
-	txnCtxSavepoint TransactionContextSavepoint
+// TransactionContext is used to store variables that has transaction scope.
+type TransactionContext struct {
+	TxnCtxNoNeedToRestore
+	TxnCtxNeedToRestore
 }
 
-// TransactionContextSavepoint is the savepoint of TransactionContext.
-// This is use to save the TransactionContext status
-// and rollback TransactionContext to the specify TransactionContextSavepoint.
-// This is uses to implement transaction savepoint and rollback to savepoint.
-type TransactionContextSavepoint struct {
-	// TableDeltaMap is the savepoint of TransactionContext.TableDeltaMap
+// TxnCtxNeedToRestore stores transaction variables which need to be restore when rollback to savepoint.
+type TxnCtxNeedToRestore struct {
+	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
+	// It's also used in the statistics updating.
+	// Note: for the partitioned table, it stores all the partition IDs.
 	TableDeltaMap map[int64]TableDelta
-	// pessimisticLockCache is the savepoint of TransactionContext.pessimisticLockCache
+
+	// pessimisticLockCache is the cache for pessimistic locked keys,
+	// The value never changes during the transaction.
 	pessimisticLockCache map[string][]byte
 }
 
-// TransactionContext is used to store variables that has transaction scope.
-// WARNING: when adding a new variable into TransactionContext, you should consider whether the variable should be
-// store into TransactionContextSavepoint.
-type TransactionContext struct {
+// TxnCtxNoNeedToRestore stores transaction variables which no need to restore when rollback to savepoint.
+type TxnCtxNoNeedToRestore struct {
 	forUpdateTS uint64
 	stmtFuture  oracle.Future
 	Binlog      interface{}
@@ -169,18 +164,10 @@ type TransactionContext struct {
 	currentShard int64
 	shardRand    *rand.Rand
 
-	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
-	// It's also used in the statistics updating.
-	// Note: for the partitioned table, it stores all the partition IDs.
-	TableDeltaMap map[int64]TableDelta
-
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
 
-	// pessimisticLockCache is the cache for pessimistic locked keys,
-	// The value never changes during the transaction.
-	pessimisticLockCache map[string][]byte
-	PessimisticCacheHit  int
+	PessimisticCacheHit int
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
@@ -214,6 +201,16 @@ type TransactionContext struct {
 
 	// Last ts used by read-consistency read.
 	LastRcReadTs uint64
+}
+
+// SavepointRecord indicates a transaction's savepoint record.
+type SavepointRecord struct {
+	// name is the name of the savepoint
+	Name string
+	// MemDBCheckpoint is the transaction's memdb checkpoint.
+	MemDBCheckpoint *tikv.MemDBCheckpoint
+	// TxnCtxSavepoint is the savepoint of TransactionContext
+	TxnCtxSavepoint TxnCtxNeedToRestore
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -346,7 +343,7 @@ func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
 }
 
 // GetCurrentSavepoint gets TransactionContext's savepoint.
-func (tc *TransactionContext) GetCurrentSavepoint() TransactionContextSavepoint {
+func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	tableDeltaMap := make(map[int64]TableDelta, len(tc.TableDeltaMap))
 	for k, v := range tc.TableDeltaMap {
 		tableDeltaMap[k] = v.Clone()
@@ -356,14 +353,14 @@ func (tc *TransactionContext) GetCurrentSavepoint() TransactionContextSavepoint 
 		pessimisticLockCache[k] = v
 	}
 
-	return TransactionContextSavepoint{
+	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
 		pessimisticLockCache: pessimisticLockCache,
 	}
 }
 
 // RestoreBySavepoint restores TransactionContext to the specify savepoint.
-func (tc *TransactionContext) RestoreBySavepoint(savepoint TransactionContextSavepoint) {
+func (tc *TransactionContext) RestoreBySavepoint(savepoint TxnCtxNeedToRestore) {
 	tc.TableDeltaMap = savepoint.TableDeltaMap
 	tc.pessimisticLockCache = savepoint.pessimisticLockCache
 }
@@ -376,7 +373,7 @@ func (tc *TransactionContext) AddSavepoint(name string, memdbCheckpoint *tikv.Me
 	record := SavepointRecord{
 		Name:            name,
 		MemDBCheckpoint: memdbCheckpoint,
-		txnCtxSavepoint: tc.GetCurrentSavepoint(),
+		TxnCtxSavepoint: tc.GetCurrentSavepoint(),
 	}
 	tc.Savepoints = append(tc.Savepoints, record)
 }
@@ -407,7 +404,7 @@ func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord 
 	name = strings.ToLower(name)
 	for idx, sp := range tc.Savepoints {
 		if name == sp.Name {
-			tc.RestoreBySavepoint(sp.txnCtxSavepoint)
+			tc.RestoreBySavepoint(sp.TxnCtxSavepoint)
 			tc.Savepoints = tc.Savepoints[:idx+1]
 			return &tc.Savepoints[idx]
 		}
