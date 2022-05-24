@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -312,6 +313,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCTE(v)
 	case *plannercore.PhysicalCTETable:
 		return b.buildCTETableReader(v)
+	case *plannercore.CompactTable:
+		return b.buildCompactTable(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -797,22 +800,23 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 
 func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		Tp:           v.Tp,
-		DBName:       model.NewCIStr(v.DBName),
-		Table:        v.Table,
-		Partition:    v.Partition,
-		Column:       v.Column,
-		IndexName:    v.IndexName,
-		Flag:         v.Flag,
-		Roles:        v.Roles,
-		User:         v.User,
-		is:           b.is,
-		Full:         v.Full,
-		IfNotExists:  v.IfNotExists,
-		GlobalScope:  v.GlobalScope,
-		Extended:     v.Extended,
-		Extractor:    v.Extractor,
+		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		Tp:                    v.Tp,
+		CountWarningsOrErrors: v.CountWarningsOrErrors,
+		DBName:                model.NewCIStr(v.DBName),
+		Table:                 v.Table,
+		Partition:             v.Partition,
+		Column:                v.Column,
+		IndexName:             v.IndexName,
+		Flag:                  v.Flag,
+		Roles:                 v.Roles,
+		User:                  v.User,
+		is:                    b.is,
+		Full:                  v.Full,
+		IfNotExists:           v.IfNotExists,
+		GlobalScope:           v.GlobalScope,
+		Extended:              v.Extended,
+		Extractor:             v.Extractor,
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -2272,13 +2276,20 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+
+	isAutoFlag := uint64(0)
+
+	if autoAnalyze != "" {
+		isAutoFlag = model.FlagIsSysSession
+	}
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
 		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
-			Flags:          sc.PushDownFlags(),
+			Flags:          sc.PushDownFlags() | isAutoFlag,
 			TimeZoneOffset: offset,
 		},
 		opts:     opts,
@@ -2432,6 +2443,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		TableName:     task.TableName,
 		PartitionName: task.PartitionName,
 	}
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2584,13 +2596,20 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+
+	isAutoFlag := uint64(0)
+
+	if autoAnalyze != "" {
+		isAutoFlag = model.FlagIsSysSession
+	}
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
-			Flags:          sc.PushDownFlags(),
+			Flags:          sc.PushDownFlags() | isAutoFlag,
 			TimeZoneOffset: offset,
 		},
 		opts:     opts,
@@ -5005,4 +5024,24 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		}
 	}
 	return nil
+}
+
+func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executor {
+	if v.ReplicaKind != ast.CompactReplicaKindTiFlash {
+		b.err = errors.Errorf("compact %v replica is not supported", strings.ToLower(string(v.ReplicaKind)))
+		return nil
+	}
+
+	store := b.ctx.GetStore()
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		b.err = errors.New("compact tiflash replica can only run with tikv compatible storage")
+		return nil
+	}
+
+	return &CompactTableTiFlashExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		tableInfo:    v.TableInfo,
+		tikvStore:    tikvStore,
+	}
 }

@@ -2940,11 +2940,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ses[0])
 
-	err = updateMemoryConfigAndSysVar(ses[0])
-	if err != nil {
-		return nil, err
-	}
-
 	dom := domain.GetDomain(ses[0])
 	// We should make the load bind-info loop before other loops which has internal SQL.
 	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
@@ -3073,8 +3068,8 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		if opt != nil && opt.PreparedPlanCache != nil {
 			s.preparedPlanCache = opt.PreparedPlanCache
 		} else {
-			s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-				plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
+			s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
 		}
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
@@ -3106,8 +3101,8 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
@@ -3386,7 +3381,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
-			zap.Stringer("user", vars.User),
+			zap.String("user", vars.User.LoginString()),
 			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
