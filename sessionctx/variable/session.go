@@ -56,6 +56,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"golang.org/x/exp/maps"
 )
 
 // PreparedStmtCount is exported for test.
@@ -349,10 +350,7 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 		tableDeltaMap[k] = v.Clone()
 	}
 	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
-	for k, v := range tc.pessimisticLockCache {
-		pessimisticLockCache[k] = v
-	}
-
+	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
 	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
 		pessimisticLockCache: pessimisticLockCache,
@@ -1814,9 +1812,7 @@ type TableDelta struct {
 // Clone returns a cloned TableDelta.
 func (td TableDelta) Clone() TableDelta {
 	colSize := make(map[int64]int64, len(td.ColSize))
-	for k, v := range td.ColSize {
-		colSize[k] = v
-	}
+	maps.Copy(colSize, td.ColSize)
 	return TableDelta{
 		Delta:    td.Delta,
 		Count:    td.Count,
