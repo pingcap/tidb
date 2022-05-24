@@ -4147,7 +4147,7 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 		return false, dbterror.ErrUnsupportedPKHandle
 	}
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
-		return false, dbterror.ErrCantDropColWithIndex.GenWithStack("can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled")
+		return false, dbterror.ErrCantDropColWithAutoInc
 	}
 	return true, nil
 }
