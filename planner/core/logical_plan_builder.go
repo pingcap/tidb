@@ -367,6 +367,21 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
+		var dbName4DerivedTable model.CIStr
+		if isSubQuery {
+			// change the derived table's database name.
+			asName := x.AsName
+			x.AsName = model.NewCIStr("")
+			var sb strings.Builder
+			// (select * from t) as t1 => db name as (select * from t)
+			err = x.Restore(format.NewRestoreCtx(0, &sb))
+			if err != nil {
+				return nil, err
+			}
+			dbName4DerivedTable = model.NewCIStr(sb.String())
+			x.AsName = asName
+		}
+
 		for _, name := range p.OutputNames() {
 			if name.Hidden {
 				continue
@@ -376,17 +391,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			}
 			if isSubQuery {
 				// change the derived table's database name.
-				asName := x.AsName
-				x.AsName = model.NewCIStr("")
-				defer func() {
-					x.AsName = asName
-				}()
-				var sb strings.Builder
-				err = x.Restore(format.NewRestoreCtx(0, &sb))
-				if err != nil {
-					return nil, err
-				}
-				name.DBName = model.NewCIStr(sb.String())
+				name.DBName = dbName4DerivedTable
 			}
 		}
 		// `TableName` is not a select block, so we do not need to handle it.
