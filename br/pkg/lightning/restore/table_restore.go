@@ -45,8 +45,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const defaultNewAllocIDCnt = 100000
-
 type TableRestore struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
