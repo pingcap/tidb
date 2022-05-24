@@ -2811,35 +2811,6 @@ func loadCollationParameter(se *session) (bool, error) {
 	return false, nil
 }
 
-func updateMemoryConfigAndSysVar(se *session) error {
-	if !config.IsOOMActionSetByUser {
-		newOOMAction, err := loadDefOOMAction(se)
-		if err != nil {
-			return err
-		}
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = newOOMAction
-		})
-	}
-
-	return nil
-}
-
-func loadDefOOMAction(se *session) (string, error) {
-	defOOMAction, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbDefOOMAction)
-	if err != nil {
-		if err == errResultIsEmpty {
-			return config.GetGlobalConfig().OOMAction, nil
-		}
-		return config.GetGlobalConfig().OOMAction, err
-	}
-	if defOOMAction != config.OOMActionLog {
-		logutil.BgLogger().Warn("Unexpected value of 'default_oom_action' in 'mysql.tidb', use 'log' instead",
-			zap.String("value", defOOMAction))
-	}
-	return defOOMAction, nil
-}
-
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	DdlJobTables     = []string{
