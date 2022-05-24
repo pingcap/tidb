@@ -1198,7 +1198,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 
 // SaveStatsToStorage saves the stats to storage.
 // TODO: refactor to reduce the number of parameters
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool, updateAnalyzeTime bool) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
@@ -1236,10 +1236,6 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return err
 	}
-	fmSketch, err := statistics.EncodeFMSketch(fms)
-	if err != nil {
-		return err
-	}
 	// Delete outdated data
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
@@ -1253,11 +1249,6 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
-	}
-	if fmSketch != nil && needDumpFMS {
-		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, isIndex, hg.ID, fmSketch); err != nil {
-			return err
-		}
 	}
 	flag := 0
 	if isAnalyzed == 1 {

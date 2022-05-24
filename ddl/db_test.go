@@ -1205,6 +1205,35 @@ func TestCreateTableWithIntegerLengthWaring(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 }
+func TestShowCountWarningsOrErrors(t *testing.T) {
+	// Inject the strict-integer-display-width variable in parser directly.
+	parsertypes.TiDBStrictIntegerDisplayWidth = true
+	defer func() { parsertypes.TiDBStrictIntegerDisplayWidth = false }()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// test sql run work
+	tk.MustExec("show count(*) warnings")
+	tk.MustExec("show count(*) errors")
+
+	// test count warnings
+	tk.MustExec("drop table if exists t1,t2,t3")
+	// Warning: Integer display width is deprecated and will be removed in a future release.
+	tk.MustExec("create table t(a int8(2));" +
+		"create table t1(a int4(2));" +
+		"create table t2(a int4(2));")
+	tk.MustQuery("show count(*) warnings").Check(tk.MustQuery("select @@session.warning_count").Rows())
+
+	// test count errors
+	tk.MustExec("drop table if exists show_errors")
+	tk.MustExec("create table show_errors (a int)")
+	// Error: Table exist
+	_, _ = tk.Exec("create table show_errors (a int)")
+	tk.MustQuery("show count(*) errors").Check(tk.MustQuery("select @@session.error_count").Rows())
+
+}
 
 // Close issue #24172.
 // See https://github.com/pingcap/tidb/issues/24172
