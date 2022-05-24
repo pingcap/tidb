@@ -532,10 +532,10 @@ func pruneDecodeColMap(colMap map[int64]decoder.Column, t table.Table, indexInfo
 	resultMap := make(map[int64]decoder.Column)
 	virtualGeneratedColumnStack := make([]*model.ColumnInfo, 0)
 	for _, idxCol := range indexInfo.Columns {
-		if isVirtualGeneratedColumn(t.Cols()[idxCol.Offset].ColumnInfo) {
-			virtualGeneratedColumnStack = append(virtualGeneratedColumnStack, t.Cols()[idxCol.Offset].ColumnInfo)
+		if isVirtualGeneratedColumn(t.Meta().Columns[idxCol.Offset]) {
+			virtualGeneratedColumnStack = append(virtualGeneratedColumnStack, t.Meta().Columns[idxCol.Offset])
 		}
-		resultMap[t.Cols()[idxCol.Offset].ID] = colMap[t.Cols()[idxCol.Offset].ID]
+		resultMap[t.Meta().Columns[idxCol.Offset].ID] = colMap[t.Meta().Columns[idxCol.Offset].ID]
 	}
 
 	for len(virtualGeneratedColumnStack) > 0 {
