@@ -608,7 +608,9 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		return errors.Trace(err)
 	}
 
-	decodeColMap = pruneDecodeColMap(decodeColMap, t, indexInfo)
+	if indexInfo != nil {
+		decodeColMap = pruneDecodeColMap(decodeColMap, t, indexInfo)
+	}
 
 	if err := w.isReorgRunnable(reorgInfo.d); err != nil {
 		return errors.Trace(err)
