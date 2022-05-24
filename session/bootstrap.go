@@ -615,13 +615,15 @@ const (
 	version88 = 88
 	// version89 adds the tables mysql.advisory_locks
 	version89 = 89
-	// version90 converts enable-batch-dml to a sysvar
+	// version90 converts enable-batch-dml, mem-quota-query, query-log-max-len, committer-concurrency, run-auto-analyze, and oom-action to a sysvar
 	version90 = 90
+	// version91 converts prepared-plan-cache to sysvars
+	version91 = 91
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version90
+var currentBootstrapVersion int64 = version91
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -715,6 +717,7 @@ var (
 		upgradeToVer88,
 		upgradeToVer89,
 		upgradeToVer90,
+		upgradeToVer91,
 	}
 )
 
@@ -1832,6 +1835,15 @@ func upgradeToVer89(s Session, ver int64) {
 // to the error log. The message is important since the behavior is weird
 // (changes to the config file will no longer take effect past this point).
 func importConfigOption(s Session, configName, svName, valStr string) {
+	if valStr == "" || valStr == "0" {
+		// We can't technically detect from config if there was no value set. i.e.
+		// a boolean is true/false, not true/false/null.
+		// *However* if there was no value, it does guarantee that it was
+		// not set in the config file. We don't want to import NULL values,
+		// because the behavior will be wrong.
+		// See: https://github.com/pingcap/tidb/issues/34847
+		return
+	}
 	message := fmt.Sprintf("%s is now configured by the system variable %s. One-time importing the value specified in tidb.toml file", configName, svName)
 	logutil.BgLogger().Warn(message, zap.String("value", valStr))
 	// We use insert ignore, since if its a duplicate we don't want to overwrite any user-set values.
@@ -1846,12 +1858,36 @@ func upgradeToVer90(s Session, ver int64) {
 	}
 	valStr := variable.BoolToOnOff(config.GetGlobalConfig().EnableBatchDML)
 	importConfigOption(s, "enable-batch-dml", variable.TiDBEnableBatchDML, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().MemQuotaQuery)
+	importConfigOption(s, "mem-quota-query", variable.TiDBMemQuotaQuery, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Log.QueryLogMaxLen)
+	importConfigOption(s, "query-log-max-len", variable.TiDBQueryLogMaxLen, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Performance.CommitterConcurrency)
+	importConfigOption(s, "committer-concurrency", variable.TiDBCommitterConcurrency, valStr)
+	valStr = variable.BoolToOnOff(config.GetGlobalConfig().Performance.RunAutoAnalyze)
+	importConfigOption(s, "run-auto-analyze", variable.TiDBEnableAutoAnalyze, valStr)
+	valStr = config.GetGlobalConfig().OOMAction
+	importConfigOption(s, "oom-action", variable.TiDBMemOOMAction, valStr)
+}
+
+func upgradeToVer91(s Session, ver int64) {
+	if ver >= version91 {
+		return
+	}
+	valStr := variable.BoolToOnOff(config.GetGlobalConfig().PreparedPlanCache.Enabled)
+	importConfigOption(s, "prepared-plan-cache.enable", variable.TiDBEnablePrepPlanCache, valStr)
+
+	valStr = strconv.Itoa(int(config.GetGlobalConfig().PreparedPlanCache.Capacity))
+	importConfigOption(s, "prepared-plan-cache.capacity", variable.TiDBPrepPlanCacheSize, valStr)
+
+	valStr = strconv.FormatFloat(config.GetGlobalConfig().PreparedPlanCache.MemoryGuardRatio, 'f', -1, 64)
+	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", variable.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
 }
 
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
-		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, variable.OOMActionLog, comment, variable.OOMActionLog,
 	)
 }
 
@@ -1997,6 +2033,14 @@ func doDMLWorks(s Session) {
 		case variable.TiDBEnableChangeMultiSchema:
 			if inTestSuite() {
 				vVal = variable.On
+			}
+		case variable.TiDBMemOOMAction:
+			if inTestSuite() {
+				vVal = variable.OOMActionLog
+			}
+		case variable.TiDBEnableAutoAnalyze:
+			if inTestSuite() {
+				vVal = variable.Off
 			}
 		// For the following sysvars, we change the default
 		// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.

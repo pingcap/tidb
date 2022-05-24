@@ -299,6 +299,16 @@ func FindColumnInfoByID(cols []*ColumnInfo, id int64) *ColumnInfo {
 	return nil
 }
 
+// FindIndexInfoByID finds IndexInfo in indices by id.
+func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
+	for _, idx := range indices {
+		if idx.ID == id {
+			return idx
+		}
+	}
+	return nil
+}
+
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
 // for use of execution phase.
 const ExtraHandleID = -1
@@ -1222,6 +1232,24 @@ func (t *TableInfo) FindConstraintInfoByName(constrName string) *ConstraintInfo 
 		}
 	}
 	return nil
+}
+
+// FindIndexNameByID finds index name by id.
+func (t *TableInfo) FindIndexNameByID(id int64) string {
+	indexInfo := FindIndexInfoByID(t.Indices, id)
+	if indexInfo != nil {
+		return indexInfo.Name.L
+	}
+	return ""
+}
+
+// FindColumnNameByID finds column name by id.
+func (t *TableInfo) FindColumnNameByID(id int64) string {
+	colInfo := FindColumnInfoByID(t.Columns, id)
+	if colInfo != nil {
+		return colInfo.Name.L
+	}
+	return ""
 }
 
 // FKInfo provides meta data describing a foreign key constraint.
