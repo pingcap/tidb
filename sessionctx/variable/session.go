@@ -399,7 +399,7 @@ func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 	return true
 }
 
-// RollbackToSavepoint rollbacks to the specify savepoint by name.
+// RollbackToSavepoint rollbacks to the specified savepoint by name.
 func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord {
 	name = strings.ToLower(name)
 	for idx, sp := range tc.Savepoints {
