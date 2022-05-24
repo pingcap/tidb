@@ -15,6 +15,12 @@ package auth
 
 import (
 	"fmt"
+<<<<<<< HEAD
+=======
+
+	"github.com/pingcap/tidb/parser/format"
+)
+>>>>>>> 85c595c34... session: fix user info in general log (#34853)
 
 	"github.com/pingcap/tidb/parser/format"
 )
@@ -58,6 +64,9 @@ func (user *UserIdentity) String() string {
 // It matches the login user.
 func (user *UserIdentity) LoginString() string {
 	// TODO: Escape username and hostname.
+	if user == nil {
+		return ""
+	}
 	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
 }
 
