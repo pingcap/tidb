@@ -149,7 +149,7 @@ type TxnCtxNeedToRestore struct {
 	pessimisticLockCache map[string][]byte
 }
 
-// TxnCtxNoNeedToRestore stores transaction variables which no need to restore when rollback to savepoint.
+// TxnCtxNoNeedToRestore stores transaction variables which do not need to restored when rolling back to a savepoint.
 type TxnCtxNoNeedToRestore struct {
 	forUpdateTS uint64
 	stmtFuture  oracle.Future
