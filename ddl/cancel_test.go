@@ -16,17 +16,17 @@ package ddl_test
 
 import (
 	"fmt"
-	"github.com/pingcap/failpoint"
-	atomicutil "go.uber.org/atomic"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	atomicutil "go.uber.org/atomic"
 )
 
 type testCancelJob struct {
