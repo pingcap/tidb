@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/terror"
+	typejson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -925,7 +926,10 @@ func StoreGlobalConfig(config *Config) {
 	tikvcfg.StoreGlobalConfig(&cfg)
 }
 
-var deprecatedConfig = map[string]struct{}{
+// removedConfig contains items that are no longer supported.
+// they might still be in the config struct to support import,
+// but are not actively used.
+var removedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl":                {},
 	"pessimistic-txn.enable":             {},
 	"log.file.log-rotate":                {},
@@ -937,8 +941,6 @@ var deprecatedConfig = map[string]struct{}{
 	"max-txn-time-use":                   {},
 	"experimental.allow-auto-random":     {},
 	"enable-redact-log":                  {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":      {},
-	"alter-primary-key":                  {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":                   {},
 	"performance.mem-profile-interval":   {},
 	"security.require-secure-transport":  {},
@@ -962,9 +964,11 @@ var deprecatedConfig = map[string]struct{}{
 	"prepared-plan-cache.memory-guard-ratio": {},
 }
 
-func isAllDeprecatedConfigItems(items []string) bool {
+// isAllRemovedConfigItems returns true if all the items that couldn't validate
+// belong to the list of removedConfig items.
+func isAllRemovedConfigItems(items []string) bool {
 	for _, item := range items {
-		if _, ok := deprecatedConfig[item]; !ok {
+		if _, ok := removedConfig[item]; !ok {
 			return false
 		}
 	}
@@ -986,7 +990,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 				// is not the default behavior of TiDB. The warning message must be deferred until
 				// logging has been set up. After strict config checking is the default behavior,
 				// This should all be removed.
-				if (!configCheck && !configStrict) || isAllDeprecatedConfigItems(tmp.UndecodedItems) {
+				if (!configCheck && !configStrict) || isAllRemovedConfigItems(tmp.UndecodedItems) {
 					fmt.Fprintln(os.Stderr, err.Error())
 					err = nil
 				}
@@ -1233,29 +1237,65 @@ var hideConfig = []string{
 	"index-usage-sync-lease",
 }
 
-// HideConfig is used to filter the configs that needs to be hidden.
-func HideConfig(s string) string {
-	configs := strings.Split(s, "\n")
-	hideMap := make([]bool, len(configs))
-	for i, c := range configs {
-		for _, hc := range hideConfig {
-			if strings.Contains(c, hc) {
-				hideMap[i] = true
-				break
-			}
-		}
+// jsonifyPath converts the item to json path, so it can be extracted.
+func jsonifyPath(str string) string {
+	s := strings.Split(str, ".")
+	return fmt.Sprintf("$.\"%s\"", strings.Join(s, "\""))
+}
+
+// GetJSONConfig returns the config as JSON with hidden items removed
+// It replaces the earlier HideConfig() which used strings.Split() in
+// an way that didn't work for similarly named items (like enable).
+func GetJSONConfig() (string, error) {
+	j, err := json.Marshal(GetGlobalConfig())
+	if err != nil {
+		return "", err
 	}
-	var buf bytes.Buffer
-	for i, c := range configs {
-		if hideMap[i] {
+	jsonValue, err := typejson.ParseBinaryFromString(string(j))
+	if err != nil {
+		return "", err
+	}
+	// Approximately length of removed items + hidden items.
+	pathExprs := make([]typejson.PathExpression, 0, len(removedConfig)+len(hideConfig))
+	var pathExpr typejson.PathExpression
+
+	// Patch out removed items.
+	for removedItem := range removedConfig {
+		s := jsonifyPath(removedItem)
+		pathExpr, err = typejson.ParseJSONPathExpr(s)
+		if err != nil {
+			// Should not be reachable, but not worth bailing for.
+			// It just means we can't patch out this line.
 			continue
 		}
-		if i != 0 {
-			buf.WriteString("\n")
-		}
-		buf.WriteString(c)
+		pathExprs = append(pathExprs, pathExpr)
 	}
-	return buf.String()
+	// Patch out hidden items
+	for _, hiddenItem := range hideConfig {
+		s := jsonifyPath(hiddenItem)
+		pathExpr, err = typejson.ParseJSONPathExpr(s)
+		if err != nil {
+			// Should not be reachable, but not worth bailing for.
+			// It just means we can't patch out this line.
+			continue
+		}
+		pathExprs = append(pathExprs, pathExpr)
+	}
+	newJsonValue, err := jsonValue.Remove(pathExprs)
+	if err != nil {
+		return "", err
+	}
+	// Convert back to GoJSON so it can be pretty formatted.
+	// This is expected for compatibility with previous versions.
+	buf, err := newJsonValue.MarshalJSON()
+	if err != nil {
+		return "", err
+	}
+	var resBuf bytes.Buffer
+	if err = json.Indent(&resBuf, buf, "", "\t"); err != nil {
+		return "", err
+	}
+	return resBuf.String(), nil
 }
 
 // ContainHiddenConfig checks whether it contains the configuration that needs to be hidden.
@@ -1263,6 +1303,11 @@ func ContainHiddenConfig(s string) bool {
 	s = strings.ToLower(s)
 	for _, hc := range hideConfig {
 		if strings.Contains(s, hc) {
+			return true
+		}
+	}
+	for dc := range removedConfig {
+		if strings.Contains(s, dc) {
 			return true
 		}
 	}

@@ -331,7 +331,7 @@ history-size=100`)
 	require.NoError(t, err)
 	err = conf.Load(configFile)
 	tmp := err.(*ErrConfigValidationFailed)
-	require.True(t, isAllDeprecatedConfigItems(tmp.UndecodedItems))
+	require.True(t, isAllRemovedConfigItems(tmp.UndecodedItems), fmt.Sprintf("some config items were not in the removed list: %#v", tmp.UndecodedItems))
 
 	// Test telemetry config default value and whether it will be overwritten.
 	conf = NewConfig()
@@ -703,6 +703,17 @@ func TestTcpNoDelay(t *testing.T) {
 	require.True(t, c1.Performance.TCPNoDelay)
 }
 
+func TestGetJSONConfig(t *testing.T) {
+	conf, err := GetJSONConfig()
+	require.NoError(t, err)
+
+	// Make sure that hidden and deprecated items are not listed in the conf
+	require.NotContains(t, conf, "index-usage-sync-lease")
+	require.NotContains(t, conf, "enable-batch-dml")
+	require.NotContains(t, conf, "mem-quota-query")
+	require.NotContains(t, conf, "query-log-max-len")
+}
+
 func TestConfigExample(t *testing.T) {
 	conf := NewConfig()
 	configFile := "config.toml.example"
@@ -711,7 +722,7 @@ func TestConfigExample(t *testing.T) {
 	keys := metaData.Keys()
 	for _, key := range keys {
 		for _, s := range key {
-			require.False(t, ContainHiddenConfig(s))
+			require.False(t, ContainHiddenConfig(s), fmt.Sprintf("%s should be hidden", s))
 		}
 	}
 }

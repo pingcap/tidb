@@ -221,12 +221,7 @@ var defaultSysVars = []*SysVar{
 		return strconv.FormatInt(int64(GlobalLogMaxDays.Load()), 10), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBConfig, Value: "", ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
-		conf := config.GetGlobalConfig()
-		j, err := json.MarshalIndent(conf, "", "\t")
-		if err != nil {
-			return "", err
-		}
-		return config.HideConfig(string(j)), nil
+		return config.GetJSONConfig()
 	}},
 	{Scope: ScopeSession, Name: TiDBDDLReorgPriority, Value: "PRIORITY_LOW", skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		s.setDDLReorgPriority(val)
