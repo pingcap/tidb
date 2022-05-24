@@ -28,17 +28,17 @@ var LogicalOptimize = logicalOptimize
 
 func testDecimalConvert(t *testing.T, lDec, lLen, rDec, rLen int, lConvert, rConvert bool, cDec, cLen int) {
 	lType := types.NewFieldType(mysql.TypeNewDecimal)
-	lType.Decimal = lDec
-	lType.Flen = lLen
+	lType.SetDecimal(lDec)
+	lType.SetFlen(lLen)
 
 	rType := types.NewFieldType(mysql.TypeNewDecimal)
-	rType.Decimal = rDec
-	rType.Flen = rLen
+	rType.SetDecimal(rDec)
+	rType.SetFlen(rLen)
 
 	cType, lCon, rCon := negotiateCommonType(lType, rType)
-	require.Equal(t, mysql.TypeNewDecimal, cType.Tp)
-	require.Equal(t, cDec, cType.Decimal)
-	require.Equal(t, cLen, cType.Flen)
+	require.Equal(t, mysql.TypeNewDecimal, cType.GetType())
+	require.Equal(t, cDec, cType.GetDecimal())
+	require.Equal(t, cLen, cType.GetFlen())
 	require.Equal(t, lConvert, lCon)
 	require.Equal(t, rConvert, rCon)
 }
@@ -60,43 +60,37 @@ func TestMPPDecimalConvert(t *testing.T) {
 
 func testJoinKeyTypeConvert(t *testing.T, leftType, rightType, retType *types.FieldType, lConvert, rConvert bool) {
 	cType, lCon, rCon := negotiateCommonType(leftType, rightType)
-	require.Equal(t, retType.Tp, cType.Tp)
-	require.Equal(t, retType.Flen, cType.Flen)
-	require.Equal(t, retType.Decimal, cType.Decimal)
-	require.Equal(t, retType.Flag, cType.Flag)
+	require.Equal(t, retType.GetType(), cType.GetType())
+	require.Equal(t, retType.GetFlen(), cType.GetFlen())
+	require.Equal(t, retType.GetDecimal(), cType.GetDecimal())
+	require.Equal(t, retType.GetFlag(), cType.GetFlag())
 	require.Equal(t, lConvert, lCon)
 	require.Equal(t, rConvert, rCon)
 
 }
 
 func TestMPPJoinKeyTypeConvert(t *testing.T) {
-	tinyIntType := &types.FieldType{
-		Tp: mysql.TypeTiny,
-	}
-	tinyIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTiny)
+	tinyIntType := types.NewFieldTypeBuilder().SetType(mysql.TypeTiny).BuildP()
+	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTiny)
+	tinyIntType.SetFlen(flen)
+	tinyIntType.SetDecimal(decimal)
 
-	unsignedTinyIntType := &types.FieldType{
-		Tp: mysql.TypeTiny,
-	}
-	unsignedTinyIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTiny)
-	unsignedTinyIntType.Flag = mysql.UnsignedFlag
+	unsignedTinyIntType := types.NewFieldTypeBuilder().SetType(mysql.TypeTiny).BuildP()
+	unsignedTinyIntType.SetFlen(flen)
+	unsignedTinyIntType.SetDecimal(decimal)
+	unsignedTinyIntType.SetFlag(mysql.UnsignedFlag)
 
-	bigIntType := &types.FieldType{
-		Tp: mysql.TypeLonglong,
-	}
-	bigIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	bigIntType := types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP()
+	flen, decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	bigIntType.SetFlen(flen)
+	bigIntType.SetDecimal(decimal)
 
-	unsignedBigIntType := &types.FieldType{
-		Tp: mysql.TypeLonglong,
-	}
-	unsignedBigIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
-	unsignedBigIntType.Flag = mysql.UnsignedFlag
+	unsignedBigIntType := types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP()
+	unsignedBigIntType.SetFlen(flen)
+	unsignedBigIntType.SetDecimal(decimal)
+	unsignedBigIntType.SetFlag(mysql.UnsignedFlag)
 
-	decimalType := &types.FieldType{
-		Tp:      mysql.TypeNewDecimal,
-		Flen:    20,
-		Decimal: 0,
-	}
+	decimalType := types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(20).SetDecimal(0).BuildP()
 
 	testJoinKeyTypeConvert(t, tinyIntType, tinyIntType, tinyIntType, false, false)
 	testJoinKeyTypeConvert(t, tinyIntType, unsignedTinyIntType, bigIntType, true, true)

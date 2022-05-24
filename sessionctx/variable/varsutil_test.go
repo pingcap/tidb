@@ -238,6 +238,11 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
 
+	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
+	err = SetSessionSystemVar(v, TiDBOptimizerEnableOuterJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.EnableOuterJoinReorder)
+
 	require.Equal(t, DefTiDBOptimizerEnableNewOFGB, v.OptimizerEnableNewOnlyFullGroupByCheck)
 	err = SetSessionSystemVar(v, TiDBOptimizerEnableNewOnlyFullGroupByCheck, "off")
 	require.NoError(t, err)
@@ -276,19 +281,6 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
-
-	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "1")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.True(t, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
-	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "0")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-	require.False(t, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
 
 	err = SetSessionSystemVar(v, TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)

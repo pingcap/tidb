@@ -81,7 +81,7 @@ func genTestChunk(maxChunkSize int, numRows int, fields []*types.FieldType) *chu
 	for numRows > 0 {
 		numRows--
 		for col, field := range fields {
-			switch field.Tp {
+			switch field.GetType() {
 			case mysql.TypeLong:
 				chk.AppendInt64(col, 0)
 			case mysql.TypeFloat:

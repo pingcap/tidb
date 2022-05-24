@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
@@ -80,6 +80,12 @@ type PointGetPlan struct {
 	partitionColumnPos int
 	Columns            []*model.ColumnInfo
 	cost               float64
+
+	// required by cost model
+	planCostInit bool
+	planCost     float64
+	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
+	accessCols []*expression.Column
 }
 
 type nameValuePair struct {
@@ -255,22 +261,6 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.outputNames = names
 }
 
-// GetCost returns cost of the PointGetPlan.
-func (p *PointGetPlan) GetCost(cols []*expression.Column) float64 {
-	sessVars := p.ctx.GetSessionVars()
-	var rowSize float64
-	cost := 0.0
-	if p.IndexInfo == nil {
-		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
-	} else {
-		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
-	}
-	cost += rowSize * sessVars.GetNetworkFactor(p.TblInfo)
-	cost += sessVars.GetSeekFactor(p.TblInfo)
-	cost /= float64(sessVars.DistSQLScanConcurrency())
-	return cost
-}
-
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
@@ -305,6 +295,12 @@ type BatchPointGetPlan struct {
 	SinglePart bool
 	// PartTblID is the table ID for the specific table partition.
 	PartTblID int64
+
+	// required by cost model
+	planCostInit bool
+	planCost     float64
+	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
+	accessCols []*expression.Column
 }
 
 // Cost implements PhysicalPlan interface
@@ -441,24 +437,6 @@ func (p *BatchPointGetPlan) OutputNames() types.NameSlice {
 // SetOutputNames sets the outputting name by the given slice.
 func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.names = names
-}
-
-// GetCost returns cost of the PointGetPlan.
-func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
-	sessVars := p.ctx.GetSessionVars()
-	var rowSize, rowCount float64
-	cost := 0.0
-	if p.IndexInfo == nil {
-		rowCount = float64(len(p.Handles))
-		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
-	} else {
-		rowCount = float64(len(p.IndexValues))
-		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
-	}
-	cost += rowCount * rowSize * sessVars.GetNetworkFactor(p.TblInfo)
-	cost += rowCount * sessVars.GetSeekFactor(p.TblInfo)
-	cost /= float64(sessVars.DistSQLScanConcurrency())
-	return cost
 }
 
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.
@@ -837,7 +815,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 		// Try use handle
 		if tbl.PKIsHandle {
 			for _, col := range tbl.Columns {
-				if mysql.HasPriKeyFlag(col.Flag) && col.Name.L == colName.Name.Name.L {
+				if mysql.HasPriKeyFlag(col.GetFlag()) && col.Name.L == colName.Name.Name.L {
 					handleCol = col
 					whereColNames = append(whereColNames, col.Name.L)
 					break
@@ -958,7 +936,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
-		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
+		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
 		p.handleFieldType = fieldType
 		p.HandleConstant = handlePair.con
 		p.PartitionInfo = partitionInfo
@@ -967,6 +945,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return nil
 	}
 
+	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
@@ -1267,7 +1246,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
 		if col == nil { // Handling the case when the column is _tidb_rowid.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: types.NewFieldType(mysql.TypeLonglong), value: d, con: con}), false
-		} else if col.Tp == mysql.TypeString && col.Collate == charset.CollationBin { // This type we needn't to pad `\0` in here.
+		} else if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
 		}
 		if !checkCanConvertInPointGet(col, d) {
@@ -1284,7 +1263,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			}
 		}
 		// The converted result must be same as original datum.
-		cmp, err := dVal.Compare(stmtCtx, &d, collate.GetCollator(col.Collate))
+		cmp, err := dVal.Compare(stmtCtx, &d, collate.GetCollator(col.GetCollate()))
 		if err != nil || cmp != 0 {
 			return nil, false
 		}
@@ -1302,7 +1281,7 @@ func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, 
 		return nil
 	}
 	// The converted result must be same as original datum.
-	cmp, err := dVal.Compare(stmtCtx, d, collate.GetCollator(col.Collate))
+	cmp, err := dVal.Compare(stmtCtx, d, collate.GetCollator(col.GetCollate()))
 	if err != nil || cmp != 0 {
 		return nil
 	}
@@ -1320,7 +1299,7 @@ func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
 			return false
 		}
 	}
-	switch col.FieldType.Tp {
+	switch col.FieldType.GetType() {
 	case mysql.TypeBit:
 		switch kind {
 		case types.KindString:
@@ -1340,7 +1319,7 @@ func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair n
 		return handlePair, nil
 	}
 	for _, col := range tblInfo.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
+		if mysql.HasPriKeyFlag(col.GetFlag()) {
 			i := findInPairs(col.Name.L, pairs)
 			if i == -1 {
 				return handlePair, nil
@@ -1588,7 +1567,7 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				return &IntHandleCols{col: schema.Columns[i]}
 			}
 		}
@@ -1631,7 +1610,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		for i, pair := range pairs {
 			if partitionColName.Name.L == pair.colName {
 				val := pair.value.GetInt64()
-				pos := math.Abs(val % int64(pi.Num))
+				pos := mathutil.Abs(val % int64(pi.Num))
 				return &pi.Definitions[pos], i, false
 			}
 		}
@@ -1643,7 +1622,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 				for i, pair := range pairs {
 					if colInfo.Name.L == pair.colName {
 						val := pair.value.GetInt64() // val cannot be Null, we've check this in func getNameValuePairs
-						unsigned := mysql.HasUnsignedFlag(col.GetType().Flag)
+						unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
 						ranges := partitionExpr.ForRangePruning
 						length := len(ranges.LessThan)
 						pos := sort.Search(length, func(i int) bool {

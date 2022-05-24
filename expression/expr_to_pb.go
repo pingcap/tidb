@@ -135,7 +135,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.Tp, nil)
+			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.GetType(), nil)
 			if err != nil {
 				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
@@ -155,36 +155,30 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 // ToPBFieldType converts *types.FieldType to *tipb.FieldType.
 func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	return &tipb.FieldType{
-		Tp:      int32(ft.Tp),
-		Flag:    uint32(ft.Flag),
-		Flen:    int32(ft.Flen),
-		Decimal: int32(ft.Decimal),
-		Charset: ft.Charset,
-		Collate: collate.CollationToProto(ft.Collate),
-		Elems:   ft.Elems,
+		Tp:      int32(ft.GetType()),
+		Flag:    uint32(ft.GetFlag()),
+		Flen:    int32(ft.GetFlen()),
+		Decimal: int32(ft.GetDecimal()),
+		Charset: ft.GetCharset(),
+		Collate: collate.CollationToProto(ft.GetCollate()),
+		Elems:   ft.GetElems(),
 	}
 }
 
 // FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
 func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
-	return &types.FieldType{
-		Tp:      byte(ft.Tp),
-		Flag:    uint(ft.Flag),
-		Flen:    int(ft.Flen),
-		Decimal: int(ft.Decimal),
-		Charset: ft.Charset,
-		Collate: collate.ProtoToCollation(ft.Collate),
-		Elems:   ft.Elems,
-	}
+	ft1 := types.NewFieldTypeBuilder().SetType(byte(ft.Tp)).SetFlag(uint(ft.Flag)).SetFlen(int(ft.Flen)).SetDecimal(int(ft.Decimal)).SetCharset(ft.Charset).SetCollate(collate.ProtoToCollation(ft.Collate)).BuildP()
+	ft1.SetElems(ft.Elems)
+	return ft1
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
-	switch column.GetType().Tp {
+	switch column.GetType().GetType() {
 	case mysql.TypeBit:
-		if !IsPushDownEnabled(ast.TypeStr(column.GetType().Tp), kv.TiKV) {
+		if !IsPushDownEnabled(ast.TypeStr(column.GetType().GetType()), kv.TiKV) {
 			return nil
 		}
 	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
@@ -251,7 +245,8 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	// put collation information into the RetType enforcedly and push it down to TiKV/MockTiKV
 	tp := *expr.RetType
 	if collate.NewCollationEnabled() {
-		_, tp.Collate = expr.CharsetAndCollation()
+		_, str1 := expr.CharsetAndCollation()
+		tp.SetCollate(str1)
 	}
 
 	// Construct expression ProtoBuf.

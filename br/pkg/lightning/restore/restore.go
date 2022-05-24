@@ -33,7 +33,6 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
@@ -57,11 +56,12 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/mathutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"modernc.org/mathutil"
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -308,12 +308,6 @@ func NewRestoreControllerWithPauser(
 
 	var backend backend.Backend
 	switch cfg.TikvImporter.Backend {
-	case config.BackendImporter:
-		var err error
-		backend, err = importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-		if err != nil {
-			return nil, errors.Annotate(err, "open importer backend failed")
-		}
 	case config.BackendTiDB:
 		backend = tidb.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate, errorMgr)
 	case config.BackendLocal:
@@ -352,7 +346,7 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var metaBuilder metaMgrBuilder
-	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendImporter
+	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal
 	switch {
 	case isSSTImport && cfg.TikvImporter.IncrementalImport:
 		metaBuilder = &dbMetaMgrBuilder{
@@ -362,7 +356,9 @@ func NewRestoreControllerWithPauser(
 			needChecksum: cfg.PostRestore.Checksum != config.OpLevelOff,
 		}
 	case isSSTImport:
-		metaBuilder = singleMgrBuilder{}
+		metaBuilder = singleMgrBuilder{
+			taskID: cfg.TaskID,
+		}
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
@@ -699,7 +695,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	// we can handle the duplicated created with createIfNotExist statement
 	// and we will check the schema in TiDB is valid with the datafile in DataCheck later.
 	logTask := log.L().Begin(zap.InfoLevel, "restore all schema")
-	concurrency := utils.MinInt(rc.cfg.App.RegionConcurrency, 8)
+	concurrency := mathutil.Min(rc.cfg.App.RegionConcurrency, 8)
 	childCtx, cancel := context.WithCancel(ctx)
 	worker := restoreSchemaWorker{
 		ctx:   childCtx,
@@ -730,9 +726,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 
 	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
 	// override by manually set vars
-	for k, v := range rc.cfg.TiDB.Vars {
-		sysVars[k] = v
-	}
+	maps.Copy(sysVars, rc.cfg.TiDB.Vars)
 	rc.sysVars = sysVars
 
 	return nil
@@ -791,10 +785,6 @@ func verifyCheckpoint(cfg *config.Config, taskCp *checkpoints.TaskCheckpoint) er
 
 		if cfg.TikvImporter.Backend == config.BackendLocal && cfg.TikvImporter.SortedKVDir != taskCp.SortedKVDir {
 			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "mydumper.sorted-kv-dir", cfg.TikvImporter.SortedKVDir, taskCp.SortedKVDir)
-		}
-
-		if cfg.TikvImporter.Backend == config.BackendImporter && cfg.TikvImporter.Addr != taskCp.ImporterAddr {
-			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "tikv-importer.addr", cfg.TikvImporter.Backend, taskCp.Backend)
 		}
 
 		if cfg.TiDB.Host != taskCp.TiDBHost {
@@ -953,8 +943,6 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
 func (rc *Controller) listenCheckpointUpdates() {
-	defer rc.checkpointsWg.Done()
-
 	var lock sync.Mutex
 	coalesed := make(map[string]*checkpoints.TableCheckpointDiff)
 	var waiters []chan<- error
@@ -1005,8 +993,8 @@ func (rc *Controller) listenCheckpointUpdates() {
 		lock.Unlock()
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		failpoint.Inject("FailIfImportedChunk", func(val failpoint.Value) {
-			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Checksum.SumKVS() >= uint64(val.(int)) {
+		failpoint.Inject("FailIfImportedChunk", func() {
+			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Pos >= merger.EndOffset {
 				rc.checkpointsWg.Done()
 				rc.checkpointsWg.Wait()
 				panic("forcing failure due to FailIfImportedChunk")
@@ -1034,14 +1022,24 @@ func (rc *Controller) listenCheckpointUpdates() {
 		})
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		failpoint.Inject("KillIfImportedChunk", func(val failpoint.Value) {
-			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Checksum.SumKVS() >= uint64(val.(int)) {
+		failpoint.Inject("KillIfImportedChunk", func() {
+			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Pos >= merger.EndOffset {
+				rc.checkpointsWg.Done()
+				rc.checkpointsWg.Wait()
 				if err := common.KillMySelf(); err != nil {
 					log.L().Warn("KillMySelf() failed to kill itself", log.ShortError(err))
 				}
+				for scp := range rc.saveCpCh {
+					if scp.waitCh != nil {
+						scp.waitCh <- context.Canceled
+					}
+				}
+				failpoint.Return()
 			}
 		})
 	}
+	// Don't put this statement in defer function at the beginning. failpoint function may call it manually.
+	rc.checkpointsWg.Done()
 }
 
 // buildRunPeriodicActionAndCancelFunc build the runPeriodicAction func and a cancel func
@@ -1594,8 +1592,7 @@ func (tr *TableRestore) restoreTable(
 		versionInfo := version.ParseServerInfo(versionStr)
 
 		// "show table next_row_id" is only available after tidb v4.0.0
-		if versionInfo.ServerVersion.Major >= 4 &&
-			(rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
+		if versionInfo.ServerVersion.Major >= 4 && rc.isLocalBackend() {
 			// first, insert a new-line into meta table
 			if err = metaMgr.InitTableMeta(ctx); err != nil {
 				return false, err
@@ -1627,12 +1624,12 @@ func (tr *TableRestore) restoreTable(
 
 		// rebase the allocator so it exceeds the number of rows.
 		if tr.tableInfo.Core.PKIsHandle && tr.tableInfo.Core.ContainsAutoRandomBits() {
-			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
+			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
 			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
 				return false, err
 			}
 		} else {
-			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
+			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
 			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
 				return false, err
 			}
@@ -1810,7 +1807,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			var importErr error
 			for _, engine := range largeEngines {
 				// Use a larger split region size to avoid split the same region by many times.
-				if err := rc.backend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
+				if err := rc.backend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
 					importErr = multierr.Append(importErr, err)
 				}
 			}
@@ -1928,7 +1925,19 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			if err = rc.taskMgr.InitTask(ctx, source); err != nil {
 				return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 			}
-			if rc.cfg.App.CheckRequirements {
+		}
+		if rc.cfg.App.CheckRequirements {
+			needCheck := true
+			if rc.cfg.Checkpoint.Enable {
+				taskCheckpoints, err := rc.checkpointsDB.TaskCheckpoint(ctx)
+				if err != nil {
+					return common.ErrReadCheckpoint.Wrap(err).GenWithStack("get task checkpoint failed")
+				}
+				// If task checkpoint is initialized, it means check has been performed before.
+				// We don't need and shouldn't check again, because lightning may have already imported some data.
+				needCheck = taskCheckpoints == nil
+			}
+			if needCheck {
 				err = rc.localResource(source)
 				if err != nil {
 					return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
@@ -2137,8 +2146,6 @@ func (cr *chunkRestore) deliverLoop(
 	dataEngine, indexEngine *backend.LocalEngineWriter,
 	rc *Controller,
 ) (deliverTotalDur time.Duration, err error) {
-	var channelClosed bool
-
 	deliverLogger := t.logger.With(
 		zap.Int32("engineNumber", engineID),
 		zap.Int("fileIndex", cr.index),
@@ -2150,7 +2157,8 @@ func (cr *chunkRestore) deliverLoop(
 	indexKVs := rc.backend.MakeEmptyRows()
 
 	dataSynced := true
-	for !channelClosed {
+	hasMoreKVs := true
+	for hasMoreKVs {
 		var dataChecksum, indexChecksum verify.KVChecksum
 		var columns []string
 		var kvPacket []deliveredKVs
@@ -2165,10 +2173,16 @@ func (cr *chunkRestore) deliverLoop(
 			select {
 			case kvPacket = <-kvsCh:
 				if len(kvPacket) == 0 {
-					channelClosed = true
+					hasMoreKVs = false
 					break populate
 				}
 				for _, p := range kvPacket {
+					if p.kvs == nil {
+						// This is the last message.
+						currOffset = p.offset
+						hasMoreKVs = false
+						break populate
+					}
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 					columns = p.columns
 					currOffset = p.offset
@@ -2231,7 +2245,8 @@ func (cr *chunkRestore) deliverLoop(
 		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)
 		// No need to apply a lock since this is the only thread updating `cr.chunk.**`.
-		// In local mode, we should write these checkpoint after engine flushed.
+		// In local mode, we should write these checkpoints after engine flushed.
+		lastOffset := cr.chunk.Chunk.Offset
 		cr.chunk.Checksum.Add(&dataChecksum)
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = currOffset
@@ -2239,7 +2254,7 @@ func (cr *chunkRestore) deliverLoop(
 
 		metric.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
 
-		if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
+		if currOffset > lastOffset || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
 			// No need to save checkpoint if nothing was delivered.
 			dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataEngine, indexEngine)
 		}
@@ -2302,6 +2317,7 @@ func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *chec
 			Pos:               chunk.Chunk.Offset,
 			RowID:             chunk.Chunk.PrevRowIDMax,
 			ColumnPermutation: chunk.ColumnPermutation,
+			EndOffset:         chunk.Chunk.EndOffset,
 		},
 	}
 }
@@ -2316,6 +2332,8 @@ func (cr *chunkRestore) encodeLoop(
 	deliverCompleteCh <-chan deliverResult,
 	rc *Controller,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
+	defer close(kvsCh)
+
 	send := func(kvs []deliveredKVs) error {
 		select {
 		case kvsCh <- kvs:
@@ -2459,7 +2477,7 @@ func (cr *chunkRestore) encodeLoop(
 		}
 	}
 
-	err = send([]deliveredKVs{})
+	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset}})
 	return
 }
 
@@ -2481,15 +2499,10 @@ func (cr *chunkRestore) restore(
 	if err != nil {
 		return err
 	}
+	defer kvEncoder.Close()
 
 	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
-
-	defer func() {
-		kvEncoder.Close()
-		kvEncoder = nil
-		close(kvsCh)
-	}()
 
 	go func() {
 		defer close(deliverCompleteCh)
@@ -2506,11 +2519,8 @@ func (cr *chunkRestore) restore(
 		zap.Stringer("path", &cr.chunk.Key),
 	).Begin(zap.InfoLevel, "restore file")
 
-	readTotalDur, encodeTotalDur, err := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc)
-	if err != nil {
-		return err
-	}
-
+	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc)
+	var deliverErr error
 	select {
 	case deliverResult, ok := <-deliverCompleteCh:
 		if ok {
@@ -2520,11 +2530,13 @@ func (cr *chunkRestore) restore(
 				zap.Duration("deliverDur", deliverResult.totalDur),
 				zap.Object("checksum", &cr.chunk.Checksum),
 			)
-			return errors.Trace(deliverResult.err)
+			deliverErr = deliverResult.err
+		} else {
+			// else, this must cause by ctx cancel
+			deliverErr = ctx.Err()
 		}
-		// else, this must cause by ctx cancel
-		return ctx.Err()
 	case <-ctx.Done():
-		return ctx.Err()
+		deliverErr = ctx.Err()
 	}
+	return errors.Trace(firstErr(encodeErr, deliverErr))
 }

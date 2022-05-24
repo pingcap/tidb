@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/twmb/murmur3"
@@ -498,7 +498,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 	for _, key := range groupKey {
 		mem += int64(cap(key))
 	}
-	mem += 12 * int64(cap(groupKey))
+	mem += aggfuncs.DefSliceSize * int64(cap(groupKey))
 	return mem
 }
 
@@ -575,9 +575,9 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 		// This check is used to avoid error during the execution of `EncodeDecimal`.
-		if item.GetType().Tp == mysql.TypeNewDecimal {
+		if item.GetType().GetType() == mysql.TypeNewDecimal {
 			newTp := *tp
-			newTp.Flen = 0
+			newTp.SetFlen(0)
 			tp = &newTp
 		}
 		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
@@ -602,11 +602,11 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 		for _, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
 			partialResults[i] = append(partialResults[i], partialResult)
-			allMemDelta += memDelta
+			allMemDelta += memDelta + 8 // the memory usage of PartialResult
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
-		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
+		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
 		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 			w.BInMap++
@@ -1666,14 +1666,14 @@ func (e *vecGroupChecker) getFirstAndLastRowDatum(item expression.Expression, ch
 		if !firstRowIsNull {
 			// make a copy to avoid DATA RACE
 			firstDatum := string([]byte(firstRowVal))
-			firstRowDatum.SetString(firstDatum, tp.Collate)
+			firstRowDatum.SetString(firstDatum, tp.GetCollate())
 		} else {
 			firstRowDatum.SetNull()
 		}
 		if !lastRowIsNull {
 			// make a copy to avoid DATA RACE
 			lastDatum := string([]byte(lastRowVal))
-			lastRowDatum.SetString(lastDatum, tp.Collate)
+			lastRowDatum.SetString(lastDatum, tp.GetCollate())
 		} else {
 			lastRowDatum.SetNull()
 		}

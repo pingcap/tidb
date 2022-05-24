@@ -27,10 +27,11 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
@@ -56,18 +58,19 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -129,7 +132,7 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 	}
 
 	txnManager := sessiontxn.GetTxnManager(ctx)
-	if provider, ok := txnManager.GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); ok {
+	if provider, ok := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
 		provider.GetReadTSFunc = b.getReadTS
 		provider.GetForUpdateTSFunc = func() (uint64, error) {
 			if b.forUpdateTS != 0 {
@@ -310,6 +313,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCTE(v)
 	case *plannercore.PhysicalCTETable:
 		return b.buildCTETableReader(v)
+	case *plannercore.CompactTable:
+		return b.buildCompactTable(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -344,9 +349,9 @@ func (b *executorBuilder) buildShowNextRowID(v *plannercore.ShowNextRowID) Execu
 }
 
 func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
-	// We get DDLInfo here because for Executors that returns result set,
+	// We get Info here because for Executors that returns result set,
 	// next will be called after transaction has been committed.
-	// We need the transaction to get DDLInfo.
+	// We need the transaction to get Info.
 	e := &ShowDDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 	}
@@ -366,7 +371,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		return nil
 	}
 
-	ddlInfo, err := admin.GetDDLInfo(txn)
+	ddlInfo, err := ddl.GetDDLInfo(txn)
 	if err != nil {
 		b.err = err
 		return nil
@@ -699,7 +704,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 	if b.err != nil {
 		return nil
 	}
-	n := int(mathutil.MinUint64(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
+	n := int(mathutil.Min(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	base.initCap = n
 	e := &LimitExec{
@@ -736,7 +741,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		name:         v.Name,
-		usingVars:    v.UsingVars,
+		usingVars:    v.TxtProtoVars,
 		id:           v.ExecID,
 		stmt:         v.Stmt,
 		plan:         v.Plan,
@@ -764,7 +769,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 				panic(fmt.Sprintf("%d != %d", b.is.SchemaMetaVersion(), is.SchemaMetaVersion()))
 			}
 
-			ts, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
+			ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
 			if err != nil {
 				panic(e)
 			}
@@ -779,7 +784,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
 		staleread.AssertStmtStaleness(b.ctx, true)
-		ts, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
+		ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
 		if err != nil {
 			panic(e)
 		}
@@ -795,22 +800,23 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 
 func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		Tp:           v.Tp,
-		DBName:       model.NewCIStr(v.DBName),
-		Table:        v.Table,
-		Partition:    v.Partition,
-		Column:       v.Column,
-		IndexName:    v.IndexName,
-		Flag:         v.Flag,
-		Roles:        v.Roles,
-		User:         v.User,
-		is:           b.is,
-		Full:         v.Full,
-		IfNotExists:  v.IfNotExists,
-		GlobalScope:  v.GlobalScope,
-		Extended:     v.Extended,
-		Extractor:    v.Extractor,
+		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		Tp:                    v.Tp,
+		CountWarningsOrErrors: v.CountWarningsOrErrors,
+		DBName:                model.NewCIStr(v.DBName),
+		Table:                 v.Table,
+		Partition:             v.Partition,
+		Column:                v.Column,
+		IndexName:             v.IndexName,
+		Flag:                  v.Flag,
+		Roles:                 v.Roles,
+		User:                  v.User,
+		is:                    b.is,
+		Full:                  v.Full,
+		IfNotExists:           v.IfNotExists,
+		GlobalScope:           v.GlobalScope,
+		Extended:              v.Extended,
+		Extractor:             v.Extractor,
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -1126,7 +1132,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 
 	us.collators = make([]collate.Collator, 0, len(us.columns))
 	for _, tp := range retTypes(us) {
-		us.collators = append(us.collators, collate.GetCollator(tp.Collate))
+		us.collators = append(us.collators, collate.GetCollator(tp.GetCollate()))
 	}
 
 	startTS, err := b.getSnapshotTS()
@@ -1376,18 +1382,20 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys))
 	for i, col := range v.LeftJoinKeys {
 		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
-		leftTypes[i].Flag = col.RetType.Flag
+		leftTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 	for i, col := range v.RightJoinKeys {
 		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
-		rightTypes[i].Flag = col.RetType.Flag
+		rightTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 
 	// consider collations
 	for i := range v.EqualConditions {
 		chs, coll := v.EqualConditions[i].CharsetAndCollation()
-		leftTypes[i].Charset, leftTypes[i].Collate = chs, coll
-		rightTypes[i].Charset, rightTypes[i].Collate = chs, coll
+		leftTypes[i].SetCharset(chs)
+		leftTypes[i].SetCollate(coll)
+		rightTypes[i].SetCharset(chs)
+		rightTypes[i].SetCollate(coll)
 	}
 	if leftIsBuildSide {
 		e.buildTypes, e.probeTypes = leftTypes, rightTypes
@@ -1567,9 +1575,9 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 
 	txnManager := sessiontxn.GetTxnManager(b.ctx)
 	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
-		return txnManager.GetForUpdateTS()
+		return txnManager.GetStmtForUpdateTS()
 	}
-	return txnManager.GetReadTS()
+	return txnManager.GetStmtReadTS()
 }
 
 // getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
@@ -1590,6 +1598,12 @@ func (b *executorBuilder) getReadTS() (uint64, error) {
 		return b.snapshotTS, nil
 	}
 
+	if snapshotTS := b.ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		b.snapshotTS = snapshotTS
+		b.snapshotTSCached = true
+		return snapshotTS, nil
+	}
+
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		if err := b.refreshForUpdateTSForRC(); err != nil {
 			return 0, err
@@ -1602,20 +1616,17 @@ func (b *executorBuilder) getReadTS() (uint64, error) {
 		return b.snapshotTS, nil
 	}
 
-	snapshotTS := b.ctx.GetSessionVars().SnapshotTS
-	if snapshotTS == 0 {
-		txn, err := b.ctx.Txn(true)
-		if err != nil {
-			return 0, err
-		}
-		snapshotTS = txn.StartTS()
+	txn, err := b.ctx.Txn(true)
+	if err != nil {
+		return 0, err
 	}
-	b.snapshotTS = snapshotTS
+
+	b.snapshotTS = txn.StartTS()
 	if b.snapshotTS == 0 {
 		return 0, errors.Trace(ErrGetStartTS)
 	}
 	b.snapshotTSCached = true
-	return snapshotTS, nil
+	return b.snapshotTS, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
@@ -1827,9 +1838,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &hugeMemTableRetriever{
-					table:     v.Table,
-					columns:   v.Columns,
-					extractor: v.Extractor.(*plannercore.ColumnsTableExtractor),
+					table:              v.Table,
+					columns:            v.Columns,
+					extractor:          v.Extractor.(*plannercore.ColumnsTableExtractor),
+					viewSchemaMap:      make(map[int64]*expression.Schema),
+					viewOutputNamesMap: make(map[int64]types.NameSlice),
 				},
 			}
 
@@ -2263,13 +2276,20 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+
+	isAutoFlag := uint64(0)
+
+	if autoAnalyze != "" {
+		isAutoFlag = model.FlagIsSysSession
+	}
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
 		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
-			Flags:          sc.PushDownFlags(),
+			Flags:          sc.PushDownFlags() | isAutoFlag,
 			TimeZoneOffset: offset,
 		},
 		opts:     opts,
@@ -2313,6 +2333,16 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	if !ok || idx.Len() == 0 || idx.LastAnalyzePos.IsNull() {
 		return analyzeTask
 	}
+	// If idx got evicted previously, we directly use IndexPushDown task as incremental analyze task will cause inaccuracy
+	if idx.IsEvicted() {
+		return analyzeTask
+	}
+	failpoint.Inject("assertEvictIndex", func() {
+		if idx.IsEvicted() {
+			panic("evicted index shouldn't use analyze incremental task")
+		}
+	})
+
 	var oldHist *statistics.Histogram
 	if statistics.IsAnalyzed(idx.Flag) {
 		exec := analyzeTask.idxExec
@@ -2344,53 +2374,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func describeV2AnalyzeJobInfo(task plannercore.AnalyzeColumnsTask, autoAnalyze string, opts map[ast.AnalyzeOptionType]uint64, sampleRate float64) string {
-	var b strings.Builder
-	b.WriteString(autoAnalyze)
-	b.WriteString("analyze table")
-	cols := task.ColsInfo
-	if cols[len(cols)-1].ID == model.ExtraHandleID {
-		cols = cols[:len(cols)-1]
-	}
-	if len(cols) < len(task.TblInfo.Columns) {
-		b.WriteString(" columns ")
-		for i, col := range cols {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(col.Name.O)
-		}
-	} else {
-		b.WriteString(" all columns")
-	}
-	var needComma bool
-	b.WriteString(" with ")
-	printOption := func(optType ast.AnalyzeOptionType) {
-		if val, ok := opts[optType]; ok {
-			if needComma {
-				b.WriteString(", ")
-			} else {
-				needComma = true
-			}
-			b.WriteString(fmt.Sprintf("%v %s", val, strings.ToLower(ast.AnalyzeOptionString[optType])))
-		}
-	}
-	printOption(ast.AnalyzeOptNumBuckets)
-	printOption(ast.AnalyzeOptNumTopN)
-	if opts[ast.AnalyzeOptNumSamples] != 0 {
-		printOption(ast.AnalyzeOptNumSamples)
-	} else {
-		if needComma {
-			b.WriteString(", ")
-		} else {
-			needComma = true
-		}
-		b.WriteString(fmt.Sprintf("%v samplerate", sampleRate))
-	}
-	return b.String()
-}
-
-func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, schemaForVirtualColEval *expression.Schema) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
 	}
@@ -2458,8 +2442,8 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		DBName:        task.DBName,
 		TableName:     task.TableName,
 		PartitionName: task.PartitionName,
-		JobInfo:       describeV2AnalyzeJobInfo(task, autoAnalyze, opts, *sampleRate),
 	}
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2540,7 +2524,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task pl
 	}
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
-	return math.Min(1, 110000/float64(statsTbl.Count))
+	return math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.Count))
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
@@ -2586,7 +2570,7 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Co
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
 	if task.StatsVersion == statistics.Version2 {
-		return b.buildAnalyzeSamplingPushdown(task, opts, autoAnalyze, schemaForVirtualColEval)
+		return b.buildAnalyzeSamplingPushdown(task, opts, schemaForVirtualColEval)
 	}
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
 	cols := task.ColsInfo
@@ -2612,13 +2596,20 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+
+	isAutoFlag := uint64(0)
+
+	if autoAnalyze != "" {
+		isAutoFlag = model.FlagIsSysSession
+	}
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
-			Flags:          sc.PushDownFlags(),
+			Flags:          sc.PushDownFlags() | isAutoFlag,
 			TimeZoneOffset: offset,
 		},
 		opts:     opts,
@@ -2966,18 +2957,18 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType.Clone()
 		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
-		// to build hash map or construct lookup keys. So we need to modify its Flen otherwise there would be
+		// to build hash map or construct lookup keys. So we need to modify its flen otherwise there would be
 		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
 		if innerTypes[i].EvalType() == types.ETString {
-			innerTypes[i].Flen = types.UnspecifiedLength
+			innerTypes[i].SetFlen(types.UnspecifiedLength)
 		}
 	}
 
 	// Use the probe table's collation.
 	for i, col := range v.OuterHashKeys {
 		outerTypes[col.Index] = outerTypes[col.Index].Clone()
-		outerTypes[col.Index].Collate = innerTypes[v.InnerHashKeys[i].Index].Collate
-		outerTypes[col.Index].Flag = col.RetType.Flag
+		outerTypes[col.Index].SetCollate(innerTypes[v.InnerHashKeys[i].Index].GetCollate())
+		outerTypes[col.Index].SetFlag(col.RetType.GetFlag())
 	}
 
 	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
@@ -2988,11 +2979,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	outerHashTypes := make([]*types.FieldType, len(v.OuterHashKeys))
 	for i, col := range v.InnerHashKeys {
 		innerHashTypes[i] = innerTypes[col.Index].Clone()
-		innerHashTypes[i].Flag = col.RetType.Flag
+		innerHashTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 	for i, col := range v.OuterHashKeys {
 		outerHashTypes[i] = outerTypes[col.Index].Clone()
-		outerHashTypes[i].Flag = col.RetType.Flag
+		outerHashTypes[i].SetFlag(col.RetType.GetFlag())
 	}
 
 	var (
@@ -3066,7 +3057,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
-		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.Collate))
+		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
 	}
 	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
@@ -3080,7 +3071,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 	for i := 0; i < len(v.InnerHashKeys); i++ {
 		innerHashCols[i] = v.InnerHashKeys[i].Index
-		hashCollators = append(hashCollators, collate.GetCollator(v.InnerHashKeys[i].RetType.Collate))
+		hashCollators = append(hashCollators, collate.GetCollator(v.InnerHashKeys[i].RetType.GetCollate()))
 	}
 	e.outerCtx.hashCols = outerHashCols
 	e.innerCtx.hashCols = innerHashCols
@@ -3102,10 +3093,10 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType.Clone()
 		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
-		// to build hash map or construct lookup keys. So we need to modify its Flen otherwise there would be
+		// to build hash map or construct lookup keys. So we need to modify its flen otherwise there would be
 		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
 		if innerTypes[i].EvalType() == types.ETString {
-			innerTypes[i].Flen = types.UnspecifiedLength
+			innerTypes[i].SetFlen(types.UnspecifiedLength)
 		}
 	}
 	var (
@@ -3139,7 +3130,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
-		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.Collate))
+		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
 	}
 	executorCounterIndexLookUpJoin.Inc()
 
@@ -4649,7 +4640,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	reqCols := make([]rowcodec.ColInfo, len(schema.Columns))
 	for i := range schema.Columns {
 		idx, col := i, schema.Columns[i]
-		isPK := (tbl.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag)) || col.ID == model.ExtraHandleID
+		isPK := (tbl.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag())) || col.ID == model.ExtraHandleID
 		if isPK {
 			pkCols = append(pkCols, col.ID)
 		}
@@ -5033,4 +5024,24 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		}
 	}
 	return nil
+}
+
+func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executor {
+	if v.ReplicaKind != ast.CompactReplicaKindTiFlash {
+		b.err = errors.Errorf("compact %v replica is not supported", strings.ToLower(string(v.ReplicaKind)))
+		return nil
+	}
+
+	store := b.ctx.GetStore()
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		b.err = errors.New("compact tiflash replica can only run with tikv compatible storage")
+		return nil
+	}
+
+	return &CompactTableTiFlashExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		tableInfo:    v.TableInfo,
+		tikvStore:    tikvStore,
+	}
 }

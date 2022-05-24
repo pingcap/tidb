@@ -272,7 +272,7 @@ func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result
 func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	src := input.Column(col.Index)
-	if col.GetType().Tp == mysql.TypeFloat {
+	if col.GetType().GetType() == mysql.TypeFloat {
 		result.ResizeFloat64(n, false)
 		f32s := src.Float32s()
 		f64s := result.Float64s()
@@ -402,7 +402,7 @@ func (col *Column) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, boo
 	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
-	if col.GetType().Tp == mysql.TypeFloat {
+	if col.GetType().GetType() == mysql.TypeFloat {
 		return float64(row.GetFloat32(col.Index)), false, nil
 	}
 	return row.GetFloat64(col.Index), false, nil
@@ -446,7 +446,7 @@ func (col *Column) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Du
 	if row.IsNull(col.Index) {
 		return types.Duration{}, true, nil
 	}
-	duration := row.GetDuration(col.Index, col.RetType.Decimal)
+	duration := row.GetDuration(col.Index, col.RetType.GetDecimal())
 	return duration, false, nil
 }
 
@@ -559,7 +559,7 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
 	for i, info := range colInfos {
 		if info.Name.L == col.Name.L {
-			if col.Length > 0 && info.FieldType.Flen > col.Length {
+			if col.Length > 0 && info.FieldType.GetFlen() > col.Length {
 				c := *cols[i]
 				c.IsPrefix = true
 				return &c
@@ -584,7 +584,7 @@ func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *m
 			return retCols, lengths
 		}
 		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.Flen {
+		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
 			lengths = append(lengths, types.UnspecifiedLength)
 		} else {
 			lengths = append(lengths, c.Length)
@@ -608,7 +608,7 @@ func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.I
 			continue
 		}
 		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.Flen {
+		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
 			lens = append(lens, types.UnspecifiedLength)
 		} else {
 			lens = append(lens, c.Length)
@@ -642,7 +642,7 @@ func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
 
 // SupportReverseEval checks whether the builtinFunc support reverse evaluation.
 func (col *Column) SupportReverseEval() bool {
-	switch col.RetType.Tp {
+	switch col.RetType.GetType() {
 	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		return true
@@ -665,11 +665,14 @@ func (col *Column) Coercibility() Coercibility {
 
 // Repertoire returns the repertoire value which is used to check collations.
 func (col *Column) Repertoire() Repertoire {
+	if col.repertoire != 0 {
+		return col.repertoire
+	}
 	switch col.RetType.EvalType() {
 	case types.ETJson:
 		return UNICODE
 	case types.ETString:
-		if col.RetType.Charset == charset.CharsetASCII {
+		if col.RetType.GetCharset() == charset.CharsetASCII {
 			return ASCII
 		}
 		return UNICODE

@@ -7,8 +7,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -71,6 +73,19 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	defer mgr.Close()
 
+	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
+	mergeRegionCount := cfg.MergeSmallRegionKeyCount
+	if mergeRegionSize == conn.DefaultMergeRegionSizeBytes &&
+		mergeRegionCount == conn.DefaultMergeRegionKeyCount {
+		// according to https://github.com/pingcap/tidb/issues/34167.
+		// we should get the real config from tikv to adapt the dynamic region.
+		httpCli := httputil.NewClient(mgr.GetTLSConfig())
+		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	// sometimes we have pooled the connections.
 	// sending heartbeats in idle times is useful.
@@ -94,7 +109,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, s, reader); err != nil {
+	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -116,7 +131,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	summary.CollectInt("restore files", len(files))
 
 	ranges, _, err := restore.MergeFileRanges(
-		files, cfg.MergeSmallRegionKeyCount, cfg.MergeSmallRegionKeyCount)
+		files, mergeRegionSize, mergeRegionCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -137,7 +152,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		return errors.Trace(err)
 	}
 
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr)
+	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
 	if err != nil {
 		return errors.Trace(err)
 	}

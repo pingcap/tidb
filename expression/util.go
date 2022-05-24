@@ -428,7 +428,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
-						changed = checkCollationStrictness(coll, newFuncExpr.GetType().Collate)
+						changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
 					}
 				}
 			}
@@ -904,7 +904,7 @@ func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err e
 // DatumToConstant generates a Constant expression from a Datum.
 func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 	t := types.NewFieldType(tp)
-	t.Flag |= flag
+	t.AddFlag(flag)
 	return &Constant{Value: d, RetType: t}
 }
 
@@ -924,6 +924,26 @@ func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, ne
 	return value, nil
 }
 
+// ParamMarkerInPrepareChecker checks whether the given ast tree has paramMarker and is in prepare statement.
+type ParamMarkerInPrepareChecker struct {
+	InPrepareStmt bool
+}
+
+// Enter implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch v := in.(type) {
+	case *driver.ParamMarkerExpr:
+		pc.InPrepareStmt = !v.InExecute
+		return v, true
+	}
+	return in, false
+}
+
+// Leave implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
 // DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
 // We should not *PARSE* a string as JSON under some scenarios. ParseToJSONFlag
 // is 0 for JSON column yet(as well as JSON correlated column), so we can skip
@@ -937,7 +957,7 @@ func DisableParseJSONFlag4Expr(expr Expression) {
 	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
 		return
 	}
-	expr.GetType().Flag &= ^mysql.ParseToJSONFlag
+	expr.GetType().SetFlag(expr.GetType().GetFlag() & ^mysql.ParseToJSONFlag)
 }
 
 // ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
