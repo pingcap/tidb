@@ -18,8 +18,8 @@
 
 set -eu
 check_cluster_version 4 0 0 'local backend'
-LOG_FILE1="$TEST_DIR/lightning-distributed-import1.log"
-LOG_FILE2="$TEST_DIR/lightning-distributed-import2.log"
+LOG_FILE1="$TEST_DIR/lightning-realloc-import1.log"
+LOG_FILE2="$TEST_DIR/lightning-realloc-import2.log"
 
 function check_result() {
   run_sql 'SHOW DATABASES;'
@@ -34,13 +34,13 @@ function check_result() {
 }
 
 function parallel_import() {
-  run_lightning --data-source-dir "tests/$TEST_NAME/data" \
-    --sorted-kv-dir "$TEST_DIR/lightning_distributed_import.sorted1" \
+  run_lightning -d "tests/$TEST_NAME/data" \
+    --sorted-kv-dir "$TEST_DIR/lightning_realloc_import.sorted1" \
     --log-file "$LOG_FILE1" \
     --config "tests/$TEST_NAME/config.toml" &
   pid1="$!"
-  run_lightning --data-source-dir "tests/$TEST_NAME/data1" \
-  --sorted-kv-dir "$TEST_DIR/lightning_distributed_import.sorted2" \
+  run_lightning -d "tests/$TEST_NAME/data1" \
+  --sorted-kv-dir "$TEST_DIR/lightning_realloc_import.sorted2" \
   --log-file "$LOG_FILE2" \
   --config "tests/$TEST_NAME/config.toml" &
   pid2="$!"
