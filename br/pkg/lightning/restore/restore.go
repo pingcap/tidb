@@ -2155,7 +2155,7 @@ type deliverResult struct {
 	err      error
 }
 
-func (cr *chunkRestore) adjustRowID(rowID int64, rc *Controller) int64 {
+func (cr *chunkRestore) adjustRowID(rowID int64, rc *Controller) (int64, error) {
 	if rowID > cr.originalRowIDMax {
 		if cr.curRowIDBase == 0 || cr.curRowIDBase > cr.curRowIDMax {
 			// reallocate rowID
@@ -2171,7 +2171,7 @@ func (cr *chunkRestore) adjustRowID(rowID int64, rc *Controller) int64 {
 					zap.String("task", "re-allocate rowID"),
 				)
 				logger.Error("fail to re-allocate rowIDs", zap.Error(err))
-				return rowID
+				return 0, err
 			}
 			cr.curRowIDBase = newBase
 			cr.curRowIDMax = newMax
@@ -2179,7 +2179,7 @@ func (cr *chunkRestore) adjustRowID(rowID int64, rc *Controller) int64 {
 		rowID = cr.curRowIDBase
 		cr.curRowIDBase++
 	}
-	return rowID
+	return rowID, nil
 }
 
 func (cr *chunkRestore) updateRowStats(rowSize int) {
@@ -2467,7 +2467,9 @@ func (cr *chunkRestore) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			// sql -> kv
-			lastRow.RowID = cr.adjustRowID(lastRow.RowID, rc)
+			if lastRow.RowID, err = cr.adjustRowID(lastRow.RowID, rc); err != nil {
+				return
+			}
 			cr.updateRowStats(lastRow.Length)
 			rowID = lastRow.RowID
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)

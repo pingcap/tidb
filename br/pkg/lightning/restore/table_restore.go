@@ -1024,17 +1024,22 @@ func (tr *TableRestore) allocateRowIDs(newRowCount int64, rc *Controller) (int64
 	tr.rowIDLock.Lock()
 	defer tr.rowIDLock.Unlock()
 	metaMgr := rc.metaMgrBuilder.TableMetaMgr(tr)
-	_, newBase, err := metaMgr.AllocTableRowIDs(context.Background(), newRowCount)
+	// try to re-allocate from downstream
+	// if we are using parallel import, rowID should be reconciled globally.
+	// Otherwise, this function will simply return 0.
+	preRowIDMax, newRowIDMax, err := metaMgr.ReAllocTableRowIDs(context.Background(), newRowCount)
 	if err != nil {
 		return 0, 0, err
 	}
-	if newBase != 0 {
+	var rowIDBase int64
+	if newRowIDMax != 0 {
 		// re-alloc from downstream
-		tr.curMaxRowID = newBase + newRowCount
-		return newBase, newBase + newRowCount, nil
+		rowIDBase = preRowIDMax + 1
+		tr.curMaxRowID = newRowIDMax
 	} else {
-		prevBase := tr.curMaxRowID + 1
+		// single import mode: re-allocate rowID from memory
+		rowIDBase = tr.curMaxRowID + 1
 		tr.curMaxRowID += newRowCount
-		return prevBase, tr.curMaxRowID, nil
 	}
+	return rowIDBase, tr.curMaxRowID, nil
 }

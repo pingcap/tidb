@@ -78,6 +78,7 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 type tableMetaMgr interface {
 	InitTableMeta(ctx context.Context) error
 	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
+	ReAllocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
 	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
@@ -158,6 +159,59 @@ func parseMetaStatus(s string) (metaStatus, error) {
 	default:
 		return metaStatusInitial, common.ErrInvalidMetaStatus.GenWithStackByArgs(s)
 	}
+}
+
+func (m *dbTableMetaMgr) ReAllocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error) {
+	conn, err := m.session.Conn(ctx)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	defer conn.Close()
+	exec := &common.SQLWithRetry{
+		DB:     m.session,
+		Logger: m.tr.logger,
+	}
+	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
+	if err != nil {
+		return 0, 0, errors.Annotate(err, "enable pessimistic transaction failed")
+	}
+	var (
+		newRowIDBase int64
+		newRowIDMax  int64
+	)
+	err = exec.Transact(ctx, "realloc table rowID", func(ctx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(
+			ctx,
+			fmt.Sprintf("SELECT row_id_max from %s WHERE table_id = ? FOR UPDATE", m.tableName),
+			m.tr.tableInfo.ID,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer rows.Close()
+		var query string
+		for rows.Next() {
+			var curRowIDMax int64
+			if err := rows.Scan(&curRowIDMax); err != nil {
+				return errors.Trace(err)
+			}
+			tempRowIDMax := curRowIDMax + newRowIDCount
+			if tempRowIDMax > newRowIDMax {
+				// find current maxRowIDMax across all parallel lightning
+				newRowIDMax = tempRowIDMax
+				newRowIDBase = curRowIDMax
+				query = fmt.Sprintf("UPDATE %s SET row_id_max = %d WHERE table_id = %d", m.tableName, newRowIDMax, m.tr.tableInfo.ID)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, query); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	return newRowIDBase, newRowIDMax, nil
 }
 
 func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
@@ -1029,6 +1083,10 @@ type noopTableMetaMgr struct{}
 
 func (m noopTableMetaMgr) InitTableMeta(ctx context.Context) error {
 	return nil
+}
+
+func (m noopTableMetaMgr) ReAllocTableRowIDs(ctx context.Context, _ int64) (int64, int64, error) {
+	return 0, 0, nil
 }
 
 func (m noopTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
