@@ -614,6 +614,9 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 	}
 	defer e.releaseSysSession(se)
 	job, err := ddl.GetHistoryJobByID(se, s.JobID)
+	if err != nil {
+		return nil, nil, err
+	}
 	if job == nil {
 		return nil, nil, dbterror.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
 	}
