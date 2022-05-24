@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
@@ -384,7 +385,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Add(1)
 	go d.limitDDLJobs()
 
-	d.sessPool = newSessionPool(ctxPool)
+	d.sessPool = newSessionPool(ctxPool, d.store)
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
@@ -976,9 +977,13 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 	return jobs, nil
 }
 
-// GetDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
-	t := meta.NewMeta(txn)
+// GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
+func GetAllDDLJobs(t *meta.Meta) ([]*model.Job, error) {
+	return getDDLJobs(t)
+}
+
+// getDDLJobs get all DDL jobs and sorts jobs by job.ID.
+func getDDLJobs(t *meta.Meta) ([]*model.Job, error) {
 	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1046,7 +1051,7 @@ func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, e
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
 // then iterates history DDL jobs until the `finishFn` return true or error.
 func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
-	jobs, err := GetDDLJobs(txn)
+	jobs, err := GetAllDDLJobs(meta.NewMeta(txn))
 	if err != nil {
 		return err
 	}
@@ -1056,4 +1061,29 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 		return err
 	}
 	return IterHistoryDDLJobs(txn, finishFn)
+}
+
+// GetAllHistoryDDLJobs get all the done ddl jobs.
+func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
+	return m.GetAllHistoryDDLJobs()
+}
+
+// GetHistoryJobByID return history ddl by id.
+func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
+	err := sessiontxn.NewTxn(context.Background(), sess)
+	if err != nil {
+		return nil, err
+	}
+	txn, err := sess.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	t := meta.NewMeta(txn)
+	job, err := t.GetHistoryDDLJob(id)
+	return job, errors.Trace(err)
+}
+
+// AddHistoryDDLJob adds DDL job to history table.
+func AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+	return t.AddHistoryDDLJob(job, updateRawArgs)
 }

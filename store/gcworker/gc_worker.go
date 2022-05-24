@@ -34,12 +34,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
@@ -1881,12 +1881,9 @@ func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gc
 		}
 	})
 	if historyJob == nil {
-		err = kv.RunInNewTxn(context.Background(), w.store, false, func(ctx context.Context, txn kv.Transaction) error {
-			var err1 error
-			t := meta.NewMeta(txn)
-			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)
-			return err1
-		})
+		se := createSession(w.store)
+		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)
+		se.Close()
 		if err != nil {
 			return
 		}
@@ -1956,12 +1953,9 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 		}
 	})
 	if historyJob == nil {
-		err = kv.RunInNewTxn(context.Background(), w.store, false, func(ctx context.Context, txn kv.Transaction) error {
-			var err1 error
-			t := meta.NewMeta(txn)
-			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)
-			return err1
-		})
+		se := createSession(w.store)
+		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)
+		se.Close()
 		if err != nil {
 			return
 		}

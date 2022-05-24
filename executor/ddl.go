@@ -608,10 +608,12 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 }
 
 func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
-	job, err := t.GetHistoryDDLJob(s.JobID)
+	se, err := e.getSysSession()
 	if err != nil {
 		return nil, nil, err
 	}
+	defer e.releaseSysSession(se)
+	job, err := ddl.GetHistoryJobByID(se, s.JobID)
 	if job == nil {
 		return nil, nil, dbterror.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
 	}
