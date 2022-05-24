@@ -3012,6 +3012,13 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
 		}
+	case ast.ShowDatabases:
+		var extractor ShowDatabaseExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			// Avoid building Selection.
+			show.Pattern = nil
+		}
 	}
 	if show.Tp == ast.ShowVariables {
 		var extractor ShowVariablesExtractor
