@@ -379,18 +379,13 @@ func (tc *TransactionContext) AddSavepoint(name string, memdbCheckpoint *tikv.Me
 // DeleteSavepoint deletes the savepoint, return false indicate the savepoint name doesn't exists.
 func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 	name = strings.ToLower(name)
-	idx := -1
 	for i, sp := range tc.Savepoints {
 		if sp.Name == name {
-			idx = i
-			break
+			tc.Savepoints = append(tc.Savepoints[:i], tc.Savepoints[i+1:]...)
+			return true
 		}
 	}
-	if idx < 0 {
-		return false
-	}
-	tc.Savepoints = append(tc.Savepoints[:idx], tc.Savepoints[idx+1:]...)
-	return true
+	return false
 }
 
 // RollbackToSavepoint rollbacks to the specified savepoint by name.
