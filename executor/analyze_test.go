@@ -3282,3 +3282,24 @@ PARTITION BY RANGE ( a ) (
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.Indices[tableInfo.Indices[0].ID].Buckets))
 }
+
+func TestDumpStatsDeltaBeforeAnalyze(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1,2), (3,4)")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "0", rows[0][4])
+	require.Equal(t, "2", rows[0][5])
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	// We expect that modify_count = 0 and row_count = 2 since stats delta is dumped before analyze.
+	rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "0", rows[0][4])
+	require.Equal(t, "2", rows[0][5])
+}

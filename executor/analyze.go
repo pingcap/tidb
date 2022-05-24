@@ -90,7 +90,6 @@ const (
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return err
@@ -118,6 +117,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.wg.Wait()
 	close(resultsCh)
 
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 
 	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
