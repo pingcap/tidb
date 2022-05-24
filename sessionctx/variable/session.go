@@ -137,7 +137,7 @@ type TransactionContext struct {
 	TxnCtxNeedToRestore
 }
 
-// TxnCtxNeedToRestore stores transaction variables which need to be restore when rollback to savepoint.
+// TxnCtxNeedToRestore stores transaction variables which need to be restored when rolling back to a savepoint.
 type TxnCtxNeedToRestore struct {
 	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
 	// It's also used in the statistics updating.
