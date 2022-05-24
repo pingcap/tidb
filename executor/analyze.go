@@ -88,39 +88,9 @@ const (
 	maxSketchSize       = 10000
 )
 
-func (e *AnalyzeExec) collectTableIDs() map[int64]struct{} {
-	tableIDs := make(map[int64]struct{}, len(e.tasks))
-	for _, task := range e.tasks {
-		if task == nil {
-			continue
-		}
-		if task.idxExec != nil {
-			tableIDs[task.idxExec.tableID.GetStatisticsID()] = struct{}{}
-		}
-		if task.colExec != nil {
-			tableIDs[task.colExec.tableID.GetStatisticsID()] = struct{}{}
-		}
-		if task.fastExec != nil {
-			tableIDs[task.fastExec.tableID.GetStatisticsID()] = struct{}{}
-		}
-		if task.idxIncrementalExec != nil {
-			tableIDs[task.idxIncrementalExec.tableID.GetStatisticsID()] = struct{}{}
-		}
-		if task.colIncrementalExec != nil {
-			tableIDs[task.colIncrementalExec.tableID.GetStatisticsID()] = struct{}{}
-		}
-	}
-	return tableIDs
-}
-
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	// We dump stats delta of the tables that are going to be analyzed. In this way, we can avoid the confusing cases like
-	// https://github.com/pingcap/tidb/issues/22934 when insertion and analyze are executed on the same TiDB.
-	if err := statsHandle.DumpSpecifiedDeltaToKV(e.collectTableIDs()); err != nil {
-		logutil.BgLogger().Error("dump stats delta failed", zap.Error(err))
-	}
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return err
