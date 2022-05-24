@@ -316,16 +316,20 @@ func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
 func UpdateDDLReorgHandle(t *meta.Meta, sess *session, job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	if variable.AllowConcurrencyDDL.Load() {
-		sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
-		_, err := sess.execute(context.Background(), sql, "update_handle")
-		if err != nil {
-			return err
-		}
-		sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key, end_key, physical_id) values (%d, %d, %s, %s, %d)", job.ID, element.ID, wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
-		_, err = sess.execute(context.Background(), sql, "update_handle")
-		return err
+		return updateDDLReorgHandle(sess, job, startKey, endKey, physicalTableID, element)
 	}
 	return t.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
+}
+
+func updateDDLReorgHandle(sess *session, job *model.Job, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
+	_, err := sess.execute(context.Background(), sql, "update_handle")
+	if err != nil {
+		return err
+	}
+	sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key, end_key, physical_id) values (%d, %d, %s, %s, %d)", job.ID, element.ID, wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
+	_, err = sess.execute(context.Background(), sql, "update_handle")
+	return err
 }
 
 func (w *worker) RemoveDDLReorgHandle(t *meta.Meta, job *model.Job, elements []*meta.Element) error {
@@ -426,4 +430,185 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 		jobs = append(jobs, &job)
 	}
 	return jobs, nil
+}
+
+func (d *ddl) MigrateExistingDDLs() (err error) {
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(sess)
+	se := newSession(sess)
+	// clean up these 3 tables.
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_job", "delete_old_ddl")
+	if err != nil {
+		return err
+	}
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_reorg", "delete_old_reorg")
+	if err != nil {
+		return err
+	}
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_history", "delete_old_history")
+	if err != nil {
+		return err
+	}
+
+	err = se.begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			se.rollback()
+		} else {
+			err = se.commit()
+		}
+	}()
+	txn, err := se.txn()
+	if err != nil {
+		return err
+	}
+
+	for _, tp := range []workerType{addIdxWorker, generalWorker} {
+		t := newMetaWithQueueTp(txn, tp)
+		jobs, err := t.GetAllDDLJobsInQueue()
+		if err != nil {
+			return err
+		}
+		err = d.addDDLJobs(jobs)
+		if err != nil {
+			return err
+		}
+		for _, job := range jobs {
+			element, start, end, pid, err := t.GetDDLReorgHandle(job)
+			if err != nil {
+				return err
+			}
+			if job.MayNeedReorg() {
+				err = updateDDLReorgHandle(se, job, start, end, pid, element)
+				if err != nil {
+					logutil.BgLogger().Error("migrate ddl job failed", zap.Error(err))
+					return err
+				}
+			}
+		}
+	}
+
+	t := meta.NewMeta(txn)
+	iterator, err := t.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	jobs := make([]*model.Job, 0, 128)
+	for {
+		jobs, err = iterator.GetLastJobs(128, jobs)
+		if err != nil {
+			return err
+		}
+		if len(jobs) == 0 {
+			break
+		}
+		for _, job := range jobs {
+			err := addHistoryDDLJob(se, job, false)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	err = t.ClearALLDDLJob()
+	if err != nil {
+		return err
+	}
+	err = t.ClearALLDDLReorgHandle()
+	if err != nil {
+		return err
+	}
+	if err := t.ClearALLHistoryJob(); err != nil {
+		return err
+	}
+	return
+}
+
+func (d *ddl) BackOffDDLs(store kv.Storage) (err error) {
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(sess)
+
+	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		if err := t.ClearALLDDLReorgHandle(); err != nil {
+			return err
+		}
+		if err := t.ClearALLDDLJob(); err != nil {
+			return err
+		}
+		if err := t.ClearALLHistoryJob(); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	se := newSession(sess)
+	err = se.begin()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err != nil {
+			se.rollback()
+		} else {
+			err = se.commit()
+		}
+	}()
+	jobs, err := getJobsBySQL(se, "tidb_ddl_job", "1 order by job_id")
+	if err != nil {
+		return err
+	}
+
+	reorgHandle, err := se.execute(context.Background(), "select job_meta from mysql.tidb_ddl_reorg", "get_handle")
+	if err != nil {
+		return err
+	}
+	txn, err := se.txn()
+	if err != nil {
+		return err
+	}
+	t := meta.NewMeta(txn)
+	for _, job := range jobs {
+		jobListKey := meta.DefaultJobListKey
+		if job.MayNeedReorg() {
+			jobListKey = meta.AddIndexJobListKey
+		}
+		if err := t.EnQueueDDLJob(job, jobListKey); err != nil {
+			return err
+		}
+	}
+	for _, row := range reorgHandle {
+		jobId := row.GetInt64(0)
+		if err := t.UpdateDDLReorgHandle(jobs[jobId], row.GetBytes(4), row.GetBytes(5), row.GetInt64(6), &meta.Element{ID: row.GetInt64(2), TypeKey: row.GetBytes(3)}); err != nil {
+			return err
+		}
+	}
+
+	// clean up these 3 tables.
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_job", "delete_old_ddl")
+	if err != nil {
+		return err
+	}
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_reorg", "delete_old_reorg")
+	if err != nil {
+		return err
+	}
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_history", "delete_old_history")
+	if err != nil {
+		return err
+	}
+	return
 }

@@ -193,6 +193,10 @@ type DDL interface {
 	SetHook(h Callback)
 	// DoDDLJob does the DDL job, it's exported for test.
 	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
+
+	MigrateExistingDDLs() error
+
+	BackOffDDLs(storage kv.Storage) error
 }
 
 type limitJobTask struct {

@@ -589,21 +589,26 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 	w.writeDDLSeqNum(job)
 	w.JobContext.resetWhenJobFinish()
-	err = w.AddHistoryDDLJob(t, job, updateRawArgs)
+	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
 }
 
-func (w *worker) AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+// AddHistoryDDLJob adds DDL job to history table.
+func AddHistoryDDLJob(sess *session, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
 	if variable.AllowConcurrencyDDL.Load() {
-		b, err := job.Encode(updateRawArgs)
-		if err != nil {
-			return err
-		}
-		_, err = w.sess.execute(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_history(job_id, job_meta, job_seq) values (%d, 0x%x, %d)", job.ID, b, job.SeqNum), "insert_history")
-		return errors.Trace(err)
+		return addHistoryDDLJob(sess, job, updateRawArgs)
 	}
 
 	return t.AddHistoryDDLJob(job, updateRawArgs)
+}
+
+func addHistoryDDLJob(sess *session, job *model.Job, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
+	if err != nil {
+		return err
+	}
+	_, err = sess.execute(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_history(job_id, job_meta, job_seq) values (%d, 0x%x, %d)", job.ID, b, job.SeqNum), "insert_history")
+	return errors.Trace(err)
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {

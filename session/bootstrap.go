@@ -782,7 +782,7 @@ func upgrade(s Session) {
 		return
 	}
 	// only upgrade from under version88 should require owner.
-	if ver <= version88 {
+	if ver <= version90 {
 		ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
 		err := domain.GetDomain(s).DDL().OwnerManager().RequireOwner(ctx)
 		cancelFunc()
@@ -795,6 +795,11 @@ func upgrade(s Session) {
 
 	updateBootstrapVer(s)
 	_, err = s.ExecuteInternal(context.Background(), "COMMIT")
+
+	if err == nil && ver <= version90 {
+		logutil.BgLogger().Info("start migrate DDLs")
+		err = domain.GetDomain(s).DDL().MigrateExistingDDLs()
+	}
 
 	if err != nil {
 		sleepTime := 1 * time.Second
