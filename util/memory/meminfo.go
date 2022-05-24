@@ -15,6 +15,7 @@
 package memory
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"strconv"
@@ -61,9 +62,10 @@ func MemUsedNormal() (uint64, error) {
 }
 
 const (
-	cGroupMemLimitPath = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
-	cGroupMemUsagePath = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
-	selfCGroupPath     = "/proc/self/cgroup"
+	// A process can access its own /proc/PID directory using the symbolic link /proc/self
+	selfCGroupPath         = "/proc/self/cgroup"
+	memorySubsystem        = "memory"
+	maximumBytes    uint64 = 0x7FFFFFFFFFFFF000
 )
 
 type memInfoCache struct {
@@ -95,38 +97,14 @@ var memUsage *memInfoCache
 // save the memory usage of the server process
 var serverMemUsage *memInfoCache
 
-// MemTotalCGroup returns the total amount of RAM on this system in container environment.
-func MemTotalCGroup() (uint64, error) {
-	mem, t := memLimit.get()
-	if time.Since(t) < 60*time.Second {
-		return mem, nil
-	}
-	mem, err := readUint(cGroupMemLimitPath)
-	if err != nil {
-		return mem, err
-	}
-	memLimit.set(mem, time.Now())
-	return mem, nil
-}
-
-// MemUsedCGroup returns the total used amount of RAM on this system in container environment.
-func MemUsedCGroup() (uint64, error) {
-	mem, t := memUsage.get()
-	if time.Since(t) < 500*time.Millisecond {
-		return mem, nil
-	}
-	mem, err := readUint(cGroupMemUsagePath)
-	if err != nil {
-		return mem, err
-	}
-	memUsage.set(mem, time.Now())
-	return mem, nil
-}
+// whether hierarchical accounting is enabled
+var isHierarchical bool
 
 func init() {
 	if inContainer() {
 		MemTotal = MemTotalCGroup
 		MemUsed = MemUsedCGroup
+		isHierarchical = getHierarchicalStatus()
 	} else {
 		MemTotal = MemTotalNormal
 		MemUsed = MemUsedNormal
@@ -178,15 +156,6 @@ func parseUint(s string, base, bitSize int) (uint64, error) {
 	return v, nil
 }
 
-// refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L243
-func readUint(path string) (uint64, error) {
-	v, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	return parseUint(strings.TrimSpace(string(v)), 10, 64)
-}
-
 // InstanceMemUsed returns the memory usage of this TiDB server
 func InstanceMemUsed() (uint64, error) {
 	used, t := serverMemUsage.get()
@@ -199,4 +168,125 @@ func InstanceMemUsed() (uint64, error) {
 	memoryUsage = instanceStats.HeapAlloc
 	serverMemUsage.set(memoryUsage, time.Now())
 	return memoryUsage, nil
+}
+
+// MemTotalCGroup returns the total amount of RAM that TIDB is limited to use in container environment.
+func MemTotalCGroup() (uint64, error) {
+	mem, t := memLimit.get()
+	if time.Since(t) < 60*time.Second {
+		return mem, nil
+	}
+	mem, err := getMemoryLimit()
+	if err != nil {
+		return mem, err
+	}
+	memLimit.set(mem, time.Now())
+	return mem, nil
+}
+
+// MemUsedCGroup returns the total used amount of RAM on this system in container environment.
+func MemUsedCGroup() (uint64, error) {
+	mem, t := memUsage.get()
+	if time.Since(t) < 500*time.Millisecond {
+		return mem, nil
+	}
+	mem, err := getSubsystemFileValue(memorySubsystem, "memory.usage_in_bytes")
+	if err != nil {
+		return mem, err
+	}
+	memUsage.set(mem, time.Now())
+	return mem, nil
+}
+
+// getMemoryLimit reads from memory subsystem and returns TIDB's memory limit
+func getMemoryLimit() (uint64, error) {
+	limitInBytes, err := getSubsystemFileValue(memorySubsystem, "memory.limit_in_bytes")
+	if err != nil {
+		return maximumBytes, err
+	}
+	if limitInBytes == uint64(maximumBytes) {
+		if isHierarchical {
+			memStatF, err := readSubsystemFile(memorySubsystem, "memory.stat")
+			if err != nil {
+				return maximumBytes, err
+			}
+			memStat, err := grepFirstMatch(string(memStatF), "hierarchical_memory_limit", 1, " ")
+			if err != nil {
+				return maximumBytes, err
+			}
+			v, err := strconv.ParseUint(memStat, 10, 64)
+			if err != nil {
+				return maximumBytes, err
+			}
+			return v, nil
+		}
+	}
+	return limitInBytes, nil
+}
+
+// getSubsystemPath returns sub-system path of current process's cgroups
+func getSubsystemPath(subsystem string) (string, error) {
+	cgroupData, err := safeReadFile(selfCGroupPath)
+	if err != nil {
+		return "", err
+	}
+	subsystemPath, err := grepFirstMatch(string(cgroupData), subsystem, 2, ":")
+	if err != nil {
+		return "", fmt.Errorf("cannot find sub-system: %s's path of self cgroup: %w", subsystem, err)
+	}
+	return subsystemPath, nil
+}
+
+// getHierarchicalStatus returns true when hierarchical accounting is enabled
+// find more information on https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt
+func getHierarchicalStatus() bool {
+	value, _ := readSubsystemFile(memorySubsystem, "memory.use_hierarchy")
+	return string(value) == "1"
+}
+
+// readSubsystemFile reads a file of a cgroup sub-system
+// e.g., memory.limit_in_bytes in /sys/fs/cgroup/memory/docker/0050c0fc269ced92965d8cda0a818125b10c3f7c7125f14f233ae9d69ba65e3f
+func readSubsystemFile(subsystem, filename string) ([]byte, error) {
+	path, err := getSubsystemPath(subsystem)
+	if err != nil {
+		return nil, err
+	}
+	return safeReadFile(fmt.Sprintf("%s/%s", path, filename))
+}
+
+// getSubsystemFileValue reads a file of a cgroup sub-system and returns its value
+func getSubsystemFileValue(subsystem, filename string) (uint64, error) {
+	path, err := getSubsystemPath(subsystem)
+	if err != nil {
+		return 0, err
+	}
+	v, err := safeReadFile(fmt.Sprintf("%s/%s", path, filename))
+	if err != nil {
+		return 0, err
+	}
+	return parseUint(strings.TrimSpace(string(v)), 10, 64)
+}
+
+// safeReadFile is a wrapper for os.ReadFile, it's panic free
+func safeReadFile(path string) ([]byte, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	} else {
+		return os.ReadFile(path)
+	}
+}
+
+// refer to https://github.com/VictoriaMetrics/VictoriaMetrics/blob/5acd70109b98a05f20375e0b4bca67ad4176ac23/lib/cgroup/util.go#L47
+func grepFirstMatch(data string, match string, index int, delimiter string) (string, error) {
+	lines := strings.Split(string(data), "\n")
+	for _, s := range lines {
+		if !strings.Contains(s, match) {
+			continue
+		}
+		parts := strings.Split(s, delimiter)
+		if index < len(parts) {
+			return strings.TrimSpace(parts[index]), nil
+		}
+	}
+	return "", fmt.Errorf("cannot find %q in %q", match, data)
 }
