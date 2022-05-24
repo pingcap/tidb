@@ -924,6 +924,26 @@ func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, ne
 	return value, nil
 }
 
+// ParamMarkerInPrepareChecker checks whether the given ast tree has paramMarker and is in prepare statement.
+type ParamMarkerInPrepareChecker struct {
+	InPrepareStmt bool
+}
+
+// Enter implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch v := in.(type) {
+	case *driver.ParamMarkerExpr:
+		pc.InPrepareStmt = !v.InExecute
+		return v, true
+	}
+	return in, false
+}
+
+// Leave implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
 // DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
 // We should not *PARSE* a string as JSON under some scenarios. ParseToJSONFlag
 // is 0 for JSON column yet(as well as JSON correlated column), so we can skip

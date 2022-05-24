@@ -714,6 +714,7 @@ import (
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
+	batch                      "BATCH"
 	buckets                    "BUCKETS"
 	builtins                   "BUILTINS"
 	cancel                     "CANCEL"
@@ -1508,6 +1509,13 @@ AlterTableStmt:
 			IndexNames:     $9.([]model.CIStr),
 			IndexFlag:      true,
 			AnalyzeOpts:    $10.([]ast.AnalyzeOpt),
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "TIFLASH" "REPLICA"
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:       $4.(*ast.TableName),
+			ReplicaKind: ast.CompactReplicaKindTiFlash,
 		}
 	}
 
@@ -6136,6 +6144,7 @@ UnReservedKeyword:
 
 TiDBKeyword:
 	"ADMIN"
+|	"BATCH"
 |	"BUCKETS"
 |	"BUILTINS"
 |	"CANCEL"
@@ -8713,7 +8722,7 @@ OptLeadLagInfo:
 	}
 |	',' paramMarker OptLLDefault
 	{
-		args := []ast.ExprNode{ast.NewValueExpr($2, parser.charset, parser.collation)}
+		args := []ast.ExprNode{ast.NewParamMarkerExpr(yyS[yypt-1].offset)}
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
@@ -10661,9 +10670,17 @@ ShowTargetFilterable:
 			Extended: true,
 		}
 	}
+|	builtinCount '(' '*' ')' "WARNINGS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings, CountWarningsOrErrors: true}
+	}
 |	"WARNINGS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings}
+	}
+|	builtinCount '(' '*' ')' "ERRORS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowErrors, CountWarningsOrErrors: true}
 	}
 |	"ERRORS"
 	{
@@ -13462,7 +13479,7 @@ TableLockList:
  * Split a SQL on a column. Used for bulk delete that doesn't need ACID.
  *******************************************************************/
 NonTransactionalDeleteStmt:
-	"SPLIT" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
+	"BATCH" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
 	{
 		$$ = &ast.NonTransactionalDeleteStmt{
 			DryRun:      $5.(int),

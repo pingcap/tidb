@@ -136,8 +136,9 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo       *tableHintInfo
-	preferJoinType uint
+	hintInfo        *tableHintInfo
+	preferJoinType  uint
+	preferJoinOrder bool
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
@@ -1196,7 +1197,7 @@ type LogicalIndexScan struct {
 
 // MatchIndexProp checks if the indexScan can match the required property.
 func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
-	if prop.IsEmpty() {
+	if prop.IsSortItemEmpty() {
 		return true
 	}
 	if all, _ := prop.AllSameOrder(); !all {
@@ -1622,6 +1623,17 @@ type WindowFrame struct {
 	End   *FrameBound
 }
 
+// Clone copies a window frame totally.
+func (wf *WindowFrame) Clone() *WindowFrame {
+	cloned := new(WindowFrame)
+	*cloned = *wf
+
+	cloned.Start = wf.Start.Clone()
+	cloned.End = wf.End.Clone()
+
+	return cloned
+}
+
 // FrameBound is the boundary of a frame.
 type FrameBound struct {
 	Type      ast.BoundType
@@ -1633,6 +1645,20 @@ type FrameBound struct {
 	CalcFuncs []expression.Expression
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
+}
+
+// Clone copies a frame bound totally.
+func (fb *FrameBound) Clone() *FrameBound {
+	cloned := new(FrameBound)
+	*cloned = *fb
+
+	cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
+	for _, it := range fb.CalcFuncs {
+		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
+	}
+	cloned.CmpFuncs = fb.CmpFuncs
+
+	return cloned
 }
 
 // LogicalWindow represents a logical window function plan.
@@ -1798,6 +1824,8 @@ type ShowContents struct {
 	Flag      int                  // Some flag parsed from sql, such as FULL.
 	User      *auth.UserIdentity   // Used for show grants.
 	Roles     []*auth.RoleIdentity // Used for show grants.
+
+	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	Full        bool
 	IfNotExists bool // Used for `show create database if not exists`.
