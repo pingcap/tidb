@@ -159,8 +159,8 @@ type Handle interface {
 	Data() ([]types.Datum, error)
 	// String implements the fmt.Stringer interface.
 	String() string
-	// MemSize returns the size of memory occupied by the handle.
-	MemSize() uint64
+	// ExtraMemSize returns the dynamic size of memory occupied by the handle, e.g. slices.
+	ExtraMemSize() uint64
 }
 
 var _ Handle = IntHandle(0)
@@ -235,9 +235,9 @@ func (ih IntHandle) String() string {
 	return strconv.FormatInt(int64(ih), 10)
 }
 
-// MemSize implements the Handle interface.
-func (ih IntHandle) MemSize() uint64 {
-	return 64
+// ExtraMemSize implements the Handle interface.
+func (ih IntHandle) ExtraMemSize() uint64 {
+	return 0
 }
 
 // CommonHandle implements the Handle interface for non-int64 type handle.
@@ -359,8 +359,8 @@ func (ch *CommonHandle) String() string {
 	return fmt.Sprintf("{%s}", strings.Join(strs, ", "))
 }
 
-// MemSize implements the Handle interface.
-func (ch *CommonHandle) MemSize() uint64 {
+// ExtraMemSize implements the Handle interface.
+func (ch *CommonHandle) ExtraMemSize() uint64 {
 	return uint64(len(ch.encoded) + len(ch.colEndOffsets)*2)
 }
 
@@ -451,7 +451,7 @@ type strHandleValue[V any] struct {
 func NewMemAwareHandleMap[V any]() *MemAwareHandleMap[V] {
 	// Initialize the two maps to avoid checking nil.
 	return &MemAwareHandleMap[V]{
-		ints: set.NewMemAwareMap[int64, V](64 + 1),
+		ints: set.NewMemAwareMap[int64, V](8 + uint64(unsafe.Sizeof(*(new(V))))),
 		strs: set.NewMemAwareMap[string, strHandleValue[V]](16 + uint64(unsafe.Sizeof(strHandleValue[V]{}))),
 	}
 }
@@ -471,12 +471,12 @@ func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
 // Set sets a value with a Handle.
 func (m *MemAwareHandleMap[V]) Set(h Handle, val V, sizeOfValue uint64) int64 {
 	if h.IsInt() {
-		return m.ints.Set(h.IntValue(), val, h.MemSize()+sizeOfValue)
+		return m.ints.Set(h.IntValue(), val, h.ExtraMemSize()+sizeOfValue)
 	}
 	return m.strs.Set(string(h.Encoded()), strHandleValue[V]{
 		h:   h,
 		val: val,
-	}, h.MemSize()+sizeOfValue)
+	}, h.ExtraMemSize()+sizeOfValue)
 }
 
 // PartitionHandle combines a handle and a PartitionID, used to location a row in partitioned table.

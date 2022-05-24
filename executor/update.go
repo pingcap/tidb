@@ -192,7 +192,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		// Update row
 		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
-			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed, 1)
+			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed, 0)
 			e.memTracker.Consume(memDelta)
 			continue
 		}
