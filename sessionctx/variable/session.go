@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 )
@@ -135,7 +136,16 @@ type SavepointRecord struct {
 	// name is the name of the savepoint
 	Name string
 	// Savepoint is the transaction savepoint.
-	Savepoint interface{}
+	MemDBCheckpoint *tikv.MemDBCheckpoint
+
+	txnCtxSavepoint TransactionContextSavepoint
+}
+
+// TransactionContextSavepoint is the savepoint of TransactionContext.
+// This is use to save the TransactionContext status
+// and rollback TransactionContext to the specify TransactionContextSavepoint.
+// This is uses to implement transaction savepoint and rollback to savepoint.
+type TransactionContextSavepoint struct {
 	// TableDeltaMap is the savepoint of TransactionContext.TableDeltaMap
 	TableDeltaMap map[int64]TableDelta
 	// pessimisticLockCache is the savepoint of TransactionContext.pessimisticLockCache
@@ -143,6 +153,8 @@ type SavepointRecord struct {
 }
 
 // TransactionContext is used to store variables that has transaction scope.
+// WARNING: when adding a new variable into TransactionContext, you should consider whether the variable should be
+// store into TransactionContextSavepoint.
 type TransactionContext struct {
 	forUpdateTS uint64
 	stmtFuture  oracle.Future
@@ -333,11 +345,8 @@ func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
 	return tc.stmtFuture
 }
 
-// AddSavepoint adds a new savepoint.
-func (tc *TransactionContext) AddSavepoint(name string, savepoint interface{}) {
-	name = strings.ToLower(name)
-	tc.DeleteSavepoint(name)
-
+// GetCurrentSavepoint gets TransactionContext's savepoint.
+func (tc *TransactionContext) GetCurrentSavepoint() TransactionContextSavepoint {
 	tableDeltaMap := make(map[int64]TableDelta, len(tc.TableDeltaMap))
 	for k, v := range tc.TableDeltaMap {
 		tableDeltaMap[k] = v.Clone()
@@ -346,12 +355,30 @@ func (tc *TransactionContext) AddSavepoint(name string, savepoint interface{}) {
 	for k, v := range tc.pessimisticLockCache {
 		pessimisticLockCache[k] = v
 	}
-	tc.Savepoints = append(tc.Savepoints, SavepointRecord{
-		Name:                 name,
-		Savepoint:            savepoint,
+
+	return TransactionContextSavepoint{
 		TableDeltaMap:        tableDeltaMap,
 		pessimisticLockCache: pessimisticLockCache,
-	})
+	}
+}
+
+// RestoreBySavepoint restores TransactionContext to the specify savepoint.
+func (tc *TransactionContext) RestoreBySavepoint(savepoint TransactionContextSavepoint) {
+	tc.TableDeltaMap = savepoint.TableDeltaMap
+	tc.pessimisticLockCache = savepoint.pessimisticLockCache
+}
+
+// AddSavepoint adds a new savepoint.
+func (tc *TransactionContext) AddSavepoint(name string, memdbCheckpoint *tikv.MemDBCheckpoint) {
+	name = strings.ToLower(name)
+	tc.DeleteSavepoint(name)
+
+	record := SavepointRecord{
+		Name:            name,
+		MemDBCheckpoint: memdbCheckpoint,
+		txnCtxSavepoint: tc.GetCurrentSavepoint(),
+	}
+	tc.Savepoints = append(tc.Savepoints, record)
 }
 
 // DeleteSavepoint deletes the savepoint, return false indicate the savepoint name doesn't exists.
@@ -380,8 +407,7 @@ func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord 
 	name = strings.ToLower(name)
 	for idx, sp := range tc.Savepoints {
 		if name == sp.Name {
-			tc.TableDeltaMap = sp.TableDeltaMap
-			tc.pessimisticLockCache = sp.pessimisticLockCache
+			tc.RestoreBySavepoint(sp.txnCtxSavepoint)
 			tc.Savepoints = tc.Savepoints[:idx+1]
 			return &tc.Savepoints[idx]
 		}

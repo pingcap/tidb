@@ -376,10 +376,10 @@ func (txn *LazyTxn) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
-// RollbackToSavepoint overrides the Transaction interface.
-func (txn *LazyTxn) RollbackToSavepoint(savepoint interface{}) {
+// RollbackMemDBToCheckpoint overrides the Transaction interface.
+func (txn *LazyTxn) RollbackMemDBToCheckpoint(savepoint *tikv.MemDBCheckpoint) {
 	txn.flushStmtBuf()
-	txn.Transaction.RollbackToSavepoint(savepoint)
+	txn.Transaction.RollbackMemDBToCheckpoint(savepoint)
 	txn.cleanup()
 }
 

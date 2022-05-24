@@ -236,10 +236,11 @@ type Transaction interface {
 	// clear allowed flag
 	ClearDiskFullOpt()
 
-	// GetSavepoint gets the savepoint of the current transaction.
-	GetSavepoint() interface{}
-	// RollbackToSavepoint uses to rollback the transaction to the specified savepoint.
-	RollbackToSavepoint(interface{})
+	// GetMemDBCheckpoint gets the transaction's memDB checkpoint.
+	GetMemDBCheckpoint() *tikv.MemDBCheckpoint
+
+	// RollbackMemDBToCheckpoint rollbacks the transaction's memDB to the specified checkpoint.
+	RollbackMemDBToCheckpoint(*tikv.MemDBCheckpoint)
 }
 
 // AssertionProto is an interface defined for the assertion protocol.

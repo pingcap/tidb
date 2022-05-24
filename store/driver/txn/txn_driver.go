@@ -78,18 +78,14 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	return txn.extractKeyErr(err)
 }
 
-func (txn *tikvTxn) GetSavepoint() interface{} {
+func (txn *tikvTxn) GetMemDBCheckpoint() *tikv.MemDBCheckpoint {
 	buf := txn.KVTxn.GetMemBuffer()
 	return buf.Checkpoint()
 }
 
-func (txn *tikvTxn) RollbackToSavepoint(savepoint interface{}) {
-	checkpoint, ok := savepoint.(*tikv.MemCheckpoint)
-	if !ok {
-		return
-	}
+func (txn *tikvTxn) RollbackMemDBToCheckpoint(savepoint *tikv.MemDBCheckpoint) {
 	buf := txn.KVTxn.GetMemBuffer()
-	buf.RevertToCheckpoint(checkpoint)
+	buf.RevertToCheckpoint(savepoint)
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.

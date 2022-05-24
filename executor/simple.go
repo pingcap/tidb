@@ -620,8 +620,8 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	if err != nil {
 		return err
 	}
-	savepoint := txn.GetSavepoint()
-	txnCtx.AddSavepoint(s.Name, savepoint)
+	memDBCheckpoint := txn.GetMemDBCheckpoint()
+	txnCtx.AddSavepoint(s.Name, memDBCheckpoint)
 	return nil
 }
 
@@ -739,7 +739,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 		if savepointRecord == nil {
 			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 		}
-		txn.RollbackToSavepoint(savepointRecord.Savepoint)
+		txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
 		return nil
 	}
 
