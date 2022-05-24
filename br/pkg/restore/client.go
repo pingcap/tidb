@@ -2016,3 +2016,7 @@ func (rc *Client) SaveSchemas(
 	}
 	return nil
 }
+
+func MockClient(dbs map[string]*utils.Database) *Client {
+	return &Client{databases: dbs}
+}

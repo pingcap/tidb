@@ -114,3 +114,11 @@ func GetSysDBName(tempDB model.CIStr) (string, bool) {
 	}
 	return tempDB.O[len(temporaryDBNamePrefix):], true
 }
+
+// GetSysDBName get the original name and lower case namne of system DB
+func GetSysDBONameAndLName(tempDB model.CIStr) (string, string, bool) {
+	if ok := strings.HasPrefix(tempDB.O, temporaryDBNamePrefix); !ok {
+		return tempDB.O, tempDB.L, false
+	}
+	return tempDB.O[len(temporaryDBNamePrefix):], tempDB.L[len(temporaryDBNamePrefix):], true
+}
