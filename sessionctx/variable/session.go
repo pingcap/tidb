@@ -389,11 +389,7 @@ func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 	if idx < 0 {
 		return false
 	}
-	length := len(tc.Savepoints)
-	for i := idx; i < length-1; i++ {
-		tc.Savepoints[i] = tc.Savepoints[i+1]
-	}
-	tc.Savepoints = tc.Savepoints[:length-1]
+	tc.Savepoints = append(tc.Savepoints[:idx], tc.Savepoints[idx+1:]...)
 	return true
 }
 
