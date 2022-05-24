@@ -528,6 +528,31 @@ func loadDDLReorgVars(w *worker) error {
 	return ddlutil.LoadDDLReorgVars(w.ddlJobCtx, ctx)
 }
 
+func pruneDecodeColMap(colMap map[int64]decoder.Column, t table.Table, indexInfo *model.IndexInfo) map[int64]decoder.Column {
+	resultMap := make(map[int64]decoder.Column)
+	virtualGeneratedColumnStack := make([]*model.ColumnInfo, 0)
+	for _, idxCol := range indexInfo.Columns {
+		if isVirtualGeneratedColumn(t.Cols()[idxCol.Offset].ColumnInfo) {
+			virtualGeneratedColumnStack = append(virtualGeneratedColumnStack, t.Cols()[idxCol.Offset].ColumnInfo)
+		}
+		resultMap[t.Cols()[idxCol.Offset].ID] = colMap[t.Cols()[idxCol.Offset].ID]
+	}
+
+	for len(virtualGeneratedColumnStack) > 0 {
+		checkCol := virtualGeneratedColumnStack[0]
+		for dColName := range checkCol.Dependences {
+			col := model.FindColumnInfo(t.Meta().Columns, dColName)
+			if isVirtualGeneratedColumn(col) {
+				virtualGeneratedColumnStack = append(virtualGeneratedColumnStack, col)
+			}
+			resultMap[col.ID] = colMap[col.ID]
+		}
+		virtualGeneratedColumnStack = virtualGeneratedColumnStack[1:]
+	}
+
+	return resultMap
+}
+
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
 	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
 	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
@@ -582,6 +607,8 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	decodeColMap = pruneDecodeColMap(decodeColMap, t, indexInfo)
 
 	if err := w.isReorgRunnable(reorgInfo.d); err != nil {
 		return errors.Trace(err)
