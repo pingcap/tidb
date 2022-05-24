@@ -622,7 +622,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = UpdateDDLReorgHandle(t, wk.sess, job, start, end, pid, elements[0])
+		err = UpdateDDLReorgHandle(t, wk.sess, job, start, end, pid, elements[0], wk.concurrentDDL)
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -642,7 +642,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		})
 
 		var err error
-		element, start, end, pid, err = getDDLReorgHandle(job, t, wk.sess)
+		element, start, end, pid, err = getDDLReorgHandle(job, t, wk.sess, wk.concurrentDDL)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -691,7 +691,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 			zap.String("startHandle", tryDecodeToHandleString(start)),
 			zap.String("endHandle", tryDecodeToHandleString(end)))
 
-		err = UpdateDDLReorgHandle(t, wk.sess, job, start, end, pid, elements[0])
+		err = UpdateDDLReorgHandle(t, wk.sess, job, start, end, pid, elements[0], wk.concurrentDDL)
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -700,7 +700,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 		element = elements[0]
 	} else {
 		var err error
-		element, start, end, pid, err = getDDLReorgHandle(job, t, wk.sess)
+		element, start, end, pid, err = getDDLReorgHandle(job, t, wk.sess, wk.concurrentDDL)
 
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
@@ -742,7 +742,7 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) error {
 			return err
 		}
 
-		err = UpdateDDLReorgHandle(nil, sess, r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
+		err = UpdateDDLReorgHandle(nil, sess, r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement, true)
 		if err != nil {
 			return err
 		}

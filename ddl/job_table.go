@@ -287,12 +287,12 @@ func updateConcurrencyDDLJob(sctx *session, job *model.Job, updateRawArgs bool) 
 
 // GetDDLReorgHandleForTest gets the latest processed DDL reorganize position. It is only used for test.
 func GetDDLReorgHandleForTest(job *model.Job, t *meta.Meta, sess sessionctx.Context) (*meta.Element, kv.Key, kv.Key, int64, error) {
-	return getDDLReorgHandle(job, t, newSession(sess))
+	return getDDLReorgHandle(job, t, newSession(sess), variable.AllowConcurrencyDDL.Load())
 }
 
 // getDDLReorgHandle gets the latest processed DDL reorganize position.
-func getDDLReorgHandle(job *model.Job, t *meta.Meta, sess *session) (*meta.Element, kv.Key, kv.Key, int64, error) {
-	if variable.AllowConcurrencyDDL.Load() {
+func getDDLReorgHandle(job *model.Job, t *meta.Meta, sess *session, concurrentDDL bool) (*meta.Element, kv.Key, kv.Key, int64, error) {
+	if concurrentDDL {
 		return GetConcurrentDDLReorgHandle(job, sess)
 	}
 	return t.GetDDLReorgHandle(job)
@@ -300,7 +300,7 @@ func getDDLReorgHandle(job *model.Job, t *meta.Meta, sess *session) (*meta.Eleme
 
 // UpdateDDLReorgStartHandle saves the job reorganization latest processed element and start handle for later resuming.
 func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element *meta.Element, startKey kv.Key) error {
-	if variable.AllowConcurrencyDDL.Load() {
+	if w.concurrentDDL {
 		sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, 0x%x)", job.ID, element.ID, element.TypeKey)
 		_, err := w.sess.execute(context.Background(), sql, "update_handle")
 		if err != nil {
@@ -314,8 +314,8 @@ func (w *worker) UpdateDDLReorgStartHandle(t *meta.Meta, job *model.Job, element
 }
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
-func UpdateDDLReorgHandle(t *meta.Meta, sess *session, job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
-	if variable.AllowConcurrencyDDL.Load() {
+func UpdateDDLReorgHandle(t *meta.Meta, sess *session, job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element, concurrentDDL bool) error {
+	if concurrentDDL {
 		return updateDDLReorgHandle(sess, job, startKey, endKey, physicalTableID, element)
 	}
 	return t.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)

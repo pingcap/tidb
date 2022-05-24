@@ -517,7 +517,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 func (d *ddl) readyForConcurrencyDDL() error {
 	reorgWorkerFunc := func() (pools.Resource, error) {
-		wk, err := newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+		wk, err := newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx, true)
 		if err != nil {
 			return wk, errors.Trace(err)
 		}
@@ -529,7 +529,7 @@ func (d *ddl) readyForConcurrencyDDL() error {
 		return wk, nil
 	}
 	generalWorkerFunc := func() (pools.Resource, error) {
-		wk, err := newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+		wk, err := newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx, true)
 		if err != nil {
 			return wk, errors.Trace(err)
 		}
@@ -553,11 +553,11 @@ func (d *ddl) readyForConcurrencyDDL() error {
 func (d *ddl) readyForDDL() {
 	var err error
 	d.workers = make(map[workerType]*worker, 2)
-	d.workers[generalWorker], err = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+	d.workers[generalWorker], err = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx, false)
 	if err != nil {
 		log.Fatal("fail to create generalWorker", zap.Error(err))
 	}
-	d.workers[addIdxWorker], err = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+	d.workers[addIdxWorker], err = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx, false)
 	if err != nil {
 		log.Fatal("fail to create addIdxWorker", zap.Error(err))
 	}

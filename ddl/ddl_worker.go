@@ -100,6 +100,8 @@ type worker struct {
 	logCtx          context.Context
 	lockSeqNum      bool
 
+	concurrentDDL bool
+
 	*ddlCtx
 	*JobContext
 }
@@ -123,7 +125,7 @@ func NewJobContext() *JobContext {
 	}
 }
 
-func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) (*worker, error) {
+func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx, concurrentDDL bool) (*worker, error) {
 	sessForJob, err := sessPool.get()
 	if err != nil {
 		return nil, err
@@ -144,6 +146,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
 		sess:            newSession(sessForJob),
+		concurrentDDL:   concurrentDDL,
 	}
 	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
 	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
@@ -507,7 +510,7 @@ func (w *worker) UpdateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 		updateRawArgs = false
 	}
 	var err error
-	if variable.AllowConcurrencyDDL.Load() {
+	if w.concurrentDDL {
 		err = w.updateConcurrencyDDLJob(job, updateRawArgs)
 	} else {
 		err = t.UpdateDDLJob(0, job, updateRawArgs)
@@ -570,7 +573,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if variable.AllowConcurrencyDDL.Load() {
+	if w.concurrentDDL {
 		err = w.deleteDDLJob(job)
 	} else {
 		_, err = t.DeQueueDDLJob()
