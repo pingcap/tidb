@@ -1281,13 +1281,13 @@ func GetJSONConfig() (string, error) {
 		}
 		pathExprs = append(pathExprs, pathExpr)
 	}
-	newJsonValue, err := jsonValue.Remove(pathExprs)
+	newJSONValue, err := jsonValue.Remove(pathExprs)
 	if err != nil {
 		return "", err
 	}
 	// Convert back to GoJSON so it can be pretty formatted.
 	// This is expected for compatibility with previous versions.
-	buf, err := newJsonValue.MarshalJSON()
+	buf, err := newJSONValue.MarshalJSON()
 	if err != nil {
 		return "", err
 	}
