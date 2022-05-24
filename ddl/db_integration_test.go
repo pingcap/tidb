@@ -2701,6 +2701,20 @@ func TestDropColumnWithIndex(t *testing.T) {
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
+func TestDropColumnWithAutoInc(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int auto_increment, c int, key(b))")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustGetErrCode("alter table t drop column b", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
+	tk.MustExec("alter table t drop column b")
+	query := queryIndexOnTable("test", "t")
+	tk.MustQuery(query).Check(testkit.Rows())
+}
+
 func TestDropColumnWithMultiIndex(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
