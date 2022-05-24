@@ -44,15 +44,13 @@ func (m *MemAwareMap[K, V]) Get(k K) (v V, ok bool) {
 }
 
 // Set the value of the key.
-// `extraSizeOfKeyAndValue` indicates any extra memory consumed by the key and the value, besides what's included
-// in `sizeOfKeyAndValue` specified when creating the map.
-func (m *MemAwareMap[K, V]) Set(k K, v V, extraSizeOfKeyAndValue uint64) (memDelta int64) {
+func (m *MemAwareMap[K, V]) Set(k K, v V) (memDelta int64) {
 	m.m[k] = v
 	if len(m.m) > (1<<m.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 		memDelta = int64(m.bucketMemoryUsage * (1 << m.bInMap))
 		m.bInMap++
 	}
-	return memDelta + int64(extraSizeOfKeyAndValue)
+	return memDelta
 }
 
 // Len returns the number of elements in the map.

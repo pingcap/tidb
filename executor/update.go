@@ -157,7 +157,9 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 		} else {
 			mergedData = append([]types.Datum{}, newTableData...)
 		}
-		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData, uint64(types.EstimatedMemUsage(mergedData, 1)))
+
+		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
+		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
 		e.memTracker.Consume(memDelta)
 	}
 	return nil
@@ -192,7 +194,8 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		// Update row
 		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
-			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed, 0)
+			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
+			memDelta += int64(handle.ExtraMemSize())
 			e.memTracker.Consume(memDelta)
 			continue
 		}

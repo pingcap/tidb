@@ -437,6 +437,8 @@ func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
 }
 
 // MemAwareHandleMap is similar to HandleMap, but it's aware of its memory usage and doesn't support delete.
+// It only tracks the actual sizes. Objects that are pointed to by the key or value are not tracked.
+// Those should be tracked by the caller.
 type MemAwareHandleMap[V any] struct {
 	ints set.MemAwareMap[int64, V]
 	strs set.MemAwareMap[string, strHandleValue[V]]
@@ -469,14 +471,14 @@ func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
 }
 
 // Set sets a value with a Handle.
-func (m *MemAwareHandleMap[V]) Set(h Handle, val V, sizeOfValue uint64) int64 {
+func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
 	if h.IsInt() {
-		return m.ints.Set(h.IntValue(), val, h.ExtraMemSize()+sizeOfValue)
+		return m.ints.Set(h.IntValue(), val)
 	}
 	return m.strs.Set(string(h.Encoded()), strHandleValue[V]{
 		h:   h,
 		val: val,
-	}, h.ExtraMemSize()+sizeOfValue)
+	})
 }
 
 // PartitionHandle combines a handle and a PartitionID, used to location a row in partitioned table.
