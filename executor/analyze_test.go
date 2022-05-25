@@ -3295,19 +3295,15 @@ func TestDumpStatsDeltaBeforeAnalyze(t *testing.T) {
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, "0", rows[0][4]) // modify_count
 	require.Equal(t, "2", rows[0][5]) // row_count
-	rows = tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Rows()
-	require.Equal(t, 2, len(rows))
-	require.Equal(t, "1", rows[0][8]) // avg_col_size
-	require.Equal(t, "1", rows[1][8]) // avg_col_size
-	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+	tk.MustQuery(fmt.Sprintf("select tot_col_size from mysql.stats_histograms where table_id = %v", tblID)).Check(testkit.Rows("2", "2"))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	// We expect that nothing changes comparing to the last check since stats delta is dumped before analyze.
 	rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Rows()
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, "0", rows[0][4])
 	require.Equal(t, "2", rows[0][5])
-	rows = tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Rows()
-	require.Equal(t, 2, len(rows))
-	require.Equal(t, "1", rows[0][8]) // avg_col_size
-	require.Equal(t, "1", rows[1][8]) // avg_col_size
+	tk.MustQuery(fmt.Sprintf("select tot_col_size from mysql.stats_histograms where table_id = %v", tblID)).Check(testkit.Rows("2", "2"))
 }
