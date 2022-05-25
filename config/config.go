@@ -115,8 +115,6 @@ var (
 			map[string]string{
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
-				"plugin.load":                   "plugin_load",
-				"plugin.dir":                    "plugin_dir",
 			},
 		},
 		{
@@ -132,6 +130,13 @@ var (
 			map[string]string{
 				"force-priority":           "tidb_force_priority",
 				"memory-usage-alarm-ratio": "tidb_memory_usage_alarm_ratio",
+			},
+		},
+		{
+			"plugin",
+			map[string]string{
+				"load": "plugin_load",
+				"dir":  "plugin_dir",
 			},
 		},
 	}
