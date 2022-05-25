@@ -19,7 +19,18 @@ import (
 	"math"
 	"sync"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/statistics"
+)
+
+var (
+	missCounter   = metrics.StatsCacheLRUCounter.WithLabelValues("miss")
+	hitCounter    = metrics.StatsCacheLRUCounter.WithLabelValues("hit")
+	updateCounter = metrics.StatsCacheLRUCounter.WithLabelValues("update")
+	delCounter    = metrics.StatsCacheLRUCounter.WithLabelValues("del")
+	evictCounter  = metrics.StatsCacheLRUCounter.WithLabelValues("evict")
+	costGauge     = metrics.StatsCacheLRUGauge.WithLabelValues("track")
+	capacityGauge = metrics.StatsCacheLRUGauge.WithLabelValues("capacity")
 )
 
 type statsInnerCache struct {
@@ -41,24 +52,27 @@ func newStatsLruCache(c int64) *statsInnerCache {
 type innerItemLruCache struct {
 	capacity     int64
 	trackingCost int64
-	elements     map[int64]map[int64]*list.Element
-	cache        *list.List
-	onEvict      func(tblID int64)
+	// elements maintains tableID -> isIndex -> columnID/indexID -> *lruCacheItem
+	elements map[int64]map[bool]map[int64]*list.Element
+	cache    *list.List
+	onEvict  func(tblID int64)
 }
 
 func newInnerLruCache(c int64) *innerItemLruCache {
 	if c < 1 {
 		c = math.MaxInt64
 	}
+	capacityGauge.Set(float64(c))
 	return &innerItemLruCache{
 		capacity: c,
 		cache:    list.New(),
-		elements: make(map[int64]map[int64]*list.Element, 0),
+		elements: make(map[int64]map[bool]map[int64]*list.Element, 0),
 	}
 }
 
 type lruCacheItem struct {
 	tblID         int64
+	isIndex       bool
 	id            int64
 	innerItem     statistics.TableCacheItem
 	innerMemUsage statistics.CacheItemMemoryUsage
@@ -86,7 +100,7 @@ func (s *statsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
 	}
 	// move index element
 	for idxID := range element.tbl.Indices {
-		s.lru.get(tblID, idxID)
+		s.lru.get(tblID, idxID, true)
 	}
 	return element.tbl, true
 }
@@ -146,16 +160,16 @@ func (s *statsInnerCache) updateIndices(tblID int64, tbl *statistics.Table, tblM
 		}
 		for idxID, index := range tbl.Indices {
 			idxMem := tblMemUsage.IndicesMemUsage[idxID]
-			s.lru.put(tblID, idxID, index, idxMem, true, needMove)
+			s.lru.put(tblID, idxID, true, index, idxMem, true, needMove)
 		}
 		for _, idxID := range deletedIdx {
-			s.lru.del(tblID, idxID)
+			s.lru.del(tblID, idxID, true)
 		}
 		return
 	}
 	for idxID, idx := range tbl.Indices {
 		idxMem := tblMemUsage.IndicesMemUsage[idxID]
-		s.lru.put(tblID, idxID, idx, idxMem, true, needMove)
+		s.lru.put(tblID, idxID, true, idx, idxMem, true, needMove)
 	}
 }
 
@@ -169,7 +183,7 @@ func (s *statsInnerCache) Del(tblID int64) {
 	}
 	// remove indices
 	for idxID := range element.tbl.Indices {
-		s.lru.del(tblID, idxID)
+		s.lru.del(tblID, idxID, true)
 	}
 	delete(s.elements, tblID)
 }
@@ -261,6 +275,22 @@ func (s *statsInnerCache) SetCapacity(c int64) {
 	s.lru.setCapacity(c)
 }
 
+// EnableQuota implements statsCacheInner
+func (s *statsInnerCache) EnableQuota() bool {
+	return true
+}
+
+// Front implements statsCacheInner
+func (s *statsInnerCache) Front() int64 {
+	s.RLock()
+	defer s.RUnlock()
+	ele := s.lru.cache.Front()
+	if ele == nil {
+		return 0
+	}
+	return s.lru.cache.Front().Value.(*lruCacheItem).tblID
+}
+
 func (s *statsInnerCache) onEvict(tblID int64) {
 	element, exist := s.elements[tblID]
 	if !exist {
@@ -272,7 +302,7 @@ func (s *statsInnerCache) onEvict(tblID int64) {
 func (s *statsInnerCache) freshTableCost(tblID int64, element *lruMapElement) {
 	element.tblMemUsage = element.tbl.MemoryUsage()
 	for idxID, idx := range element.tbl.Indices {
-		s.lru.put(tblID, idxID, idx, element.tblMemUsage.IndicesMemUsage[idxID], true, false)
+		s.lru.put(tblID, idxID, true, idx, element.tblMemUsage.IndicesMemUsage[idxID], true, false)
 	}
 }
 
@@ -280,43 +310,62 @@ func (s *statsInnerCache) capacity() int64 {
 	return s.lru.capacity
 }
 
-func (c *innerItemLruCache) get(tblID, id int64) (*lruCacheItem, bool) {
+func (c *innerItemLruCache) get(tblID, id int64, isIndex bool) (*lruCacheItem, bool) {
 	v, ok := c.elements[tblID]
 	if !ok {
+		missCounter.Inc()
 		return nil, false
 	}
-	ele, ok := v[id]
+	isIndexSet, ok := v[isIndex]
 	if !ok {
+		missCounter.Inc()
 		return nil, false
 	}
+	ele, ok := isIndexSet[id]
+	if !ok {
+		missCounter.Inc()
+		return nil, false
+	}
+	hitCounter.Inc()
 	c.cache.MoveToFront(ele)
 	return ele.Value.(*lruCacheItem), true
 }
 
-func (c *innerItemLruCache) del(tblID, id int64) {
+func (c *innerItemLruCache) del(tblID, id int64, isIndex bool) {
 	v, ok := c.elements[tblID]
 	if !ok {
 		return
 	}
-	ele, ok := v[id]
+	isindexSet, ok := v[isIndex]
 	if !ok {
 		return
 	}
-	delete(c.elements[tblID], id)
+	ele, ok := isindexSet[id]
+	if !ok {
+		return
+	}
+	delCounter.Inc()
+	delete(c.elements[tblID][isIndex], id)
 	c.cache.Remove(ele)
 }
 
-func (c *innerItemLruCache) put(tblID, id int64, item statistics.TableCacheItem, itemMem statistics.CacheItemMemoryUsage,
+func (c *innerItemLruCache) put(tblID, id int64, isIndex bool, item statistics.TableCacheItem, itemMem statistics.CacheItemMemoryUsage,
 	needEvict, needMove bool) {
 	defer func() {
+		updateCounter.Inc()
 		if needEvict {
 			c.evictIfNeeded()
 		}
 	}()
-	v, ok := c.elements[tblID]
+	isIndexSet, ok := c.elements[tblID]
 	if !ok {
-		c.elements[tblID] = make(map[int64]*list.Element)
-		v = c.elements[tblID]
+		c.elements[tblID] = make(map[bool]map[int64]*list.Element)
+		isIndexSet = c.elements[tblID]
+	}
+	v, ok := isIndexSet[isIndex]
+	if !ok {
+		c.elements[tblID][isIndex] = make(map[int64]*list.Element)
+		v = c.elements[tblID][isIndex]
 	}
 	element, exist := v[id]
 	if exist {
@@ -335,6 +384,7 @@ func (c *innerItemLruCache) put(tblID, id int64, item statistics.TableCacheItem,
 		id:            id,
 		innerItem:     item,
 		innerMemUsage: itemMem,
+		isIndex:       isIndex,
 	}
 	newElement := c.cache.PushFront(newItem)
 	v[id] = newElement
@@ -344,6 +394,7 @@ func (c *innerItemLruCache) put(tblID, id int64, item statistics.TableCacheItem,
 func (c *innerItemLruCache) evictIfNeeded() {
 	curr := c.cache.Back()
 	for c.trackingCost > c.capacity {
+		evictCounter.Inc()
 		prev := curr.Prev()
 		item := curr.Value.(*lruCacheItem)
 		oldMem := item.innerMemUsage
@@ -353,7 +404,7 @@ func (c *innerItemLruCache) evictIfNeeded() {
 		c.calculateCost(newMem, oldMem)
 		// remove from lru
 		c.cache.Remove(curr)
-		delete(c.elements[item.tblID], item.id)
+		delete(c.elements[item.tblID][item.isIndex], item.id)
 		if c.onEvict != nil {
 			c.onEvict(item.tblID)
 		}
@@ -370,7 +421,7 @@ func (c *innerItemLruCache) copy() *innerItemLruCache {
 	curr := c.cache.Back()
 	for curr != nil {
 		item := curr.Value.(*lruCacheItem)
-		newLRU.put(item.tblID, item.id, item.innerItem, item.innerMemUsage, false, false)
+		newLRU.put(item.tblID, item.id, item.isIndex, item.innerItem, item.innerMemUsage, false, false)
 		curr = curr.Prev()
 	}
 	return newLRU
@@ -381,5 +432,6 @@ func (c *innerItemLruCache) setCapacity(capacity int64) {
 		capacity = math.MaxInt64
 	}
 	c.capacity = capacity
+	capacityGauge.Set(float64(c.capacity))
 	c.evictIfNeeded()
 }

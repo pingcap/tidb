@@ -193,7 +193,8 @@ func (a *aggregationPushDownSolver) checkValidJoin(join *LogicalJoin) bool {
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
 // there are no differences between partial mode and complete mode, so we can confuse them.
-func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc, schema *expression.Schema) ([]*aggregation.AggFuncDesc, *expression.Schema) {
+func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc,
+	schema *expression.Schema, nullGenerating bool) ([]*aggregation.AggFuncDesc, *expression.Schema) {
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
 	result := []*aggregation.AggFuncDesc{aggFunc.Clone()}
 	for _, aggFunc := range result {
@@ -202,7 +203,21 @@ func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *a
 			RetType:  aggFunc.RetTp,
 		})
 	}
-	aggFunc.Args = expression.Column2Exprs(schema.Columns[schema.Len()-len(result):])
+	cols := schema.Columns[schema.Len()-len(result):]
+	aggFunc.Args = make([]expression.Expression, 0, len(cols))
+	// if the partial aggregation is on the null generating side, we have to clear the NOT NULL flag
+	// for the final aggregate functions' arguments
+	for _, col := range cols {
+		if nullGenerating {
+			arg := *col
+			newFieldType := *arg.RetType
+			newFieldType.DelFlag(mysql.NotNullFlag)
+			arg.RetType = &newFieldType
+			aggFunc.Args = append(aggFunc.Args, &arg)
+		} else {
+			aggFunc.Args = append(aggFunc.Args, col)
+		}
+	}
 	aggFunc.Mode = aggregation.FinalMode
 	return result, schema
 }
@@ -226,7 +241,9 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 			return child, nil
 		}
 	}
-	agg, err := a.makeNewAgg(join.ctx, aggFuncs, gbyCols, aggHints, blockOffset)
+	nullGenerating := (join.JoinType == LeftOuterJoin && childIdx == 1) ||
+		(join.JoinType == RightOuterJoin && childIdx == 0)
+	agg, err := a.makeNewAgg(join.ctx, aggFuncs, gbyCols, aggHints, blockOffset, nullGenerating)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +290,8 @@ func (a *aggregationPushDownSolver) checkAnyCountAndSum(aggFuncs []*aggregation.
 // TODO:
 //   1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
 //   2. remove this method and use splitPartialAgg instead for clean code.
-func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int) (*LogicalAggregation, error) {
+func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc,
+	gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{
 		GroupByItems: expression.Column2Exprs(gbyCols),
 		aggHints:     aggHints,
@@ -283,7 +301,7 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 	schema := expression.NewSchema(make([]*expression.Column, 0, aggLen)...)
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []*aggregation.AggFuncDesc
-		newFuncs, schema = a.decompose(ctx, aggFunc, schema)
+		newFuncs, schema = a.decompose(ctx, aggFunc, schema, nullGenerating)
 		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
 	}
 	for _, gbyCol := range gbyCols {
@@ -436,6 +454,11 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					}
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
+					if join.JoinType == LeftOuterJoin {
+						resetNotNullFlag(join.schema, lChild.Schema().Len(), join.schema.Len())
+					} else if join.JoinType == RightOuterJoin {
+						resetNotNullFlag(join.schema, 0, lChild.Schema().Len())
+					}
 					buildKeyInfo(join)
 					proj := a.tryToEliminateAggregation(agg, opt)
 					if proj != nil {

@@ -2371,7 +2371,7 @@ type NonTransactionalDeleteStmt struct {
 
 // Restore implements Node interface.
 func (n *NonTransactionalDeleteStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("SPLIT ")
+	ctx.WriteKeyWord("BATCH ")
 	if n.ShardColumn != nil {
 		ctx.WriteKeyWord("ON ")
 		if err := n.ShardColumn.Restore(ctx); err != nil {
@@ -2706,6 +2706,8 @@ type ShowStmt struct {
 	Roles       []*auth.RoleIdentity // Used for show grants .. using
 	IfNotExists bool                 // Used for `show create database if not exists`
 	Extended    bool                 // Used for `show extended columns from ...`
+
+	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	// GlobalScope is used by `show variables` and `show bindings`
 	GlobalScope bool

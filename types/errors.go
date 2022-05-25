@@ -87,4 +87,7 @@ var (
 	// ErrPartitionStatsMissing is returned when the partition-level stats is missing and the build global-level stats fails.
 	// Put this error here is to prevent `import cycle not allowed`.
 	ErrPartitionStatsMissing = dbterror.ClassTypes.NewStd(mysql.ErrPartitionStatsMissing)
+	// ErrPartitionColumnStatsMissing is returned when the partition-level column stats is missing and the build global-level stats fails.
+	// Put this error here is to prevent `import cycle not allowed`.
+	ErrPartitionColumnStatsMissing = dbterror.ClassTypes.NewStd(mysql.ErrPartitionColumnStatsMissing)
 )
