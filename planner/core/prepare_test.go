@@ -2931,3 +2931,66 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 0"))
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
+
+func TestSomething(t *testing.T) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	//ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t (id int primary key, v int, index iv (v))")
+	tk1.MustExec("insert into t values (1, 10), (2, 20), (3, 30), (4, 40)")
+	tk1.MustExec("prepare s from 'select * from t'")
+
+	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 10", "2 20", "3 30", "4 40"))
+
+	tk2.MustExec("alter table t drop index iv")
+	tk2.MustExec("alter table t drop column v")
+	tk2.MustExec("insert into t values(5)")
+
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1 10", "2 20", "3 30", "4 40", "5 <nil>"))
+	tk1.MustQuery("execute s").Check(testkit.Rows("1 10", "2 20", "3 30", "4 40", "5 <nil>"))
+	tk1.MustQuery("execute s").Check(testkit.Rows("1 10", "2 20", "3 30", "4 40", "5 <nil>"))
+}
+
+func TestSomething2(t *testing.T) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	//ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t (id int primary key, v int, index iv (v), v2 int)")
+	tk1.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300), (4, 40, 400)")
+
+	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustQuery("select * from t use index (iv) where v = 10;").Check(testkit.Rows("1 10 100"))
+
+	tk2.MustExec("alter table t drop index iv")
+	tk2.MustExec("update t set v = 11 where id = 1")
+
+	tk1.MustExec("prepare s from 'select /*+use_index(t, ic)*/ * from t where 1'")
+	tk1.MustQuery("execute s").Check(testkit.Rows("1 11 100", "2 20 200", "3 30 300", "4 40 400"))
+}

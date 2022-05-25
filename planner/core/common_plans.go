@@ -506,7 +506,24 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		return nil
 	}
 	if prepared.UseCache { // for general plans
+		var rebuild bool
+		newCacheKey := cacheKey
+		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
+			latestIsVersion := domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+			if latestIsVersion != prepared.SchemaVersion {
+				prepared.SchemaVersion = latestIsVersion
+				if newCacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+					return err
+				}
+				rebuild = true
+			}
+		}
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
+			if rebuild {
+				sctx.PreparedPlanCache().Delete(cacheKey)
+				cacheKey = newCacheKey
+				goto REBUILD
+			}
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
 			}
@@ -562,6 +579,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 				break
 			}
+		} else {
+			cacheKey = newCacheKey
 		}
 	}
 
