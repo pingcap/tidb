@@ -892,6 +892,7 @@ const (
 	DefTiDBEnablePrepPlanCache                   = true
 	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
+	DefTiDBEnableConcurrencyDDL                  = true
 )
 
 // Process global variables.
@@ -937,6 +938,7 @@ var (
 	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
 	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
+	AllowConcurrencyDDL               = atomic.NewBool(DefTiDBEnableConcurrencyDDL)
 )
 
 var (

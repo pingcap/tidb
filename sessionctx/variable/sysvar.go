@@ -1577,6 +1577,13 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	/* The system variables below have INSTANCE scope  */
+	{Scope: ScopeInstance, Name: TiDBEnableConcurrencyDDL, Value: BoolToOnOff(DefTiDBEnableConcurrencyDDL), Hidden: true, Type: TypeBool, skipInit: true, SetGlobal: func(s *SessionVars, val string) error {
+		AllowConcurrencyDDL.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(AllowConcurrencyDDL.Load()), nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -1883,4 +1890,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
+	// TiDBEnableConcurrencyDDL indicates whether to enable the new DDL framework.
+	TiDBEnableConcurrencyDDL = "tidb_enable_concurrency_ddl"
 )

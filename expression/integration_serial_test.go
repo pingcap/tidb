@@ -3744,6 +3744,13 @@ func TestSetVariables(t *testing.T) {
 	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
 	require.Error(t, err)
 	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
+
+	tk.MustQuery("select @@global.tidb_enable_concurrency_ddl").Check(testkit.Rows("1"))
+	require.True(t, variable.AllowConcurrencyDDL.Load())
+	tk.MustExec("set @@global.tidb_enable_concurrency_ddl=0")
+	tk.MustQuery("select @@global.tidb_enable_concurrency_ddl").Check(testkit.Rows("0"))
+	require.False(t, variable.AllowConcurrencyDDL.Load())
+	testkit.NewTestKit(t, store).MustQuery("select @@global.tidb_enable_concurrency_ddl").Check(testkit.Rows("0"))
 }
 
 func TestPreparePlanCache(t *testing.T) {
