@@ -238,18 +238,20 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		}
 	}
 
-	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPTask, mppReq, kvrpcpb.Context{})
-	if tp, err := getTiFlashEndPointType(req.StoreTp); err != nil {
-		m.sendError(err)
-		return
-	} else {
-		wrappedReq.StoreTp = tp
-	}
-
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
 	var rpcResp *tikvrpc.Response
 	var err error
 	var retry bool
+	var tp tikvrpc.EndpointType
+
+	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPTask, mppReq, kvrpcpb.Context{})
+	tp, err = getTiFlashEndPointType(req.StoreTp)
+	if err != nil {
+		m.sendError(err)
+		return
+	}
+	wrappedReq.StoreTp = tp
+
 	// If copTasks is not empty, we should send request according to region distribution.
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
@@ -342,6 +344,8 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
+	var tp tikvrpc.EndpointType
+	var err error
 
 	// Value type is kv.StoreType, so we can decide whether to invalid tiflash_mpp store cache or not.
 	usedStoreAddrs := make(map[string]kv.StoreType)
@@ -349,12 +353,12 @@ func (m *mppIterator) cancelMppTasks() {
 		// get the store address of running tasks
 		if _, ok := usedStoreAddrs[task.Meta.GetAddress()]; ok && task.State == kv.MppTaskRunning {
 			usedStoreAddrs[task.Meta.GetAddress()] = task.StoreTp
-			if tp, err := getTiFlashEndPointType(task.StoreTp); err != nil {
+			tp, err = getTiFlashEndPointType(task.StoreTp)
+			if err != nil {
 				m.sendError(err)
 				return
-			} else {
-				wrappedReq.StoreTp = tp
 			}
+			wrappedReq.StoreTp = tp
 		} else if task.State == kv.MppTaskCancelled {
 			return
 		}
@@ -383,13 +387,15 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 		},
 	}
 
+	var err error
+	var tp tikvrpc.EndpointType
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPConn, connReq, kvrpcpb.Context{})
-	if tp, err := getTiFlashEndPointType(req.StoreTp); err != nil {
+	tp, err = getTiFlashEndPointType(req.StoreTp)
+	if err != nil {
 		m.sendError(err)
 		return
-	} else {
-		wrappedReq.StoreTp = tp
 	}
+	wrappedReq.StoreTp = tp
 
 	// Drain results from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
