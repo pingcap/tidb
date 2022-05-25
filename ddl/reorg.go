@@ -196,11 +196,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			Location:      &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
 		}
 	}
-	// this job is cancelling, we should notify the reorg worker.
-	if job.IsCancelling() {
-		d.removeReorgCtx(job)
-		return dbterror.ErrCancelledDDLJob
-	}
+
 	rc := w.getReorgCtx(job)
 	if rc == nil {
 		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
@@ -208,6 +204,14 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
 		if lease > 0 {
 			delayForAsyncCommit()
+		}
+		// this job is cancelling, we should return ErrCancelledDDLJob directly.
+		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
+		// A: Yes, consider the case that we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
+		// and then the backfill workers send signal to the `doneCh` of the reorgCtx, and then the ddl worker will remove the reorgCtx and
+		// update the ddl job to `done`, but at the commit time, the ddl txn will raise a "write conflict" error and retry, and it happens.
+		if job.IsCancelling() {
+			return dbterror.ErrCancelledDDLJob
 		}
 		rc = w.newReorgCtx(reorgInfo)
 		w.wg.Add(1)
@@ -262,9 +266,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		}
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
-		rc.setNextKey(nil)
-		rc.setRowCount(0)
-		rc.resetWarnings()
+		d.removeReorgCtx(job)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):

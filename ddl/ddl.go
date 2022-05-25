@@ -226,7 +226,7 @@ type ddlCtx struct {
 	// reorgCtx is used for reorganization.
 	reorgCtx struct {
 		sync.RWMutex
-		// reorgCtxMap maps job id to reorg context.
+		// reorgCtxMap maps job ID to reorg context.
 		reorgCtxMap map[int64]*reorgCtx
 	}
 
