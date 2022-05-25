@@ -1143,9 +1143,6 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		}
 		return strconv.FormatUint(value, 10), false, nil
 	}
-	if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
-		return "", false, errors.Trace(err)
-	}
 	switch tp {
 	case mysql.TypeSet:
 		val, err := getSetDefaultValue(v, col)
@@ -1153,10 +1150,10 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	case mysql.TypeEnum:
 		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
-	// case mysql.TypeDuration, mysql.TypeDate:
-	// 	if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
-	// 		return "", false, errors.Trace(err)
-	// 	}
+	case mysql.TypeDuration, mysql.TypeDate, mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
+			return "", false, errors.Trace(err)
+		}
 	case mysql.TypeBit:
 		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
 			// For BIT fields, convert int into BinaryLiteral.
@@ -4249,15 +4246,6 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
-	// rvalue, err := table.GetColDefaultValue(ctx, col.ToInfo())
-	// if err != nil {
-	// 	return hasDefaultValue, errors.Trace(err)
-	// }
-	// fmt.Println("rvalue: ", rvalue)
-	// err = setDefaultValueWithBinaryPadding(col, rvalue)
-	// if err != nil {
-	// 	return hasDefaultValue, errors.Trace(err)
-	// }
 	return hasDefaultValue, nil
 }
 
