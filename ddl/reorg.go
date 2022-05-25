@@ -196,6 +196,11 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			Location:      &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
 		}
 	}
+	// this job is cancelling, we should notify the reorg worker.
+	if job.IsCancelling() {
+		d.removeReorgCtx(job)
+		return dbterror.ErrCancelledDDLJob
+	}
 	rc := w.getReorgCtx(job)
 	if rc == nil {
 		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
@@ -205,10 +210,6 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			delayForAsyncCommit()
 		}
 		rc = w.newReorgCtx(reorgInfo)
-		// this job is cancelling, we should notify the reorg worker.
-		if job.IsCancelling() {
-			w.notifyReorgCancel(job)
-		}
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
