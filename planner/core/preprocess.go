@@ -1696,13 +1696,7 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	if p.InfoSchema != nil {
 		return p.InfoSchema
 	}
-	//// `Execute` under some conditions need to see the latest information schema.
-	//if p.PreprocessExecuteISUpdate != nil {
-	//	if newInfoSchema := p.ExecuteInfoSchemaUpdate(p.Node, p.ctx); newInfoSchema != nil {
-	//		p.InfoSchema = newInfoSchema
-	//		return p.InfoSchema
-	//	}
-	//}
+
 	p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	return p.InfoSchema
 }

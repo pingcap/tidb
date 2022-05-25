@@ -191,10 +191,11 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		sorter.markers[i].SetOrder(i)
 	}
 	prepared := &ast.Prepared{
-		Stmt:          stmt,
-		StmtType:      GetStmtLabel(stmt),
-		Params:        sorter.markers,
-		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
+		Stmt:                     stmt,
+		StmtType:                 GetStmtLabel(stmt),
+		Params:                   sorter.markers,
+		SchemaVersion:            ret.InfoSchema.SchemaMetaVersion(),
+		LastUpdatedSchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	if topsqlstate.TopSQLEnabled() {

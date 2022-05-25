@@ -451,9 +451,22 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 
 	var bindSQL string
+
+	schemaCheck := sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead
 	if prepared.UseCache {
 		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
-		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+		schemaVersion := prepared.SchemaVersion
+		if schemaCheck {
+			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
+			// last time. If it changed, we should rebuild the plan. Here, we use a different and more
+			// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
+			latestSchemaVersion := domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+			if latestSchemaVersion > prepared.LastUpdatedSchemaVersion {
+				prepared.LastUpdatedSchemaVersion = latestSchemaVersion
+			}
+			schemaVersion = prepared.LastUpdatedSchemaVersion
+		}
+		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, schemaVersion); err != nil {
 			return err
 		}
 	}
@@ -479,6 +492,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		}
 	}
 
+	// todo: Is it affected by RC or ForUpdateRead
 	if prepared.UseCache && prepared.CachedPlan != nil { // short path for point-get plans
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
@@ -506,24 +520,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		return nil
 	}
 	if prepared.UseCache { // for general plans
-		var rebuild bool
-		newCacheKey := cacheKey
-		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
-			latestIsVersion := domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
-			if latestIsVersion != prepared.SchemaVersion {
-				prepared.SchemaVersion = latestIsVersion
-				if newCacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
-					return err
-				}
-				rebuild = true
-			}
-		}
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-			if rebuild {
-				sctx.PreparedPlanCache().Delete(cacheKey)
-				cacheKey = newCacheKey
-				goto REBUILD
-			}
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
 			}
@@ -579,8 +576,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 				break
 			}
-		} else {
-			cacheKey = newCacheKey
 		}
 	}
 
