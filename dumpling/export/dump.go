@@ -45,8 +45,9 @@ var emptyHandleValsErr = errors.New("empty handleVals for TiDB table")
 // Dumper is the dump progress structure
 type Dumper struct {
 	tctx      *tcontext.Context
-	conf      *Config
 	cancelCtx context.CancelFunc
+	conf      *Config
+	metrics   *metrics
 
 	extStore storage.ExternalStorage
 	dbHandle *sql.DB
@@ -79,6 +80,13 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		cancelCtx:                 cancelFn,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
+
+	if conf.PromFactory == nil {
+		d.metrics = defaultMetrics
+	} else {
+		d.metrics = newMetrics(conf.PromFactory, []string{})
+	}
+
 	err := adjustConfig(conf,
 		registerTLSConfig,
 		validateSpecifiedSQL,
