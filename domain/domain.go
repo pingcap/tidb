@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -1089,6 +1090,56 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
+// WatchTiFlashMPPStoreChange create a routine to watch.
+// TODO: we can start watch only when user add tiflash_mpp into tidb_isolatoin_read_engines.
+// 		 tiflashMPPStoreKey is not put to etcd yet, store cache will only be invalidated every 30 seconds.
+func (do *Domain) WatchTiFlashMPPStoreChange() error {
+	var watchCh clientv3.WatchChan
+	if do.etcdClient != nil {
+		watchCh = do.etcdClient.Watch(context.Background(), tiflashMPPStoreKey)
+	}
+	do.wg.Add(1)
+	duration := 30 * time.Second
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("WatchTiFlashMPPStoreChange exit")
+		}()
+
+		var count int
+		for {
+			ok := true
+			var watched bool
+			select {
+			case <-do.exit:
+				return
+			case _, ok = <-watchCh:
+				watched = true
+			case <-time.After(duration):
+			}
+			if !ok {
+				logutil.BgLogger().Error("WatchTiFlashMPPStoreChange watch channel closed")
+				watchCh = do.etcdClient.Watch(context.Background(), tiflashMPPStoreKey)
+				count++
+				if count > 10 {
+					time.Sleep(time.Duration(count) * time.Second)
+				}
+				continue
+			}
+			count = 0
+			switch s := do.store.(type) {
+			case tikv.Storage:
+				s.GetRegionCache().InvalidateTiFlashMPPStores()
+				logutil.BgLogger().Info("tiflash_mpp store cache invalied, will update next query", zap.Bool("watched", watched))
+			default:
+				logutil.BgLogger().Info("ignore non tikv store to watch tiflashMPPStoreKey")
+				return
+			}
+		}
+	}()
+	return nil
+}
+
 // PrivilegeHandle returns the MySQLPrivilege.
 func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
@@ -1546,8 +1597,9 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 }
 
 const (
-	privilegeKey   = "/tidb/privilege"
-	sysVarCacheKey = "/tidb/sysvars"
+	privilegeKey       = "/tidb/privilege"
+	sysVarCacheKey     = "/tidb/sysvars"
+	tiflashMPPStoreKey = "/tiflash/new_tiflash_mpp_stores"
 )
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
