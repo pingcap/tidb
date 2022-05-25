@@ -295,7 +295,7 @@ const (
 	// 	1. sysvar.go: when user set tidb_isolation_read_engines.
 	// 	2. coprocessor.go/mpp.go: when send copTask/batchCopTask/mppTask to tiflash.
 	// Other modules in TiDB should only use kv.TiFlash, they don't distinguish ReadNodes and WriteNodes.
-	// So we can avoid to change kv.TiFlashMPP in all code pathes where kv.TiFlash occurs.
+	// So we can avoid to change kv.TiFlashMPP in all code paths where kv.TiFlash occurs.
 	TiFlashMPP
 
 	// UnSpecified means the store type is unknown

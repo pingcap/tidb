@@ -578,10 +578,9 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 	cache := store.GetRegionCache()
 
 	for {
-		logutil.BgLogger().Info(fmt.Sprintf("buildBatchCopTasksConsistentHash retryNum: %v. ", retryNum))
 		retryNum++
 		if retryNum >= 10 {
-			return nil, errors.New("too many times of retry to GetTiFlashRPCContext()")
+			return nil, errors.New("too many times of retry to GetTiFlashMPPRPCContextByConsistentHash()")
 		}
 
 		var rangesLen int
@@ -611,7 +610,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 			return nil, err
 		}
 		if rpcCtxs == nil {
-			// Retry.
+			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because rcpCtx is nil", zap.Int("retryNum", retryNum))
 			continue
 		}
 		if len(rpcCtxs) != len(tasks) {

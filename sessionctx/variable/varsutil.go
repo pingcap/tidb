@@ -514,7 +514,7 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.TiDBShard:  {},
 }
 
-// GetTiFlashEngine retrun kv.TiFlash or kv.TiFlashMPP.
+// GetTiFlashEngine return kv.TiFlash or kv.TiFlashMPP.
 func GetTiFlashEngine(readEngines map[kv.StoreType]struct{}) (res kv.StoreType, _ error) {
 	_, hasTiFlash := readEngines[kv.TiFlash]
 	_, hasTiFlashMPP := readEngines[kv.TiFlashMPP]
