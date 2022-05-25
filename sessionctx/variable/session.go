@@ -148,6 +148,9 @@ type TxnCtxNeedToRestore struct {
 	// pessimisticLockCache is the cache for pessimistic locked keys,
 	// The value never changes during the transaction.
 	pessimisticLockCache map[string][]byte
+
+	// CachedTables is not nil if the transaction write on cached table.
+	CachedTables map[int64]interface{}
 }
 
 // TxnCtxNoNeedToRestore stores transaction variables which do not need to restored when rolling back to a savepoint.
@@ -196,9 +199,6 @@ type TxnCtxNoNeedToRestore struct {
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
-
-	// CachedTables is not nil if the transaction write on cached table.
-	CachedTables map[int64]interface{}
 
 	// Last ts used by read-consistency read.
 	LastRcReadTs uint64
@@ -351,9 +351,12 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	}
 	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
 	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
+	cachedTables := make(map[int64]interface{}, len(tc.CachedTables))
+	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
 		pessimisticLockCache: pessimisticLockCache,
+		CachedTables:         cachedTables,
 	}
 }
 
@@ -361,6 +364,7 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 func (tc *TransactionContext) RestoreBySavepoint(savepoint TxnCtxNeedToRestore) {
 	tc.TableDeltaMap = savepoint.TableDeltaMap
 	tc.pessimisticLockCache = savepoint.pessimisticLockCache
+	tc.CachedTables = savepoint.CachedTables
 }
 
 // AddSavepoint adds a new savepoint.

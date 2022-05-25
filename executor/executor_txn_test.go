@@ -675,6 +675,93 @@ func TestSavepointRandTestIssue0(t *testing.T) {
 	tk.MustExec("delete from t where a = 'B' ;")
 }
 
+func TestSavepointWithTemporaryTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test for local temporary table.
+	txnModes := []string{"optimistic", "pessimistic", ""}
+	for _, txnMode := range txnModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
+		tk.MustExec("drop table if exists tmp1")
+		tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
+		tk.MustExec("insert into tmp1 values(1, 11, 101)")
+		tk.MustExec("begin")
+		tk.MustExec("savepoint sp0;")
+		tk.MustExec("insert into tmp1 values(2, 22, 202)")
+		tk.MustExec("savepoint sp1;")
+		tk.MustExec("insert into tmp1 values(3, 33, 303)")
+		tk.MustExec("rollback to sp1;")
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("1 11 101", "2 22 202"))
+		tk.MustExec("commit")
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("1 11 101", "2 22 202"))
+	}
+
+	// Test for global temporary table.
+	for _, txnMode := range txnModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
+		tk.MustExec("drop table if exists tmp1")
+		tk.MustExec("create global temporary table tmp1 (id int primary key auto_increment, u int unique, v int) on commit delete rows")
+		tk.MustExec("begin")
+		tk.MustExec("savepoint sp0;")
+		tk.MustExec("insert into tmp1 values(2, 22, 202)")
+		tk.MustExec("savepoint sp1;")
+		tk.MustExec("insert into tmp1 values(3, 33, 303)")
+		tk.MustExec("savepoint sp2;")
+		tk.MustExec("insert into tmp1 values(4, 44, 404)")
+		tk.MustExec("rollback to sp2;")
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("2 22 202", "3 33 303"))
+		tk.MustExec("rollback to sp1;")
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("2 22 202"))
+		tk.MustExec("commit")
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows())
+	}
+}
+
+func TestSavepointWithCacheTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t0 (id int primary key, v int)")
+
+	txnModes := []string{"optimistic", "pessimistic", ""}
+	for _, txnMode := range txnModes {
+		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
+		tk.MustExec("create table if not exists t (id int primary key auto_increment, u int unique, v int)")
+		tk.MustExec("delete from t")
+		tk.MustExec("delete from t0")
+		tk.MustExec("ALTER TABLE t CACHE;")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t0 values(1, 1)")
+		tk.MustExec("savepoint sp0;")
+		tk.MustExec("insert into t values(1, 11, 101)")
+		txnCtx := tk.Session().GetSessionVars().TxnCtx
+		require.Equal(t, 1, len(txnCtx.CachedTables))
+		tk.MustExec("savepoint sp1;")
+		tk.MustExec("insert into t values(2, 22, 202)")
+		tk.MustExec("savepoint sp2;")
+		tk.MustExec("insert into t values(3, 33, 303)")
+		tk.MustExec("rollback to sp2;")
+		require.Equal(t, 1, len(txnCtx.CachedTables))
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 11 101", "2 22 202"))
+		tk.MustExec("rollback to sp1;")
+		require.Equal(t, 1, len(txnCtx.CachedTables))
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 11 101"))
+		tk.MustExec("rollback to sp0;")
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows())
+		tk.MustQuery("select * from t0 order by id").Check(testkit.Rows("1 1"))
+		require.Equal(t, 0, len(txnCtx.CachedTables))
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows())
+		tk.MustQuery("select * from t0 order by id").Check(testkit.Rows("1 1"))
+	}
+}
+
 func TestSavepointWithBinlog(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
