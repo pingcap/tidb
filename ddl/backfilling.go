@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -536,6 +537,14 @@ func pruneDecodeColMap(colMap map[int64]decoder.Column, t table.Table, indexInfo
 			virtualGeneratedColumnStack = append(virtualGeneratedColumnStack, t.Meta().Columns[idxCol.Offset])
 		}
 		resultMap[t.Meta().Columns[idxCol.Offset].ID] = colMap[t.Meta().Columns[idxCol.Offset].ID]
+	}
+	if t.Meta().IsCommonHandle {
+		for _, pkCol := range tables.TryGetCommonPkColumns(t) {
+			resultMap[pkCol.ID] = colMap[pkCol.ID]
+		}
+	} else if t.Meta().PKIsHandle {
+		pkCol := t.Meta().GetPkColInfo()
+		resultMap[pkCol.ID] = colMap[pkCol.ID]
 	}
 
 	for len(virtualGeneratedColumnStack) > 0 {
