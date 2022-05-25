@@ -85,5 +85,14 @@
       "explain select a from t where t.a>1 or t.a not in (select a from t); -- now it's supported -- 8. anti left outer semi join",
       "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions"
     ]
+  },
+  {
+    "name": "TestMPP2PhaseAggPushDown",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_opt_agg_push_down=1;",
+      "EXPLAIN select count(*) from c, o where c.c_id=o.c_id; -- 1. test agg push down, scalar aggregate",
+      "EXPLAIN select o.o_id, count(*) from c, o where c.c_id=o.c_id group by o.o_id; -- 2. test agg push down, group by non-join column",
+      "EXPLAIN select o.c_id, count(*) from c, o where c.c_id=o.c_id group by o.c_id; -- 3. test agg push down, group by join column"
+    ]
   }
 ]
