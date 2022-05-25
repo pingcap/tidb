@@ -75,9 +75,6 @@ func (eqh *Handle) Run() {
 						zap.Duration("maxExecutionTime", time.Duration(info.MaxExecutionTime)*time.Millisecond), zap.String("processInfo", info.String()))
 					sm.Kill(info.ID, true)
 				}
-				if strings.Contains(info.String(), "analyze") {
-					logutil.BgLogger().Info("find analyze")
-				}
 				if info.ID == util.GetAutoAnalyzeProcID(sm.ServerID) {
 					maxAutoAnalyzeTime := variable.MaxAutoAnalyzeTime.Load()
 					if maxAutoAnalyzeTime > 0 && costTime > time.Duration(maxAutoAnalyzeTime)*time.Second {
