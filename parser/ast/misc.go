@@ -485,7 +485,12 @@ type Prepared struct {
 	StmtType      string
 	Params        []ParamMarkerExpr
 	SchemaVersion int64
-	// Used for RC or ForUpdate Only. When checking
+
+	// Used for RC or ForUpdateRead Only.
+	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
+	// If it changed, we should rebuild the plan. However, the plan is rebuilt by using the information schema from
+	// the context provider, not the latest information schema to be consistent with the non-prepare-execute sql. But we
+	// save the latest' information schema version, which is used to build cacheKey, in order to hit plan cache.
 	LastUpdatedSchemaVersion int64
 	UseCache                 bool
 	CachedPlan               interface{}
