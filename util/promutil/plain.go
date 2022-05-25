@@ -19,29 +19,35 @@ import (
 )
 
 // PlainNoAutoRegisterFactory implements Factory. Note that it will not automatically
-// Register the metrics created by its methods.
+// Register the metrics created by its methods as the Factory interface said.
 type PlainNoAutoRegisterFactory struct{}
 
+// NewCounter implements Factory.NewCounter.
 func (f *PlainNoAutoRegisterFactory) NewCounter(opts prometheus.CounterOpts) prometheus.Counter {
 	return prometheus.NewCounter(opts)
 }
 
+// NewCounterVec implements Factory.NewCounterVec.
 func (f *PlainNoAutoRegisterFactory) NewCounterVec(opts prometheus.CounterOpts, labelNames []string) *prometheus.CounterVec {
 	return prometheus.NewCounterVec(opts, labelNames)
 }
 
+// NewGauge implements Factory.NewGauge.
 func (f *PlainNoAutoRegisterFactory) NewGauge(opts prometheus.GaugeOpts) prometheus.Gauge {
 	return prometheus.NewGauge(opts)
 }
 
+// NewGaugeVec implements Factory.NewGaugeVec.
 func (f *PlainNoAutoRegisterFactory) NewGaugeVec(opts prometheus.GaugeOpts, labelNames []string) *prometheus.GaugeVec {
 	return prometheus.NewGaugeVec(opts, labelNames)
 }
 
+// NewHistogram implements Factory.NewHistogram.
 func (f *PlainNoAutoRegisterFactory) NewHistogram(opts prometheus.HistogramOpts) prometheus.Histogram {
 	return prometheus.NewHistogram(opts)
 }
 
+// NewHistogramVec implements Factory.NewHistogramVec.
 func (f *PlainNoAutoRegisterFactory) NewHistogramVec(opts prometheus.HistogramOpts, labelNames []string) *prometheus.HistogramVec {
 	return prometheus.NewHistogramVec(opts, labelNames)
 }
