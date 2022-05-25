@@ -15,7 +15,10 @@
 package ddl
 
 const (
-	JobTable     = "tidb_ddl_job"
-	ReorgTable   = "tidb_ddl_reorg"
+	// JobTable stores the information of DDL jobs.
+	JobTable = "tidb_ddl_job"
+	// ReorgTable stores the information of DDL reorganization.
+	ReorgTable = "tidb_ddl_reorg"
+	// HistoryTable stores the history DDL jobs.
 	HistoryTable = "tidb_ddl_history"
 )
