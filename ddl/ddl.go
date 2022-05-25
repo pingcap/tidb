@@ -979,11 +979,6 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(t *meta.Meta) ([]*model.Job, error) {
-	return getDDLJobs(t)
-}
-
-// getDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func getDDLJobs(t *meta.Meta) ([]*model.Job, error) {
 	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1068,7 +1063,7 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 	return m.GetAllHistoryDDLJobs()
 }
 
-// GetHistoryJobByID return history ddl by id.
+// GetHistoryJobByID return history DDL job by ID.
 func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 	err := sessiontxn.NewTxn(context.Background(), sess)
 	if err != nil {
