@@ -39,11 +39,17 @@ var (
 
 // FieldType records field type information.
 type FieldType struct {
-	tp      byte
-	flag    uint
-	flen    int
+	// tp is type of the field
+	tp byte
+	// flag represent NotNull, Unsigned, PriKey flags etc.
+	flag uint
+	// represent size of bytes of the field
+	flen int
+	// represent decimal length of the field
 	decimal int
+	// represent character set
 	charset string
+	// represent collate rules of the charset
 	collate string
 	// elems is the element list for enum and set type.
 	elems []string
