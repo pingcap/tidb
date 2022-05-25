@@ -4088,14 +4088,14 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	// 3. statistics is outdated.
-	if ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
-		if statsTbl.IsOutdated() {
-			tbl := *statsTbl
-			tbl.Pseudo = true
-			statsTbl = &tbl
-			pseudoEstimationOutdate.Inc()
-		}
-	}
+	//if ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
+	//	if statsTbl.IsOutdated() {
+	//		tbl := *statsTbl
+	//		tbl.Pseudo = true
+	//		statsTbl = &tbl
+	//		pseudoEstimationOutdate.Inc()
+	//	}
+	//}
 	return statsTbl
 }
 
