@@ -1037,7 +1037,7 @@ func isTableAliasDuplicate(ctx sessionctx.Context, node ast.ResultSetNode, table
 				}
 			}
 		}
-		_, exists := tableAliases[tabName.L]
+		_, exists := tableAliases[tabName.O]
 		if len(tabName.L) != 0 && exists {
 			names := strings.Split(tabName.O, ".")
 			return ErrNonUniqTable.GenWithStackByArgs(names[len(names)-1])
