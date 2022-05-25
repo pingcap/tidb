@@ -15,10 +15,10 @@
 package session_test
 
 import (
-	"github.com/pingcap/tidb/ddl"
 	"reflect"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
