@@ -26,7 +26,7 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
-func TestNonTransactionalDeleteSharding(t *testing.T) {
+func TestNonTransactionalDeleteShardingOnInt(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -42,6 +42,18 @@ func TestNonTransactionalDeleteSharding(t *testing.T) {
 		"create table t(a int, b int, key(a))",
 		"create table t(a int, b int, unique key(a, b))",
 		"create table t(a int, b int, unique key(a))",
+	}
+	testSharding(tables, tk)
+}
+
+func TestNonTransactionalDeleteShardingOnVarchar(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=35")
+	tk.MustExec("use test")
+
+	tables := []string{
 		"create table t(a varchar(30), b int, primary key(a, b) clustered)",
 		"create table t(a varchar(30), b int, primary key(a, b) nonclustered)",
 		"create table t(a varchar(30), b int, primary key(a) clustered)",
@@ -51,8 +63,12 @@ func TestNonTransactionalDeleteSharding(t *testing.T) {
 		"create table t(a varchar(30), b int, unique key(a, b))",
 		"create table t(a varchar(30), b int, unique key(a))",
 	}
-	tableSizes := []int{0, 1, 10, 35, 40, 100}
-	batchSizes := []int{1, 10, 25, 35, 50, 80, 120}
+	testSharding(tables, tk)
+}
+
+func testSharding(tables []string, tk *testkit.TestKit) {
+	tableSizes := []int{0, 1, 30, 35, 40, 100}
+	batchSizes := []int{25, 35, 50, 80, 120}
 	for _, table := range tables {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(table)

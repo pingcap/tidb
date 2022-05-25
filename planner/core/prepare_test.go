@@ -1031,6 +1031,9 @@ func TestPrepareWithWindowFunction(t *testing.T) {
 func TestPrepareWindowFunctionWithoutParamsCheck(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(false)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_window_function = 1")
 	defer tk.MustExec("set @@tidb_enable_window_function = 0")
@@ -1580,6 +1583,53 @@ func TestIssue29303(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
 	tk.MustExec(`set @a="龂", @b="龂", @c="龂", @d="龂"`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("� 龂 � 龂"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
+func TestIssue34725(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (
+		a int(11) DEFAULT NULL,
+		b int(11) GENERATED ALWAYS AS (a) STORED NOT NULL,
+		PRIMARY KEY (b))`)
+	tk.MustExec(`insert into t(a) values(102)`)
+	tk.MustExec(`prepare stmt from "select * from t where b in (?, ?, ?)"`)
+	tk.MustExec(`set @a=102, @b=102, @c=102`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows(`102 102`))
+	tk.MustExec(`set @a=-97, @b=-97, @c=-97`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows())
+}
+
+func TestIssue33628(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(false)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int primary key, b int)`)
+	tk.MustExec(`prepare stmt from "select * from t where a=10"`) // point-get plan
+	tk.MustExec(`execute stmt`)
+	tk.MustExec(`execute stmt`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 

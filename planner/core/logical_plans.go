@@ -1825,6 +1825,8 @@ type ShowContents struct {
 	User      *auth.UserIdentity   // Used for show grants.
 	Roles     []*auth.RoleIdentity // Used for show grants.
 
+	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
+
 	Full        bool
 	IfNotExists bool // Used for `show create database if not exists`.
 	GlobalScope bool // Used by show variables.
