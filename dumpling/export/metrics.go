@@ -86,18 +86,6 @@ func newMetrics(f promutil.Factory, labelNames []string) *metrics {
 	return &m
 }
 
-// TODO: remove these
-var (
-	finishedSizeGauge              *prometheus.GaugeVec
-	finishedRowsGauge              *prometheus.GaugeVec
-	finishedTablesCounter          *prometheus.CounterVec
-	estimateTotalRowsCounter       *prometheus.CounterVec
-	writeTimeHistogram             *prometheus.HistogramVec
-	receiveWriteChunkTimeHistogram *prometheus.HistogramVec
-	errorCount                     *prometheus.CounterVec
-	taskChannelCapacity            *prometheus.GaugeVec
-)
-
 // InitMetricsVector inits metrics vectors.
 // This function must run before RegisterMetrics
 func InitMetricsVector(labels prometheus.Labels) {
@@ -110,32 +98,32 @@ func InitMetricsVector(labels prometheus.Labels) {
 
 // RegisterMetrics registers metrics.
 func RegisterMetrics(registry *prometheus.Registry) {
-	if finishedSizeGauge == nil {
+	if defaultMetrics.finishedSizeGauge == nil {
 		return
 	}
-	registry.MustRegister(finishedSizeGauge)
-	registry.MustRegister(finishedRowsGauge)
-	registry.MustRegister(estimateTotalRowsCounter)
-	registry.MustRegister(finishedTablesCounter)
-	registry.MustRegister(writeTimeHistogram)
-	registry.MustRegister(receiveWriteChunkTimeHistogram)
-	registry.MustRegister(errorCount)
-	registry.MustRegister(taskChannelCapacity)
+	registry.MustRegister(defaultMetrics.finishedSizeGauge)
+	registry.MustRegister(defaultMetrics.finishedRowsGauge)
+	registry.MustRegister(defaultMetrics.estimateTotalRowsCounter)
+	registry.MustRegister(defaultMetrics.finishedTablesCounter)
+	registry.MustRegister(defaultMetrics.writeTimeHistogram)
+	registry.MustRegister(defaultMetrics.receiveWriteChunkTimeHistogram)
+	registry.MustRegister(defaultMetrics.errorCount)
+	registry.MustRegister(defaultMetrics.taskChannelCapacity)
 }
 
 // RemoveLabelValuesWithTaskInMetrics removes metrics of specified labels.
 func RemoveLabelValuesWithTaskInMetrics(labels prometheus.Labels) {
-	if finishedSizeGauge == nil {
+	if defaultMetrics.finishedSizeGauge == nil {
 		return
 	}
-	finishedSizeGauge.Delete(labels)
-	finishedRowsGauge.Delete(labels)
-	estimateTotalRowsCounter.Delete(labels)
-	finishedTablesCounter.Delete(labels)
-	writeTimeHistogram.Delete(labels)
-	receiveWriteChunkTimeHistogram.Delete(labels)
-	errorCount.Delete(labels)
-	taskChannelCapacity.Delete(labels)
+	defaultMetrics.finishedSizeGauge.Delete(labels)
+	defaultMetrics.finishedRowsGauge.Delete(labels)
+	defaultMetrics.estimateTotalRowsCounter.Delete(labels)
+	defaultMetrics.finishedTablesCounter.Delete(labels)
+	defaultMetrics.writeTimeHistogram.Delete(labels)
+	defaultMetrics.receiveWriteChunkTimeHistogram.Delete(labels)
+	defaultMetrics.errorCount.Delete(labels)
+	defaultMetrics.taskChannelCapacity.Delete(labels)
 }
 
 // ReadCounter reports the current value of the counter.
