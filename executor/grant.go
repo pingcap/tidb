@@ -131,7 +131,17 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
+<<<<<<< HEAD
 			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `INSERT INTO %n.%n (Host, User, authentication_string) VALUES (%?, %?, %?);`, mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd)
+=======
+			authPlugin := mysql.AuthNativePassword
+			if user.AuthOpt.AuthPlugin != "" {
+				authPlugin = user.AuthOpt.AuthPlugin
+			}
+			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx,
+				`INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES (%?, %?, %?, %?);`,
+				mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd, authPlugin)
+>>>>>>> dce5064e9... parser, executor: consistently lower identity hostnames (#33172)
 			if err != nil {
 				return err
 			}
