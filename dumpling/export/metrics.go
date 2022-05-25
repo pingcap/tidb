@@ -98,7 +98,7 @@ func InitMetricsVector(labels prometheus.Labels) {
 
 // RegisterMetrics registers metrics.
 func RegisterMetrics(registry *prometheus.Registry) {
-	if defaultMetrics.finishedSizeGauge == nil {
+	if defaultMetrics == nil || defaultMetrics.finishedSizeGauge == nil {
 		return
 	}
 	registry.MustRegister(defaultMetrics.finishedSizeGauge)
