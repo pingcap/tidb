@@ -967,6 +967,7 @@ var removedConfig = map[string]struct{}{
 	"prepared-plan-cache.enabled":            {},
 	"prepared-plan-cache.capacity":           {},
 	"prepared-plan-cache.memory-guard-ratio": {},
+	"oom-action":                             {},
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
@@ -1239,13 +1240,13 @@ func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 
 // hideConfig is used to filter a single line of config for hiding.
 var hideConfig = []string{
-	"index-usage-sync-lease",
+	"performance.index-usage-sync-lease",
 }
 
 // jsonifyPath converts the item to json path, so it can be extracted.
 func jsonifyPath(str string) string {
 	s := strings.Split(str, ".")
-	return fmt.Sprintf("$.\"%s\"", strings.Join(s, "\""))
+	return fmt.Sprintf("$.\"%s\"", strings.Join(s, "\".\""))
 }
 
 // GetJSONConfig returns the config as JSON with hidden items removed

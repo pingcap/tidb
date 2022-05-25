@@ -730,6 +730,12 @@ func TestGetJSONConfig(t *testing.T) {
 	require.NotContains(t, conf, "enable-batch-dml")
 	require.NotContains(t, conf, "mem-quota-query")
 	require.NotContains(t, conf, "query-log-max-len")
+	require.NotContains(t, conf, "oom-action")
+
+	require.Contains(t, conf, "query-feedback-limit")
+	require.Contains(t, conf, "feedback-probability")
+	require.Contains(t, conf, "stmt-count-limit")
+	require.Contains(t, conf, "rpc-metrics")
 }
 
 func TestConfigExample(t *testing.T) {
