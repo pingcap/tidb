@@ -222,6 +222,9 @@ type StatementContext struct {
 	// always created during each statement execution.
 	KvExecCounter *stmtstats.KvExecCounter
 
+	// Timestamp is used to store the timestamp set by set system vars,eg set SET TIMESTAMP=978364799;
+	Timestamp time.Time
+
 	// WeakConsistency is true when read consistency is weak and in a read statement and not in a transaction.
 	WeakConsistency bool
 
@@ -555,6 +558,7 @@ func (sc *StatementContext) NumErrorWarnings() (ec uint16, wc int) {
 func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	sc.mu.errorCount = 0
 	sc.mu.warnings = warns
 	for _, w := range warns {
 		if w.Level == WarnLevelError {

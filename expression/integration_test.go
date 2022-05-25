@@ -7101,6 +7101,22 @@ func TestIssue30174(t *testing.T) {
 	tk.MustQuery("select * from t2 where c2 in (select c2 from t1);").Check(testkit.Rows())
 }
 
+func TestIssue30327(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	result := tk.MustQuery("SELECT cast(TIME'23:59:59.4' as date)")
+	result.Check(testkit.Rows(time.Now().Format("2006-01-02")))
+	tk.MustExec("SET TIMESTAMP=UNIX_TIMESTAMP('2001-01-01');")
+	result = tk.MustQuery("SELECT cast(TIME'23:59:59.4' as date)")
+	result.Check(testkit.Rows("2001-01-01"))
+	tk.MustExec("SET @@TIMESTAMP=UNIX_TIMESTAMP('2002-01-01');")
+	result = tk.MustQuery("SELECT cast(TIME'23:59:59.4' as date)")
+	result.Check(testkit.Rows("2002-01-01"))
+	result = tk.MustQuery("SELECT cast(TIME'23:59:59.4' as date)")
+	result.Check(testkit.Rows("2002-01-01"))
+}
+
 func TestIssue30264(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
