@@ -2813,7 +2813,7 @@ func loadCollationParameter(se *session) (bool, error) {
 
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
-	DdlJobTables     = []string{
+	DDLJobTables     = []string{
 		fmt.Sprintf("create table %s(job_id bigint not null, reorg int, schema_id bigint, table_id bigint, job_meta longblob, processing bigint, is_drop_schema int, primary key(job_id))", ddl.JobTable),
 		fmt.Sprintf("create table %s(job_id bigint not null, ele_id bigint, curr_ele_id bigint, curr_ele_type blob, start_key blob, end_key blob, physical_id bigint)", ddl.ReorgTable),
 		fmt.Sprintf("create table %s(job_id bigint not null, job_meta longblob, job_seq bigint not null, primary key(job_id), index(job_seq))", ddl.HistoryTable),
@@ -2833,7 +2833,7 @@ func InitMetaTable(store kv.Storage) error {
 			return err
 		}
 		p := parser.New()
-		for _, s := range DdlJobTables {
+		for _, s := range DDLJobTables {
 			stmt, err := p.ParseOneStmt(s, "", "")
 			if err != nil {
 				return errors.Trace(err)
