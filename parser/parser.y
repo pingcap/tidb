@@ -10670,9 +10670,17 @@ ShowTargetFilterable:
 			Extended: true,
 		}
 	}
+|	builtinCount '(' '*' ')' "WARNINGS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings, CountWarningsOrErrors: true}
+	}
 |	"WARNINGS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings}
+	}
+|	builtinCount '(' '*' ')' "ERRORS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowErrors, CountWarningsOrErrors: true}
 	}
 |	"ERRORS"
 	{
