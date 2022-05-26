@@ -95,7 +95,6 @@ type worker struct {
 
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
 	sess            *session
-	reorgCtx        *reorgCtx // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 	logCtx          context.Context
 	lockSeqNum      bool
@@ -142,7 +141,6 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		ctx:             ctx,
 		JobContext:      NewJobContext(),
 		ddlCtx:          dCtx,
-		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
 		sess:            newSession(sessForJob),

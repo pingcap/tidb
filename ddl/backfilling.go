@@ -236,14 +236,14 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	lastLogCount := 0
 	lastLogTime := time.Now()
 	startTime := lastLogTime
-	rc := w.ddlWorker.getReorgCtx(w.reorgInfo.Job)
+	rc := d.getReorgCtx(w.reorgInfo.Job)
 
 	for {
 		// Give job chance to be canceled, if we not check it here,
 		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
 		// Because reorgRecordTask may run a long time,
 		// we should check whether this ddl job is still runnable.
-		err := w.ddlWorker.isReorgRunnable(w.reorgInfo)
+		err := w.ddlWorker.isReorgRunnable(w.reorgInfo.Job)
 		if err != nil {
 			result.err = err
 			return result
@@ -406,7 +406,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	nextKey, taskAddedCount, err := w.waitTaskResults(workers, taskCnt, totalAddedCount, startKey)
 	elapsedTime := time.Since(startTime)
 	if err == nil {
-		err = w.isReorgRunnable(reorgInfo)
+		err = w.isReorgRunnable(reorgInfo.Job)
 	}
 
 	if err != nil {
@@ -590,7 +590,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		return errors.Trace(err)
 	}
 
-	if err := w.isReorgRunnable(reorgInfo); err != nil {
+	if err := w.isReorgRunnable(reorgInfo.Job); err != nil {
 		return errors.Trace(err)
 	}
 	if startKey == nil && endKey == nil {

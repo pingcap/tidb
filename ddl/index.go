@@ -1048,7 +1048,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_rate_" + reorgInfo.SchemaName + "_" + t.Meta().Name.String()),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_rate"),
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
 		},
 		index: index,
@@ -1498,7 +1498,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("cleanup_idx_rate_" + reorgInfo.SchemaName + "_" + t.Meta().Name.String()),
+			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("cleanup_idx_rate"),
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
 		},
 	}

@@ -186,6 +186,7 @@ func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 // After that, we can make sure that the worker goroutine is correctly shut down.
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
+	d := reorgInfo.d
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
 	if job.ReorgMeta == nil {
@@ -196,8 +197,8 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			Location:      &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
 		}
 	}
-	rc := w.getReorgCtx(job)
 
+	rc := w.getReorgCtx(job)
 	if rc == nil {
 		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
 		// for the later entrances.
@@ -205,14 +206,20 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		if lease > 0 {
 			delayForAsyncCommit()
 		}
-		rc = w.newReorgCtx(reorgInfo)
-		// this job is cancelling, we should notify the reorg worker.
+		// This job is cancelling, we should return ErrCancelledDDLJob directly.
+		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
+		// A: Yes, consider the case that we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
+		// and then the backfill workers send signal to the `doneCh` of the reorgCtx, and then the DDL worker will remove the reorgCtx and
+		// update the DDL job to `done`, but at the commit time, the DDL txn will raise a "write conflict" error and retry, and it happens.
 		if job.IsCancelling() {
-			w.notifyReorgCancel(job)
+			return dbterror.ErrCancelledDDLJob
 		}
-		w.wg.Run(func() {
+		rc = w.newReorgCtx(reorgInfo)
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
 			rc.doneCh <- f()
-		})
+		}()
 	}
 
 	waitTimeout := defaultWaitReorgTimeout
@@ -228,19 +235,20 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	// wait reorganization job done or timeout
 	select {
 	case err := <-rc.doneCh:
-		defer w.removeReorgCtx(job)
 		// Since job is cancelled，we don't care about its partial counts.
 		if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
+			d.removeReorgCtx(job)
 			return dbterror.ErrCancelledDDLJob
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()
-		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Int32("worker id", w.id), zap.String("job", job.String()))
+		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
+		d.removeReorgCtx(job)
 		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
 		// since in the next round, the startKey is brand new which is stored by last time.
 		if err != nil {
@@ -260,9 +268,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		}
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
-		rc.setNextKey(nil)
-		rc.setRowCount(0)
-		rc.resetWarnings()
+		d.removeReorgCtx(job)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
@@ -349,13 +355,13 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
-func (w *worker) isReorgRunnable(reorgInfo *reorgInfo) error {
+func (w *worker) isReorgRunnable(job *model.Job) error {
 	if isChanClosed(w.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganizational job.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
-	if w.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
+	if w.getReorgCtx(job).isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
 	}
