@@ -455,18 +455,19 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	schemaCheck := sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead
 	if prepared.UseCache {
 		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
-		schemaVersion := prepared.SchemaVersion
 		if schemaCheck {
 			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 			// last time. If it changed, we should rebuild the plan. Here, we use a different and more
 			// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
 			latestSchemaVersion := domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
-			if latestSchemaVersion > prepared.LastUpdatedSchemaVersion {
+			if latestSchemaVersion >= prepared.LastUpdatedSchemaVersion {
 				prepared.LastUpdatedSchemaVersion = latestSchemaVersion
+			} else {
+				panic("Regression schema version")
 			}
-			schemaVersion = prepared.LastUpdatedSchemaVersion
 		}
-		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, schemaVersion); err != nil {
+		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText,
+			preparedStmt.StmtDB, prepared.SchemaVersion, prepared.LastUpdatedSchemaVersion); err != nil {
 			return err
 		}
 	}
@@ -599,7 +600,8 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB,
+				prepared.SchemaVersion, prepared.LastUpdatedSchemaVersion); err != nil {
 				return err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
