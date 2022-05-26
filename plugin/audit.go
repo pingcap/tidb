@@ -37,17 +37,12 @@ const (
 	GeneralEventCount
 )
 
-var generalEvent2String = map[GeneralEvent]string{
-	Starting:  "STARTING",
-	Completed: "COMPLETED",
-	Error:     "ERROR",
-}
-
 // GeneralEventFromString gets the `GeneralEvent` from the given string
 func GeneralEventFromString(s string) (GeneralEvent, error) {
 	upperStr := strings.ToUpper(s)
-	for event, str := range generalEvent2String {
-		if upperStr == str {
+	for i := 0; i < int(GeneralEventCount); i++ {
+		event := GeneralEvent(i)
+		if event.String() == upperStr {
 			return event, nil
 		}
 	}

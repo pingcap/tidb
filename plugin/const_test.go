@@ -16,6 +16,7 @@ package plugin
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,20 +49,18 @@ func TestConstToString(t *testing.T) {
 	}
 }
 
-func TestGeneralEventFromString(t *testing.T) {
-	event, err := GeneralEventFromString("STARTING")
-	require.NoError(t, err)
-	require.Equal(t, Starting, event)
+func TestGeneralEventString(t *testing.T) {
+	for i := 0; i < int(GeneralEventCount); i++ {
+		event := GeneralEvent(i)
+		str := event.String()
+		require.Greater(t, len(str), 0)
+		require.Equal(t, strings.ToUpper(str), str)
+		got, err := GeneralEventFromString(event.String())
+		require.NoError(t, err)
+		require.Equal(t, got, event)
+	}
 
-	event, err = GeneralEventFromString("COMPLETED")
-	require.NoError(t, err)
-	require.Equal(t, Completed, event)
-
-	event, err = GeneralEventFromString("ERROR")
-	require.NoError(t, err)
-	require.Equal(t, Error, event)
-
-	event, err = GeneralEventFromString("starting")
+	event, err := GeneralEventFromString("starting")
 	require.NoError(t, err)
 	require.Equal(t, Starting, event)
 
