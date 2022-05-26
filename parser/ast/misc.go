@@ -486,7 +486,7 @@ type Prepared struct {
 	Params        []ParamMarkerExpr
 	SchemaVersion int64
 
-	// Used for RC or ForUpdateRead Only.
+	// Used for RC or ForUpdateRead Only. It represents the version used to build plan cache last time.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
 	// If it changed, we should rebuild the plan. However, the plan is rebuilt by using the information schema from
 	// the context provider, not the latest information schema to be consistent with the non-prepare-execute sql. But we
