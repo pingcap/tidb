@@ -75,13 +75,6 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	}
 }
 
-// WithExecuteInfoSchemaUpdate return a PreprocessOpt to update the `Execute` infoSchema under some conditions.
-func WithExecuteInfoSchemaUpdate(pe *PreprocessExecuteISUpdate) PreprocessOpt {
-	return func(p *preprocessor) {
-		p.PreprocessExecuteISUpdate = pe
-	}
-}
-
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
 func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
@@ -172,12 +165,6 @@ type PreprocessorReturn struct {
 	ReadReplicaScope string
 }
 
-// PreprocessExecuteISUpdate is used to update information schema for special Execute statement in the preprocessor.
-type PreprocessExecuteISUpdate struct {
-	ExecuteInfoSchemaUpdate func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema
-	Node                    ast.Node
-}
-
 // preprocessWith is used to record info from WITH statements like CTE name.
 type preprocessWith struct {
 	cteCanUsed      []string
@@ -201,7 +188,6 @@ type preprocessor struct {
 
 	// values that may be returned
 	*PreprocessorReturn
-	*PreprocessExecuteISUpdate
 	err error
 }
 
