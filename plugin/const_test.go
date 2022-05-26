@@ -38,13 +38,19 @@ func TestConstToString(t *testing.T) {
 		PreAuth:                   "PreAuth",
 		Reject:                    "Reject",
 		ConnectionEvent(byte(15)): "",
-		// GeneralEvent
-		Starting:          "STARTING",
-		Completed:         "COMPLETED",
-		Error:             "ERROR",
-		GeneralEventCount: "",
 	}
 	for key, value := range kinds {
+		require.Equal(t, value, key.String())
+	}
+
+	generalEvents := map[fmt.Stringer]string{
+		// GeneralEvent
+		Starting:  "STARTING",
+		Completed: "COMPLETED",
+		Error:     "ERROR",
+	}
+	require.Equal(t, int(GeneralEventCount), len(generalEvents))
+	for key, value := range generalEvents {
 		require.Equal(t, value, key.String())
 	}
 }
@@ -53,13 +59,15 @@ func TestGeneralEventString(t *testing.T) {
 	for i := 0; i < int(GeneralEventCount); i++ {
 		event := GeneralEvent(i)
 		str := event.String()
-		require.Greater(t, len(str), 0)
+		// event string should be upper case
 		require.Equal(t, strings.ToUpper(str), str)
+		// GeneralEventFromString return the right event
 		got, err := GeneralEventFromString(event.String())
 		require.NoError(t, err)
 		require.Equal(t, got, event)
 	}
 
+	// case insensitive
 	event, err := GeneralEventFromString("starting")
 	require.NoError(t, err)
 	require.Equal(t, Starting, event)
@@ -68,6 +76,7 @@ func TestGeneralEventString(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, Starting, event)
 
+	// invalid string
 	_, err = GeneralEventFromString("")
 	require.Error(t, err)
 
