@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	"github.com/pingcap/tidb/config"
 	"github.com/prometheus/client_golang/prometheus"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 )
@@ -184,4 +185,36 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+
+	if config.GetGlobalConfig().Status.MetricsSimplified {
+		UnregisterUnused()
+	}
+}
+
+func UnregisterUnused() {
+	var unusedMetricsByGrafana = []prometheus.Collector{
+		StatementDeadlockDetectDuration,
+		ValidateReadTSFromPDCount,
+		LoadTableCacheDurationHistogram,
+		TxnWriteThroughput,
+		SmallTxnWriteDuration,
+		InfoCacheCounters,
+		ReadFromTableCacheCounter,
+		TiFlashQueryTotalCounter,
+		CampaignOwnerCounter,
+		NonTransactionalDeleteCount,
+		MemoryUsage,
+		TokenGauge,
+		tikvmetrics.TiKVRawkvSizeHistogram,
+		tikvmetrics.TiKVRawkvCmdHistogram,
+		tikvmetrics.TiKVReadThroughput,
+		tikvmetrics.TiKVSmallReadDuration,
+		tikvmetrics.TiKVBatchWaitOverLoad,
+		tikvmetrics.TiKVBatchClientRecycle,
+		tikvmetrics.TiKVRequestRetryTimesHistogram,
+		tikvmetrics.TiKVStatusDuration,
+	}
+	for _, m := range unusedMetricsByGrafana {
+		prometheus.Unregister(m)
+	}
 }

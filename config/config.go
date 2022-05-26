@@ -581,8 +581,10 @@ type Status struct {
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
 	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
-	ReportStatus    bool   `toml:"report-status" json:"report-status"`
-	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
+	// Whether to unregister the grafana-unused metrics.
+	MetricsSimplified bool `toml:"metrics-simplified" json:"metrics-simplified"`
+	ReportStatus      bool `toml:"report-status" json:"report-status"`
+	RecordQPSbyDB     bool `toml:"record-db-qps" json:"record-db-qps"`
 	// After a duration of this time in seconds if the server doesn't see any activity it pings
 	// the client to see if the transport is still alive.
 	GRPCKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
@@ -822,6 +824,7 @@ var defaultConf = Config{
 		StatusHost:            DefStatusHost,
 		StatusPort:            DefStatusPort,
 		MetricsInterval:       15,
+		MetricsSimplified:     false,
 		RecordQPSbyDB:         false,
 		GRPCKeepAliveTime:     10,
 		GRPCKeepAliveTimeout:  3,
