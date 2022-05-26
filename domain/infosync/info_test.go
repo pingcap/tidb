@@ -36,11 +36,6 @@ import (
 	"go.uber.org/goleak"
 )
 
-const (
-	// NewSessionDefaultRetryCnt is the default retry times when create new session.
-	NewSessionDefaultRetryCnt = 3
-)
-
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
