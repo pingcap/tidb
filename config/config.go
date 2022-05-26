@@ -859,8 +859,8 @@ var defaultConf = Config{
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          false,
-		Capacity:         1000,
+		Enabled:          true,
+		Capacity:         100,
 		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
