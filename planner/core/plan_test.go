@@ -867,9 +867,13 @@ func TestIssue34863(t *testing.T) {
 	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
 	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
 	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
 	tk.MustExec("set @@tidb_opt_agg_push_down=0")
 	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
 	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
 	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
 	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
 }
