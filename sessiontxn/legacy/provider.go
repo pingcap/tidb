@@ -97,7 +97,7 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 			sessVars.SetInTxn(true)
 		}
 
-		sessVars.TxnCtx.IsPessimistic = p.Pessimistic
+		txnCtx.IsPessimistic = p.Pessimistic
 		if _, err := p.activeTxn(); err != nil {
 			return err
 		}
