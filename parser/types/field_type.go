@@ -45,7 +45,7 @@ type FieldType struct {
 	flag uint
 	// flen represent size of bytes of the field
 	flen int
-	// represent decimal length of the field
+	// decimal represent decimal length of the field
 	decimal int
 	// represent character set
 	charset string
