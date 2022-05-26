@@ -31,11 +31,8 @@ var retryableServerError = []string{
 	"body write aborted",
 	"error during dispatch",
 	"put object timeout",
-<<<<<<< HEAD
-=======
 	"internalerror",
 	"not read from or written to within the timeout period",
->>>>>>> 0f85650aa... br: add error into retry list when backup (#34930)
 }
 
 // RetryableFunc presents a retryable operation.
