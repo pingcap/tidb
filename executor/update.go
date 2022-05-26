@@ -433,6 +433,7 @@ func (e *UpdateExec) Close() error {
 			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
+	e.memTracker.ReplaceBytesUsed(0)
 	return e.children[0].Close()
 }
 
