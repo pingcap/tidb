@@ -299,13 +299,16 @@ func (t *Tracker) remove(oldChild *Tracker) {
 
 func (t *Tracker) ClearChildTrack(oldChild *Tracker) {
 	t.Consume(-oldChild.BytesConsumed())
+	childBytesReleased := oldChild.BytesReleased()
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
-		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, -oldChild.BytesReleased())
+		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, -childBytesReleased)
+		//if tracker.label == LabelForGlobalAnalyzeMemory || tracker.label == LabelForAnalyzeMemory {
+		//	println("update released " + strconv.FormatInt(bytesReleased, 10))
+		//}
 		if label, ok := MetricsTypes[tracker.label]; ok {
 			metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(bytesReleased))
 		}
 	}
-	atomic.AddInt64(&t.bytesReleased, -oldChild.bytesReleased)
 }
 
 // ReplaceChild removes the old child specified in "oldChild" and add a new
@@ -413,6 +416,9 @@ func (t *Tracker) Release(bytes int64) {
 	t.Consume(-bytes)
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, bytes)
+		//if tracker.label == LabelForGlobalAnalyzeMemory || tracker.label == LabelForAnalyzeMemory {
+		//	println("update released " + strconv.FormatInt(bytesReleased, 10))
+		//}
 		if label, ok := MetricsTypes[tracker.label]; ok {
 			metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(bytesReleased))
 		}
