@@ -17,6 +17,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"go.uber.org/zap/buffer"
 	"sort"
 	"strconv"
 	"sync"
@@ -294,6 +295,7 @@ func (t *Tracker) remove(oldChild *Tracker) {
 	if found {
 		oldChild.setParent(nil)
 		t.Consume(-oldChild.BytesConsumed())
+		atomic.AddInt64(&t.bytesReleased, -oldChild.bytesReleased)
 	}
 }
 
@@ -346,9 +348,6 @@ func (t *Tracker) Consume(bytes int64) {
 	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
-		if bytes < 0 {
-			atomic.AddInt64(&tracker.bytesReleased, -bytes)
-		}
 		limits := tracker.bytesLimit.Load().(*bytesLimits)
 		if bytesConsumed >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
 			rootExceed = tracker
@@ -365,8 +364,6 @@ func (t *Tracker) Consume(bytes int64) {
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
 				metrics.MemoryUsage.WithLabelValues(label[0]).Set(float64(consumed))
-				released := atomic.LoadInt64(&tracker.bytesReleased)
-				metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(released))
 			}
 			break
 		}
@@ -397,6 +394,16 @@ func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	if *bufferedMemSize > int64(config.TrackMemWhenExceeds) {
 		t.Consume(*bufferedMemSize)
 		*bufferedMemSize = int64(0)
+	}
+}
+
+func (t *Tracker) Release(bytes int64) {
+	t.Consume(-bytes)
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, bytes)
+		if label, ok := MetricsTypes[tracker.label]; ok {
+			metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(bytesReleased))
+		}
 	}
 }
 
