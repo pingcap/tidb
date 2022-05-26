@@ -4146,6 +4146,9 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 	if col.IsPKHandleColumn(tblInfo) {
 		return false, dbterror.ErrUnsupportedPKHandle
 	}
+	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
+		return false, dbterror.ErrCantDropColWithAutoInc
+	}
 	return true, nil
 }
 
