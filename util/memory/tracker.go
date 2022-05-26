@@ -70,6 +70,7 @@ type Tracker struct {
 
 	label         int   // Label of this "Tracker".
 	bytesConsumed int64 // Consumed bytes.
+	bytesReleased int64 // Released bytes.
 	bytesLimit    atomic.Value
 	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
 	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
@@ -345,6 +346,9 @@ func (t *Tracker) Consume(bytes int64) {
 	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
+		if bytes < 0 {
+			atomic.AddInt64(&tracker.bytesReleased, -bytes)
+		}
 		limits := tracker.bytesLimit.Load().(*bytesLimits)
 		if bytesConsumed >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
 			rootExceed = tracker
@@ -360,7 +364,9 @@ func (t *Tracker) Consume(bytes int64) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
-				metrics.MemoryUsage.WithLabelValues(label).Set(float64(consumed))
+				metrics.MemoryUsage.WithLabelValues(label[0]).Set(float64(consumed))
+				released := atomic.LoadInt64(&tracker.bytesReleased)
+				metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(released))
 			}
 			break
 		}
@@ -617,6 +623,6 @@ const (
 )
 
 // MetricsTypes is used to get label for metrics
-var MetricsTypes = map[int]string{
-	LabelForGlobalAnalyzeMemory: "analyze",
+var MetricsTypes = map[int][]string{
+	LabelForGlobalAnalyzeMemory: {"analyze", "analyze-released"},
 }

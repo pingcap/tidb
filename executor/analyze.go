@@ -1416,7 +1416,8 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		retCollector.MergeCollector(subCollector)
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
-		e.memTracker.Consume(newRetCollectorSize - dataSize - colRespSize - oldRetCollectorSize - subCollectorSize)
+		e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
+		e.memTracker.Consume(-dataSize - colRespSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
