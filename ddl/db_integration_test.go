@@ -154,8 +154,8 @@ func TestInvalidNameWhenCreateTable(t *testing.T) {
 	tk.MustGetErrCode("create table t(t.tttt.a bigint)", errno.ErrWrongDBName)
 }
 
-// TestCreateTableIfNotExists for issue #6879
-func TestCreateTableIfNotExists(t *testing.T) {
+// TestCreateTableIfNotExistsLike for issue #6879
+func TestCreateTableIfNotExistsLike(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
