@@ -321,6 +321,7 @@ func SetTestHook(fn func(plugin *Plugin, dir string, pluginID ID) (manifest func
 	testHook = &struct{ loadOne loadFn }{loadOne: fn}
 }
 
+// ClearTestHook for uint test in custom plugin to clear the test hook.
 func ClearTestHook() {
 	testHook = nil
 }
