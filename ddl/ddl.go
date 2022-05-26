@@ -1180,3 +1180,8 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 func AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bool) error {
 	return t.AddHistoryDDLJob(job, updateRawArgs)
 }
+
+// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+func GetLastHistoryDDLJobsIterator(m *meta.Meta) (meta.LastJobIterator, error) {
+	return m.GetLastHistoryDDLJobsIterator()
+}
