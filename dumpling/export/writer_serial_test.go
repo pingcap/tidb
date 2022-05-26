@@ -261,6 +261,8 @@ func TestSQLDataTypes(t *testing.T) {
 		require.Equal(t, fmt.Sprintf("(%s);", result), lines[1])
 		require.Equal(t, float64(1), ReadGauge(defaultMetrics.finishedRowsGauge, conf.Labels))
 		require.Equal(t, float64(len(bf.String())), ReadGauge(defaultMetrics.finishedSizeGauge, conf.Labels))
+
+		RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 	}
 }
 
