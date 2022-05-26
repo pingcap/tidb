@@ -2976,7 +2976,7 @@ func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 	tk1.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2", "3 <nil>"))
 }
 
-func verifyCache(t *testing.T, ctx context.Context, tk1 *testkit.TestKit, tk2 *testkit.TestKit, stmtID uint32) {
+func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *testkit.TestKit, stmtID uint32) {
 	// Cache miss in the firs time.
 	tk1.MustExec("execute s")
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -3028,7 +3028,7 @@ func TestCacheHitInRc(t *testing.T) {
 	tk1.MustExec("begin pessimistic")
 
 	// Verify for the RC isolation
-	verifyCache(t, ctx, tk1, tk2, stmtID)
+	verifyCache(ctx, t, tk1, tk2, stmtID)
 	tk1.MustExec("rollback")
 }
 
@@ -3057,7 +3057,7 @@ func TestCacheHitInForUpdateRead(t *testing.T) {
 	tk1.MustExec("begin pessimistic")
 
 	// Verify for the for update read
-	verifyCache(t, ctx, tk1, tk2, stmtID)
+	verifyCache(ctx, t, tk1, tk2, stmtID)
 	tk1.MustExec("rollback")
 }
 
