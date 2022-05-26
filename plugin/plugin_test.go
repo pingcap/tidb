@@ -242,3 +242,31 @@ func TestPluginsClone(t *testing.T) {
 	require.Equal(t, uint16(1), cps.versions["whitelist"])
 	require.Len(t, cps.dyingPlugins, 1)
 }
+
+func TestGeneralEventFromString(t *testing.T) {
+	event, err := GeneralEventFromString("STARTING")
+	require.NoError(t, err)
+	require.Equal(t, Starting, event)
+
+	event, err = GeneralEventFromString("COMPLETED")
+	require.NoError(t, err)
+	require.Equal(t, Completed, event)
+
+	event, err = GeneralEventFromString("ERROR")
+	require.NoError(t, err)
+	require.Equal(t, Error, event)
+
+	event, err = GeneralEventFromString("starting")
+	require.NoError(t, err)
+	require.Equal(t, Starting, event)
+
+	event, err = GeneralEventFromString("starTing")
+	require.NoError(t, err)
+	require.Equal(t, Starting, event)
+
+	_, err = GeneralEventFromString("")
+	require.Error(t, err)
+
+	_, err = GeneralEventFromString("xx")
+	require.Error(t, err)
+}
