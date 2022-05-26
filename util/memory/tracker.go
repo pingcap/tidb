@@ -299,6 +299,12 @@ func (t *Tracker) remove(oldChild *Tracker) {
 
 func (t *Tracker) ClearChildTrack(oldChild *Tracker) {
 	t.Consume(-oldChild.BytesConsumed())
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, -oldChild.BytesReleased())
+		if label, ok := MetricsTypes[tracker.label]; ok {
+			metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(bytesReleased))
+		}
+	}
 	atomic.AddInt64(&t.bytesReleased, -oldChild.bytesReleased)
 }
 
@@ -401,6 +407,9 @@ func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 }
 
 func (t *Tracker) Release(bytes int64) {
+	if bytes == 0 {
+		return
+	}
 	t.Consume(-bytes)
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, bytes)
@@ -413,6 +422,11 @@ func (t *Tracker) Release(bytes int64) {
 // BytesConsumed returns the consumed memory usage value in bytes.
 func (t *Tracker) BytesConsumed() int64 {
 	return atomic.LoadInt64(&t.bytesConsumed)
+}
+
+// BytesReleased returns the released memory value in bytes.
+func (t *Tracker) BytesReleased() int64 {
+	return atomic.LoadInt64(&t.bytesReleased)
 }
 
 // MaxConsumed returns max number of bytes consumed during execution.
