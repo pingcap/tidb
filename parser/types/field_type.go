@@ -49,7 +49,7 @@ type FieldType struct {
 	decimal int
 	// charset represent character set
 	charset string
-	// represent collate rules of the charset
+	// collate represent collate rules of the charset
 	collate string
 	// elems is the element list for enum and set type.
 	elems []string
