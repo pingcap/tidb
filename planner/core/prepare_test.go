@@ -2976,7 +2976,7 @@ func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 	tk1.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2", "3 <nil>"))
 	tk1.MustExec("commit")
 
-	// After beginnig a new txn, the infoSchema should be the latest
+	// After beginning a new txn, the infoSchema should be the latest
 	tk1.MustExec("begin pessimistic")
 	tk1.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "3"))
 

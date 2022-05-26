@@ -463,7 +463,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			if latestSchemaVersion >= prepared.LastUpdatedSchemaVersion {
 				prepared.LastUpdatedSchemaVersion = latestSchemaVersion
 			} else {
-				panic("Regression schema version")
+				return errors.New("Regression infoSchema version")
 			}
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText,

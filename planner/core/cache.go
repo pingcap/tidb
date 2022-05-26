@@ -66,7 +66,7 @@ type planCacheKey struct {
 	// If it changed, we should rebuild the plan. However, the plan is rebuilt by using the information schema from
 	// the context provider, not the latest information schema to be consistent with the non-prepare-execute sql. But we
 	// save the latest' information schema version, which is used to build cacheKey, in order to hit plan cache.
-	LastUpdatedSchemaVersion int64
+	lastUpdatedSchemaVersion int64
 	sqlMode                  mysql.SQLMode
 	timezoneOffset           int
 	isolationReadEngines     map[kv.StoreType]struct{}
@@ -89,7 +89,7 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
-		key.hash = codec.EncodeInt(key.hash, key.LastUpdatedSchemaVersion)
+		key.hash = codec.EncodeInt(key.hash, key.lastUpdatedSchemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
 		if _, ok := key.isolationReadEngines[kv.TiDB]; ok {
@@ -127,6 +127,9 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
+	if schemaVersion == 0 || lastUpdatedSchemaVersion == 0 {
+		return nil, errors.New("Schema version / latest schema version uninitialized")
+	}
 	if stmtDB == "" {
 		stmtDB = sessionVars.CurrentDB
 	}
@@ -139,7 +142,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		connID:                   sessionVars.ConnectionID,
 		stmtText:                 stmtText,
 		schemaVersion:            schemaVersion,
-		LastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
+		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
 		sqlMode:                  sessionVars.SQLMode,
 		timezoneOffset:           timezoneOffset,
 		isolationReadEngines:     make(map[kv.StoreType]struct{}),
