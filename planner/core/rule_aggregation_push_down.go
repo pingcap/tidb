@@ -71,7 +71,8 @@ func (a *aggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.Agg
 	}
 }
 
-// getAggFuncChildIdx gets which children it belongs to, 0 stands for left, 1 stands for right, -1 stands for both.
+// getAggFuncChildIdx gets which children it belongs to.
+// 0 stands for left, 1 stands for right, -1 stands for both, 2 stands for neither (e.g. count(*), sum(1) ...)
 func (a *aggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, lSchema, rSchema *expression.Schema) int {
 	fromLeft, fromRight := false, false
 	var cols []*expression.Column
@@ -308,6 +309,8 @@ func (a *aggregationPushDownSolver) checkAnyCountAndSum(aggFuncs []*aggregation.
 	return false
 }
 
+// checkAllArgsColumn checks whether the args in function are dedicated columns
+// eg: count(*) or sum(a+1) will return false while count(a) or sum(a) will return true
 func (a *aggregationPushDownSolver) checkAllArgsColumn(fun *aggregation.AggFuncDesc) bool {
 	for _, arg := range fun.Args {
 		_, ok := arg.(*expression.Column)
