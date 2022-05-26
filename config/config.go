@@ -761,6 +761,8 @@ var defaultConf = Config{
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
+	MemQuotaQuery:                1 << 30,
+	OOMAction:                    "cancel",
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
@@ -791,6 +793,7 @@ var defaultConf = Config{
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
+		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
@@ -839,6 +842,7 @@ var defaultConf = Config{
 		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
 		ProjectionPushDown:    false,
+		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease:      "0s",
@@ -848,6 +852,7 @@ var defaultConf = Config{
 		StatsLoadConcurrency:     5,
 		StatsLoadQueueSize:       1000,
 		EnableStatsCacheMemQuota: false,
+		RunAutoAnalyze:           true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
