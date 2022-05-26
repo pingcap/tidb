@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unsafe"
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -453,8 +452,8 @@ type strHandleValue[V any] struct {
 func NewMemAwareHandleMap[V any]() *MemAwareHandleMap[V] {
 	// Initialize the two maps to avoid checking nil.
 	return &MemAwareHandleMap[V]{
-		ints: set.NewMemAwareMap[int64, V](8 + uint64(unsafe.Sizeof(*(new(V))))),
-		strs: set.NewMemAwareMap[string, strHandleValue[V]](16 + uint64(unsafe.Sizeof(strHandleValue[V]{}))),
+		ints: set.NewMemAwareMap[int64, V](),
+		strs: set.NewMemAwareMap[string, strHandleValue[V]](),
 	}
 }
 

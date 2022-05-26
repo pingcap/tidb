@@ -15,6 +15,9 @@
 package set
 
 import (
+	"math"
+	"unsafe"
+
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -28,12 +31,28 @@ type MemAwareMap[K comparable, V any] struct {
 	bucketMemoryUsage uint64
 }
 
+// EstimateBucketMemoryUsage returns the estimated memory usage of a bucket in a map.
+func EstimateBucketMemoryUsage(sizeofKeyAndValue uint64) uint64 {
+	return 8*(1+sizeofKeyAndValue) + 16
+}
+
+// EstimateMapSize returns the estimated size of the map. It doesn't include the dynamic part, e.g. objects pointed to by pointers in the map.
+// len(map) <= load_factor * 2^bInMap. bInMap = ceil(log2(len(map)/load_factor)).
+// memory = bucketSize * 2^bInMap
+func EstimateMapSize(len int, bucketSize uint64) uint64 {
+	if len == 0 {
+		return 0
+	}
+	bInMap := uint64(math.Ceil(math.Log2(float64(len) * hack.LoadFactorDen / hack.LoadFactorNum)))
+	return bucketSize * uint64(1<<bInMap)
+}
+
 // NewMemAwareMap creates a new MemAwareMap.
-func NewMemAwareMap[K comparable, V any](sizeOfKeyAndValue uint64) MemAwareMap[K, V] {
+func NewMemAwareMap[K comparable, V any]() MemAwareMap[K, V] {
 	return MemAwareMap[K, V]{
 		m:                 make(map[K]V),
 		bInMap:            0,
-		bucketMemoryUsage: 8*(1+sizeOfKeyAndValue) + 16,
+		bucketMemoryUsage: EstimateBucketMemoryUsage(uint64(unsafe.Sizeof(*new(K)) + unsafe.Sizeof(*new(V)))),
 	}
 }
 
