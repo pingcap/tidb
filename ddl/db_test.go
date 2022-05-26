@@ -1089,10 +1089,10 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 				for _, DDLSQL := range curCase.tk2DDL {
 					tk2.MustExec(DDLSQL)
 				}
-				hook := &ddl.TestDDLCallback{}
+				hook := &ddl.TestDDLCallback{Do: dom}
 				prepared := false
 				committed := false
-				hook.OnJobUpdatedExported = func(job *model.Job) {
+				hook.OnJobRunBeforeExported = func(job *model.Job) {
 					if job.SchemaState == startState {
 						if !prepared {
 							tk.MustExec("begin pessimistic")
@@ -1101,7 +1101,10 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 							}
 							prepared = true
 						}
-					} else if job.SchemaState == endState {
+					}
+				}
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.SchemaState == endState {
 						if !committed {
 							if curCase.failCommit {
 								err := tk.ExecToErr("commit")
@@ -1250,7 +1253,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 
 	var cancelErr error
 	var rs []sqlexec.RecordSet
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	d := dom.DDL()
 	originalHook := d.GetHook()
 	d.SetHook(hook)
@@ -1276,6 +1279,8 @@ func TestCancelJobWriteConflict(t *testing.T) {
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("retry_once")`))
 			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL", `return(true)`))
+			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL")) }()
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}
