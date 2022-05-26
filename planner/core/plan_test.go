@@ -855,7 +855,7 @@ func TestIssue34863(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test"
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists c")
 	tk.MustExec("drop table if exists o")
 	tk.MustExec("create table c(c_id bigint);")
