@@ -43,7 +43,7 @@ type FieldType struct {
 	tp byte
 	// flag represent NotNull, Unsigned, PriKey flags etc.
 	flag uint
-	// represent size of bytes of the field
+	// flen represent size of bytes of the field
 	flen int
 	// represent decimal length of the field
 	decimal int
