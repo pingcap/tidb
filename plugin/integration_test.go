@@ -30,6 +30,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAuditLogVariable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	// default value should be 2
+	tk.MustQuery("select @@tidb_audit_log_version").Check(testkit.Rows("2"))
+	// `tidb_audit_log_version` should be hidden
+	tk.MustQuery("show variables like '%tidb_audit_log_version%'").Check(testkit.Rows())
+	// test global change
+	tk.MustExec("set @@global.tidb_audit_log_version=1")
+	tk.MustQuery("select @@tidb_audit_log_version").Check(testkit.Rows("1"))
+}
+
 // Audit tests cannot run in parallel.
 func TestAuditLogNormal(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -50,7 +64,8 @@ func TestAuditLogNormal(t *testing.T) {
 		tables   string
 		cmd      string
 		event    plugin.GeneralEvent
-		resCnt   int
+		resCntV2 int
+		resCntV1 int
 	}
 
 	tests := []normalTest{
@@ -121,6 +136,12 @@ func TestAuditLogNormal(t *testing.T) {
 			stmtType: "other",
 			dbs:      "test",
 			tables:   "seq",
+		},
+		{
+			sql:      "DROP TEMPORARY TABLE t3",
+			stmtType: "DropTable",
+			dbs:      "test",
+			tables:   "t3",
 		},
 		{
 			sql:      "DROP TABLE t4",
@@ -508,7 +529,8 @@ func TestAuditLogNormal(t *testing.T) {
 		{
 			sql:      "SHOW TABLE STATUS LIKE 't1'",
 			stmtType: "Show",
-			resCnt:   3, // Start + SHOW TABLE + Internal SELECT .. FROM IS.TABLES in current session
+			resCntV2: 3, // Start + SHOW TABLE + Internal SELECT .. FROM IS.TABLES in current session
+			resCntV1: 2,
 		},
 		{
 			sql:      "SHOW TABLES",
@@ -688,43 +710,83 @@ func TestAuditLogNormal(t *testing.T) {
 		}
 		testResults = append(testResults, audit)
 	}
+
 	loadPlugin(t, onGeneralEvent)
 	defer plugin.Shutdown(context.Background())
 
-	require.NoError(t, conn.HandleQuery(context.Background(), "use test"))
-	for _, test := range tests {
+	executeQuery := func(test normalTest, version int) ([]normalTest, string) {
 		testResults = testResults[:0]
-		errMsg := fmt.Sprintf("statement: %s", test.sql)
+		errMsg := fmt.Sprintf("statement: %s for audit log version %d", test.sql, version)
 		query := append([]byte{mysql.ComQuery}, []byte(test.sql)...)
 		err := conn.Dispatch(context.Background(), query)
 		require.NoError(t, err, errMsg)
-		resultCount := test.resCnt
-		if resultCount == 0 {
-			resultCount = 2
+
+		var resultCount int
+		if version == 1 {
+			resultCount = test.resCntV1
+			if resultCount == 0 {
+				resultCount = 1
+			}
+		} else {
+			resultCount = test.resCntV2
+			if resultCount == 0 {
+				resultCount = 2
+			}
 		}
 		require.Equal(t, resultCount, len(testResults), errMsg)
+		return testResults, errMsg
+	}
 
-		result := testResults[0]
+	checkCompleteResult := func(result normalTest, errMsg string) {
+		require.Equal(t, "Query", result.cmd, errMsg)
+		if result.text == "" {
+			require.Equal(t, result.sql, result.text, errMsg)
+		} else {
+			require.Equal(t, result.text, result.text, errMsg)
+		}
+		require.Equal(t, result.rows, result.rows, errMsg)
+		require.Equal(t, result.stmtType, result.stmtType, errMsg)
+		require.Equal(t, result.dbs, result.dbs, errMsg)
+		require.Equal(t, result.tables, result.tables, errMsg)
+		require.Equal(t, "Query", result.cmd, errMsg)
+	}
+
+	// for tidb_audit_log_version=2
+	require.NoError(t, conn.HandleQuery(context.Background(), "use test"))
+	for _, test := range tests {
+		results, errMsg := executeQuery(test, 2)
+
+		result := results[0]
 		require.Equal(t, "Query", result.cmd, errMsg)
 		require.Equal(t, plugin.Starting, result.event, errMsg)
 
-		result = testResults[resultCount-1]
-		require.Equal(t, "Query", result.cmd, errMsg)
-		if test.text == "" {
-			require.Equal(t, test.sql, result.text, errMsg)
-		} else {
-			require.Equal(t, test.text, result.text, errMsg)
-		}
-		require.Equal(t, test.rows, result.rows, errMsg)
-		require.Equal(t, test.stmtType, result.stmtType, errMsg)
-		require.Equal(t, test.dbs, result.dbs, errMsg)
-		require.Equal(t, test.tables, result.tables, errMsg)
-		require.Equal(t, "Query", result.cmd, errMsg)
+		result = results[len(results)-1]
+		checkCompleteResult(result, errMsg)
 		require.Equal(t, plugin.Completed, result.event, errMsg)
-		for i := 1; i < resultCount-1; i++ {
+
+		for i := 1; i < len(results)-1; i++ {
 			result = testResults[i]
 			require.Equal(t, "Query", result.cmd, errMsg)
 			require.Equal(t, plugin.Completed, result.event, errMsg)
+		}
+	}
+
+	// for tidb_audit_log_version=1
+	require.NoError(t, conn.HandleQuery(context.Background(), "drop database test"))
+	require.NoError(t, conn.HandleQuery(context.Background(), "create database test"))
+	require.NoError(t, conn.HandleQuery(context.Background(), "use test"))
+	require.NoError(t, conn.HandleQuery(context.Background(), "set @@global.tidb_audit_log_version=1"))
+	for _, test := range tests {
+		results, errMsg := executeQuery(test, 1)
+
+		result := testResults[len(results)-1]
+		checkCompleteResult(result, errMsg)
+		require.Equal(t, plugin.Log, result.event, errMsg)
+
+		for i := 0; i < len(results)-1; i++ {
+			result = results[i]
+			require.Equal(t, "Query", result.cmd, errMsg)
+			require.Equal(t, plugin.Log, result.event, errMsg)
 		}
 	}
 }
@@ -773,6 +835,7 @@ func loadPlugin(t *testing.T, onGeneralEvent func(context.Context, *variable.Ses
 		}, nil
 	}
 	plugin.SetTestHook(loadOne)
+	defer plugin.ClearTestHook()
 
 	// trigger load.
 	err := plugin.Load(ctx, cfg)

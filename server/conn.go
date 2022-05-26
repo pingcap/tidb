@@ -1121,7 +1121,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		err = cc.dispatch(ctx, data)
 		cc.chunkAlloc.Reset()
 		if err != nil {
-			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
+			cc.auditForV2(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				disconnectNormal.Inc()
@@ -1799,7 +1799,11 @@ func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLo
 	return planReplayerLoadInfo.Update(data)
 }
 
-func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
+func (cc *clientConn) auditForV2(eventType plugin.GeneralEvent) {
+	if variable.AuditLogVersion.Load() < 2 {
+		return
+	}
+
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
@@ -2018,7 +2022,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
-	cc.audit(plugin.Starting)
+	cc.auditForV2(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
 	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.

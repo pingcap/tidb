@@ -321,6 +321,10 @@ func SetTestHook(fn func(plugin *Plugin, dir string, pluginID ID) (manifest func
 	testHook = &struct{ loadOne loadFn }{loadOne: fn}
 }
 
+func ClearTestHook() {
+	testHook = nil
+}
+
 func loadManifestByGoPlugin(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 	plugin.Path = filepath.Join(dir, string(pluginID)+LibrarySuffix)
 	plugin.library, err = gplugin.Open(plugin.Path)

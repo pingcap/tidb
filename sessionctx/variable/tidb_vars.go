@@ -701,6 +701,8 @@ const (
 	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
 	// TiDBPrepPlanCacheMemoryGuardRatio is used to prevent [performance.max-memory] from being exceeded
 	TiDBPrepPlanCacheMemoryGuardRatio = "tidb_prepared_plan_cache_memory_guard_ratio"
+	// TiDBAuditLogVersion indicates the version for tidb audit log
+	TiDBAuditLogVersion = "tidb_audit_log_version"
 )
 
 // TiDB intentional limits
@@ -888,6 +890,7 @@ const (
 	DefTiDBEnablePrepPlanCache                   = true
 	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
+	DefTiDBAuditLogVersion                       = 2
 )
 
 // Process global variables.
@@ -928,6 +931,7 @@ var (
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
 	OOMAction                             = atomic.NewString(DefTiDBMemOOMAction)
+	AuditLogVersion                       = atomic.NewInt64(DefTiDBAuditLogVersion)
 	// variables for plan cache
 	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
 	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)

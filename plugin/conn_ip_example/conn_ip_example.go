@@ -103,6 +103,8 @@ func OnGeneralEvent(ctx context.Context, sctx *variable.SessionVars, event plugi
 		fmt.Printf("---- executed by user: %#v\n", sctx.User)
 	}
 	switch event {
+	case plugin.Log:
+		fmt.Println("---- event: Log")
 	case plugin.Starting:
 		fmt.Println("---- event: Statement Starting")
 	case plugin.Completed:

@@ -1570,6 +1570,20 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBAuditLogVersion, Hidden: true, Value: strconv.Itoa(2), Type: TypeUnsigned, MinValue: 1, MaxValue: 2,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatInt(AuditLogVersion.Load(), 10), nil
+		},
+		SetGlobal: func(s *SessionVars, sVal string) error {
+			val, err := strconv.ParseInt(sVal, 10, 64)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			AuditLogVersion.Store(val)
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

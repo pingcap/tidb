@@ -61,9 +61,7 @@ func TestLoadPluginSuccess(t *testing.T) {
 			return ExportManifest(m)
 		}, nil
 	})
-	defer func() {
-		testHook = nil
-	}()
+	defer ClearTestHook()
 
 	// trigger load.
 	err := Load(ctx, cfg)
@@ -136,9 +134,7 @@ func TestLoadPluginSkipError(t *testing.T) {
 			return ExportManifest(m)
 		}, nil
 	})
-	defer func() {
-		testHook = nil
-	}()
+	defer ClearTestHook()
 
 	// trigger load.
 	err := Load(ctx, cfg)
@@ -212,9 +208,7 @@ func TestLoadFail(t *testing.T) {
 			return ExportManifest(m)
 		}, nil
 	})
-	defer func() {
-		testHook = nil
-	}()
+	defer ClearTestHook()
 
 	err := Load(ctx, cfg)
 	require.Error(t, err)

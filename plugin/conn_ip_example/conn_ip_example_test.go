@@ -56,6 +56,7 @@ func TestLoadPlugin(t *testing.T) {
 		}, nil
 	}
 	plugin.SetTestHook(loadOne)
+	defer plugin.ClearTestHook()
 
 	// trigger load.
 	err := plugin.Load(ctx, cfg)

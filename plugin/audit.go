@@ -24,9 +24,11 @@ import (
 type GeneralEvent byte
 
 const (
-	// Starting represents a GeneralEvent that is about to start
+	// Log presents log event. Only valid when tidb_audit_log_ver=1
+	Log GeneralEvent = iota
+	// Starting represents a GeneralEvent that is about to start. Only valid when tidb_audit_log_ver=1
 	Starting GeneralEvent = iota
-	// Completed represents a GeneralEvent that has completed
+	// Completed represents a GeneralEvent that has completed. Only valid when tidb_audit_log_ver=1
 	Completed
 	// Error represents a GeneralEvent that has error (and typically couldn't start)
 	Error
