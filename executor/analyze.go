@@ -786,7 +786,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		defer wg.Wait()
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
-			colExec.memTracker.Release(-colExec.memTracker.BytesConsumed())
+			colExec.memTracker.Release(colExec.memTracker.BytesConsumed())
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
@@ -1202,7 +1202,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			totalSampleCollectorSize += sampleCollector.MemSize
 		}
 	}
-	e.memTracker.Release(-rootRowCollector.Base().MemSize - totalSampleCollectorSize)
+	e.memTracker.Release(rootRowCollector.Base().MemSize + totalSampleCollectorSize)
 	return
 }
 
@@ -1417,7 +1417,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
 		e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
-		e.memTracker.Release(-dataSize - colRespSize)
+		e.memTracker.Release(dataSize + colRespSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -1554,7 +1554,7 @@ workLoop:
 			}
 			releaseCollectorMemory := func() {
 				if !task.isColumn {
-					e.memTracker.Release(-collector.MemSize)
+					e.memTracker.Release(collector.MemSize)
 				}
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
