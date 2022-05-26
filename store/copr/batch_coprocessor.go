@@ -644,7 +644,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 
 	failpoint.Inject("check_only_dispatched_to_tiflash_mpp_nodes", func(val failpoint.Value) {
 		// This failpoint will be tested in test-infra case, because we needs setup a cluster.
-		// All ReadNode addrs are stored in val, each addr is seperated by semicolon.
+		// All ReadNode addrs are stored in val, each addr is separated by semicolon.
 		str := val.(string)
 		addrs := strings.Split(str, ";")
 		if len(addrs) < 1 {
