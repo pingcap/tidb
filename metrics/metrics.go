@@ -187,11 +187,11 @@ func RegisterMetrics() {
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
 
 	if config.GetGlobalConfig().Status.MetricsSimplified {
-		UnregisterUnused()
+		unregisterUnusedByGrafana()
 	}
 }
 
-func UnregisterUnused() {
+func unregisterUnusedByGrafana() {
 	var unusedMetricsByGrafana = []prometheus.Collector{
 		StatementDeadlockDetectDuration,
 		ValidateReadTSFromPDCount,
