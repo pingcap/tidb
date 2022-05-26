@@ -2974,6 +2974,12 @@ func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1", "2 2", "3 <nil>"))
 	// Normal sql
 	tk1.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2", "3 <nil>"))
+	tk1.MustExec("commit")
+
+	// After beginnig a new txn, the infoSchema should be the latest
+	tk1.MustExec("begin pessimistic")
+	tk1.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "3"))
+
 }
 
 func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *testkit.TestKit, stmtID uint32) {
@@ -3105,40 +3111,4 @@ func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
 	require.Nil(t, err)
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-}
-
-// In rc/for update read, after infoSchema changed, we should miss the cache and rebuild again as the latest infoSchema version
-// is larger than prepare's infoSchema version.
-// However, the rebuild is based on the context provider's infoSchema (often not equal to the latest infoSchema).
-// But when we begin a new txn, we should use the latest infoSchema at the time of beginning.
-func TestNewTxnCanUseTheLatestInfoSchema(t *testing.T) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-	tk1.MustExec("drop table if exists t1")
-	tk1.MustExec("create table t1(id int primary key, c int)")
-	tk1.MustExec("insert into t1 values(1, 1), (2, 2)")
-	tk1.MustExec("prepare s from 'select * from t1 for update'")
-
-	tk1.MustExec("begin pessimistic")
-	tk1.MustQuery("execute s").Check(testkit.Rows("1 1", "2 2"))
-
-	tk2.MustExec("alter table t1 drop column c")
-
-	tk1.MustQuery("execute s").Check(testkit.Rows("1 1", "2 2"))
-	tk1.MustExec("commit")
-
-	tk1.MustExec("begin pessimistic")
-	tk1.MustQuery("execute s").Check(testkit.Rows("1", "2"))
-	tk1.MustExec("commit")
 }
