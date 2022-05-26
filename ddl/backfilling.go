@@ -321,6 +321,10 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
 		})
 
+		failpoint.Inject("mockBackfillSlow", func() {
+			time.Sleep(30 * time.Millisecond)
+		})
+
 		// Dynamic change batch size.
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
 		result := w.handleBackfillTask(d, task, bf)
