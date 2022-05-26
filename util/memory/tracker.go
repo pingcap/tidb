@@ -17,7 +17,6 @@ package memory
 import (
 	"bytes"
 	"fmt"
-	"go.uber.org/zap/buffer"
 	"sort"
 	"strconv"
 	"sync"
