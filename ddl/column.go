@@ -631,15 +631,6 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 		return nil, nil, nil, errors.Trace(err)
 	}
 	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
-	if len(idxInfos) > 0 {
-		for _, idxInfo := range idxInfos {
-			err = checkDropIndexOnAutoIncrementColumn(tblInfo, idxInfo)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return nil, nil, nil, err
-			}
-		}
-	}
 	return tblInfo, colInfo, idxInfos, nil
 }
 
