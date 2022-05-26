@@ -43,6 +43,7 @@ var generalEvent2String = map[GeneralEvent]string{
 	Error:     "ERROR",
 }
 
+// GeneralEventFromString gets the `GeneralEvent` from the given string
 func GeneralEventFromString(s string) (GeneralEvent, error) {
 	upperStr := strings.ToUpper(s)
 	for event, str := range generalEvent2String {
@@ -53,8 +54,17 @@ func GeneralEventFromString(s string) (GeneralEvent, error) {
 	return 0, errors.Errorf("Invalid general event: %s", s)
 }
 
+// String returns the string for the `GeneralEvent`
 func (e GeneralEvent) String() string {
-	return generalEvent2String[e]
+	switch e {
+	case Starting:
+		return "STARTING"
+	case Completed:
+		return "COMPLETED"
+	case Error:
+		return "ERROR"
+	}
+	return ""
 }
 
 // ConnectionEvent presents TiDB connection event.
