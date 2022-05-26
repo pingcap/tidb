@@ -17,6 +17,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"go.uber.org/zap/buffer"
 	"sort"
 	"strconv"
 	"sync"
@@ -293,9 +294,13 @@ func (t *Tracker) remove(oldChild *Tracker) {
 	t.mu.Unlock()
 	if found {
 		oldChild.setParent(nil)
-		t.Consume(-oldChild.BytesConsumed())
-		atomic.AddInt64(&t.bytesReleased, -oldChild.bytesReleased)
+		t.ClearChildTrack(oldChild)
 	}
+}
+
+func (t *Tracker) ClearChildTrack(oldChild *Tracker) {
+	t.Consume(-oldChild.BytesConsumed())
+	atomic.AddInt64(&t.bytesReleased, -oldChild.bytesReleased)
 }
 
 // ReplaceChild removes the old child specified in "oldChild" and add a new
@@ -553,7 +558,7 @@ func (t *Tracker) DetachFromGlobalTracker() {
 	if !parent.isGlobal {
 		panic("Detach from a non-GlobalTracker")
 	}
-	parent.Consume(-t.BytesConsumed())
+	parent.ClearChildTrack(t)
 	t.setParent(nil)
 }
 
