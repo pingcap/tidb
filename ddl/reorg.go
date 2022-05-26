@@ -205,11 +205,11 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		if lease > 0 {
 			delayForAsyncCommit()
 		}
-		// this job is cancelling, we should return ErrCancelledDDLJob directly.
+		// This job is cancelling, we should return ErrCancelledDDLJob directly.
 		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
 		// A: Yes, consider the case that we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
-		// and then the backfill workers send signal to the `doneCh` of the reorgCtx, and then the ddl worker will remove the reorgCtx and
-		// update the ddl job to `done`, but at the commit time, the ddl txn will raise a "write conflict" error and retry, and it happens.
+		// and then the backfill workers send signal to the `doneCh` of the reorgCtx, and then the DDL worker will remove the reorgCtx and
+		// update the DDL job to `done`, but at the commit time, the DDL txn will raise a "write conflict" error and retry, and it happens.
 		if job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
