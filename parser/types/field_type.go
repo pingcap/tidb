@@ -47,7 +47,7 @@ type FieldType struct {
 	flen int
 	// decimal represent decimal length of the field
 	decimal int
-	// represent character set
+	// charset represent character set
 	charset string
 	// represent collate rules of the charset
 	collate string
