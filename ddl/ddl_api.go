@@ -1143,6 +1143,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		}
 		return strconv.FormatUint(value, 10), false, nil
 	}
+
 	switch tp {
 	case mysql.TypeSet:
 		val, err := getSetDefaultValue(v, col)
@@ -1150,7 +1151,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	case mysql.TypeEnum:
 		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
-	case mysql.TypeDuration, mysql.TypeDate, mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+	case mysql.TypeDuration, mysql.TypeDate:
 		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
 			return "", false, errors.Trace(err)
 		}
@@ -1158,6 +1159,10 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
 			// For BIT fields, convert int into BinaryLiteral.
 			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), false, nil
+		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if v_, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err == nil {
+			v = v_
 		}
 	}
 
