@@ -131,8 +131,8 @@ func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	return nil
 }
 
-func (p *baseTxnContextProvider) OnStmtErrorForNextAction(tp sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
-	switch tp {
+func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+	switch point {
 	case sessiontxn.StmtErrAfterPessimisticLock:
 		// for pessimistic lock error, return the error by default
 		return sessiontxn.ErrorAction(err)
