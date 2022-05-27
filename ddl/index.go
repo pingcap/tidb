@@ -53,7 +53,7 @@ const (
 	MaxCommentLength = 1024
 )
 
-func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, error) {
+func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -78,7 +78,11 @@ func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*a
 
 		// The sum of all lengths must be shorter than the max length for prefix.
 		if sumLength > config.GetGlobalConfig().MaxIndexLength {
-			return nil, dbterror.ErrTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+			if ctx != nil && !ctx.GetSessionVars().StrictSQLMode {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(config.GetGlobalConfig().MaxIndexLength))
+			} else {
+				return nil, dbterror.ErrTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+			}
 		}
 
 		idxParts = append(idxParts, &model.IndexColumn{
@@ -221,12 +225,12 @@ func calcBytesLengthForDecimal(m int) int {
 	return (m / 9 * 4) + ((m%9)+1)/2
 }
 
-func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, indexPartSpecifications []*ast.IndexPartSpecification, state model.SchemaState) (*model.IndexInfo, error) {
+func buildIndexInfo(ctx sessionctx.Context, tblInfo *model.TableInfo, indexName model.CIStr, indexPartSpecifications []*ast.IndexPartSpecification, state model.SchemaState) (*model.IndexInfo, error) {
 	if err := checkTooLongIndex(indexName); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	idxColumns, err := buildIndexColumns(tblInfo.Columns, indexPartSpecifications)
+	idxColumns, err := buildIndexColumns(ctx, tblInfo.Columns, indexPartSpecifications)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -467,7 +471,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		indexInfo, err = buildIndexInfo(tblInfo, indexName, indexPartSpecifications, model.StateNone)
+		indexInfo, err = buildIndexInfo(nil, tblInfo, indexName, indexPartSpecifications, model.StateNone)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)

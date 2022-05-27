@@ -1470,3 +1470,21 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	infoSyncer.ReportMinStartTS(dom.Store())
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 }
+
+func TestNonRestrictedSqlMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("DROP DATABASE IF EXISTS `t1`")
+	tk.MustExec("DROP DATABASE IF EXISTS `t2`")
+	_, err := tk.Exec("create table t1 (id int, name varchar(2048), index(name)) charset=utf8;")
+	require.Error(t, err)
+	tk.MustExec("set @@sql_mode=''")
+
+	_, err = tk.Exec("create table t2 (id int, name varchar(2048), index(name)) charset=utf8;")
+	require.NoError(t, err)
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+}
