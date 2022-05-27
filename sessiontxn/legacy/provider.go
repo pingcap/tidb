@@ -196,11 +196,6 @@ func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
 	return nil
 }
 
-// ReplaceStmtInfoSchema replaces the current info schema
-func (p *SimpleTxnContextProvider) ReplaceStmtInfoSchema(is infoschema.InfoSchema) {
-	p.InfoSchema = is
-}
-
 // activeTxn actives the txn
 func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
 	if p.isTxnActive {

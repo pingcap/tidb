@@ -38,11 +38,10 @@ type baseTxnContextProvider struct {
 	getStmtForUpdateTSFunc func() (uint64, error)
 
 	// Runtime states
-	ctx            context.Context
-	infoSchema     infoschema.InfoSchema
-	stmtInfoSchema infoschema.InfoSchema
-	txn            kv.Transaction
-	isTxnPrepared  bool
+	ctx           context.Context
+	infoSchema    infoschema.InfoSchema
+	txn           kv.Transaction
+	isTxnPrepared bool
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -91,11 +90,6 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	if is := p.sctx.GetSessionVars().SnapshotInfoschema; is != nil {
 		return is.(infoschema.InfoSchema)
 	}
-
-	if p.stmtInfoSchema != nil {
-		return p.stmtInfoSchema
-	}
-
 	return p.infoSchema
 }
 

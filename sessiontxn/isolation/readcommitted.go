@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
@@ -128,11 +127,6 @@ func (p *PessimisticRCTxnContextProvider) warmUp() error {
 	}
 	p.prepareStmtTS()
 	return nil
-}
-
-// ReplaceStmtInfoSchema replaces the current info schema
-func (p *PessimisticRCTxnContextProvider) ReplaceStmtInfoSchema(is infoschema.InfoSchema) {
-	p.stmtInfoSchema = is
 }
 
 func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
