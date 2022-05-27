@@ -331,22 +331,36 @@ func TestCreateTableWithIntegerColWithDefault(t *testing.T) {
 	tk.MustExec("create table t1 (a tinyint unsigned default 1.25);")
 	ret := tk.MustQuery("show create table t1").Rows()[0][1]
 	require.True(t, strings.Contains(ret.(string), "`a` tinyint(3) unsigned DEFAULT '1'"))
+
 	tk.MustExec("drop table t1")
 	tk.MustExec("create table t1 (a smallint default -1.25);")
 	ret = tk.MustQuery("show create table t1").Rows()[0][1]
 	require.True(t, strings.Contains(ret.(string), "`a` smallint(6) DEFAULT '-1'"))
+
 	tk.MustExec("drop table t1")
 	tk.MustExec("create table t1 (a mediumint default 2.8);")
 	ret = tk.MustQuery("show create table t1").Rows()[0][1]
 	require.True(t, strings.Contains(ret.(string), "`a` mediumint(9) DEFAULT '3'"))
+
 	tk.MustExec("drop table t1")
 	tk.MustExec("create table t1 (a int default -2.8);")
 	ret = tk.MustQuery("show create table t1").Rows()[0][1]
 	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '-3'"))
+
 	tk.MustExec("drop table t1")
 	tk.MustExec("create table t1 (a bigint unsigned default 0.0);")
 	ret = tk.MustQuery("show create table t1").Rows()[0][1]
 	require.True(t, strings.Contains(ret.(string), "`a` bigint(20) unsigned DEFAULT '0'"))
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a float default '0012.43');")
+	ret = tk.MustQuery("show create table t1").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` float DEFAULT '12.43'"))
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a double default '12.4300');")
+	ret = tk.MustQuery("show create table t1").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` double DEFAULT '12.43'"))
 }
 
 func TestAlterTableWithValidation(t *testing.T) {
