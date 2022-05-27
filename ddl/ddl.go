@@ -1058,7 +1058,7 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 	return IterHistoryDDLJobs(txn, finishFn)
 }
 
-// GetAllHistoryDDLJobs get all the done ddl jobs.
+// GetAllHistoryDDLJobs get all the done DDL jobs.
 func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 	return m.GetAllHistoryDDLJobs()
 }
