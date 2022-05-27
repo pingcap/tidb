@@ -78,6 +78,8 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 type tableMetaMgr interface {
 	InitTableMeta(ctx context.Context) error
 	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
+	// re-allocate rowIDs across lightning instances
+	// only parallel import needs this
 	ReallocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
@@ -180,23 +182,19 @@ func (m *dbTableMetaMgr) ReallocTableRowIDs(ctx context.Context, newRowIDCount i
 		newRowIDMax  int64
 	)
 	err = exec.Transact(ctx, "realloc table rowID", func(ctx context.Context, tx *sql.Tx) error {
-		rows, err := tx.QueryContext(
+		row := tx.QueryRowContext(
 			ctx,
 			fmt.Sprintf("SELECT MAX(row_id_max) from %s WHERE table_id = ? FOR UPDATE", m.tableName),
 			m.tr.tableInfo.ID,
 		)
-		if err != nil {
+		if row.Err() != nil {
 			return errors.Trace(err)
 		}
-		defer rows.Close()
-		var query string
-		for rows.Next() {
-			if err := rows.Scan(&newRowIDBase); err != nil {
-				return errors.Trace(err)
-			}
-			newRowIDMax = newRowIDBase + newRowIDCount
-			query = fmt.Sprintf("UPDATE %s SET row_id_max = %d WHERE table_id = ? AND task_id = ?", m.tableName, newRowIDMax)
+		if err := row.Scan(&newRowIDBase); err != nil {
+			return errors.Trace(err)
 		}
+		newRowIDMax = newRowIDBase + newRowIDCount
+		query := fmt.Sprintf("UPDATE %s SET row_id_max = %d WHERE table_id = ? AND task_id = ?", m.tableName, newRowIDMax)
 		if _, err := tx.ExecContext(ctx, query, m.tr.tableInfo.ID, m.taskID); err != nil {
 			return err
 		}
@@ -1080,6 +1078,8 @@ func (m noopTableMetaMgr) InitTableMeta(ctx context.Context) error {
 }
 
 func (m noopTableMetaMgr) ReallocTableRowIDs(ctx context.Context, _ int64) (int64, int64, error) {
+	// we don't need to reconcile rowIDs across all the instances
+	// barring using parallel import
 	return 0, 0, nil
 }
 
