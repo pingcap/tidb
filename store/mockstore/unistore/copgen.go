@@ -68,7 +68,7 @@ func (c *TestGenConfig) Serialize() ([]byte, error) {
 	return json.MarshalIndent(c, "", "  ")
 }
 
-func getMockedRegionInfo(store kv.Storage, tblInfo *model.TableInfo) ([]RegionInfo, error) {
+func (c *TestGenConfig) getMockedRegionInfo(store kv.Storage, tblInfo *model.TableInfo) ([]RegionInfo, error) {
 	mockStorage, ok := store.(*mockstorage.MockStorage)
 	if !ok {
 		return nil, fmt.Errorf("the store is not a mockStorage")
@@ -77,7 +77,6 @@ func getMockedRegionInfo(store kv.Storage, tblInfo *model.TableInfo) ([]RegionIn
 	start, end := tablecodec.GetTableHandleKeyRange(tblInfo.ID)
 	ctx := context.Background()
 	regions, err := pdClient.ScanRegions(ctx, start, end, -1)
-	fmt.Printf("regions: %v\n", regions)
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +86,6 @@ func getMockedRegionInfo(store kv.Storage, tblInfo *model.TableInfo) ([]RegionIn
 	for _, region := range regions {
 		start := region.Meta.StartKey
 		end := region.Meta.EndKey
-		fmt.Println("start", start)
-		fmt.Println("end", end)
 		regionInfo := RegionInfo{
 			ID:      region.Meta.Id,
 			Version: region.Meta.RegionEpoch.Version,
@@ -97,14 +94,16 @@ func getMockedRegionInfo(store kv.Storage, tblInfo *model.TableInfo) ([]RegionIn
 			End:     end,
 			Pairs:   make([]KvPair, 0),
 		}
-		scanReq := &kvrpcpb.ScanRequest{StartKey: start, EndKey: end, Context: &kvrpcpb.Context{RegionId: region.Meta.Id, RegionEpoch: region.Meta.RegionEpoch},
-			Version: math.MaxUint64,
-			Limit:   math.MaxUint32}
+		scanReq := &kvrpcpb.ScanRequest{
+			StartKey: start,
+			EndKey:   end,
+			Context:  &kvrpcpb.Context{RegionId: region.Meta.Id, RegionEpoch: region.Meta.RegionEpoch},
+			Version:  math.MaxUint64,
+			Limit:    math.MaxUint32}
 		req := tikvrpc.NewRequest(tikvrpc.CmdScan, scanReq)
 
 		ctx := context.Background()
-		// TODO(zhifeng): determine the correct store name
-		resp, err := kvClient.SendRequest(ctx, "store1", req, 10*time.Second)
+		resp, err := kvClient.SendRequest(ctx, c.Cluster.GetAllStores()[0].Address, req, 10*time.Second)
 		if err != nil {
 			return nil, err
 		}
@@ -112,16 +111,13 @@ func getMockedRegionInfo(store kv.Storage, tblInfo *model.TableInfo) ([]RegionIn
 			return nil, fmt.Errorf("resp is nil")
 		}
 		scanResp := resp.Resp.(*kvrpcpb.ScanResponse)
-		fmt.Printf("number of KV in region %d is %d\n", region.Meta.Id, len(scanResp.Pairs))
 		for _, pair := range scanResp.Pairs {
 			if tablecodec.DecodeTableID(pair.Key) == tblInfo.ID {
 				regionInfo.Pairs = append(regionInfo.Pairs, KvPair{Key: pair.Key, Value: pair.Value})
 			}
 		}
-		fmt.Printf("number of KV of table in region %d is %d\n", region.Meta.Id, len(regionInfo.Pairs))
 		regionInfos = append(regionInfos, regionInfo)
 	}
-
 	return regionInfos, err
 }
 
@@ -157,6 +153,18 @@ func (c *TestGenConfig) RemoveTable(dbName, tblName string) error {
 	return nil
 }
 
+func (c *TestGenConfig) split(key []byte, splitKey []byte) {
+	region, peers, _ := c.Cluster.GetRegionByKey(key)
+	if bytes.Compare(region.StartKey, key) != 0 {
+		newRegionID := c.Cluster.AllocID()
+		peersID := make([]uint64, 0, len(region.Peers))
+		for _, peer := range region.Peers {
+			peersID = append(peersID, peer.Id)
+		}
+		c.Cluster.Split(region.Id, newRegionID, splitKey, peersID, peers.Id)
+	}
+}
+
 func (c *TestGenConfig) dumpTable(tblID int64) error {
 	tbl, exists := c.dom.InfoSchema().TableByID(tblID)
 	if !exists {
@@ -168,35 +176,13 @@ func (c *TestGenConfig) dumpTable(tblID int64) error {
 	rawStartKey := codec.EncodeBytes(nil, tableStart)
 	rawEndKey := codec.EncodeBytes(nil, tableEnd)
 
-	fmt.Printf("%v %v %v %v\n", tableStart, tableEnd, rawStartKey, rawEndKey)
+	c.split(rawStartKey, tableStart)
+	c.split(rawEndKey, tableEnd)
 
-	firstRegion, peers, _ := c.Cluster.GetRegionByKey(rawStartKey)
-	fmt.Printf("firstRegion id %d region start %v table start %v\n", firstRegion.Id, firstRegion.StartKey, rawStartKey)
-	if bytes.Compare(firstRegion.StartKey, rawStartKey) != 0 {
-		newRegionID := c.Cluster.AllocID()
-		peersID := make([]uint64, 0, len(firstRegion.Peers))
-		for _, peer := range firstRegion.Peers {
-			peersID = append(peersID, peer.Id)
-		}
-		c.Cluster.Split(firstRegion.Id, newRegionID, tableStart, peersID, peers.Id)
-	}
-
-	lastRegion, peers, _ := c.Cluster.GetRegionByKey(rawEndKey)
-	fmt.Printf("lastRegion id %d region start %v table end %v\n", lastRegion.Id, lastRegion.StartKey, rawEndKey)
-	if bytes.Compare(lastRegion.StartKey, rawEndKey) != 0 {
-		newRegionID := c.Cluster.AllocID()
-		peersID := make([]uint64, 0, len(lastRegion.Peers))
-		for _, peer := range lastRegion.Peers {
-			peersID = append(peersID, peer.Id)
-		}
-		c.Cluster.Split(lastRegion.Id, newRegionID, tableEnd, peersID, peers.Id)
-	}
-
-	regions, err := getMockedRegionInfo(c.store, tbl.Meta())
+	regions, err := c.getMockedRegionInfo(c.store, tbl.Meta())
 	if err != nil {
 		return err
 	}
-	fmt.Printf("number of regions of table %s is %d\n", tbl.Meta().Name.String(), len(regions))
 	tableInfo := &TableInfo{
 		ID:      tbl.Meta().ID,
 		Regions: regions,
