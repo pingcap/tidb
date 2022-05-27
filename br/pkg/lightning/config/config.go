@@ -523,6 +523,7 @@ type TikvImporter struct {
 	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
 	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	RegionSplitKeys     int                          `toml:"region-split-keys" json:"region-split-keys"`
 	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
 	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`

@@ -20,11 +20,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	atomicutil "go.uber.org/atomic"
 )
 
 type testCancelJob struct {
@@ -227,17 +229,24 @@ func TestCancel(t *testing.T) {
 	}
 
 	// Change some configurations.
-	ddl.ReorgWaitTimeout = 10 * time.Microsecond
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 8")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillSlow"))
+	}()
 
 	hook := &ddl.TestDDLCallback{Do: dom}
-	i := 0
+	i := atomicutil.NewInt64(0)
 	cancel := false
 	cancelResult := false
 	cancelWhenReorgNotStart := false
 
 	hookFunc := func(job *model.Job) {
-		if job.SchemaState == allTestCase[i].cancelState && !cancel {
+		if job.SchemaState == allTestCase[i.Load()].cancelState && !cancel {
 			if !cancelWhenReorgNotStart && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
@@ -261,7 +270,7 @@ func TestCancel(t *testing.T) {
 	}
 
 	for j, tc := range allTestCase {
-		i = j
+		i.Store(int64(j))
 		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
 		if tc.onJobBefore {
 			restHook(hook)

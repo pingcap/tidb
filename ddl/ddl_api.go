@@ -4146,6 +4146,9 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 	if col.IsPKHandleColumn(tblInfo) {
 		return false, dbterror.ErrUnsupportedPKHandle
 	}
+	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
+		return false, dbterror.ErrCantDropColWithAutoInc
+	}
 	return true, nil
 }
 
@@ -4178,7 +4181,6 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 	if (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
 		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
 		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) ||
-		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8) ||
 		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4) {
 		// TiDB only allow utf8/latin1 to be changed to utf8mb4, or changing the collation when the charset is utf8/utf8mb4/latin1.
 		return nil
@@ -4555,7 +4557,6 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 // checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
 // Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
 // will cause index idx to break the max-prefix-length constraint.
-//
 func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
 	columns := make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
 	columns = append(columns, tbInfo.Columns...)
@@ -4730,12 +4731,6 @@ func (d *ddl) ChangeColumn(ctx context.Context, sctx sessionctx.Context, ident a
 func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	oldColName := spec.OldColumnName.Name
 	newColName := spec.NewColumnName.Name
-	if oldColName.L == newColName.L {
-		return nil
-	}
-	if newColName.L == model.ExtraHandleName.L {
-		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
-	}
 
 	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -4745,6 +4740,13 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	oldCol := table.FindCol(tbl.VisibleCols(), oldColName.L)
 	if oldCol == nil {
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
+	}
+
+	if oldColName.L == newColName.L {
+		return nil
+	}
+	if newColName.L == model.ExtraHandleName.L {
+		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 
 	allCols := tbl.Cols()
@@ -7065,11 +7067,12 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	// Initialize the cached table meta lock info in `mysql.table_cache_meta`.
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
-	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(),
+	_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil,
 		"replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	ctx.SetValue(sessionctx.QueryString, ddlQuery)
 
 	job := &model.Job{

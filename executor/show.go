@@ -87,6 +87,8 @@ type ShowExec struct {
 
 	is infoschema.InfoSchema
 
+	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
+
 	result *chunk.Chunk
 	cursor int
 
@@ -1640,8 +1642,17 @@ func (e *ShowExec) fetchShowPlugins() error {
 }
 
 func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
-	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	for _, w := range warns {
+	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	if e.CountWarningsOrErrors {
+		errCount, warnCount := stmtCtx.NumErrorWarnings()
+		if errOnly {
+			e.appendRow([]interface{}{int64(errCount)})
+		} else {
+			e.appendRow([]interface{}{int64(warnCount)})
+		}
+		return nil
+	}
+	for _, w := range stmtCtx.GetWarnings() {
 		if errOnly && w.Level != stmtctx.WarnLevelError {
 			continue
 		}
@@ -1929,13 +1940,6 @@ func runWithSystemSession(sctx sessionctx.Context, fn func(sessionctx.Context) e
 	if err != nil {
 		return err
 	}
-	// TODO(tangenta): remove the CurrentDB assignment after
-	// https://github.com/pingcap/tidb/issues/34090 is fixed.
-	originDB := sysCtx.GetSessionVars().CurrentDB
-	sysCtx.GetSessionVars().CurrentDB = sctx.GetSessionVars().CurrentDB
-	defer func() {
-		sysCtx.GetSessionVars().CurrentDB = originDB
-	}()
 	defer b.releaseSysSession(sysCtx)
 	return fn(sysCtx)
 }

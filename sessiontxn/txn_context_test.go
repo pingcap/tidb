@@ -23,16 +23,17 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
@@ -523,6 +524,9 @@ func TestTxnContextForStaleRead(t *testing.T) {
 func TestTxnContextForPrepareExecute(t *testing.T) {
 	store, do, deferFunc := setupTxnContextTest(t)
 	defer deferFunc()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -550,8 +554,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	})
 
 	// Test PlanCache
-	path = []string{"assertTxnManagerInCachedPlanExec", "assertTxnManagerInShortPointGetPlan"}
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, nil, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -685,16 +688,15 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 11"))
 	})
 
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, do.InfoSchema())
 	path := append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
 	doWithCheckPath(t, se, path, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
-		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11 100"))
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
 	})
 
 	doWithCheckPath(t, se, normalPathRecords, func() {
-		tk.MustQuery("execute s").Check(testkit.Rows("1 11 100"))
+		tk.MustQuery("execute s").Check(testkit.Rows("1 11"))
 	})
 
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
