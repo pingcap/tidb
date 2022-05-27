@@ -278,14 +278,23 @@ var tableIDMap = map[string]int64{
 	TablePlacementPolicies:               autoid.InformationSchemaDBID + 79,
 }
 
+// columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
 type columnInfo struct {
-	name      string
-	tp        byte
-	size      int
-	decimal   int
-	flag      uint
-	deflt     interface{}
-	comment   string
+	// name of column
+	name string
+	// tp is column type
+	tp byte
+	// represent size of bytes of the column
+	size int
+	// represent decimal length of the column
+	decimal int
+	// flag represent NotNull, Unsigned, PriKey flags etc.
+	flag uint
+	// deflt is default value
+	deflt interface{}
+	// comment for the column
+	comment string
+	// enumElems represent all possible literal string values of an enum column
 	enumElems []string
 }
 

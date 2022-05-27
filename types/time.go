@@ -393,6 +393,10 @@ func (t Time) IsZero() bool {
 }
 
 // InvalidZero returns a boolean indicating whether the month or day is zero.
+// Several functions are strict when passed a DATE() function value as their argument and reject incomplete dates with a day part of zero:
+// CONVERT_TZ(), DATE_ADD(), DATE_SUB(), DAYOFYEAR(), TIMESTAMPDIFF(),
+// TO_DAYS(), TO_SECONDS(), WEEK(), WEEKDAY(), WEEKOFYEAR(), YEARWEEK().
+// Mysql Doc: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html
 func (t Time) InvalidZero() bool {
 	return t.Month() == 0 || t.Day() == 0
 }
