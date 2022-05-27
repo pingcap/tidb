@@ -144,7 +144,7 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	var stmtTSFuture oracle.Future
 	switch {
 	case p.stmtUseStartTS:
-		stmtTSFuture = p.getTxnStartTSFuture()
+		stmtTSFuture = sessiontxn.FuncFuture(p.getTxnStartTS)
 	case p.availableRCCheckTS != 0 && sessVars.StmtCtx.RCCheckTS:
 		stmtTSFuture = sessiontxn.ConstantFuture(p.availableRCCheckTS)
 	default:
@@ -152,21 +152,6 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	}
 
 	p.stmtTSFuture = stmtTSFuture
-}
-
-func (p *PessimisticRCTxnContextProvider) getTxnStartTSFuture() sessiontxn.FuncFuture {
-	return func() (uint64, error) {
-		txn, err := p.sctx.Txn(false)
-		if err != nil {
-			return 0, err
-		}
-
-		if !txn.Valid() {
-			return 0, errors.New("invalid transaction")
-		}
-
-		return txn.StartTS(), nil
-	}
 }
 
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
