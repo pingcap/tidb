@@ -154,8 +154,8 @@ func TestInvalidNameWhenCreateTable(t *testing.T) {
 	tk.MustGetErrCode("create table t(t.tttt.a bigint)", errno.ErrWrongDBName)
 }
 
-// TestCreateTableIfNotExists for issue #6879
-func TestCreateTableIfNotExists(t *testing.T) {
+// TestCreateTableIfNotExistsLike for issue #6879
+func TestCreateTableIfNotExistsLike(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -770,9 +770,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustGetErrCode("alter table t charset utf8 collate latin1_bin", errno.ErrCollationCharsetMismatch)
 	tk.MustGetErrCode("alter table t charset utf8 collate utf8mb4_bin;", errno.ErrCollationCharsetMismatch)
 	tk.MustGetErrCode("alter table t charset utf8 collate utf8_bin collate utf8mb4_bin collate utf8_bin;", errno.ErrCollationCharsetMismatch)
-
-	tk.MustExec("alter table t charset utf8")
-	tk.MustExec("admin check table t")
+	tk.MustGetErrCode("alter table t charset utf8", errno.ErrUnsupportedDDLOperation)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), index i(a)) charset latin1 collate latin1_bin")
@@ -806,8 +804,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("create table t(a varchar(20), key i(a)) charset=latin1")
 	tk.MustGetErrCode("alter table t convert to charset utf8 collate utf8_unicode_ci", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t convert to charset utf8 collate utf8_general_ci", errno.ErrUnsupportedDDLOperation)
-	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
-	tk.MustGetErrCode("alter table t convert to charset latin1", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t convert to charset utf8 collate utf8_bin", errno.ErrUnsupportedDDLOperation)
 
 	// Test when column charset can not convert to the target charset.
 	tk.MustExec("drop table t;")
@@ -2702,6 +2699,23 @@ func TestDropColumnWithIndex(t *testing.T) {
 	tk.MustExec("alter table t_drop_column_with_idx drop column b")
 	query := queryIndexOnTable("test", "t_drop_column_with_idx")
 	tk.MustQuery(query).Check(testkit.Rows())
+}
+
+func TestDropColumnWithAutoInc(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int auto_increment, c int, key(b))")
+	tk.MustGetErrCode("alter table t drop column b", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
+	tk.MustExec("alter table t drop column b")
+	query := queryIndexOnTable("test", "t")
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(a int auto_increment, b int, key(a, b))")
+	tk.MustGetErrCode("alter table t drop column b", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestDropColumnWithMultiIndex(t *testing.T) {

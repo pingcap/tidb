@@ -282,7 +282,6 @@ func TestMergeJoinInDisk(t *testing.T) {
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
-		conf.OOMAction = config.OOMActionLog
 		conf.TempStoragePath = t.TempDir()
 	})
 
@@ -293,6 +292,8 @@ func TestMergeJoinInDisk(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	tk.MustExec("use test")
 
 	sm := &testkit.MockSessionManager{
