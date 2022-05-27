@@ -166,7 +166,7 @@ func (ts *TiDBStatement) Close() error {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
 			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
-				preparedObj.PreparedAst.SchemaVersion, preparedObj.PreparedAst.LastUpdatedSchemaVersion)
+				preparedObj.PreparedAst.SchemaVersion, 0)
 			if err != nil {
 				return err
 			}

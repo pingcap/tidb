@@ -191,11 +191,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		sorter.markers[i].SetOrder(i)
 	}
 	prepared := &ast.Prepared{
-		Stmt:                     stmt,
-		StmtType:                 GetStmtLabel(stmt),
-		Params:                   sorter.markers,
-		SchemaVersion:            ret.InfoSchema.SchemaMetaVersion(),
-		LastUpdatedSchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
+		Stmt:          stmt,
+		StmtType:      GetStmtLabel(stmt),
+		Params:        sorter.markers,
+		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	if topsqlstate.TopSQLEnabled() {
@@ -336,8 +335,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB,
-			prepared.SchemaVersion, prepared.LastUpdatedSchemaVersion)
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion, 0)
 		if err != nil {
 			return err
 		}

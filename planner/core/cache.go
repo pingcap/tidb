@@ -61,11 +61,10 @@ type planCacheKey struct {
 	stmtText      string
 	schemaVersion int64
 
-	// Used for RC or ForUpdateRead Only. It represents the version used to build plan cache last time.
+	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
-	// If it changed, we should rebuild the plan. However, the plan is rebuilt by using the information schema from
-	// the context provider, not the latest information schema to be consistent with the non-prepare-execute sql. But we
-	// save the latest' information schema version, which is used to build cacheKey, in order to hit plan cache.
+	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
+	// the plan in rc or for update read.
 	lastUpdatedSchemaVersion int64
 	sqlMode                  mysql.SQLMode
 	timezoneOffset           int
@@ -123,11 +122,14 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 }
 
 // NewPlanCacheKey creates a new planCacheKey object.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64, lastUpdatedSchemaVersion int64) (kvcache.Key, error) {
+// Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
+// differentiate the cache key. In other cases, it will be 0.
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
+	lastUpdatedSchemaVersion int64) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
-	if schemaVersion == 0 || lastUpdatedSchemaVersion == 0 {
+	if schemaVersion == 0 {
 		return nil, errors.New("Schema version / latest schema version uninitialized")
 	}
 	if stmtDB == "" {
