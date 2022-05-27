@@ -554,10 +554,6 @@ func setGlobalVars() {
 					cfg.Instance.CheckMb4ValueInUTF8.Store(cfg.CheckMb4ValueInUTF8.Load())
 				case "enable-collect-execution-info":
 					cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
-				case "plugin.load":
-					cfg.Instance.PluginLoad = cfg.Plugin.Load
-				case "plugin.dir":
-					cfg.Instance.PluginDir = cfg.Plugin.Dir
 				}
 			case "log":
 				switch oldName {
@@ -574,6 +570,13 @@ func setGlobalVars() {
 					cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
 				case "memory-usage-alarm-ratio":
 					cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
+				}
+			case "plugin":
+				switch oldName {
+				case "load":
+					cfg.Instance.PluginLoad = cfg.Plugin.Load
+				case "dir":
+					cfg.Instance.PluginDir = cfg.Plugin.Dir
 				}
 			default:
 			}
