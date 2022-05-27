@@ -1684,9 +1684,69 @@ func TestIsClockUnit(t *testing.T) {
 		{"DAY_MINUTE", true},
 		{"DAY_HOUR", true},
 		{"TEST", false},
+		{"SOME_MICROSECOND", false},
 	}
 	for _, col := range tbl {
 		output := types.IsClockUnit(col.input)
+		require.Equal(t, col.expected, output)
+	}
+}
+
+func TestIsDateUnit(t *testing.T) {
+	tbl := []struct {
+		input    string
+		expected bool
+	}{
+		{"Day", true},
+		{"Week", true},
+		{"month", true},
+		{"quarter", true},
+		{"YEAR", true},
+		{"DAY_MICROSECOND", true},
+		{"DAY_SECOND", true},
+		{"DAY_MINUTE", true},
+		{"DAY_HOUR", true},
+		{"YEAR_MONTH", true},
+		{"MICROSECOND", false},
+		{"SECOND", false},
+		{"MINUTE", false},
+		{"HOUR", false},
+		{"TEST", false},
+		{"SOME_DAY", false},
+	}
+	for _, col := range tbl {
+		output := types.IsDateUnit(col.input)
+		require.Equal(t, col.expected, output)
+	}
+}
+
+func TestIsMicrosecondUnit(t *testing.T) {
+	tbl := []struct {
+		input    string
+		expected bool
+	}{
+		//case "MICROSECOND", "SECOND_MICROSECOND", "MINUTE_MICROSECOND", "HOUR_MICROSECOND", "DAY_MICROSECOND":
+		{"Microsecond", true},
+		{"Second_microsecond", true},
+		{"minute_microsecond", true},
+		{"hour_microsecond", true},
+		{"DAY_MICROSECOND", true},
+		{"SECOND", false},
+		{"MINUTE", false},
+		{"HOUR", false},
+		{"DAY_SECOND", false},
+		{"DAY_MINUTE", false},
+		{"DAY_HOUR", false},
+		{"DAY", false},
+		{"WEEK", false},
+		{"MONTH", false},
+		{"QUARTER", false},
+		{"YEAR", false},
+		{"TEST", false},
+		{"SOME_MICROSECOND", false},
+	}
+	for _, col := range tbl {
+		output := types.IsDateUnit(col.input)
 		require.Equal(t, col.expected, output)
 	}
 }
