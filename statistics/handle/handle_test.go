@@ -1070,18 +1070,6 @@ partition by range (a) (
 	checkHealthy(60, 50, 66)
 }
 
-func TestHideGlobalStatsSwitch(t *testing.T) {
-	// NOTICE: remove this test when this global-stats is GA.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		require.NotEqual(t, "tidb_partition_prune_mode", strings.ToLower(r[0].(string)))
-	}
-	require.Len(t, tk.MustQuery("show variables where variable_name like '%tidb_partition_prune_mode%'").Rows(), 0)
-}
-
 func TestGlobalStatsData(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -2220,6 +2208,7 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
+		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
 		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))

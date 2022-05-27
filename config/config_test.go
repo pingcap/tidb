@@ -492,21 +492,6 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}
 }
 
-func TestPreparePlanCacheValid(t *testing.T) {
-	conf := NewConfig()
-	tests := map[PreparedPlanCache]bool{
-		{Enabled: true, Capacity: 0}:                        false,
-		{Enabled: true, Capacity: 2}:                        true,
-		{Enabled: true, MemoryGuardRatio: -0.1}:             false,
-		{Enabled: true, MemoryGuardRatio: 2.2}:              false,
-		{Enabled: true, Capacity: 2, MemoryGuardRatio: 0.5}: true,
-	}
-	for testCase, res := range tests {
-		conf.PreparedPlanCache = testCase
-		require.Equal(t, res, conf.Valid() == nil)
-	}
-}
-
 func TestConflictInstanceConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
@@ -558,17 +543,28 @@ func TestConflictInstanceConfig(t *testing.T) {
 			require.Equal(t, expectedNewName, newName)
 		}
 	}
+}
 
-	err = f.Truncate(0)
+func TestDeprecatedConfig(t *testing.T) {
+	var expectedNewName string
+	conf := new(Config)
+	configFile := "config.toml"
+	_, localFile, _, _ := runtime.Caller(0)
+	configFile = filepath.Join(filepath.Dir(localFile), configFile)
+
+	f, err := os.Create(configFile)
 	require.NoError(t, err)
-	_, err = f.Seek(0, 0)
-	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
 
 	// DeprecatedOptions indicates the options that should be moved to [instance] section.
 	// The value in conf.Instance.* would be overwritten by the other sections.
 	expectedDeprecatedOptions := map[string]InstanceConfigSection{
 		"": {
-			"", map[string]string{"enable-collect-execution-info": "tidb_enable_collect_execution_info"},
+			"", map[string]string{
+				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
+			},
 		},
 		"log": {
 			"log", map[string]string{"slow-threshold": "tidb_slow_log_threshold"},
@@ -576,8 +572,15 @@ func TestConflictInstanceConfig(t *testing.T) {
 		"performance": {
 			"performance", map[string]string{"memory-usage-alarm-ratio": "tidb_memory_usage_alarm_ratio"},
 		},
+		"plugin": {
+			"plugin", map[string]string{
+				"load": "plugin_load",
+				"dir":  "plugin_dir",
+			},
+		},
 	}
 	_, err = f.WriteString("enable-collect-execution-info = false \n" +
+		"[plugin] \ndir=\"/plugin-path\" \nload=\"audit-1,whitelist-1\" \n" +
 		"[log] \nslow-threshold = 100 \n" +
 		"[performance] \nmemory-usage-alarm-ratio = 0.5")
 	require.NoError(t, err)
