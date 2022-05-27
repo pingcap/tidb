@@ -654,11 +654,11 @@ func TestColumnModifyingDefaultValue(t *testing.T) {
 	ret := tk.MustQuery("show create table t").Rows()[0][1]
 	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '0'"))
 
-	// tk.MustExec("drop table if exists t;")
-	// tk.MustExec("create table t (a int default 1.25);")
-	// tk.MustExec("alter table t change a a int default 2.8;")
-	// ret = tk.MustQuery("show create table t").Rows()[0][1]
-	// require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '3'"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1.25);")
+	tk.MustExec("alter table t change a a int default 2.8;")
+	ret = tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '3'"))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a float default 1.25);")
