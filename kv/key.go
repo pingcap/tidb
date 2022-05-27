@@ -480,6 +480,20 @@ func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
 	})
 }
 
+// Range iterates the MemAwareHandleMap with fn, the fn returns true to continue, returns false to stop.
+func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val interface{}) bool) {
+	for h, val := range m.ints.M {
+		if !fn(IntHandle(h), val) {
+			return
+		}
+	}
+	for _, strVal := range m.strs.M {
+		if !fn(strVal.h, strVal.val) {
+			return
+		}
+	}
+}
+
 // PartitionHandle combines a handle and a PartitionID, used to location a row in partitioned table.
 // Now only used in global index.
 // TODO: support PartitionHandle in HandleMap.

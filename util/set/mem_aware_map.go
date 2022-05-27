@@ -26,7 +26,7 @@ import (
 // The estimate usage of memory is usually smaller than the real usage.
 // According to experiments with SetWithMemoryUsage, in worst case the maximum bias is 50%, i.e. real usage <= 1.5 * estimated usage.
 type MemAwareMap[K comparable, V any] struct {
-	m                 map[K]V
+	M                 map[K]V // it's public, when callers want to directly access it, e.g. use in a for-range-loop
 	bInMap            int64
 	bucketMemoryUsage uint64
 }
@@ -50,7 +50,7 @@ func EstimateMapSize(len int, bucketSize uint64) uint64 {
 // NewMemAwareMap creates a new MemAwareMap.
 func NewMemAwareMap[K comparable, V any]() MemAwareMap[K, V] {
 	return MemAwareMap[K, V]{
-		m:                 make(map[K]V),
+		M:                 make(map[K]V),
 		bInMap:            0,
 		bucketMemoryUsage: EstimateBucketMemoryUsage(uint64(unsafe.Sizeof(*new(K)) + unsafe.Sizeof(*new(V)))),
 	}
@@ -58,14 +58,14 @@ func NewMemAwareMap[K comparable, V any]() MemAwareMap[K, V] {
 
 // Get the value of the key.
 func (m *MemAwareMap[K, V]) Get(k K) (v V, ok bool) {
-	v, ok = m.m[k]
+	v, ok = m.M[k]
 	return
 }
 
 // Set the value of the key.
 func (m *MemAwareMap[K, V]) Set(k K, v V) (memDelta int64) {
-	m.m[k] = v
-	if len(m.m) > (1<<m.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+	m.M[k] = v
+	if len(m.M) > (1<<m.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 		memDelta = int64(m.bucketMemoryUsage * (1 << m.bInMap))
 		m.bInMap++
 	}
@@ -74,5 +74,5 @@ func (m *MemAwareMap[K, V]) Set(k K, v V) (memDelta int64) {
 
 // Len returns the number of elements in the map.
 func (m *MemAwareMap[K, V]) Len() int {
-	return len(m.m)
+	return len(m.M)
 }
