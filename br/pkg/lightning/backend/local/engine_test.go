@@ -156,4 +156,40 @@ func TestAutoSplitSST(t *testing.T) {
 	err = w.appendRowsSorted(kvs)
 	require.Nil(t, err)
 	require.False(t, prevWriter == w.writer) // id leap, should flush and create
+	prevWriter = w.writer
+	kvs = []common.KvPair{
+		{
+			Key:   []byte("16"),
+			Val:   []byte("val16"),
+			RowID: 16,
+		},
+		{
+			Key:   []byte("17"),
+			Val:   []byte("val17"),
+			RowID: 17,
+		},
+		{
+			Key:   []byte("19"),
+			Val:   []byte("val19"),
+			RowID: 19,
+		},
+		{
+			Key:   []byte("20"),
+			Val:   []byte("val20"),
+			RowID: 20,
+		},
+		{
+			Key:   []byte("22"),
+			Val:   []byte("val22"),
+			RowID: 22,
+		},
+		{
+			Key:   []byte("23"),
+			Val:   []byte("val23"),
+			RowID: 22,
+		},
+	}
+	err = w.appendRowsSorted(kvs)
+	require.Nil(t, err)
+	require.False(t, prevWriter == w.writer) // id leap, should flush and create
 }

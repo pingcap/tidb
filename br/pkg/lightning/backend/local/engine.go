@@ -1006,14 +1006,10 @@ type Writer struct {
 
 func (w *Writer) flushAndNewWriter() error {
 	var err error
-	failpoint.Inject("MockFlushWriter", func() {
-		failpoint.Goto("CreateNewWriter")
-	})
 	err = w.flush(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	failpoint.Label("CreateNewWriter")
 	newWriter, err := w.createSSTWriter()
 	if err != nil {
 		return errors.Trace(err)
@@ -1062,30 +1058,35 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		kvs = newKvs
 	}
-	sliceIdx := -1
+	tempKvs := make([]common.KvPair, 0)
+	if len(kvs) > 0 {
+		tempKvs = append(tempKvs, kvs[0])
+		w.prevRowID = kvs[0].RowID
+	}
 	for i := 1; i < len(kvs); i++ {
-		if kvs[i].RowID > kvs[i-1].RowID+1 && sliceIdx == -1 {
-			// rowID leap, probably re-alloc id
-			// should write to different sst
-			sliceIdx = i
+		if kvs[i].RowID > kvs[i-1].RowID+1 {
+			// leap id
+			err := w.writer.writeKVs(tempKvs)
+			if err != nil {
+				return err
+			}
+			err = w.flushAndNewWriter()
+			if err != nil {
+				return err
+			}
+			tempKvs = make([]common.KvPair, 0)
+			tempKvs = append(tempKvs, kvs[i])
+		} else {
+			tempKvs = append(tempKvs, kvs[i])
 		}
 		if i == len(kvs)-1 {
 			w.prevRowID = kvs[i].RowID
 		}
 	}
-	if sliceIdx > 0 {
-		oldKvs := kvs[:sliceIdx]
-		kvs = kvs[sliceIdx:]
-		err := w.writer.writeKVs(oldKvs)
-		if err != nil {
-			return err
-		}
-		err = w.flushAndNewWriter()
-		if err != nil {
-			return err
-		}
+	if len(tempKvs) > 0 {
+		return w.writer.writeKVs(tempKvs)
 	}
-	return w.writer.writeKVs(kvs)
+	return nil
 }
 
 func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) error {
@@ -1152,6 +1153,9 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 }
 
 func (w *Writer) flush(ctx context.Context) error {
+	failpoint.Inject("MockFlushWriter", func() {
+		failpoint.Return(nil)
+	})
 	w.Lock()
 	defer w.Unlock()
 	if w.batchCount == 0 {

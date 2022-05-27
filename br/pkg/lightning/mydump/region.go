@@ -338,6 +338,9 @@ func SampleAndGetAvgRowSize(
 		}
 	case SourceTypeSQL:
 		parser = NewChunkParser(cfg.TiDB.SQLMode, reader, int64(cfg.Mydumper.ReadBlockSize), ioWorkers)
+	default:
+		err = errors.New("unknown source type")
+		return 0, errors.Annotatef(err, "source file %s is none of csv, sql, or parquet file", fileInfo.FileMeta.Path)
 	}
 	totalBytes := 0
 	totalRows := 0

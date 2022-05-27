@@ -58,7 +58,7 @@ function check_parallel_result() {
 
 run_sql 'DROP DATABASE IF EXISTS db;'
 export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/mydump/MockInaccurateRowID=return(true)'
-run_lightning --config "tests/$TEST_NAME/config.toml"
+run_lightning --config "tests/$TEST_NAME/config1.toml"
 check_result
 run_sql 'DROP DATABASE IF EXISTS db;'
 parallel_import
