@@ -438,6 +438,11 @@ func TestRenameColumn(t *testing.T) {
 
 	tk.MustExec("drop view test_rename_column_view")
 	tk.MustExec("drop table test_rename_column")
+
+	// Test rename a non-exists column. See https://github.com/pingcap/tidb/issues/34811.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustGetErrCode("alter table t rename column b to b;", errno.ErrBadField)
 }
 
 func TestVirtualColumnDDL(t *testing.T) {

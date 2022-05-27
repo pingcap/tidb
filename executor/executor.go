@@ -1808,12 +1808,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
-	switch globalConfig.OOMAction {
-	case config.OOMActionCancel:
+	switch variable.OOMAction.Load() {
+	case variable.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
-	case config.OOMActionLog:
+	case variable.OOMActionLog:
 		fallthrough
 	default:
 		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
@@ -1859,6 +1859,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// We should set only two variables (
 	// IgnoreErr and StrictSQLMode) to avoid setting the same bool variables and
 	// pushing them down to TiKV as flags.
+
+	sc.InRestrictedSQL = vars.InRestrictedSQL
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
 		ResetUpdateStmtCtx(sc, stmt, vars)

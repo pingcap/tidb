@@ -333,15 +333,6 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
-	if len(idxInfos) > 0 {
-		for _, idxInfo := range idxInfos {
-			err = checkDropIndexOnAutoIncrementColumn(tblInfo, idxInfo)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return nil, nil, nil, false, err
-			}
-		}
-	}
 	return tblInfo, colInfo, idxInfos, false, nil
 }
 
@@ -793,7 +784,6 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, j
 		if job.IsCancelling() {
 			logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err))
-			w.reorgCtx.cleanNotifyReorgCancel()
 			job.State = model.JobStateRollingback
 			return false, ver, err
 		}
@@ -841,8 +831,6 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 			return false, ver, nil
 		}
 		if kv.IsTxnRetryableError(err) {
-			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			w.reorgCtx.cleanNotifyReorgCancel()
 			return false, ver, errors.Trace(err)
 		}
 		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
@@ -851,12 +839,8 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 		}
 		logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 		job.State = model.JobStateRollingback
-		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-		w.reorgCtx.cleanNotifyReorgCancel()
 		return false, ver, errors.Trace(err)
 	}
-	// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-	w.reorgCtx.cleanNotifyReorgCancel()
 	return true, ver, nil
 }
 
@@ -1036,7 +1020,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 			TestReorgGoroutineRunning <- a
 			for {
 				time.Sleep(30 * time.Millisecond)
-				if w.reorgCtx.isReorgCanceled() {
+				if w.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
 					// Job is cancelled. So it can't be done.
 					failpoint.Return(dbterror.ErrCancelledDDLJob)
 				}
@@ -1082,7 +1066,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		}
 
 		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
-		w.reorgCtx.setCurrentElement(reorgInfo.elements[i+1])
+		w.getReorgCtx(reorgInfo.Job).setCurrentElement(reorgInfo.elements[i+1])
 
 		// Update the element in the reorgInfo for updating the reorg meta below.
 		reorgInfo.currElement = reorgInfo.elements[i+1]
@@ -1121,16 +1105,16 @@ type updateColumnWorker struct {
 	sqlMode mysql.SQLMode
 }
 
-func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column, sqlMode mysql.SQLMode) *updateColumnWorker {
+func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo) *updateColumnWorker {
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
-		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
+		backfillWorker: newBackfillWorker(sessCtx, worker, id, t, reorgInfo),
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
 		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_rate"),
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-		sqlMode:        sqlMode,
+		sqlMode:        reorgInfo.ReorgMeta.SQLMode,
 	}
 }
 

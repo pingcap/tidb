@@ -24,6 +24,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -113,8 +115,6 @@ var (
 			map[string]string{
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
-				"plugin.load":                   "plugin_load",
-				"plugin.dir":                    "plugin_dir",
 			},
 		},
 		{
@@ -132,6 +132,13 @@ var (
 				"memory-usage-alarm-ratio": "tidb_memory_usage_alarm_ratio",
 			},
 		},
+		{
+			"plugin",
+			map[string]string{
+				"load": "plugin_load",
+				"dir":  "plugin_dir",
+			},
+		},
 	}
 
 	// ConflictOptions indicates the conflict config options existing in both [instance] and other sections in config file.
@@ -140,6 +147,9 @@ var (
 	// DeprecatedOptions indicates the config options existing in some other sections in config file.
 	// They should be moved to [instance] section.
 	DeprecatedOptions []InstanceConfigSection
+
+	// TikvConfigLock protects against concurrent tikv config refresh
+	TikvConfigLock sync.Mutex
 )
 
 // Config contains configuration options.
@@ -157,11 +167,9 @@ type Config struct {
 	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
 	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	OOMAction        string `toml:"oom-action" json:"oom-action"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
-	EnableBatchDML             bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	ServerVersion              string                  `toml:"server-version" json:"server-version"`
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
@@ -248,6 +256,16 @@ type Config struct {
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
+	// EnableGlobalKill indicates whether to enable global kill.
+	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// EnableBatchDML, MemQuotaQuery, OOMAction unused since bootstrap v90
+	EnableBatchDML bool   `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	MemQuotaQuery  int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	OOMAction      string `toml:"oom-action" json:"oom-action"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -260,9 +278,10 @@ func (c *Config) UpdateTempStoragePath() {
 	}
 }
 
-func (c *Config) getTiKVConfig() *tikvcfg.Config {
+// GetTiKVConfig returns configuration options from tikvcfg
+func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
-		CommitterConcurrency:  c.Performance.CommitterConcurrency,
+		CommitterConcurrency:  int(tikvutil.CommitterConcurrency.Load()),
 		MaxTxnTTL:             c.Performance.MaxTxnTTL,
 		TiKVClient:            c.TiKVClient,
 		Security:              c.Security.ClusterSecurity(),
@@ -416,6 +435,12 @@ type Log struct {
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint       `toml:"expensive-threshold" json:"expensive-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// QueryLogMaxLen, unused since bootstrap v90
+	QueryLogMaxLen uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -478,15 +503,14 @@ const (
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable         bool     `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA                  string   `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert                string   `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey                 string   `toml:"ssl-key" json:"ssl-key"`
-	RequireSecureTransport bool     `toml:"require-secure-transport" json:"require-secure-transport"`
-	ClusterSSLCA           string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert         string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey          string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
-	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	SkipGrantTable  bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA           string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert         string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey          string   `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA    string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
@@ -592,12 +616,10 @@ type Performance struct {
 	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
-	ProjectionPushDown   bool   `toml:"projection-push-down" json:"projection-push-down"`
-	CommitterConcurrency int    `toml:"committer-concurrency" json:"committer-concurrency"`
-	MaxTxnTTL            uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
+	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
 	MemProfileInterval       string `toml:"-" json:"-"`
 	IndexUsageSyncLease      string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
@@ -607,6 +629,12 @@ type Performance struct {
 	StatsLoadConcurrency     uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
 	StatsLoadQueueSize       uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 	EnableStatsCacheMemQuota bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	// The following items are deprecated. We need to keep them here temporarily
+	// to support the upgrade process. They can be removed in future.
+
+	// CommitterConcurrency, RunAutoAnalyze unused since bootstrap v90
+	CommitterConcurrency int  `toml:"committer-concurrency" json:"committer-concurrency"`
+	RunAutoAnalyze       bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -718,8 +746,6 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
-	// Whether enable global kill.
-	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
@@ -740,7 +766,8 @@ var defaultConf = Config{
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
-	OOMAction:                    OOMActionCancel,
+	MemQuotaQuery:                1 << 30,
+	OOMAction:                    "cancel",
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
@@ -771,6 +798,7 @@ var defaultConf = Config{
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
+		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
@@ -809,7 +837,6 @@ var defaultConf = Config{
 		TCPNoDelay:            true,
 		CrossJoin:             true,
 		StatsLease:            "3s",
-		RunAutoAnalyze:        true,
 		StmtCountLimit:        5000,
 		FeedbackProbability:   0.0,
 		QueryFeedbackLimit:    512,
@@ -830,14 +857,15 @@ var defaultConf = Config{
 		StatsLoadConcurrency:     5,
 		StatsLoadQueueSize:       1000,
 		EnableStatsCacheMemQuota: false,
+		RunAutoAnalyze:           true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          false,
-		Capacity:         1000,
+		Enabled:          true,
+		Capacity:         100,
 		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
@@ -862,9 +890,7 @@ var defaultConf = Config{
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
-	Experimental: Experimental{
-		EnableGlobalKill: false,
-	},
+	Experimental:               Experimental{},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
 	Labels:                     make(map[string]string),
@@ -880,6 +906,7 @@ var defaultConf = Config{
 	StoresRefreshInterval:                defTiKVCfg.StoresRefreshInterval,
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,
 	NewCollationsEnabledOnFirstBootstrap: true,
+	EnableGlobalKill:                     true,
 }
 
 var (
@@ -902,7 +929,9 @@ func GetGlobalConfig() *Config {
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
 	globalConf.Store(config)
-	cfg := *config.getTiKVConfig()
+	TikvConfigLock.Lock()
+	defer TikvConfigLock.Unlock()
+	cfg := *config.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
 }
 
@@ -922,6 +951,7 @@ var deprecatedConfig = map[string]struct{}{
 	"alter-primary-key":                  {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":                   {},
 	"performance.mem-profile-interval":   {},
+	"security.require-secure-transport":  {},
 	"lower-case-table-names":             {},
 	"stmt-summary":                       {},
 	"stmt-summary.enable":                {},
@@ -930,8 +960,16 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.max-sql-length":        {},
 	"stmt-summary.refresh-interval":      {},
 	"stmt-summary.history-size":          {},
+	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
 	"mem-quota-query":                    {},
-	"query-log-max-len":                  {},
+	"log.query-log-max-len":              {},
+	"performance.committer-concurrency":  {},
+	"experimental.enable-global-kill":    {},
+	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
+	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
+	"prepared-plan-cache.enabled":            {},
+	"prepared-plan-cache.capacity":           {},
+	"prepared-plan-cache.memory-guard-ratio": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -942,10 +980,6 @@ func isAllDeprecatedConfigItems(items []string) bool {
 	}
 	return true
 }
-
-// IsOOMActionSetByUser indicates whether the config item mem-action is set by
-// the user.
-var IsOOMActionSetByUser bool
 
 // InitializeConfig initialize the global config handler.
 // The function enforceCmdArgs is used to merge the config file with command arguments:
@@ -1004,9 +1038,6 @@ func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
-	}
-	if metaData.IsDefined("oom-action") {
-		IsOOMActionSetByUser = true
 	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
@@ -1083,10 +1114,6 @@ func (c *Config) Valid() error {
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
-	c.OOMAction = strings.ToLower(c.OOMAction)
-	if c.OOMAction != OOMActionLog && c.OOMAction != OOMActionCancel {
-		return fmt.Errorf("unsupported OOMAction %v, TiDB only supports [%v, %v]", c.OOMAction, OOMActionLog, OOMActionCancel)
-	}
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
 	}
@@ -1109,12 +1136,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
-	if c.PreparedPlanCache.Capacity < 1 {
-		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
-	}
-	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
-		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
-	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
 	}
@@ -1216,15 +1237,6 @@ func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 		CheckTableBeforeDrop = true
 	}
 }
-
-// The following constants represents the valid action configurations for OOMAction.
-// NOTE: Although the values is case-insensitive, we should use lower-case
-// strings because the configuration value will be transformed to lower-case
-// string and compared with these constants in the further usage.
-const (
-	OOMActionCancel = "cancel"
-	OOMActionLog    = "log"
-)
 
 // hideConfig is used to filter a single line of config for hiding.
 var hideConfig = []string{

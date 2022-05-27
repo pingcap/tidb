@@ -149,9 +149,6 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 				if err != nil {
 					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
 				}
-				if sv.Name == variable.TiDBStatsCacheMemQuota {
-					do.SetStatsCacheCapacity(variable.StatsCacheMemQuota.Load())
-				}
 			}
 		}
 

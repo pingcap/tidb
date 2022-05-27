@@ -48,12 +48,14 @@ func NewStreamCommand() *cobra.Command {
 		newStreamResumeCommand(),
 		newStreamStatusCommand(),
 		newStreamTruncateCommand(),
+		newStreamCheckCommand(),
 	)
 	command.SetHelpFunc(func(command *cobra.Command, strings []string) {
 		task.HiddenFlagsForStream(command.Root().PersistentFlags())
 		command.Root().HelpFunc()(command, strings)
 	})
 
+	command.Hidden = true
 	return command
 }
 
@@ -143,6 +145,18 @@ func newStreamTruncateCommand() *cobra.Command {
 	return command
 }
 
+func newStreamCheckCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "metadata",
+		Short: "get the metadata of log dir.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return streamCommand(cmd, task.StreamMetadata)
+		},
+	}
+	return command
+}
+
 func streamCommand(command *cobra.Command, cmdName string) error {
 	var cfg task.StreamConfig
 	var err error
@@ -158,6 +172,10 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 	}
 
 	switch cmdName {
+	case task.StreamMetadata:
+		{
+			// do nothing.
+		}
 	case task.StreamTruncate:
 		if err = cfg.ParseStreamTruncateFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)

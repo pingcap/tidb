@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,28 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testkit
+package statisticstest
 
 import (
 	"testing"
 
-	"github.com/pingcap/check"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 )
 
-var _ = check.Suite(&testKitSuite{})
-
-func TestT(t *testing.T) {
-	check.TestingT(t)
-}
-
-type testKitSuite struct {
-}
-
-func (s testKitSuite) TestSort(c *check.C) {
-	result := &Result{
-		rows:    [][]string{{"1", "1", "<nil>", "<nil>"}, {"2", "2", "2", "3"}},
-		c:       c,
-		comment: check.Commentf(""),
-	}
-	result.Sort().Check(Rows("1 1 <nil> <nil>", "2 2 2 3"))
+func TestMain(m *testing.M) {
+	realtikvtest.RunTestMain(m)
 }

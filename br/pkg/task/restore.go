@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/multierr"
@@ -49,15 +51,16 @@ const (
 
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
-	FlagStreamRestoreTS = "restore-ts"
+	FlagStreamRestoreTS = "restored-ts"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
 
-	defaultRestoreConcurrency = 128
-	maxRestoreBatchSizeLimit  = 10240
-	defaultPDConcurrency      = 1
-	defaultBatchFlushInterval = 16 * time.Second
-	defaultFlagDdlBatchSize   = 128
+	defaultRestoreConcurrency       = 128
+	defaultRestoreStreamConcurrency = 64
+	maxRestoreBatchSizeLimit        = 10240
+	defaultPDConcurrency            = 1
+	defaultBatchFlushInterval       = 16 * time.Second
+	defaultFlagDdlBatchSize         = 128
 )
 
 const (
@@ -83,10 +86,10 @@ type RestoreCommonConfig struct {
 // useful when not starting BR from CLI (e.g. from BRIE in SQL).
 func (cfg *RestoreCommonConfig) adjust() {
 	if cfg.MergeSmallRegionKeyCount == 0 {
-		cfg.MergeSmallRegionKeyCount = restore.DefaultMergeRegionKeyCount
+		cfg.MergeSmallRegionKeyCount = conn.DefaultMergeRegionKeyCount
 	}
 	if cfg.MergeSmallRegionSizeBytes == 0 {
-		cfg.MergeSmallRegionSizeBytes = restore.DefaultMergeRegionSizeBytes
+		cfg.MergeSmallRegionSizeBytes = conn.DefaultMergeRegionSizeBytes
 	}
 }
 
@@ -95,9 +98,9 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
 
-	flags.Uint64(FlagMergeRegionSizeBytes, restore.DefaultMergeRegionSizeBytes,
+	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
 		"the threshold of merging small regions (Default 96MB, region split size)")
-	flags.Uint64(FlagMergeRegionKeyCount, restore.DefaultMergeRegionKeyCount,
+	flags.Uint64(FlagMergeRegionKeyCount, conn.DefaultMergeRegionKeyCount,
 		"the threshold of merging small regions (Default 960_000, region split key count)")
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
 		"concurrency pd-relative operations like split & scatter.")
@@ -148,8 +151,9 @@ type RestoreConfig struct {
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
-	StartTS   uint64 `json:"start-ts" toml:"start-ts"`
-	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
+	StartTS     uint64 `json:"start-ts" toml:"start-ts"`
+	RestoreTS   uint64 `json:"restore-ts" toml:"restore-ts"`
+	skipTiflash bool   `json:"-" toml:"-"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -399,6 +403,19 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 
+	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
+	mergeRegionCount := cfg.MergeSmallRegionKeyCount
+	if mergeRegionSize == conn.DefaultMergeRegionSizeBytes &&
+		mergeRegionCount == conn.DefaultMergeRegionKeyCount {
+		// according to https://github.com/pingcap/tidb/issues/34167.
+		// we should get the real config from tikv to adapt the dynamic region.
+		httpCli := httputil.NewClient(mgr.GetTLSConfig())
+		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
 	err = configureRestoreClient(ctx, client, cfg)
@@ -472,7 +489,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
-	err = client.PreCheckTableTiFlashReplica(ctx, tables)
+	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.skipTiflash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -537,13 +554,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
 	rangeStream := restore.GoValidateFileRanges(
-		ctx, tableStream, tableFileMap, cfg.MergeSmallRegionSizeBytes, cfg.MergeSmallRegionKeyCount, errCh)
+		ctx, tableStream, tableFileMap, mergeRegionSize, mergeRegionCount, errCh)
 
 	rangeSize := restore.EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
 	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
 
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr)
+	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -561,7 +578,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// Restore sst files in batch.
-	batchSize := utils.ClampInt(int(cfg.Concurrency), defaultRestoreConcurrency, maxRestoreBatchSizeLimit)
+	batchSize := mathutil.Clamp(int(cfg.Concurrency), defaultRestoreConcurrency, maxRestoreBatchSizeLimit)
 	failpoint.Inject("small-batch-size", func(v failpoint.Value) {
 		log.Info("failpoint small batch size is on", zap.Int("size", v.(int)))
 		batchSize = v.(int)
@@ -672,13 +689,15 @@ func filterRestoreFiles(
 
 // restorePreWork executes some prepare work before restore.
 // TODO make this function returns a restore post work.
-func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr) (pdutil.UndoFunc, error) {
+func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, error) {
 	if client.IsOnline() {
 		return pdutil.Nop, nil
 	}
 
-	// Switch TiKV cluster to import mode (adjust rocksdb configuration).
-	client.SwitchToImportMode(ctx)
+	if switchToImport {
+		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
+		client.SwitchToImportMode(ctx)
+	}
 
 	return mgr.RemoveSchedulers(ctx)
 }

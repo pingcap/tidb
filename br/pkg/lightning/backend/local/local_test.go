@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -1199,4 +1201,37 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	err := bak.writeAndIngestPairs(context.Background(), nil, nil, nil, nil, 0, 0)
 	require.Error(t, err)
 	require.Regexp(t, "The available disk of TiKV.*", err.Error())
+}
+
+func TestGetRegionSplitSizeKeys(t *testing.T) {
+	allStores := []*metapb.Store{
+		{
+			Address:       "172.16.102.1:20160",
+			StatusAddress: "0.0.0.0:20180",
+		},
+		{
+			Address:       "172.16.102.2:20160",
+			StatusAddress: "0.0.0.0:20180",
+		},
+		{
+			Address:       "172.16.102.3:20160",
+			StatusAddress: "0.0.0.0:20180",
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cli := utils.FakePDClient{Stores: allStores}
+	defer func() {
+		getSplitConfFromStoreFunc = getSplitConfFromStore
+	}()
+	getSplitConfFromStoreFunc = func(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
+		if strings.Contains(host, "172.16.102.3:20180") {
+			return int64(1), int64(2), nil
+		}
+		return 0, 0, errors.New("invalid connection")
+	}
+	splitSize, splitKeys, err := getRegionSplitSizeKeys(ctx, cli, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), splitSize)
+	require.Equal(t, int64(2), splitKeys)
 }

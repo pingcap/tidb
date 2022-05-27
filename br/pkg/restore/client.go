@@ -133,6 +133,13 @@ type Client struct {
 	// TiKV will filter the key space that don't belong to [startTS, restoreTS].
 	startTS   uint64
 	restoreTS uint64
+
+	// If the the commit-ts of txn-entry is belong [startTS, restoreTS],
+	// the start-ts of txn-entry may be smaller than startTS.
+	// We need maintain and restore more entries in default-cf
+	// (the start-ts in these entries is belong to [shiftStartTS, startTS]).
+	shiftStartTS uint64
+
 	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
 	currentTS uint64
@@ -239,7 +246,7 @@ func (rc *Client) GetSupportPolicy() bool {
 
 // GetTruncateSafepoint read the truncate checkpoint from the storage bind to the client.
 func (rc *Client) GetTruncateSafepoint(ctx context.Context) (uint64, error) {
-	ts, err := GetTruncateSafepoint(ctx, rc.storage)
+	ts, err := GetTSFromFile(ctx, rc.storage, TruncateSafePointFileName)
 	if err != nil {
 		log.Warn("failed to get truncate safepoint, using 0", logutil.ShortError(err))
 	}
@@ -286,9 +293,10 @@ func (rc *Client) Close() {
 	log.Info("Restore client closed")
 }
 
-func (rc *Client) SetRestoreRangeTS(startTs, restoreTS uint64) {
+func (rc *Client) SetRestoreRangeTS(startTs, restoreTS, shiftStartTS uint64) {
 	rc.startTS = startTs
 	rc.restoreTS = restoreTS
+	rc.shiftStartTS = shiftStartTS
 }
 
 func (rc *Client) SetCurrentTS(ts uint64) {
@@ -1444,6 +1452,7 @@ func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
 func (rc *Client) PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	tables []*metautil.Table,
+	skipTiflash bool,
 ) error {
 	tiFlashStores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.TiFlashOnly)
 	if err != nil {
@@ -1451,7 +1460,8 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	}
 	tiFlashStoreCount := len(tiFlashStores)
 	for _, table := range tables {
-		if table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount) {
+		if skipTiflash ||
+			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount)) {
 			// we cannot satisfy TiFlash replica in restore cluster. so we should
 			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
 			// see details at https://github.com/pingcap/br/issues/931
@@ -1533,6 +1543,7 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	return streamBackupMetaFiles, nil
 }
 
@@ -1540,18 +1551,17 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 func (rc *Client) ReadStreamDataFiles(
 	ctx context.Context,
 	metas []*backuppb.Metadata,
-	fromTS uint64,
-	restoreTS uint64,
 ) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
 	dFiles := make([]*backuppb.DataFileInfo, 0)
 	mFiles := make([]*backuppb.DataFileInfo, 0)
 
 	for _, m := range metas {
 		for _, d := range m.Files {
-			if d.MaxTs < fromTS {
+			if d.MinTs > rc.restoreTS {
 				continue
-			}
-			if d.MinTs > restoreTS {
+			} else if d.Cf == stream.WriteCF && d.MaxTs < rc.startTS {
+				continue
+			} else if d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS {
 				continue
 			}
 
@@ -1586,7 +1596,7 @@ func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) err
 	return nil
 }
 
-// FixIndicdesOfTables tries to fix the indices of the tables via `ADMIN RECOVERY INDEX`.
+// FixIndicesOfTables tries to fix the indices of the tables via `ADMIN RECOVERY INDEX`.
 func (rc *Client) FixIndicesOfTables(
 	ctx context.Context,
 	fullBackupTables map[int64]*metautil.Table,
@@ -1673,7 +1683,11 @@ func (rc *Client) RestoreKVFiles(
 					summary.CollectInt("File", 1)
 					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
 				}()
-				return rc.fileImporter.ImportKVFiles(ectx, file, rule, rc.restoreTS)
+				startTS := rc.startTS
+				if file.Cf == stream.DefaultCF {
+					startTS = rc.shiftStartTS
+				}
+				return rc.fileImporter.ImportKVFiles(ectx, file, rule, startTS, rc.restoreTS)
 			})
 		}
 	}
@@ -1787,12 +1801,19 @@ func (rc *Client) RestoreMetaKVFiles(
 ) error {
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
-	// The k-v envets in default CF should be restored firstly. The reason is that:
+	// The k-v events in default CF should be restored firstly. The reason is that:
 	// The error of transactions of meta will happen,
 	// if restore default CF events successfully, but failed to restore write CF events.
 	for _, f := range files {
 		if f.Cf == stream.WriteCF {
 			filesInWriteCF = append(filesInWriteCF, f)
+			continue
+		}
+
+		if f.Type == backuppb.FileType_Delete {
+			// this should happen abnormally.
+			// only do some preventive checks here.
+			log.Warn("detected delete file of meta key, skip it", zap.Any("file", f))
 			continue
 		}
 
@@ -1819,7 +1840,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	return nil
 }
 
-// RestoreMetaKVFiles tries to restore a file about meta kv-event from stream-backup.
+// RestoreMetaKVFile tries to restore a file about meta kv-event from stream-backup.
 func (rc *Client) RestoreMetaKVFile(
 	ctx context.Context,
 	file *backuppb.DataFileInfo,
@@ -1858,11 +1879,19 @@ func (rc *Client) RestoreMetaKVFile(
 			continue
 		} else if file.Cf == stream.WriteCF && ts < rc.startTS {
 			continue
+		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
+			continue
 		}
-
+		if len(txnEntry.Value) == 0 {
+			// we might record duplicated prewrite keys in some conor cases.
+			// the first prewrite key has the value but the second don't.
+			// so we can ignore the empty value key.
+			// see details at https://github.com/pingcap/tiflow/issues/5468.
+			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.ByteString("tnxKey", txnEntry.Key))
+			continue
+		}
 		log.Debug("txn entry", zap.Uint64("key-ts", ts), zap.Int("txnKey-len", len(txnEntry.Key)),
 			zap.Int("txnValue-len", len(txnEntry.Value)), zap.ByteString("txnKey", txnEntry.Key))
-
 		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
 		if err != nil {
 			log.Error("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
@@ -1871,7 +1900,6 @@ func (rc *Client) RestoreMetaKVFile(
 		} else if newEntry == nil {
 			continue
 		}
-
 		log.Debug("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
 			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
 
@@ -1890,7 +1918,7 @@ func transferBoolToValue(enable bool) string {
 	return "OFF"
 }
 
-// GenGlobalIDs generates a global id by transaction way.
+// GenGlobalID generates a global id by transaction way.
 func (rc *Client) GenGlobalID(ctx context.Context) (int64, error) {
 	var id int64
 	storage := rc.GetDomain().Store()
@@ -1940,7 +1968,7 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			var e error
-			schemaVersion, e = t.GenSchemaVersion()
+			schemaVersion, e = t.GenSchemaVersions(128)
 			return e
 		},
 	); err != nil {
