@@ -888,7 +888,7 @@ const (
 	DefTiDBMemQuotaAnalyze                       = -1
 	DefTiDBEnableAutoAnalyze                     = true
 	DefTiDBMemOOMAction                          = "CANCEL"
-	DefTiDBMaxAutoAnalyzeTime                    = 60 * 60
+	DefTiDBMaxAutoAnalyzeTime                    = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                   = true
 	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
