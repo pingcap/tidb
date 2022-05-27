@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1005,6 +1006,15 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 				err = nil
 			}
 		}
+		// In configCheck we always print out which options in the config file
+		// have been removed. This helps users upgrade better.
+		if configCheck {
+			err = cfg.RemovedVariableCheck(confPath)
+			if err != nil {
+				logutil.BgLogger().Warn(err.Error())
+				err = nil // treat as warning
+			}
+		}
 
 		terror.MustNil(err)
 	} else {
@@ -1031,6 +1041,31 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 		os.Exit(0)
 	}
 	StoreGlobalConfig(cfg)
+}
+
+// RemovedVariableCheck checks if the config file contains any items
+// which have been removed. These will not take effect any more.
+func (c *Config) RemovedVariableCheck(confFile string) error {
+	metaData, err := toml.DecodeFile(confFile, c)
+	if err != nil {
+		return err
+	}
+	var removed []string
+	for item := range removedConfig {
+		// We need to split the string to account for the top level
+		// and the section hierarchy of config.
+		tmp := strings.Split(item, ".")
+		if len(tmp) == 2 && metaData.IsDefined(tmp[0], tmp[1]) {
+			removed = append(removed, item)
+		} else if len(tmp) == 1 && metaData.IsDefined(tmp[0]) {
+			removed = append(removed, item)
+		}
+	}
+	if len(removed) > 0 {
+		sort.Strings(removed) // deterministic for tests
+		return fmt.Errorf("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: %s", strings.Join(removed, ", "))
+	}
+	return nil
 }
 
 // Load loads config options from a toml file.
