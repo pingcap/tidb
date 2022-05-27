@@ -57,11 +57,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	ret := &plannercore.PreprocessorReturn{}
-	pe := &plannercore.PreprocessExecuteISUpdate{ExecuteInfoSchemaUpdate: planner.GetExecuteForUpdateReadIS, Node: stmtNode}
 	err := plannercore.Preprocess(c.Ctx,
 		stmtNode,
 		plannercore.WithPreprocessorReturn(ret),
-		plannercore.WithExecuteInfoSchemaUpdate(pe),
 		plannercore.InitTxnContextProvider,
 	)
 	if err != nil {
