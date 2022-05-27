@@ -130,7 +130,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		return nil, errors.New("no statement text")
 	}
 	if schemaVersion == 0 {
-		return nil, errors.New("Schema version / latest schema version uninitialized")
+		return nil, errors.New("Schema version uninitialized")
 	}
 	if stmtDB == "" {
 		stmtDB = sessionVars.CurrentDB
