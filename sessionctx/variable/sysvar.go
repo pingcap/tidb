@@ -1160,7 +1160,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableTablePartition = val
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableListTablePartition, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableListTablePartition, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableListTablePartition = TiDBOptOn(val)
 		return nil
 	}},
