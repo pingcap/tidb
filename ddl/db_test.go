@@ -1487,4 +1487,7 @@ func TestNonRestrictedSqlMode(t *testing.T) {
 	_, err = tk.Exec("create table t2 (id int, name varchar(2048), index(name)) charset=utf8;")
 	require.NoError(t, err)
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+
+	_, err = tk.Exec("create table t1 (id int, name varchar(2048), unique index(name)) charset=utf8;")
+	require.Error(t, err)
 }
