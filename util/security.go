@@ -95,7 +95,7 @@ func ToTLSConfigWithVerify(caPath, certPath, keyPath string, verifyCN []string) 
 	}
 
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS10,
 		Certificates: certificates,
 		RootCAs:      certPool,
 		ClientCAs:    certPool,
