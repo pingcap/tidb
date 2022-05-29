@@ -474,8 +474,8 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		updateRawArgs = false
 	}
 	w.writeDDLSeqNum(job)
-	w.JobContext.resetWhenJobFinish()
-	err = AddHistoryDDLJob(t, job, updateRawArgs)
+	w.removeJobCtx(job)
+	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
 
