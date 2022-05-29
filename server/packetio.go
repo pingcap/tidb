@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const defaultWriterSize = 16 * 1024
@@ -54,16 +55,22 @@ var (
 )
 
 // packetIO is a helper to read and write data in packet format.
+// MySQL Packets: https://dev.mysql.com/doc/internals/en/mysql-packet.html
 type packetIO struct {
 	bufReadConn *bufferedReadConn
 	bufWriter   *bufio.Writer
 	sequence    uint8
 	readTimeout time.Duration
+	// maxAllowedPacket is the maximum size of one packet in readPacket.
+	maxAllowedPacket uint64
+	// accumulatedLength count the length of totally received 'payload' in readPacket.
+	accumulatedLength uint64
 }
 
 func newPacketIO(bufReadConn *bufferedReadConn) *packetIO {
 	p := &packetIO{sequence: 0}
 	p.setBufferedReadConn(bufReadConn)
+	p.setMaxAllowedPacket(variable.DefMaxAllowedPacket)
 	return p
 }
 
@@ -96,6 +103,12 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 
+	// Accumulated payload length exceeds the limit.
+	if p.accumulatedLength += uint64(length); p.accumulatedLength > p.maxAllowedPacket {
+		terror.Log(errNetPacketTooLarge)
+		return nil, errNetPacketTooLarge
+	}
+
 	data := make([]byte, length)
 	if p.readTimeout > 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
@@ -108,7 +121,12 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 	return data, nil
 }
 
+func (p *packetIO) setMaxAllowedPacket(maxAllowedPacket uint64) {
+	p.maxAllowedPacket = maxAllowedPacket
+}
+
 func (p *packetIO) readPacket() ([]byte, error) {
+	p.accumulatedLength = 0
 	if p.readTimeout == 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Time{}); err != nil {
 			return nil, errors.Trace(err)
@@ -148,11 +166,10 @@ func (p *packetIO) writePacket(data []byte) error {
 	writePacketBytes.Add(float64(len(data)))
 
 	for length >= mysql.MaxPayloadLen {
+		data[3] = p.sequence
 		data[0] = 0xff
 		data[1] = 0xff
 		data[2] = 0xff
-
-		data[3] = p.sequence
 
 		if n, err := p.bufWriter.Write(data[:4+mysql.MaxPayloadLen]); err != nil {
 			return errors.Trace(mysql.ErrBadConn)
@@ -164,11 +181,10 @@ func (p *packetIO) writePacket(data []byte) error {
 			data = data[mysql.MaxPayloadLen:]
 		}
 	}
-
+	data[3] = p.sequence
 	data[0] = byte(length)
 	data[1] = byte(length >> 8)
 	data[2] = byte(length >> 16)
-	data[3] = p.sequence
 
 	if n, err := p.bufWriter.Write(data); err != nil {
 		terror.Log(errors.Trace(err))

@@ -122,7 +122,7 @@ func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType
 		Exprs: exprs,
 	}
 	executorID := ""
-	if storeType == kv.TiFlash {
+	if storeType == kv.TiFlash || storeType == kv.TiKV {
 		var err error
 		projExec.Child, err = p.children[0].ToPB(ctx, storeType)
 		if err != nil {
@@ -130,7 +130,7 @@ func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType
 		}
 		executorID = p.ExplainID().String()
 	} else {
-		return nil, errors.Errorf("The projection can only be pushed down to TiFlash now, not %s", storeType.Name())
+		return nil, errors.Errorf("the projection can only be pushed down to TiFlash or TiKV now, not %s", storeType.Name())
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeProjection, Projection: projExec, ExecutorId: &executorID}, nil
 }
@@ -433,8 +433,8 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	for _, equalCondition := range p.EqualConditions {
 		retType := equalCondition.RetType.Clone()
 		chs, coll := equalCondition.CharsetAndCollation()
-		retType.Charset = chs
-		retType.Collate = coll
+		retType.SetCharset(chs)
+		retType.SetCollate(coll)
 		probeFiledTypes = append(probeFiledTypes, expression.ToPBFieldType(retType))
 		buildFiledTypes = append(buildFiledTypes, expression.ToPBFieldType(retType))
 	}
@@ -455,6 +455,96 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 
 	executorID := p.ExplainID().String()
 	return &tipb.Executor{Tp: tipb.ExecType_TypeJoin, Join: join, ExecutorId: &executorID}, nil
+}
+
+// ToPB converts FrameBound to tipb structure.
+func (fb *FrameBound) ToPB(ctx sessionctx.Context) (*tipb.WindowFrameBound, error) {
+	pbBound := &tipb.WindowFrameBound{
+		Type:      tipb.WindowBoundType(fb.Type),
+		Unbounded: fb.UnBounded,
+	}
+	offset := fb.Num
+	pbBound.Offset = &offset
+
+	calcFuncs, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, fb.CalcFuncs, ctx.GetClient())
+	if err != nil {
+		return nil, err
+	}
+
+	pbBound.CalcFuncs = calcFuncs
+	return pbBound, nil
+}
+
+// ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+
+	windowExec := &tipb.Window{}
+
+	windowExec.FuncDesc = make([]*tipb.Expr, 0, len(p.WindowFuncDescs))
+	for _, desc := range p.WindowFuncDescs {
+		windowExec.FuncDesc = append(windowExec.FuncDesc, aggregation.WindowFuncToPBExpr(ctx, client, desc))
+	}
+	for _, item := range p.PartitionBy {
+		windowExec.PartitionBy = append(windowExec.PartitionBy, expression.SortByItemToPB(sc, client, item.Col.Clone(), item.Desc))
+	}
+	for _, item := range p.OrderBy {
+		windowExec.OrderBy = append(windowExec.OrderBy, expression.SortByItemToPB(sc, client, item.Col.Clone(), item.Desc))
+	}
+
+	if p.Frame != nil {
+		windowExec.Frame = &tipb.WindowFrame{
+			Type: tipb.WindowFrameType(p.Frame.Type),
+		}
+		if p.Frame.Start != nil {
+			start, err := p.Frame.Start.ToPB(ctx)
+			if err != nil {
+				return nil, err
+			}
+			windowExec.Frame.Start = start
+		}
+		if p.Frame.End != nil {
+			end, err := p.Frame.End.ToPB(ctx)
+			if err != nil {
+				return nil, err
+			}
+			windowExec.Frame.End = end
+		}
+	}
+
+	var err error
+	windowExec.Child, err = p.children[0].ToPB(ctx, storeType)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{Tp: tipb.ExecType_TypeWindow, Window: windowExec, ExecutorId: &executorID}, nil
+}
+
+// ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalSort) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	if !p.IsPartialSort {
+		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort", p.basePlan.ExplainID())
+	}
+
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+
+	sortExec := &tipb.Sort{}
+	for _, item := range p.ByItems {
+		sortExec.ByItems = append(sortExec.ByItems, expression.SortByItemToPB(sc, client, item.Expr, item.Desc))
+	}
+	isPartialSort := p.IsPartialSort
+	sortExec.IsPartialSort = &isPartialSort
+
+	var err error
+	sortExec.Child, err = p.children[0].ToPB(ctx, storeType)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{Tp: tipb.ExecType_TypeSort, Sort: sortExec, ExecutorId: &executorID}, nil
 }
 
 // SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfos.

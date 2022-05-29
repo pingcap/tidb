@@ -33,7 +33,8 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
@@ -160,7 +161,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 			if isNull {
 				pos = 0
 			}
-			idx := math.Abs(pos % int64(pi.Num))
+			idx := mathutil.Abs(pos % int64(pi.Num))
 			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 				continue
 			}
@@ -192,7 +193,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				}
 
 				var rangeScalar float64
-				if mysql.HasUnsignedFlag(col.RetType.Flag) {
+				if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
 					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
 				} else {
 					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
@@ -201,7 +202,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
 				if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
 					for i := posLow; i <= posHigh; i++ {
-						idx := math.Abs(i % int64(pi.Num))
+						idx := mathutil.Abs(i % int64(pi.Num))
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
 						}
@@ -211,11 +212,11 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				}
 
 				// issue:#22619
-				if col.RetType.Tp == mysql.TypeBit {
+				if col.RetType.GetType() == mysql.TypeBit {
 					// maximum number of partitions is 8192
-					if col.RetType.Flen > 0 && col.RetType.Flen < int(gomath.Log2(ddl.PartitionCountLimit)) {
+					if col.RetType.GetFlen() > 0 && col.RetType.GetFlen() < int(gomath.Log2(ddl.PartitionCountLimit)) {
 						// all possible hash values
-						maxUsedPartitions := 1 << col.RetType.Flen
+						maxUsedPartitions := 1 << col.RetType.GetFlen()
 						if maxUsedPartitions < numPartitions {
 							for i := 0; i < maxUsedPartitions; i++ {
 								used = append(used, i)
@@ -866,7 +867,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 		if dataForPrune, ok := pruner.extractDataForPrune(ctx, cond); ok {
 			switch dataForPrune.op {
 			case ast.EQ:
-				unsigned := mysql.HasUnsignedFlag(pruner.col.RetType.Flag)
+				unsigned := mysql.HasUnsignedFlag(pruner.col.RetType.GetFlag())
 				start, _ := pruneUseBinarySearch(pruner.lessThan, dataForPrune, unsigned)
 				// if the type of partition key is Int
 				if pk, ok := partExpr.Expr.(*expression.Column); ok && pk.RetType.EvalType() == types.ETInt {
@@ -1020,7 +1021,7 @@ func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expres
 		return 0, 0, false
 	}
 
-	unsigned := mysql.HasUnsignedFlag(p.col.RetType.Flag)
+	unsigned := mysql.HasUnsignedFlag(p.col.RetType.GetFlag())
 	start, end := pruneUseBinarySearch(p.lessThan, dataForPrune, unsigned)
 	return start, end, true
 }
@@ -1082,7 +1083,7 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 	}
 
 	var result partitionRangeOR
-	unsigned := mysql.HasUnsignedFlag(col.RetType.Flag)
+	unsigned := mysql.HasUnsignedFlag(col.RetType.GetFlag())
 	for i := 1; i < len(args); i++ {
 		constExpr, ok := args[i].(*expression.Constant)
 		if !ok {
@@ -1575,13 +1576,23 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 		return 0, len(p.data), false
 	}
 
-	start, end := p.pruneUseBinarySearch(sctx, opName, con, op)
+	// If different collation, we can only prune if:
+	// - expression is binary collation (can only be found in one partition)
+	// - EQ operator, consider values 'a','b','ä' where 'ä' would be in the same partition as 'a' if general_ci, but is binary after 'b'
+	// otherwise return all partitions / no pruning
+	_, exprColl := expr.CharsetAndCollation()
+	colColl := p.partCol.RetType.GetCollate()
+	if exprColl != colColl && (opName != ast.EQ || !collate.IsBinCollation(exprColl)) {
+		return 0, len(p.data), true
+	}
+	start, end := p.pruneUseBinarySearch(sctx, opName, con)
 	return start, end, true
 }
 
-func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant, f *expression.ScalarFunction) (start int, end int) {
+func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
 	var err error
 	var isNull bool
+	charSet, collation := p.partCol.RetType.GetCharset(), p.partCol.RetType.GetCollate()
 	compare := func(ith int, op string, v *expression.Constant) bool {
 		if ith == len(p.data)-1 {
 			if p.maxvalue {
@@ -1590,7 +1601,7 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 		}
 		var expr expression.Expression
 		expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
-		expr.SetCharsetAndCollation(f.CharsetAndCollation())
+		expr.SetCharsetAndCollation(charSet, collation)
 		var val int64
 		val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
 		return val > 0

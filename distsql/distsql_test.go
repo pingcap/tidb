@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -249,7 +249,7 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 
 			colTypes := make([]*types.FieldType, 4)
 			for i := 0; i < 4; i++ {
-				colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+				colTypes[i] = types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP()
 			}
 			chk := chunk.New(colTypes, numRows, numRows)
 
@@ -325,15 +325,10 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 		Build()
 
 	// 4 int64 types.
+	ftb := types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
 	colTypes := []*types.FieldType{
-		{
-			Tp:      mysql.TypeLonglong,
-			Flen:    mysql.MaxIntWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-			Charset: charset.CharsetBin,
-			Collate: charset.CollationBin,
-		},
+		ftb.BuildP(),
 	}
 	colTypes = append(colTypes, colTypes[0])
 	colTypes = append(colTypes, colTypes[0])
@@ -400,15 +395,10 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	require.NoError(t, err)
 
 	// 4 int64 types.
+	ftb := types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
 	colTypes := []*types.FieldType{
-		{
-			Tp:      mysql.TypeLonglong,
-			Flen:    mysql.MaxIntWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-			Charset: charset.CharsetBin,
-			Collate: charset.CollationBin,
-		},
+		ftb.BuildP(),
 	}
 	colTypes = append(colTypes, colTypes[0])
 	colTypes = append(colTypes, colTypes[0])

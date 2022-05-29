@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -146,8 +147,8 @@ func TestMemJsonObjectagg(t *testing.T) {
 		}
 
 		tests := []multiArgsAggMemTest{
-			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+aggfuncs.DefMapStringInterfaceBucketSize, defaultMultiArgsMemDeltaGens, true),
-			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+aggfuncs.DefMapStringInterfaceBucketSize, defaultMultiArgsMemDeltaGens, false),
+			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+hack.DefBucketMemoryUsageForMapStringToAny, defaultMultiArgsMemDeltaGens, true),
+			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+hack.DefBucketMemoryUsageForMapStringToAny, defaultMultiArgsMemDeltaGens, false),
 		}
 		for _, test := range tests {
 			testMultiArgsAggMemFunc(t, test)
