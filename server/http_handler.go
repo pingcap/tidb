@@ -1265,7 +1265,7 @@ func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
 	}
 	txnMeta := meta.NewMeta(txn)
 
-	jobs, err := ddl.GetAllHistoryDDLJobs(txnMeta)
+	jobs, err := txnMeta.GetAllHistoryDDLJobs()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -117,7 +117,10 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 }
 
 func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	historyJob, err := GetHistoryJobByID(ctx, id)
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	tran := meta.NewMeta(txn)
+	historyJob, err := tran.GetHistoryDDLJob(id)
 	require.NoError(t, err)
 	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
 
@@ -752,7 +755,7 @@ func TestGetDDLJobs(t *testing.T) {
 		err = m.EnQueueDDLJob(jobs[i])
 		require.NoError(t, err)
 
-		currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
+		currJobs, err := GetDDLJobs(txn)
 		require.NoError(t, err)
 		require.Len(t, currJobs, i+1)
 
@@ -771,7 +774,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs2, i+1)
 	}
 
-	currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
+	currJobs, err := GetDDLJobs(txn)
 	require.NoError(t, err)
 
 	for i, job := range jobs {
@@ -803,7 +806,7 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	m = meta.NewMeta(txn, meta.AddIndexJobListKey)
 	enQueueDDLJobs(t, m, model.ActionAddIndex, 5, 10)
 
-	currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
+	currJobs, err := GetDDLJobs(txn)
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 
@@ -943,7 +946,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err = AddHistoryDDLJob(m, jobs[i], true)
+		err = m.AddHistoryDDLJob(jobs[i], true)
 		require.NoError(t, err)
 
 		historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)

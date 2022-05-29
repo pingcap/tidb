@@ -19,8 +19,11 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
@@ -86,7 +89,13 @@ func TestCancelAddIndexJobError(t *testing.T) {
 	require.EqualError(t, err, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
 
 	// Verification of the history job state.
-	job, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
+	var job *model.Job
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		var err1 error
+		job, err1 = m.GetHistoryDDLJob(jobID)
+		return errors.Trace(err1)
+	})
 	require.NoError(t, err)
 	require.Equal(t, int64(4), job.ErrorCount)
 	require.EqualError(t, job.Error, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")

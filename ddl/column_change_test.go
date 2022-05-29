@@ -413,15 +413,19 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 }
 
 func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
-	sess := testkit.NewTestKit(t, store).Session()
-	historyJob, err := ddl.GetHistoryJobByID(sess, jobID)
-	require.NoError(t, err)
-	require.Equal(t, historyJob.State, model.JobStateSynced)
-	if isAdd {
-		require.Equal(t, historyJob.SchemaState, model.StatePublic)
-	} else {
-		require.Equal(t, historyJob.SchemaState, model.StateNone)
-	}
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		historyJob, err := m.GetHistoryDDLJob(jobID)
+		require.NoError(t, err)
+		require.Equal(t, historyJob.State, model.JobStateSynced)
+		if isAdd {
+			require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		} else {
+			require.Equal(t, historyJob.SchemaState, model.StateNone)
+		}
+
+		return nil
+	}))
 }
 
 func testNewContext(store kv.Storage) sessionctx.Context {
