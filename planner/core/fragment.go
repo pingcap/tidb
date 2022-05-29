@@ -46,7 +46,8 @@ type Fragment struct {
 
 	IsRoot bool
 
-	singleton bool // indicates if this is a task running on a single node.
+	singleton                bool // indicates if this is a task running on a single node.
+	EnableFineGrainedShuffle bool
 }
 
 type tasksAndFrags struct {
@@ -63,14 +64,27 @@ type mppTaskGenerator struct {
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) (frags []*Fragment, err error) {
 	g := &mppTaskGenerator{
 		ctx:     ctx,
 		startTS: startTs,
 		is:      is,
 		cache:   make(map[int]tasksAndFrags),
 	}
-	return g.generateMPPTasks(sender)
+	if frags, err = g.generateMPPTasks(sender); err != nil {
+		return
+	}
+	enable := true
+	for _, frag := range frags {
+		if !frag.EnableFineGrainedShuffle {
+			enable = false
+			break
+		}
+	}
+	for _, frag := range frags {
+		frag.EnableFineGrainedShuffle = enable
+	}
+	return
 }
 
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
@@ -141,6 +155,53 @@ func (f *Fragment) init(p PhysicalPlan) error {
 		}
 	}
 	return nil
+}
+
+func checkEnableFineGrainedShuffle(hasValidWindow bool, hasInvalidWindow bool, hasTableScan bool) bool {
+	if hasInvalidWindow {
+		return false
+	}
+	if hasValidWindow || hasTableScan {
+		return true
+	}
+	return false
+}
+
+func (f *Fragment) initFineGrainedShuffleFlag(s *PhysicalExchangeSender) {
+	f.EnableFineGrainedShuffle = checkEnableFineGrainedShuffle(traverseFragmentForFineGrainedShuffle(s))
+}
+
+func traverseFragmentForFineGrainedShuffle(p PhysicalPlan) (hasValidWindow bool, hasInvalidWindow bool, hasTableScan bool) {
+	switch x := p.(type) {
+	case *PhysicalWindow:
+		if len(x.PartitionBy) <= 0 {
+			hasInvalidWindow = true
+			break
+		}
+		child := x.Children()[0]
+		if sort, ok := child.(*PhysicalSort); ok {
+			child = sort.Children()[0]
+		}
+		switch child.(type) {
+		case *PhysicalWindow:
+			hasValidWindow = true
+			_, hasInvalidWindow, hasTableScan = traverseFragmentForFineGrainedShuffle(child)
+		case *PhysicalExchangeReceiver:
+			hasValidWindow = true
+		default:
+			hasInvalidWindow = true
+		}
+	case *PhysicalTableScan:
+		hasTableScan = true
+	default:
+		for _, child := range p.Children() {
+			hasValidWindow, hasInvalidWindow, hasTableScan = traverseFragmentForFineGrainedShuffle(child)
+			if !checkEnableFineGrainedShuffle(hasValidWindow, hasInvalidWindow, hasTableScan) {
+				break
+			}
+		}
+	}
+	return
 }
 
 // We would remove all the union-all operators by 'untwist'ing and copying the plans above union-all.
@@ -215,6 +276,7 @@ func buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		f.initFineGrainedShuffleFlag(s)
 		fragments = append(fragments, f)
 	}
 	return fragments, nil

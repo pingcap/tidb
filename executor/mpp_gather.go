@@ -77,7 +77,12 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs), zap.Int64("ID", mppTask.ID), zap.String("address", mppTask.Meta.GetAddress()), zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
+		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
+			zap.Int64("ID", mppTask.ID), zap.String("address", mppTask.Meta.GetAddress()),
+			zap.Bool("EnableFineGrainedShuffle", pf.EnableFineGrainedShuffle),
+			zap.Uint32("FineGrainedShuffleStreamCount", e.ctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount),
+			zap.Int64("FineGrainedShuffleBatchSize", e.ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize),
+			zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
 		req := &kv.MPPDispatchRequest{
 			Data:      pbData,
 			Meta:      mppTask.Meta,
@@ -87,6 +92,10 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 			SchemaVar: e.is.SchemaMetaVersion(),
 			StartTs:   e.startTS,
 			State:     kv.MppTaskReady,
+		}
+		if pf.EnableFineGrainedShuffle {
+			req.FineGrainedShuffleStreamCount = e.ctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
+			req.FineGrainedShuffleBatchSize = e.ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize
 		}
 		e.mppReqs = append(e.mppReqs, req)
 	}

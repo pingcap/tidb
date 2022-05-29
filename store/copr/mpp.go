@@ -223,9 +223,11 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		Meta:        taskMeta,
 		EncodedPlan: req.Data,
 		// TODO: This is only an experience value. It's better to be configurable.
-		Timeout:   60,
-		SchemaVer: req.SchemaVar,
-		Regions:   regionInfos,
+		Timeout:                       60,
+		SchemaVer:                     req.SchemaVar,
+		Regions:                       regionInfos,
+		FineGrainedShuffleStreamCount: req.FineGrainedShuffleStreamCount,
+		FineGrainedShuffleBatchSize:   req.FineGrainedShuffleBatchSize,
 	}
 	if originalTask != nil {
 		mppReq.TableRegions = originalTask.PartitionTableRegions
