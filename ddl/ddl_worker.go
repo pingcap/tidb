@@ -338,14 +338,12 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
 func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
-	var job *model.Job
-
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
-	})
+	se, err := d.sessPool.get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer d.sessPool.put(se)
+	job, err := GetHistoryJobByID(se, id)
 
 	return job, errors.Trace(err)
 }
