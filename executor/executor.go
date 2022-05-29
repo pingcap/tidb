@@ -493,11 +493,11 @@ type DDLJobRetriever struct {
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
-	jobs, err := ddl.GetDDLJobs(txn)
+	m := meta.NewMeta(txn)
+	jobs, err := ddl.GetAllDDLJobs(m)
 	if err != nil {
 		return err
 	}
-	m := meta.NewMeta(txn)
 	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
 	if err != nil {
 		return err
@@ -596,7 +596,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs, err := ddl.GetDDLJobs(txn)
+	jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
 	if err != nil {
 		return err
 	}
@@ -1843,6 +1843,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// We should set only two variables (
 	// IgnoreErr and StrictSQLMode) to avoid setting the same bool variables and
 	// pushing them down to TiKV as flags.
+
+	sc.InRestrictedSQL = vars.InRestrictedSQL
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
 		ResetUpdateStmtCtx(sc, stmt, vars)
