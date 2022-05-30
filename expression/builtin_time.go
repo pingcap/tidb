@@ -3408,6 +3408,16 @@ func subDuration(da *baseDateArithmetical, ctx sessionctx.Context, d types.Durat
 	return da.subDuration(ctx, d, interval, unit, resultFsp)
 }
 
+type funcSetPbCodeOp func(b builtinFunc, add tipb.ScalarFuncSig, sub tipb.ScalarFuncSig)
+
+func setAdd(b builtinFunc, add tipb.ScalarFuncSig, sub tipb.ScalarFuncSig) {
+	b.setPbCode(add)
+}
+
+func setSub(b builtinFunc, add tipb.ScalarFuncSig, sub tipb.ScalarFuncSig) {
+	b.setPbCode(sub)
+}
+
 type funcGetDateForDateAddSub func(da *baseDateArithmetical, ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (types.Time, bool, error)
 
 func getDateFromString(da *baseDateArithmetical, ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (types.Time, bool, error) {
@@ -3482,8 +3492,9 @@ func vecGetIntervalFromDecimal(da *baseDateArithmetical, b *baseBuiltinFunc, inp
 
 type addSubDateFunctionClass struct {
 	baseFunctionClass
-	timeOp     funcTimeOpForDateAddSub
-	durationOp funcDurationOpForDateAddSub
+	timeOp      funcTimeOpForDateAddSub
+	durationOp  funcDurationOpForDateAddSub
+	setPbCodeOp funcSetPbCodeOp
 }
 
 func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -3591,7 +3602,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromString,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateStringString)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateStringString, tipb.ScalarFuncSig_AddDateStringString)
 	case dateEvalTp == types.ETString && intervalEvalTp == types.ETInt:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3602,7 +3613,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromInt,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateStringInt)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateStringInt, tipb.ScalarFuncSig_AddDateStringInt)
 	case dateEvalTp == types.ETString && intervalEvalTp == types.ETReal:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3613,7 +3624,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromReal,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateStringReal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateStringReal, tipb.ScalarFuncSig_AddDateStringReal)
 	case dateEvalTp == types.ETString && intervalEvalTp == types.ETDecimal:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3624,7 +3635,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromDecimal,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateStringDecimal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateStringDecimal, tipb.ScalarFuncSig_AddDateStringDecimal)
 	case dateEvalTp == types.ETInt && intervalEvalTp == types.ETString:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3635,7 +3646,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromString,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateIntString)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateIntString, tipb.ScalarFuncSig_AddDateIntString)
 	case dateEvalTp == types.ETInt && intervalEvalTp == types.ETInt:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3646,7 +3657,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromInt,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateIntInt)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateIntInt, tipb.ScalarFuncSig_AddDateIntInt)
 	case dateEvalTp == types.ETInt && intervalEvalTp == types.ETReal:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3657,7 +3668,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromReal,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateIntReal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateIntReal, tipb.ScalarFuncSig_AddDateIntReal)
 	case dateEvalTp == types.ETInt && intervalEvalTp == types.ETDecimal:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3668,7 +3679,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromDecimal,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateIntDecimal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateIntDecimal, tipb.ScalarFuncSig_AddDateIntDecimal)
 	case dateEvalTp == types.ETReal && intervalEvalTp == types.ETString:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3679,7 +3690,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromString,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateRealString)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateRealString, tipb.ScalarFuncSig_AddDateRealString)
 	case dateEvalTp == types.ETReal && intervalEvalTp == types.ETInt:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3690,7 +3701,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromInt,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateRealInt)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateRealInt, tipb.ScalarFuncSig_AddDateRealInt)
 	case dateEvalTp == types.ETReal && intervalEvalTp == types.ETReal:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3701,7 +3712,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromReal,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateRealReal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateRealReal, tipb.ScalarFuncSig_AddDateRealReal)
 	case dateEvalTp == types.ETReal && intervalEvalTp == types.ETDecimal:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3712,7 +3723,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromDecimal,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateRealDecimal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateRealDecimal, tipb.ScalarFuncSig_AddDateRealDecimal)
 	case dateEvalTp == types.ETDecimal && intervalEvalTp == types.ETString:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3723,7 +3734,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromString,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDecimalString)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDecimalString, tipb.ScalarFuncSig_AddDateDecimalString)
 	case dateEvalTp == types.ETDecimal && intervalEvalTp == types.ETInt:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3734,7 +3745,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromInt,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDecimalInt)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDecimalInt, tipb.ScalarFuncSig_AddDateDecimalInt)
 	case dateEvalTp == types.ETDecimal && intervalEvalTp == types.ETReal:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3745,7 +3756,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromReal,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDecimalReal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDecimalReal, tipb.ScalarFuncSig_AddDateDecimalReal)
 	case dateEvalTp == types.ETDecimal && intervalEvalTp == types.ETDecimal:
 		sig = &builtinAddSubDateAsStringSig{
 			baseBuiltinFunc:      bf,
@@ -3756,7 +3767,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromDecimal,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDecimalDecimal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDecimalDecimal, tipb.ScalarFuncSig_AddDateDecimalDecimal)
 	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETString:
 		sig = &builtinAddSubDateDatetimeAnySig{
 			baseBuiltinFunc:      bf,
@@ -3765,7 +3776,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromString,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDatetimeString)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDatetimeString, tipb.ScalarFuncSig_AddDateDatetimeString)
 	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETInt:
 		sig = &builtinAddSubDateDatetimeAnySig{
 			baseBuiltinFunc:      bf,
@@ -3774,7 +3785,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromInt,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDatetimeInt)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateDatetimeInt)
 	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETReal:
 		sig = &builtinAddSubDateDatetimeAnySig{
 			baseBuiltinFunc:      bf,
@@ -3783,7 +3794,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromReal,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDatetimeReal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDatetimeReal, tipb.ScalarFuncSig_AddDateDatetimeReal)
 	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETDecimal:
 		sig = &builtinAddSubDateDatetimeAnySig{
 			baseBuiltinFunc:      bf,
@@ -3792,7 +3803,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			vecGetInterval:       vecGetIntervalFromDecimal,
 			timeOp:               c.timeOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDatetimeDecimal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDatetimeDecimal, tipb.ScalarFuncSig_AddDateDatetimeDecimal)
 	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETString:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
@@ -3802,7 +3813,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			timeOp:               c.timeOp,
 			durationOp:           c.durationOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDurationString)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationString, tipb.ScalarFuncSig_AddDateDurationString)
 	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETInt:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
@@ -3812,7 +3823,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			timeOp:               c.timeOp,
 			durationOp:           c.durationOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDurationInt)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationInt, tipb.ScalarFuncSig_AddDateDurationInt)
 	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETReal:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
@@ -3822,7 +3833,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			timeOp:               c.timeOp,
 			durationOp:           c.durationOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDurationReal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationReal, tipb.ScalarFuncSig_AddDateDurationReal)
 	case dateEvalTp == types.ETDuration && intervalEvalTp == types.ETDecimal:
 		sig = &builtinAddSubDateDurationAnySig{
 			baseBuiltinFunc:      bf,
@@ -3832,7 +3843,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			timeOp:               c.timeOp,
 			durationOp:           c.durationOp,
 		}
-		sig.setPbCode(tipb.ScalarFuncSig_AddDateDurationDecimal)
+		c.setPbCodeOp(sig, tipb.ScalarFuncSig_AddDateDurationDecimal, tipb.ScalarFuncSig_AddDateDurationDecimal)
 	}
 	return sig, nil
 }
@@ -3871,7 +3882,7 @@ func (b *builtinAddSubDateAsStringSig) evalString(row chunk.Row) (string, bool, 
 		return types.ZeroTime.String(), true, err
 	}
 	if date.InvalidZero() {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+		return types.ZeroTime.String(), true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
 	interval, isNull, err := b.getInterval(&b.baseDateArithmetical, b.ctx, b.args, row, unit)
