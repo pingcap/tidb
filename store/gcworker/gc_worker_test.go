@@ -1682,7 +1682,7 @@ func TestGCPlacementRules(t *testing.T) {
 
 	// do gc
 	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
-	err = s.gcWorker.doGCPlacementRules(1, dr, gcPlacementRuleCache)
+	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
 	require.NoError(t, err)
 	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
 	require.Equal(t, 1, deletePlacementRuleCounter)
@@ -1694,7 +1694,7 @@ func TestGCPlacementRules(t *testing.T) {
 	require.True(t, got.IsEmpty())
 
 	// gc the same table id repeatedly
-	err = s.gcWorker.doGCPlacementRules(1, dr, gcPlacementRuleCache)
+	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
 	require.NoError(t, err)
 	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
 	require.Equal(t, 1, deletePlacementRuleCounter)

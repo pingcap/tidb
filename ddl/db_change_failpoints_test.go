@@ -15,7 +15,6 @@
 package ddl_test
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,10 +22,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -64,15 +62,7 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 
 	id, err := strconv.Atoi(jobID)
 	require.NoError(t, err)
-	var historyJob *model.Job
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		historyJob, err = t.GetHistoryDDLJob(int64(id))
-		if err != nil {
-			return err
-		}
-		return nil
-	})
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), int64(id))
 	require.NoError(t, err)
 	require.NotNil(t, historyJob)
 
