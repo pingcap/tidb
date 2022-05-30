@@ -1171,6 +1171,10 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 	}
 	t := meta.NewMeta(txn)
 	job, err := t.GetHistoryDDLJob(id)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = txn.Commit(context.Background())
 	return job, errors.Trace(err)
 }
 
