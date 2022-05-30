@@ -301,8 +301,8 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	tablesMap := make(map[string]struct{})
 	for _, db := range schemas {
 		dbName := db.Info.Name.L
-		if oname, lname, ok := utils.GetSysDBONameAndLName(db.Info.Name); utils.IsSysDB(oname) && ok {
-			dbName = lname
+		if dbCIStrName, ok := utils.GetSysDBCIStrName(db.Info.Name); utils.IsSysDB(dbCIStrName.O) && ok {
+			dbName = dbCIStrName.L
 		}
 		schemasMap[utils.EncloseName(dbName)] = struct{}{}
 		for _, table := range db.Tables {
