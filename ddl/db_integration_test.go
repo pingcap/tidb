@@ -1225,19 +1225,6 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 	done <- errors.Trace(err)
 }
 
-func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
-	var job *model.Job
-
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
-	})
-
-	return job, errors.Trace(err)
-}
-
 func TestCreateTableTooLarge(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -2699,6 +2686,23 @@ func TestDropColumnWithIndex(t *testing.T) {
 	tk.MustExec("alter table t_drop_column_with_idx drop column b")
 	query := queryIndexOnTable("test", "t_drop_column_with_idx")
 	tk.MustQuery(query).Check(testkit.Rows())
+}
+
+func TestDropColumnWithAutoInc(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int auto_increment, c int, key(b))")
+	tk.MustGetErrCode("alter table t drop column b", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
+	tk.MustExec("alter table t drop column b")
+	query := queryIndexOnTable("test", "t")
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(a int auto_increment, b int, key(a, b))")
+	tk.MustGetErrCode("alter table t drop column b", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestDropColumnWithMultiIndex(t *testing.T) {
