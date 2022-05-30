@@ -151,9 +151,24 @@ error = '''
 failed to update PD
 '''
 
+["BR:PiTR:ErrInvalidTaskInfo"]
+error = '''
+task info is invalid
+'''
+
+["BR:PiTR:ErrMalformedMetadata"]
+error = '''
+malformed metadata
+'''
+
 ["BR:PiTR:ErrPiTRInvalidCDCLogFormat"]
 error = '''
 invalid cdc log format
+'''
+
+["BR:PiTR:ErrTaskNotFound"]
+error = '''
+task not found
 '''
 
 ["BR:Restore:ErrRestoreChecksumMismatch"]
@@ -224,6 +239,11 @@ failed to write and ingest
 ["BR:Restore:ErrUnsupportedSysTable"]
 error = '''
 the system table isn't supported for restoring yet
+'''
+
+["BR:Stream:ErrStreamLogTaskExist"]
+error = '''
+stream task already exists
 '''
 
 ["Lighting:Restore:ErrChecksumMismatch"]
@@ -519,21 +539,6 @@ TiDB admin check table failed.
 ["admin:8223"]
 error = '''
 data inconsistency in table: %s, index: %s, handle: %s, index-values:%#v != record-values:%#v
-'''
-
-["admin:8224"]
-error = '''
-DDL Job:%v not found
-'''
-
-["admin:8225"]
-error = '''
-This job:%v is finished, so can't be cancelled
-'''
-
-["admin:8226"]
-error = '''
-This job:%v is almost finished, can't be cancelled now
 '''
 
 ["autoid:1075"]
@@ -1156,6 +1161,21 @@ error = '''
 Invalid auto random: %s
 '''
 
+["ddl:8224"]
+error = '''
+DDL Job:%v not found
+'''
+
+["ddl:8225"]
+error = '''
+This job:%v is finished, so can't be cancelled
+'''
+
+["ddl:8226"]
+error = '''
+This job:%v is almost finished, can't be cancelled now
+'''
+
 ["ddl:8227"]
 error = '''
 Unsupported sequence table-option %s
@@ -1604,6 +1624,11 @@ Table '%-.192s' already exists
 ["meta:1146"]
 error = '''
 Table '%-.192s.%-.192s' doesn't exist
+'''
+
+["meta:1300"]
+error = '''
+Invalid %s character string: '%.64s'
 '''
 
 ["meta:8235"]
@@ -2211,6 +2236,11 @@ error = '''
 [%d] can not retry select for update statement
 '''
 
+["session:8143"]
+error = '''
+non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v
+'''
+
 ["structure:8217"]
 error = '''
 invalid encoded hash key flag
@@ -2554,6 +2584,11 @@ TiDB does not yet support JSON objects with the key length >= 65536
 ["types:8131"]
 error = '''
 Build table: %s global-level stats failed due to missing partition-level stats
+'''
+
+["types:8244"]
+error = '''
+Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions
 '''
 
 ["variable:1193"]

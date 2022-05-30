@@ -1405,6 +1405,39 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		require.NoError(t, rows.Close())
 		dbt.MustExec("drop table if exists pn")
 	})
+
+	// Test with upper case variables.
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists pn")
+		dbt.MustExec("create table pn (c1 int, c2 int, c3 int)")
+		dbt.MustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, @VAL1, @VAL2) SET c3 = @VAL2 * 100, c2 = CAST(@VAL1 AS UNSIGNED)`, path))
+		require.NoError(t, err1)
+		var (
+			a int
+			b int
+			c int
+		)
+		rows := dbt.MustQuery("select * from pn")
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&a, &b, &c)
+		require.NoError(t, err)
+		require.Equal(t, 1, a)
+		require.Equal(t, 2, b)
+		require.Equal(t, 300, c)
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&a, &b, &c)
+		require.NoError(t, err)
+		require.Equal(t, 4, a)
+		require.Equal(t, 5, b)
+		require.Equal(t, 600, c)
+		require.Falsef(t, rows.Next(), "unexpected data")
+		require.NoError(t, rows.Close())
+		dbt.MustExec("drop table if exists pn")
+	})
 }
 
 func (cli *testServerClient) runTestConcurrentUpdate(t *testing.T) {
@@ -1861,6 +1894,21 @@ func (cli *testServerClient) runTestTLSConnection(t *testing.T, overrider config
 		require.NoError(t, err)
 	}()
 	_, err = db.Exec("USE test")
+	if err != nil {
+		return errors.Annotate(err, "dsn:"+dsn)
+	}
+	return err
+}
+
+func (cli *testServerClient) runTestEnableSecureTransport(t *testing.T, overrider configOverrider) error {
+	dsn := cli.getDSN(overrider)
+	db, err := sql.Open("mysql", dsn)
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	_, err = db.Exec("SET GLOBAL require_secure_transport = 1")
 	if err != nil {
 		return errors.Annotate(err, "dsn:"+dsn)
 	}

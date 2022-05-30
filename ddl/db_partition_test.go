@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -54,7 +54,7 @@ import (
 )
 
 func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
-	require.NoError(t, ctx.NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	defer func() {
@@ -642,6 +642,114 @@ create table log_message_1 (
 	tk.MustExec(`alter table t add partition (partition p1 values less than (X'0D'), partition p2 values less than (X'0E'));`)
 	tk.MustExec(`insert into t values (X'0B'), (X'0C'), (X'0D')`)
 	tk.MustQuery(`select * from t where a < X'0D' order by a`).Check(testkit.Rows("\x0B", "\x0C"))
+}
+
+func TestPartitionRangeColumnsCollate(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create schema PartitionRangeColumnsCollate")
+	tk.MustExec("use PartitionRangeColumnsCollate")
+	tk.MustExec(`create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns (a)
+ (partition p0A values less than ("A"),
+ partition p1AA values less than ("AA"),
+ partition p2Aa values less than ("Aa"),
+ partition p3BB values less than ("BB"),
+ partition p4Bb values less than ("Bb"),
+ partition p5aA values less than ("aA"),
+ partition p6aa values less than ("aa"),
+ partition p7bB values less than ("bB"),
+ partition p8bb values less than ("bb"),
+ partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba")`)
+	tk.MustQuery(`explain select * from t where a = "AA" collate utf8mb4_general_ci`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:all data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "AA")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a = "AA" collate utf8mb4_general_ci`).Sort().Check(testkit.Rows("AA", "Aa", "aA", "aa"))
+	tk.MustQuery(`explain select * from t where a = "aa" collate utf8mb4_general_ci`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:all data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "aa")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a = "aa" collate utf8mb4_general_ci`).Sort().Check(testkit.Rows("AA", "Aa", "aA", "aa"))
+	tk.MustQuery(`explain select * from t where a >= "aa" collate utf8mb4_general_ci`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:all data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  ge(partitionrangecolumnscollate.t.a, "aa")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a >= "aa" collate utf8mb4_general_ci`).Sort().Check(testkit.Rows(
+		"AA", "AB", "Aa", "Ab", "B", "BA", "BB", "Ba", "Bb", "aA", "aB", "aa", "ab", "b", "bA", "bB", "ba", "bb"))
+	tk.MustQuery(`explain select * from t where a > "aa" collate utf8mb4_general_ci`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:all data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  gt(partitionrangecolumnscollate.t.a, "aa")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a > "aa" collate utf8mb4_general_ci`).Sort().Check(testkit.Rows(
+		"AB", "Ab", "B", "BA", "BB", "Ba", "Bb", "aB", "ab", "b", "bA", "bB", "ba", "bb"))
+	tk.MustQuery(`explain select * from t where a <= "aa" collate utf8mb4_general_ci`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:all data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  le(partitionrangecolumnscollate.t.a, "aa")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a <= "aa" collate utf8mb4_general_ci`).Sort().Check(testkit.Rows(
+		"A", "AA", "Aa", "a", "aA", "aa"))
+	tk.MustQuery(`explain select * from t where a < "aa" collate utf8mb4_general_ci`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:all data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  lt(partitionrangecolumnscollate.t.a, "aa")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a < "aa" collate utf8mb4_general_ci`).Sort().Check(testkit.Rows(
+		"A", "a"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec(` create table t (a varchar(255) charset utf8mb4 collate utf8mb4_general_ci) partition by range columns (a)
+(partition p0 values less than ("A"),
+ partition p1 values less than ("aa"),
+ partition p2 values less than ("AAA"),
+ partition p3 values less than ("aaaa"),
+ partition p4 values less than ("B"),
+ partition p5 values less than ("bb"),
+ partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba"),("ä"),("ÄÄÄ")`)
+	tk.MustQuery(`explain select * from t where a = "aa" collate utf8mb4_general_ci`).Check(testkit.Rows(
+		`TableReader_7 10.00 root partition:p2 data:Selection_6`,
+		`└─Selection_6 10.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "aa")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a = "aa" collate utf8mb4_general_ci`).Sort().Check(testkit.Rows(
+		"AA", "Aa", "aA", "aa"))
+	tk.MustQuery(`explain select * from t where a = "aa" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:p2 data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "aa")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a = "aa" collate utf8mb4_bin`).Sort().Check(testkit.Rows("aa"))
+	// 'a' < 'b' < 'ä' in _bin
+	tk.MustQuery(`explain select * from t where a = "ä" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:p1 data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "ä")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a = "ä" collate utf8mb4_bin`).Sort().Check(testkit.Rows("ä"))
+	tk.MustQuery(`explain select * from t where a = "b" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:p5 data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "b")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a = "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("b"))
+	tk.MustQuery(`explain select * from t where a <= "b" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:all data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  le(partitionrangecolumnscollate.t.a, "b")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a <= "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("A", "AA", "AB", "Aa", "Ab", "B", "BA", "BB", "Ba", "Bb", "a", "aA", "aB", "aa", "ab", "b"))
+	tk.MustQuery(`explain select * from t where a < "b" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:all data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  lt(partitionrangecolumnscollate.t.a, "b")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	// Missing upper case B if not p5 is included!
+	tk.MustQuery(`select * from t where a < "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("A", "AA", "AB", "Aa", "Ab", "B", "BA", "BB", "Ba", "Bb", "a", "aA", "aB", "aa", "ab"))
+	tk.MustQuery(`explain select * from t where a >= "b" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:all data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  ge(partitionrangecolumnscollate.t.a, "b")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a >= "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("b", "bA", "bB", "ba", "bb", "ÄÄÄ", "ä"))
+	tk.MustQuery(`explain select * from t where a > "b" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:all data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  gt(partitionrangecolumnscollate.t.a, "b")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a > "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("bA", "bB", "ba", "bb", "ÄÄÄ", "ä"))
 }
 
 func TestDisableTablePartition(t *testing.T) {
@@ -2913,17 +3021,12 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	jobID := row.GetInt64(0)
 
 	var tableIDs []int64
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMeta(txn)
-		historyJob, err := tt.GetHistoryDDLJob(jobID)
-		require.NoError(t, err)
-		err = historyJob.DecodeArgs(&tableIDs)
-		require.NoError(t, err)
-		// There is 2 partitions.
-		require.Equal(t, 3, len(tableIDs))
-		return nil
-	})
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
+	err = historyJob.DecodeArgs(&tableIDs)
+	require.NoError(t, err)
+	// There is 2 partitions.
+	require.Equal(t, 3, len(tableIDs))
 
 	startTime := time.Now()
 	done := waitGCDeleteRangeDone(t, tk, tableIDs[2])
@@ -2954,7 +3057,7 @@ func getPartitionTableRecordsNum(t *testing.T, ctx sessionctx.Context, tbl table
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.GetPartition(pid)
-		require.Nil(t, ctx.NewTxn(context.Background()))
+		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 		err := tables.IterRecords(partition, ctx, partition.Cols(),
 			func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 				num++
