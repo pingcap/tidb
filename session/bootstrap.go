@@ -1882,8 +1882,7 @@ func upgradeToVer92(s Session, ver int64) {
 	if ver >= version92 {
 		return
 	}
-	valStr := config.GetGlobalConfig().Performance.ForcePriority
-	importConfigOption(s, "performance.force-priority", variable.TiDBForcePriority, valStr)
+	importConfigOption(s, "performance.force-priority", variable.TiDBForcePriority, config.GetGlobalConfig().Performance.ForcePriority)
 }
 
 func writeOOMAction(s Session) {
