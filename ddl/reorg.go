@@ -344,7 +344,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 		return statistics.PseudoRowCount
 	}
 	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	rows, _, err := executor.ExecRestrictedSQL(w.ddlJobCtx, nil, sql, tblInfo.ID)
+	rows, _, err := executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
@@ -354,20 +354,20 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
-func (w *worker) isReorgRunnable(job *model.Job) error {
-	if isChanClosed(w.ctx.Done()) {
+func (dc *ddlCtx) isReorgRunnable(job *model.Job) error {
+	if isChanClosed(dc.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganizational job.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
-	if w.getReorgCtx(job).isReorgCanceled() {
+	if dc.getReorgCtx(job).isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
 	}
 
-	if !w.isOwner() {
+	if !dc.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", w.uuid))
+		logutil.BgLogger().Info("[ddl] DDL is not the DDL owner", zap.String("ID", dc.uuid))
 		return errors.Trace(dbterror.ErrNotOwner)
 	}
 	return nil

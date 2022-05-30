@@ -653,7 +653,7 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery("select ord('123'), ord(123), ord(''), ord('你好'), ord(NULL), ord('👍')")
 	result.Check(testkit.Rows("49 49 0 14990752 <nil> 4036989325"))
 	result = tk.MustQuery("select ord(X''), ord(X'6161'), ord(X'e4bd'), ord(X'e4bda0'), ord(_ascii'你'), ord(_latin1'你')")
-	result.Check(testkit.Rows("0 97 228 228 228 14990752"))
+	result.Check(testkit.Rows("0 97 228 228 228 228"))
 
 	// for space
 	result = tk.MustQuery(`select space(0), space(2), space(-1), space(1.1), space(1.9)`)
@@ -3137,8 +3137,9 @@ func TestUnknowHintIgnore(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
-	_, err := tk.Exec("select 1 from /*+ test1() */ t")
+	rs, err := tk.Exec("select 1 from /*+ test1() */ t")
 	require.NoError(t, err)
+	rs.Close()
 }
 
 func TestValuesInNonInsertStmt(t *testing.T) {
