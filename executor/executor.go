@@ -484,7 +484,7 @@ type ShowDDLJobsExec struct {
 // nolint:structcheck
 type DDLJobRetriever struct {
 	runningJobs    []*model.Job
-	historyJobIter *meta.LastJobIterator
+	historyJobIter meta.LastJobIterator
 	cursor         int
 	is             infoschema.InfoSchema
 	activeRoles    []*auth.RoleIdentity
