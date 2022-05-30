@@ -1725,7 +1725,6 @@ func TestIsMicrosecondUnit(t *testing.T) {
 		input    string
 		expected bool
 	}{
-		//case "MICROSECOND", "SECOND_MICROSECOND", "MINUTE_MICROSECOND", "HOUR_MICROSECOND", "DAY_MICROSECOND":
 		{"Microsecond", true},
 		{"Second_microsecond", true},
 		{"minute_microsecond", true},
@@ -1746,7 +1745,7 @@ func TestIsMicrosecondUnit(t *testing.T) {
 		{"SOME_MICROSECOND", false},
 	}
 	for _, col := range tbl {
-		output := types.IsDateUnit(col.input)
+		output := types.IsMicrosecondUnit(col.input)
 		require.Equal(t, col.expected, output)
 	}
 }
@@ -1785,6 +1784,94 @@ func TestParseTimeFromInt64(t *testing.T) {
 	require.Equal(t, 00, output.Minute())
 	require.Equal(t, 00, output.Second())
 	require.Equal(t, 00, output.Microsecond())
+}
+
+func TestParseTimeFromFloat64(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+
+	cases := []struct {
+		f   float64
+		t   byte // type: date or datetime.
+		Y   int
+		M   int
+		D   int
+		h   int
+		m   int
+		s   int
+		ms  int
+		err *terror.Error
+	}{
+		{20000102, mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{20000102.9, mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{0.0, mysql.TypeDate, 0, 0, 0, 0, 0, 0, 0, nil},
+		{20000102030405, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 0, nil},
+		{20000102030405.015625, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 15625, nil},
+		{20000102030405.0078125, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7812, nil},
+		{2000, mysql.TypeDatetime, 0, 0, 0, 0, 0, 0, 0, types.ErrTruncatedWrongVal},
+		{20000000000000, mysql.TypeDatetime, 2000, 0, 0, 0, 0, 0, 0, nil},
+	}
+
+	for _, c := range cases {
+		res, err := types.ParseTimeFromFloat64(sc, c.f)
+		require.Equalf(t, c.t, res.Type(), "Type mismatch for case %v", c)
+		require.Equalf(t, c.Y, res.Year(), "Year mismatch for case %v", c)
+		require.Equalf(t, c.M, res.Month(), "Month mismatch for case %v", c)
+		require.Equalf(t, c.D, res.Day(), "Day mismatch for case %v", c)
+		require.Equalf(t, c.h, res.Hour(), "Hour mismatch for case %v", c)
+		require.Equalf(t, c.m, res.Minute(), "Minute mismatch for case %v", c)
+		require.Equalf(t, c.s, res.Second(), "Second mismatch for case %v", c)
+		require.Equalf(t, c.ms, res.Microsecond(), "Microsecond mismatch for case %v", c)
+		if c.err == nil {
+			require.NoErrorf(t, err, "Unexpected error for case %v", c)
+		} else {
+			require.Truef(t, c.err.Equal(err), "Error mismatch for case %v", c)
+		}
+	}
+}
+
+func TestParseTimeFromDecimal(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+
+	cases := []struct {
+		d   *types.MyDecimal
+		t   byte // type: date or datetime.
+		Y   int
+		M   int
+		D   int
+		h   int
+		m   int
+		s   int
+		ms  int
+		err *terror.Error
+	}{
+		{types.NewDecFromStringForTest("20000102"), mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{types.NewDecFromStringForTest("20000102.9"), mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{types.NewDecFromStringForTest("0.0"), mysql.TypeDate, 0, 0, 0, 0, 0, 0, 0, nil},
+		{types.NewDecFromStringForTest("20000102030405"), mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 0, nil},
+		{types.NewDecFromStringForTest("20000102030405.015625"), mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 15625, nil},
+		{types.NewDecFromStringForTest("20000102030405.0078125"), mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7812, nil},
+		{types.NewDecFromStringForTest("2000"), mysql.TypeDatetime, 0, 0, 0, 0, 0, 0, 0, types.ErrTruncatedWrongVal},
+		{types.NewDecFromStringForTest("20000000000000"), mysql.TypeDatetime, 2000, 0, 0, 0, 0, 0, 0, nil},
+	}
+
+	for _, c := range cases {
+		res, err := types.ParseTimeFromDecimal(sc, c.d)
+		require.Equalf(t, c.t, res.Type(), "Type mismatch for case %v", c)
+		require.Equalf(t, c.Y, res.Year(), "Year mismatch for case %v", c)
+		require.Equalf(t, c.M, res.Month(), "Month mismatch for case %v", c)
+		require.Equalf(t, c.D, res.Day(), "Day mismatch for case %v", c)
+		require.Equalf(t, c.h, res.Hour(), "Hour mismatch for case %v", c)
+		require.Equalf(t, c.m, res.Minute(), "Minute mismatch for case %v", c)
+		require.Equalf(t, c.s, res.Second(), "Second mismatch for case %v", c)
+		require.Equalf(t, c.ms, res.Microsecond(), "Microsecond mismatch for case %v", c)
+		if c.err == nil {
+			require.NoErrorf(t, err, "Unexpected error for case %v", c)
+		} else {
+			require.Truef(t, c.err.Equal(err), "Error mismatch for case %v", c)
+		}
+	}
 }
 
 func TestGetFormatType(t *testing.T) {

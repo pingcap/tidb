@@ -2924,14 +2924,14 @@ func (du *baseDateArithmetical) getIntervalFromReal(ctx sessionctx.Context, args
 }
 
 func (du *baseDateArithmetical) add(ctx sessionctx.Context, date types.Time, interval string, unit string, resultFsp int) (types.Time, bool, error) {
-	year, month, day, nano, fsp, err := types.ParseDurationValue(unit, interval)
+	year, month, day, nano, _, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
-	return du.addDate(ctx, date, year, month, day, nano, fsp, resultFsp)
+	return du.addDate(ctx, date, year, month, day, nano, resultFsp)
 }
 
-func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time, year, month, day, nano int64, fsp int, resultFsp int) (types.Time, bool, error) {
+func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time, year, month, day, nano int64, resultFsp int) (types.Time, bool, error) {
 	goTime, err := date.GoTime(time.UTC)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
@@ -2943,14 +2943,6 @@ func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time,
 	if resultFsp != types.UnspecifiedFsp {
 		date.SetFsp(resultFsp)
 	}
-
-	// date.SetFsp(fsp)
-
-	//if goTime.Nanosecond() == 0 {
-	//	date.SetFsp(0)
-	//} else {
-	//	date.SetFsp(6)
-	//}
 
 	// fix https://github.com/pingcap/tidb/issues/11329
 	if goTime.Year() == 0 {
@@ -3005,11 +2997,11 @@ func (du *baseDateArithmetical) subDuration(ctx sessionctx.Context, d types.Dura
 }
 
 func (du *baseDateArithmetical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string, resultFsp int) (types.Time, bool, error) {
-	year, month, day, nano, fsp, err := types.ParseDurationValue(unit, interval)
+	year, month, day, nano, _, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
-	return du.addDate(ctx, date, -year, -month, -day, -nano, fsp, resultFsp)
+	return du.addDate(ctx, date, -year, -month, -day, -nano, resultFsp)
 }
 
 func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {

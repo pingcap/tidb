@@ -147,7 +147,6 @@ func TestClone(t *testing.T) {
 		&builtinTimestampLiteralSig{}, &builtinLastDaySig{}, &builtinStrToDateDateSig{}, &builtinStrToDateDatetimeSig{}, &builtinStrToDateDurationSig{},
 		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeFromStringSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddSubDateAsStringSig{},
 		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{},
-		// TODO: Fill in fields.
 	}
 	for _, f := range builtinFuncs {
 		cf := f.Clone()
