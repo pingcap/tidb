@@ -4431,6 +4431,8 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	// See PR: 11561.
 	job.BinlogInfo = nil
 	job.SchemaName = ""
+	err = sessiontxn.NewTxnInStmt(context.Background(), tk.Session())
+	require.NoError(t, err)
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	err = ddl.AddHistoryDDLJob(meta.NewMeta(txn), job, true)
