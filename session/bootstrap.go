@@ -619,11 +619,13 @@ const (
 	version90 = 90
 	// version91 converts prepared-plan-cache to sysvars
 	version91 = 91
+	// version92 converts performance.force-priority to sysvars
+	version92 = 92
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version91
+var currentBootstrapVersion int64 = version92
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -718,6 +720,7 @@ var (
 		upgradeToVer89,
 		upgradeToVer90,
 		upgradeToVer91,
+		upgradeToVer92,
 	}
 )
 
@@ -1873,6 +1876,13 @@ func upgradeToVer91(s Session, ver int64) {
 
 	valStr = strconv.FormatFloat(config.GetGlobalConfig().PreparedPlanCache.MemoryGuardRatio, 'f', -1, 64)
 	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", variable.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
+}
+
+func upgradeToVer92(s Session, ver int64) {
+	if ver >= version92 {
+		return
+	}
+	importConfigOption(s, "performance.force-priority", variable.TiDBForcePriority, config.GetGlobalConfig().Performance.ForcePriority)
 }
 
 func writeOOMAction(s Session) {

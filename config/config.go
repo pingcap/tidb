@@ -611,7 +611,6 @@ type Performance struct {
 	FeedbackProbability   float64 `toml:"feedback-probability" json:"feedback-probability"`
 	QueryFeedbackLimit    uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio   float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease         string  `toml:"bind-info-lease" json:"bind-info-lease"`
 	TxnEntrySizeLimit     uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
 	TxnTotalSizeLimit     uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
@@ -637,6 +636,9 @@ type Performance struct {
 	// CommitterConcurrency, RunAutoAnalyze unused since bootstrap v90
 	CommitterConcurrency int  `toml:"committer-concurrency" json:"committer-concurrency"`
 	RunAutoAnalyze       bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
+
+	// ForcePriority unused since bootstrap v92
+	ForcePriority string `toml:"force-priority" json:"force-priority"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -974,6 +976,8 @@ var removedConfig = map[string]struct{}{
 	"prepared-plan-cache.capacity":           {},
 	"prepared-plan-cache.memory-guard-ratio": {},
 	"oom-action":                             {},
+	// use tidb_force_priority
+	"performance.force-priority": {},
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
