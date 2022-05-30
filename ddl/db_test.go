@@ -1285,6 +1285,106 @@ func TestCancelJobWriteConflict(t *testing.T) {
 	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
 }
 
+func TestTxnSavepointWithDDL(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+
+	prepareFn := func() {
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1 (c1 int primary key, c2 int)")
+		tk.MustExec("create table t2 (c1 int primary key, c2 int)")
+	}
+	prepareFn()
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("rollback to s1")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("admin check table t1")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("rollback to s2")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustExec("admin check table t1, t2")
+
+	prepareFn()
+	tk.MustExec("truncate table t1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("rollback to s2")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	err := tk.ExecToErr("commit")
+	require.Error(t, err)
+	require.Regexp(t, ".*8028.*Information schema is changed during the execution of the statement.*", err.Error())
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("admin check table t1, t2")
+}
+
+func TestAmendTxnSavepointWithDDL(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+
+	prepareFn := func() {
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1 (c1 int primary key, c2 int)")
+		tk.MustExec("create table t2 (c1 int primary key, c2 int)")
+	}
+
+	prepareFn()
+	tk.MustExec("truncate table t1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("rollback to s2")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustExec("admin check table t1, t2")
+
+	prepareFn()
+	tk.MustExec("truncate table t1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("savepoint s3")
+	tk.MustExec("insert t2 values (2, 22)")
+	tk.MustExec("rollback to s3")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 11"))
+	tk.MustExec("admin check table t1, t2")
+}
+
 func TestSnapshotVersion(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	defer clean()
