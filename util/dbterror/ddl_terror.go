@@ -43,7 +43,9 @@ var (
 
 	// ErrCantDropColWithIndex means can't drop the column with index. We don't support dropping column with index covered now.
 	ErrCantDropColWithIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop column with index"), nil))
-	// ErrUnsupportedAddColumn means add columns is unsupoorted
+	// ErrCantDropColWithAutoInc means can't drop column with auto_increment
+	ErrCantDropColWithAutoInc = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "can't remove column with auto_increment when @@tidb_allow_remove_auto_inc disabled"), nil))
+	// ErrUnsupportedAddColumn means add columns is unsupported
 	ErrUnsupportedAddColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
 	// ErrUnsupportedModifyColumn means modify columns is unsupoorted
 	ErrUnsupportedModifyColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modify column: %s"), nil))
