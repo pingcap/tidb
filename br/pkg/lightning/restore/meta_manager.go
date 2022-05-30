@@ -194,8 +194,9 @@ func (m *dbTableMetaMgr) ReallocTableRowIDs(ctx context.Context, newRowIDCount i
 			return errors.Trace(err)
 		}
 		newRowIDMax = newRowIDBase + newRowIDCount
-		query := fmt.Sprintf("UPDATE %s SET row_id_max = %d WHERE table_id = ? AND task_id = ?", m.tableName, newRowIDMax)
-		if _, err := tx.ExecContext(ctx, query, m.tr.tableInfo.ID, m.taskID); err != nil {
+		// nolint:gosec
+		query := fmt.Sprintf("UPDATE %s SET row_id_max = ? WHERE table_id = ? AND task_id = ?", m.tableName)
+		if _, err := tx.ExecContext(ctx, query, newRowIDMax, m.tr.tableInfo.ID, m.taskID); err != nil {
 			return err
 		}
 		return nil

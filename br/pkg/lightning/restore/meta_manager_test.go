@@ -408,7 +408,7 @@ func TestReallocTableRowIDs(t *testing.T) {
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("\\QSELECT MAX(row_id_max) from `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"row_id_max"}).AddRow(1008))
-	s.mockDB.ExpectExec("\\QUPDATE `test`.`table_meta` SET row_id_max = 1018 WHERE table_id = ? AND task_id = ?\\E").WithArgs(int64(1), int64(1)).
+	s.mockDB.ExpectExec("\\QUPDATE `test`.`table_meta` SET row_id_max = ? WHERE table_id = ? AND task_id = ?\\E").WithArgs(int64(1018), int64(1), int64(1)).
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
 	s.mockDB.ExpectCommit()
 	preMax, newMax, err := s.mgr.ReallocTableRowIDs(context.Background(), 10)
