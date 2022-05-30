@@ -1165,6 +1165,10 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		// we can ignore the commit error because this txn is readonly.
+		_ = sess.CommitTxn(context.Background())
+	}()
 	txn, err := sess.Txn(true)
 	if err != nil {
 		return nil, err
