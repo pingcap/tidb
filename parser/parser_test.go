@@ -236,6 +236,11 @@ func TestSimple(t *testing.T) {
 	_, err = p.ParseOneStmt(src, "", "")
 	require.NoError(t, err)
 
+	// for issue #34642
+	src = `SELECT a as c having c = a;`
+	_, err = p.ParseOneStmt(src, "", "")
+	require.NoError(t, err)
+
 	// for issue #9823
 	src = "SELECT 9223372036854775807;"
 	st, err = p.ParseOneStmt(src, "", "")
