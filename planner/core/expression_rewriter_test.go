@@ -372,6 +372,22 @@ func TestBetweenExprCollation(t *testing.T) {
 	tk.MustGetErrMsg("select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;", "[expression:1270]Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'BETWEEN'")
 }
 
+func TestIssue34823(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1(a char(20));")
+	tk.MustExec("create table t2(b binary(20), c binary(20));")
+	tk.MustExec("insert into t1 value('-1');")
+	tk.MustExec("insert into t2 value(0x2D31, 0x67);")
+	tk.MustExec("insert into t2 value(0x2D31, 0x73);")
+	tk.MustQuery("select a from t1, t2 where t1.a between t2.b and t2.c;").Check(testkit.Rows())
+	tk.MustQuery("select a from t1, t2 where cast(t1.a as binary(20)) between t2.b and t2.c;").Check(testkit.Rows("-1", "-1"))
+}
+
 func TestInsertOnDuplicateLazyMoreThan1Row(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
