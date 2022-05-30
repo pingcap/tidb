@@ -102,6 +102,25 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *tiflashTestSuite) TestAggPushDownApplyAll(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("drop table if exists bar")
+	tk.MustExec("create table foo(a int, b int)")
+	tk.MustExec("create table bar(a double not null, b decimal(65,0) not null)")
+	tk.MustExec("alter table foo set tiflash replica 1")
+	tk.MustExec("alter table bar set tiflash replica 1")
+	tk.MustExec("insert into foo values(0, NULL)")
+	tk.MustExec("insert into bar values(0, 0)")
+
+	tk.MustExec("set @@session.tidb_allow_mpp=1")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+
+	tk.MustQuery("select * from foo where a=all(select a from bar where bar.b=foo.b)").Check(testkit.Rows("0 <nil>"))
+}
+
 func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
