@@ -2452,6 +2452,7 @@ func TestResultField(t *testing.T) {
 	tk.MustExec(`INSERT INTO t VALUES (2);`)
 	r, err := tk.Exec(`SELECT count(*) from t;`)
 	require.NoError(t, err)
+	defer r.Close()
 	fields := r.Fields()
 	require.NoError(t, err)
 	require.Len(t, fields, 1)
@@ -2504,6 +2505,7 @@ func TestFieldText(t *testing.T) {
 		result, err := tk.Exec(tt.sql)
 		require.NoError(t, err)
 		require.Equal(t, tt.field, result.Fields()[0].ColumnAsName.O)
+		result.Close()
 	}
 }
 
