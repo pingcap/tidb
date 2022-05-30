@@ -403,14 +403,11 @@ func (e *ShowExec) fetchShowDatabases() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	sort.Strings(dbs)
 	var (
-		lowerCaseNames    = make(map[string]string)
 		fieldPatternsLike collate.WildcardPattern
 		FieldFilterEnable bool
 		fieldFilter       string
 	)
-	for _, info := range e.is.AllSchemas() {
-		lowerCaseNames[info.Name.O] = info.Name.L
-	}
+
 	if e.Extractor != nil {
 		extractor := (e.Extractor).(*plannercore.ShowDatabaseExtractor)
 		if extractor.FieldPatterns != "" {
@@ -425,9 +422,9 @@ func (e *ShowExec) fetchShowDatabases() error {
 	for _, d := range dbs {
 		if checker != nil && !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, d) {
 			continue
-		} else if FieldFilterEnable && lowerCaseNames[d] != fieldFilter {
+		} else if FieldFilterEnable && strings.ToLower(d) != fieldFilter {
 			continue
-		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(lowerCaseNames[d]) {
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(strings.ToLower(d)) {
 			continue
 		}
 		e.appendRow([]interface{}{
