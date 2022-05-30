@@ -1549,8 +1549,8 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 // in the packet.
 func (cc *clientConn) writeEOF(serverStatus uint16) error {
 	if cc.capability&mysql.ClientDeprecateEOF > 0 {
-		logutil.Logger(context.Background()).Error("Attempt to write EOF to client that has the ClientDeprecateEOF flag set", zap.Stack("stack"))
-		// return errors.New("Attempt to write EOF to client that has the ClientDeprecateEOF flag set")
+		logutil.Logger(context.Background()).Error(
+			"Attempt to write EOF to client that has the ClientDeprecateEOF flag set", zap.Stack("stack"))
 	}
 
 	data := cc.alloc.AllocWithLen(4, 9)
@@ -2188,8 +2188,6 @@ func (cc *clientConn) writeColumnInfo(ctx context.Context, columns []*ColumnInfo
 		}
 	}
 	if cc.capability&mysql.ClientDeprecateEOF > 0 {
-		// return cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
-		//	cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), true)
 		return nil
 	}
 	return cc.writeEOF(serverStatus)
