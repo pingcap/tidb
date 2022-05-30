@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -868,17 +867,14 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		"xxx row4_col1	- 		900\n" +
 		"xxx row5_col1	- 	row5_col3")
 	require.NoError(t, err)
-
-	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit
-	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
-	kv.TxnTotalSizeLimit = 10240
-	defer func() { kv.TxnTotalSizeLimit = originalTxnTotalSizeLimit }()
-
 	// support ClientLocalFiles capability
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
+		dbt.MustExec("set global tidb_txn_total_size_limit = 10240")
+		defer dbt.MustExec("set global tidb_txn_total_size_limit = default")
 		dbt.MustExec("set @@tidb_dml_batch_size = 3")
 		dbt.MustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		dbt.MustExec("create view v1 as select 1")

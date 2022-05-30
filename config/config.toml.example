@@ -248,17 +248,6 @@ bind-info-lease = "3s"
 # Whether support pushing down aggregation with distinct to cop task
 distinct-agg-push-down = false
 
-# The limitation of the size in byte for the entries in one transaction.
-# If using TiKV as the storage, the entry represents a key/value pair.
-# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
-# this value should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
-# If binlog is disabled or binlog is enabled without Kafka, this value should be less than 1099511627776(1T).
-txn-total-size-limit = 104857600
-
-# The limitation of the size in byte for each entry in one transaction.
-# NOTE: Increasing this limit may cause performance problems.
-txn-entry-size-limit = 6291456
-
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
 
@@ -383,7 +372,7 @@ capacity-mb = 1000.0
 [binlog]
 # enable to write binlog.
 # NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
-# txn-total-size-limit should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
+# The sysvar tidb_txn_total_size_limit should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
 enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.

@@ -652,6 +652,10 @@ const (
 // TiDB vars that have only global scope
 
 const (
+	// TiDBTxnEntrySizeLimit is the size limit of a single row of data in TiDB
+	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
+	// TiDBTxnTotalSizeLimit is the size limit of a single transaction
+	TiDBTxnTotalSizeLimit = "tidb_txn_total_size_limit"
 	// TiDBGCEnable turns garbage collection on or OFF
 	TiDBGCEnable = "tidb_gc_enable"
 	// TiDBGCRunInterval sets the interval that GC runs
@@ -882,6 +886,8 @@ const (
 	DefTiDBStatsCacheMemQuota                    = 0
 	MaxTiDBStatsCacheMemQuota                    = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                        = 4096
+	DefTiDBTxnTotalSizeLimit                     = 100 * 1024 * 1024
+	DefTiDBTxnEntrySizeLimit                     = 6 * 1024 * 1024
 	DefRequireSecureTransport                    = false
 	DefTiDBCommitterConcurrency                  = 128
 	DefTiDBBatchDMLIgnoreError                   = false
@@ -930,6 +936,8 @@ var (
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
+	TxnTotalSizeLimit              uint64 = DefTiDBTxnTotalSizeLimit
+	TxnEntrySizeLimit              uint64 = DefTiDBTxnEntrySizeLimit
 	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
 	OOMAction                             = atomic.NewString(DefTiDBMemOOMAction)
 	MaxAutoAnalyzeTime                    = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)

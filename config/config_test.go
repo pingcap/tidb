@@ -685,7 +685,6 @@ func TestConfig(t *testing.T) {
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
-	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
@@ -734,7 +733,6 @@ stores-refresh-interval = 30
 enable-forwarding = true
 enable-global-kill = true
 [performance]
-txn-total-size-limit=2000
 tcp-no-delay = false
 [tikv-client]
 commit-timeout="41s"
@@ -780,7 +778,6 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, "hash", conf.Binlog.Strategy)
 
 	// Test that the value will be overwritten by the config file.
-	require.Equal(t, uint64(2000), conf.Performance.TxnTotalSizeLimit)
 	require.True(t, conf.AlterPrimaryKey)
 	require.False(t, conf.Performance.TCPNoDelay)
 
@@ -982,25 +979,6 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	for i := 0; i < st.NumField(); i++ {
 		field := st.Field(i)
 		require.Equal(t, field.Tag.Get("json"), field.Tag.Get("toml"))
-	}
-}
-
-func TestTxnTotalSizeLimitValid(t *testing.T) {
-	conf := NewConfig()
-	tests := []struct {
-		limit uint64
-		valid bool
-	}{
-		{4 << 10, true},
-		{10 << 30, true},
-		{10<<30 + 1, true},
-		{1 << 40, true},
-		{1<<40 + 1, false},
-	}
-
-	for _, tt := range tests {
-		conf.Performance.TxnTotalSizeLimit = tt.limit
-		require.Equal(t, tt.valid, conf.Valid() == nil)
 	}
 }
 

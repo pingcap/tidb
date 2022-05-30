@@ -46,10 +46,6 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
-	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
-	DefTxnEntrySizeLimit = 6 * 1024 * 1024
-	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
@@ -613,8 +609,6 @@ type Performance struct {
 	PseudoEstimateRatio   float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease         string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntrySizeLimit     uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
-	TxnTotalSizeLimit     uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
@@ -635,8 +629,10 @@ type Performance struct {
 	// to support the upgrade process. They can be removed in future.
 
 	// CommitterConcurrency, RunAutoAnalyze unused since bootstrap v90
-	CommitterConcurrency int  `toml:"committer-concurrency" json:"committer-concurrency"`
-	RunAutoAnalyze       bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	CommitterConcurrency int    `toml:"committer-concurrency" json:"committer-concurrency"`
+	RunAutoAnalyze       bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	TxnEntrySizeLimit    uint64 `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
+	TxnTotalSizeLimit    uint64 `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -845,8 +841,6 @@ var defaultConf = Config{
 		PseudoEstimateRatio:   0.8,
 		ForcePriority:         "NO_PRIORITY",
 		BindInfoLease:         "3s",
-		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
-		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
 		ProjectionPushDown:    false,
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
@@ -966,6 +960,8 @@ var removedConfig = map[string]struct{}{
 	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
 	"mem-quota-query":                    {},
 	"log.query-log-max-len":              {},
+	"performance.txn-total-size-limit":   {}, // use tidb_txn_total_size_limit
+	"performance.txn-entry-size-limit":   {}, // use tidb_txn_entry_size_limit
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
 	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
@@ -1166,10 +1162,6 @@ func (c *Config) Valid() error {
 	// For tikvclient.
 	if err := c.TiKVClient.Valid(); err != nil {
 		return err
-	}
-
-	if c.Performance.TxnTotalSizeLimit > 1<<40 {
-		return fmt.Errorf("txn-total-size-limit should be less than %d", 1<<40)
 	}
 
 	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {

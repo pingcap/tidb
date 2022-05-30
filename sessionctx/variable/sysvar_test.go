@@ -961,6 +961,56 @@ func TestTiDBQueryLogMaxLen(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTiDBTxnTotalSizeLimit(t *testing.T) {
+	sv := GetSysVar(TiDBTxnTotalSizeLimit)
+	vars := NewSessionVars()
+
+	newVal := 10485760
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, "10485760", val)
+	require.NoError(t, err)
+
+	// out of range
+	newVal = 1099511627777
+	expected := 1099511627776
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, fmt.Sprintf("%d", expected), val)
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 1022
+	expected = 1024
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, fmt.Sprintf("%d", expected), val)
+	require.NoError(t, err)
+}
+func TestTiDBTxnEntrySizeLimit(t *testing.T) {
+	sv := GetSysVar(TiDBTxnEntrySizeLimit)
+	vars := NewSessionVars()
+
+	newVal := 10485760
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, "10485760", val)
+	require.NoError(t, err)
+
+	// Max Value out of range
+	newVal = 125829121
+	expected := 125829120
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, fmt.Sprintf("%d", expected), val)
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 1022
+	expected = 1024
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, fmt.Sprintf("%d", expected), val)
+	require.NoError(t, err)
+}
 func TestTiDBCommitterConcurrency(t *testing.T) {
 	sv := GetSysVar(TiDBCommitterConcurrency)
 	vars := NewSessionVars()

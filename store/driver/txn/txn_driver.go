@@ -16,7 +16,6 @@ package txn
 
 import (
 	"context"
-	"sync/atomic"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -48,8 +47,8 @@ type tikvTxn struct {
 func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	txn.SetKVFilter(TiDBKVFilter{})
 
-	entryLimit := atomic.LoadUint64(&kv.TxnEntrySizeLimit)
-	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	entryLimit := kv.TxnEntrySizeLimit.Load()
+	totalLimit := kv.TxnTotalSizeLimit.Load()
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
 	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil}

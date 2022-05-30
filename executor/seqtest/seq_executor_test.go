@@ -935,16 +935,10 @@ func TestCartesianProduct(t *testing.T) {
 func TestBatchInsertDelete(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
-	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
-	defer func() {
-		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
-	}()
-	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5500)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_txn_total_size_limit = 5500")
+	defer tk.MustExec("set global tidb_txn_total_size_limit = default")
 	tk.MustExec("drop table if exists batch_insert")
 	tk.MustExec("create table batch_insert (c int)")
 	tk.MustExec("drop table if exists batch_insert_on_duplicate")

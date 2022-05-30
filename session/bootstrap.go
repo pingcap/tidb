@@ -615,7 +615,7 @@ const (
 	version88 = 88
 	// version89 adds the tables mysql.advisory_locks
 	version89 = 89
-	// version90 converts enable-batch-dml, mem-quota-query, query-log-max-len, committer-concurrency, run-auto-analyze, and oom-action to a sysvar
+	// version90 converts enable-batch-dml, mem-quota-query, query-log-max-len, committer-concurrency, run-auto-analyze,txn-total-size-limit , txn-entry-size-limit and oom-action to a sysvar
 	version90 = 90
 	// version91 converts prepared-plan-cache to sysvars
 	version91 = 91
@@ -1859,6 +1859,10 @@ func upgradeToVer90(s Session, ver int64) {
 	importConfigOption(s, "run-auto-analyze", variable.TiDBEnableAutoAnalyze, valStr)
 	valStr = config.GetGlobalConfig().OOMAction
 	importConfigOption(s, "oom-action", variable.TiDBMemOOMAction, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Performance.TxnEntrySizeLimit)
+	importConfigOption(s, "txn-entry-size-limit", variable.TiDBTxnEntrySizeLimit, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Performance.TxnTotalSizeLimit)
+	importConfigOption(s, "txn-total-size-limit", variable.TiDBTxnTotalSizeLimit, valStr)
 }
 
 func upgradeToVer91(s Session, ver int64) {
