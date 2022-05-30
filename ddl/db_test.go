@@ -1487,13 +1487,6 @@ func TestNonRestrictedSqlMode(t *testing.T) {
 	sql := "create table t1 (id int, name varchar(2048), index(name)) charset=utf8;"
 	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 
-	r := tk.MustQuery("select @@sql_mode")
-	defer func(sqlMode string) {
-		tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("drop table if exists t2")
-		tk.MustExec("drop table if exists t3")
-	}(r.Rows()[0][0].(string))
 	tk.MustExec("set @@sql_mode=''")
 
 	err := tk.ExecToErr("create table t2 (id int, name varchar(2048), index(name)) charset=utf8;")
