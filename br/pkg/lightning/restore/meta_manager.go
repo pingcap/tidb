@@ -78,8 +78,8 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 type tableMetaMgr interface {
 	InitTableMeta(ctx context.Context) error
 	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
-	// re-allocate rowIDs across lightning instances
-	// only parallel import needs this
+	// ReallocTableRowIDs: re-allocate rowIDs across lightning instances. only parallel import needs this
+	// returns: prevMaxRowID, newlyAllocatedMaxRowID, error
 	ReallocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
