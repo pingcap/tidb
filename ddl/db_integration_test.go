@@ -1225,19 +1225,6 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 	done <- errors.Trace(err)
 }
 
-func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
-	var job *model.Job
-
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
-	})
-
-	return job, errors.Trace(err)
-}
-
 func TestCreateTableTooLarge(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

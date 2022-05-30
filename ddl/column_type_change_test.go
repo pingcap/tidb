@@ -15,19 +15,16 @@
 package ddl_test
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strconv"
 	"testing"
 	"time"
 
-	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -1932,13 +1929,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 	require.Less(t, int64(0), jobID)
 
 	// Verification of the history job state.
-	var job *model.Job
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = m.GetHistoryDDLJob(jobID)
-		return errors2.Trace(err1)
-	})
+	job, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), job.ErrorCount)
 	require.Equal(t, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled", job.Error.Error())
