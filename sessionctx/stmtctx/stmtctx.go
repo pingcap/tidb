@@ -99,7 +99,8 @@ type StatementContext struct {
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
-	IsStaleness bool
+	IsStaleness     bool
+	InRestrictedSQL bool
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -761,6 +762,9 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	}
 	if sc.InLoadDataStmt {
 		flags |= model.FlagInLoadDataStmt
+	}
+	if sc.InRestrictedSQL {
+		flags |= model.FlagInRestrictedSQL
 	}
 	return flags
 }
