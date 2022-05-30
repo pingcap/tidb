@@ -261,6 +261,10 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.outputNames = names
 }
 
+func (p *PointGetPlan) appendChildCandidate(op *physicalOptimizeOp) {
+	return
+}
+
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
@@ -437,6 +441,10 @@ func (p *BatchPointGetPlan) OutputNames() types.NameSlice {
 // SetOutputNames sets the outputting name by the given slice.
 func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.names = names
+}
+
+func (p *BatchPointGetPlan) appendChildCandidate(op *physicalOptimizeOp) {
+	return
 }
 
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.
