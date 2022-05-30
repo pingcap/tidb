@@ -229,8 +229,11 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("HIGH_PRIORITY"))
 	tk.MustExec(`set @@global.tidb_force_priority = "delayed"`)
 	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
-	tk.MustExec(`set @@global.tidb_force_priority = "abc"`)
-	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
+
+	// Previously setting an invalid priority led to priority being set to NO_PRIORITY.
+	// It now raises an error instead.
+	require.Error(t, tk.ExecToErr("set global tidb_force_priority = 'abc'"))
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
 
 	tk.MustExec("set tidb_constraint_check_in_place = 1")
 	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
