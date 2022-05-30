@@ -194,31 +194,9 @@
       {
         "Plan": [
           "Sort_9 8000.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_11 8000.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t2.b)",
-          "  ├─IndexReader_17(Build) 10000.00 root  index:IndexFullScan_16",
-          "  │ └─IndexFullScan_16 10000.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
-          "  └─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
-          "    └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "Plan": [
-          "Sort_10 7992.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_29 7992.00 root  semi join, equal:[eq(test.t1.a, test.t2.b)], other cond:gt(test.t2.c, test.t1.c)",
-          "  ├─TableReader_43(Build) 9980.01 root  data:Selection_42",
-          "  │ └─Selection_42 9980.01 cop[tikv]  not(isnull(test.t2.b)), not(isnull(test.t2.c))",
-          "  │   └─TableFullScan_41 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader_40(Probe) 9990.00 root  data:Selection_39",
-          "    └─Selection_39 9990.00 cop[tikv]  not(isnull(test.t1.c))",
-          "      └─TableFullScan_38 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "Plan": [
-          "Sort_10 8000.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_12 8000.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t2.b), gt(test.t2.c, test.t1.c)",
-          "  ├─TableReader_16(Build) 10000.00 root  data:TableFullScan_15",
-          "  │ └─TableFullScan_15 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─HashJoin_12 8000.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t2.b)",
+          "  ├─IndexReader_18(Build) 10000.00 root  index:IndexFullScan_17",
+          "  │ └─IndexFullScan_17 10000.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
           "  └─TableReader_14(Probe) 10000.00 root  data:TableFullScan_13",
           "    └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
@@ -226,45 +204,67 @@
       {
         "Plan": [
           "Sort_10 7992.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_12 7992.00 root  CARTESIAN semi join, other cond:gt(test.t2.c, test.t1.c)",
-          "  ├─TableReader_18(Build) 9990.00 root  data:Selection_17",
-          "  │ └─Selection_17 9990.00 cop[tikv]  not(isnull(test.t2.c))",
-          "  │   └─TableFullScan_16 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader_15(Probe) 9990.00 root  data:Selection_14",
-          "    └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t1.c))",
-          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─HashJoin_30 7992.00 root  semi join, equal:[eq(test.t1.a, test.t2.b)], other cond:gt(test.t2.c, test.t1.c)",
+          "  ├─TableReader_44(Build) 9980.01 root  data:Selection_43",
+          "  │ └─Selection_43 9980.01 cop[tikv]  not(isnull(test.t2.b)), not(isnull(test.t2.c))",
+          "  │   └─TableFullScan_42 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_41(Probe) 9990.00 root  data:Selection_40",
+          "    └─Selection_40 9990.00 cop[tikv]  not(isnull(test.t1.c))",
+          "      └─TableFullScan_39 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
         "Plan": [
           "Sort_10 8000.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_12 8000.00 root  CARTESIAN anti semi join, other cond:gt(test.t2.c, test.t1.c)",
-          "  ├─TableReader_16(Build) 10000.00 root  data:TableFullScan_15",
-          "  │ └─TableFullScan_15 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader_14(Probe) 10000.00 root  data:TableFullScan_13",
-          "    └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─HashJoin_13 8000.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t2.b), gt(test.t2.c, test.t1.c)",
+          "  ├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "  │ └─TableFullScan_16 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_15(Probe) 10000.00 root  data:TableFullScan_14",
+          "    └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
         "Plan": [
           "Sort_10 7992.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_12 7992.00 root  semi join, equal:[eq(test.t1.c, test.t2.c)]",
-          "  ├─TableReader_18(Build) 9990.00 root  data:Selection_17",
-          "  │ └─Selection_17 9990.00 cop[tikv]  not(isnull(test.t2.c))",
-          "  │   └─TableFullScan_16 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader_15(Probe) 9990.00 root  data:Selection_14",
-          "    └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t1.c))",
-          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─HashJoin_13 7992.00 root  CARTESIAN semi join, other cond:gt(test.t2.c, test.t1.c)",
+          "  ├─TableReader_19(Build) 9990.00 root  data:Selection_18",
+          "  │ └─Selection_18 9990.00 cop[tikv]  not(isnull(test.t2.c))",
+          "  │   └─TableFullScan_17 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_16(Probe) 9990.00 root  data:Selection_15",
+          "    └─Selection_15 9990.00 cop[tikv]  not(isnull(test.t1.c))",
+          "      └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
         "Plan": [
           "Sort_10 8000.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_12 8000.00 root  anti semi join, equal:[eq(test.t1.c, test.t2.c)]",
-          "  ├─TableReader_16(Build) 10000.00 root  data:TableFullScan_15",
-          "  │ └─TableFullScan_15 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader_14(Probe) 10000.00 root  data:TableFullScan_13",
-          "    └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─HashJoin_13 8000.00 root  CARTESIAN anti semi join, other cond:gt(test.t2.c, test.t1.c)",
+          "  ├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "  │ └─TableFullScan_16 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_15(Probe) 10000.00 root  data:TableFullScan_14",
+          "    └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Plan": [
+          "Sort_10 7992.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "└─HashJoin_13 7992.00 root  semi join, equal:[eq(test.t1.c, test.t2.c)]",
+          "  ├─TableReader_19(Build) 9990.00 root  data:Selection_18",
+          "  │ └─Selection_18 9990.00 cop[tikv]  not(isnull(test.t2.c))",
+          "  │   └─TableFullScan_17 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_16(Probe) 9990.00 root  data:Selection_15",
+          "    └─Selection_15 9990.00 cop[tikv]  not(isnull(test.t1.c))",
+          "      └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Plan": [
+          "Sort_10 8000.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "└─HashJoin_13 8000.00 root  anti semi join, equal:[eq(test.t1.c, test.t2.c)]",
+          "  ├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "  │ └─TableFullScan_16 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_15(Probe) 10000.00 root  data:TableFullScan_14",
+          "    └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -378,23 +378,23 @@
       {
         "Plan": [
           "Sort_11 2666.67 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_13 2666.67 root  CARTESIAN semi join, other cond:nulleq(test.t1.a, test.t2.a), nulleq(test.t1.b, test.t2.b), nulleq(test.t1.c, test.t2.c), nulleq(test.t1.d, test.t2.d)",
-          "  ├─TableReader_20(Build) 3333.33 root  data:Selection_19",
-          "  │ └─Selection_19 3333.33 cop[tikv]  gt(test.t2.b, 20)",
-          "  │   └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader_16(Probe) 3333.33 root  data:TableRangeScan_15",
-          "    └─TableRangeScan_15 3333.33 cop[tikv] table:t1 range:(10,+inf], keep order:false, stats:pseudo"
+          "└─HashJoin_14 2666.67 root  CARTESIAN semi join, other cond:nulleq(test.t1.a, test.t2.a), nulleq(test.t1.b, test.t2.b), nulleq(test.t1.c, test.t2.c), nulleq(test.t1.d, test.t2.d)",
+          "  ├─TableReader_21(Build) 3333.33 root  data:Selection_20",
+          "  │ └─Selection_20 3333.33 cop[tikv]  gt(test.t2.b, 20)",
+          "  │   └─TableFullScan_19 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_17(Probe) 3333.33 root  data:TableRangeScan_16",
+          "    └─TableRangeScan_16 3333.33 cop[tikv] table:t1 range:(10,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "Plan": [
           "Sort_11 2666.67 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_13 2666.67 root  anti semi join, equal:[nulleq(test.t1.a, test.t2.a) nulleq(test.t1.b, test.t2.b) nulleq(test.t1.c, test.t2.c) nulleq(test.t1.d, test.t2.d)]",
-          "  ├─TableReader_20(Build) 3333.33 root  data:Selection_19",
-          "  │ └─Selection_19 3333.33 cop[tikv]  gt(test.t2.b, 20)",
-          "  │   └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader_16(Probe) 3333.33 root  data:TableRangeScan_15",
-          "    └─TableRangeScan_15 3333.33 cop[tikv] table:t1 range:(10,+inf], keep order:false, stats:pseudo"
+          "└─HashJoin_14 2666.67 root  anti semi join, equal:[nulleq(test.t1.a, test.t2.a) nulleq(test.t1.b, test.t2.b) nulleq(test.t1.c, test.t2.c) nulleq(test.t1.d, test.t2.d)]",
+          "  ├─TableReader_21(Build) 3333.33 root  data:Selection_20",
+          "  │ └─Selection_20 3333.33 cop[tikv]  gt(test.t2.b, 20)",
+          "  │   └─TableFullScan_19 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_17(Probe) 3333.33 root  data:TableRangeScan_16",
+          "    └─TableRangeScan_16 3333.33 cop[tikv] table:t1 range:(10,+inf], keep order:false, stats:pseudo"
         ]
       },
       {

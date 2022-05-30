@@ -242,10 +242,10 @@
         "Plan": [
           "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#10)->Column#11",
           "└─HashJoin 4.00 root  left outer semi join, equal:[eq(test.t1.b, test.t2.b)], other cond:gt(test.t2.a, test.t1.a)",
-          "  ├─TableReader(Build) 9.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 9.00 cop[tikv] table:t2 keep order:false",
-          "  └─TableReader(Probe) 4.00 root  data:TableFullScan",
-          "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
+          "  ├─TableReader(Build) 4.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
+          "  └─TableReader(Probe) 9.00 root  data:TableFullScan",
+          "    └─TableFullScan 9.00 cop[tikv] table:t2 keep order:false"
         ]
       },
       {
@@ -253,10 +253,10 @@
         "Plan": [
           "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#10)->Column#11",
           "└─HashJoin 4.00 root  anti left outer semi join, equal:[eq(test.t1.b, test.t2.b)], other cond:gt(test.t2.a, test.t1.a)",
-          "  ├─TableReader(Build) 9.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 9.00 cop[tikv] table:t2 keep order:false",
-          "  └─TableReader(Probe) 4.00 root  data:TableFullScan",
-          "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
+          "  ├─TableReader(Build) 4.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
+          "  └─TableReader(Probe) 9.00 root  data:TableFullScan",
+          "    └─TableFullScan 9.00 cop[tikv] table:t2 keep order:false"
         ]
       },
       {
