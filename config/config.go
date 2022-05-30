@@ -265,7 +265,7 @@ type Config struct {
 	MemQuotaQuery  int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	OOMAction      string `toml:"oom-action" json:"oom-action"`
 
-	// CheckMb4ValueInUTF8, EnableCollectExecutionInfo, Plugin unused since bootstrap v92
+	// CheckMb4ValueInUTF8, EnableCollectExecutionInfo, Plugin are deprecated.
 	CheckMb4ValueInUTF8        AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	EnableCollectExecutionInfo bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
@@ -441,7 +441,7 @@ type Log struct {
 
 	// QueryLogMaxLen unused since bootstrap v90
 	QueryLogMaxLen uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
-	// EnableSlowLog, SlowThreshold, RecordPlanInSlowLog unused since bootstrap v92
+	// EnableSlowLog, SlowThreshold, RecordPlanInSlowLog are deprecated.
 	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
@@ -638,7 +638,7 @@ type Performance struct {
 	CommitterConcurrency int  `toml:"committer-concurrency" json:"committer-concurrency"`
 	RunAutoAnalyze       bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
 
-	// ForcePriority, MemoryUsageAlarmRatio unused since bootstrap v92
+	// ForcePriority, MemoryUsageAlarmRatio are deprecated.
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 }

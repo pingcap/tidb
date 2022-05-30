@@ -619,13 +619,11 @@ const (
 	version90 = 90
 	// version91 converts prepared-plan-cache to sysvars
 	version91 = 91
-	// version92 converts performance.force-priority to sysvars
-	version92 = 92
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version92
+var currentBootstrapVersion int64 = version91
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -720,7 +718,6 @@ var (
 		upgradeToVer89,
 		upgradeToVer90,
 		upgradeToVer91,
-		upgradeToVer92,
 	}
 )
 
@@ -1876,38 +1873,6 @@ func upgradeToVer91(s Session, ver int64) {
 
 	valStr = strconv.FormatFloat(config.GetGlobalConfig().PreparedPlanCache.MemoryGuardRatio, 'f', -1, 64)
 	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", variable.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
-}
-
-func upgradeToVer92(s Session, ver int64) {
-	if ver >= version92 {
-		return
-	}
-	valStr := variable.BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
-	importConfigOption(s, "check-mb4-value-in-utf8", variable.TiDBCheckMb4ValueInUTF8, valStr)
-
-	valStr = variable.BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo)
-	importConfigOption(s, "enable-collect-execution-info", variable.TiDBEnableCollectExecutionInfo, valStr)
-
-	valStr = variable.BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog.Load())
-	importConfigOption(s, "log.enable-slow-log", variable.TiDBEnableSlowLog, valStr)
-
-	valStr = strconv.FormatUint(config.GetGlobalConfig().Log.SlowThreshold, 10)
-	importConfigOption(s, "log.slow-threshold", variable.TiDBSlowLogThreshold, valStr)
-
-	valStr = strconv.FormatUint(uint64(config.GetGlobalConfig().Log.RecordPlanInSlowLog), 10)
-	importConfigOption(s, "log.record-plan-in-slow-log", variable.TiDBRecordPlanInSlowLog, valStr)
-
-	valStr = config.GetGlobalConfig().Performance.ForcePriority
-	importConfigOption(s, "performance.force-priority", variable.TiDBForcePriority, valStr)
-
-	valStr = strconv.FormatFloat(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio, 'f', -1, 64)
-	importConfigOption(s, "performance.memory-usage-alarm-ratio", variable.TiDBMemoryUsageAlarmRatio, valStr)
-
-	valStr = config.GetGlobalConfig().Plugin.Load
-	importConfigOption(s, "plugin.load", variable.PluginLoad, valStr)
-
-	valStr = config.GetGlobalConfig().Plugin.Dir
-	importConfigOption(s, "plugin.dir", variable.PluginDir, valStr)
 }
 
 func writeOOMAction(s Session) {
