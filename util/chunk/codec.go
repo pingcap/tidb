@@ -120,7 +120,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	// decode nullBitmap.
 	if nullCount > 0 {
 		numNullBitmapBytes := (col.length + 7) / 8
-		col.nullBitmap = buffer[:numNullBitmapBytes:numNullBitmapBytes]
+		col.nullBitmap = append([]byte{}, buffer[:numNullBitmapBytes:numNullBitmapBytes]...)
 		buffer = buffer[numNullBitmapBytes:]
 	} else {
 		c.setAllNotNull(col)
@@ -131,7 +131,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	numDataBytes := int64(numFixedBytes * col.length)
 	if numFixedBytes == -1 {
 		numOffsetBytes := (col.length + 1) * 8
-		col.offsets = bytesToI64Slice(buffer[:numOffsetBytes:numOffsetBytes])
+		col.offsets = append([]int64{}, bytesToI64Slice(buffer[:numOffsetBytes:numOffsetBytes])...)
 		buffer = buffer[numOffsetBytes:]
 		numDataBytes = col.offsets[col.length]
 	} else if cap(col.elemBuf) < numFixedBytes {
@@ -139,7 +139,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 	}
 
 	// decode data.
-	col.data = buffer[:numDataBytes:numDataBytes]
+	col.data = append([]byte{}, buffer[:numDataBytes:numDataBytes]...)
 	// The column reference the data of the grpc response, the memory of the grpc message cannot be GCed if we reuse
 	// this column. Thus, we set `avoidReusing` to true.
 	col.avoidReusing = true
