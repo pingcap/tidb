@@ -1471,6 +1471,7 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 }
 
+// for issue #34931
 func TestNonRestrictedSqlMode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1478,16 +1479,31 @@ func TestNonRestrictedSqlMode(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("DROP DATABASE IF EXISTS `t1`")
-	tk.MustExec("DROP DATABASE IF EXISTS `t2`")
-	_, err := tk.Exec("create table t1 (id int, name varchar(2048), index(name)) charset=utf8;")
-	require.Error(t, err)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
+
+	// test in strict sql mode
+	sql := "create table t1 (id int, name varchar(2048), index(name)) charset=utf8;"
+	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+
+	r := tk.MustQuery("select @@sql_mode")
+	defer func(sqlMode string) {
+		tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("drop table if exists t3")
+	}(r.Rows()[0][0].(string))
 	tk.MustExec("set @@sql_mode=''")
 
-	_, err = tk.Exec("create table t2 (id int, name varchar(2048), index(name)) charset=utf8;")
+	err := tk.ExecToErr("create table t2 (id int, name varchar(2048), index(name)) charset=utf8;")
 	require.NoError(t, err)
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `id` int(11) DEFAULT NULL,\n  `name` varchar(2048) DEFAULT NULL,\n  KEY `name` (`name`(1024))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
-	_, err = tk.Exec("create table t1 (id int, name varchar(2048), unique index(name)) charset=utf8;")
-	require.Error(t, err)
+	sql = "create table t1 (id int, name varchar(2048), unique index(name)) charset=utf8;"
+	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+
+	sql = "create table t3 (id int, name varchar(512), alias varchar(1024), index(name,alias)) charset=utf8;"
+	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 }
