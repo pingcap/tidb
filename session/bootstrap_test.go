@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
@@ -55,7 +54,7 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
 
 	ok := se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""))
 	require.True(t, ok)
@@ -176,7 +175,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
 	require.NoError(t, r.Close())
 
 	mustExec(t, se, "USE test")
@@ -210,13 +209,6 @@ func TestBootstrapWithError(t *testing.T) {
 
 // TestUpgrade tests upgrading
 func TestUpgrade(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
-
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -297,12 +289,6 @@ func TestUpgrade(t *testing.T) {
 }
 
 func TestIssue17979_1(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -333,18 +319,11 @@ func TestIssue17979_1(t *testing.T) {
 	r := mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, "log", req.GetRow(0).GetString(0))
-	require.Equal(t, config.OOMActionLog, config.GetGlobalConfig().OOMAction)
+	require.Equal(t, variable.OOMActionLog, req.GetRow(0).GetString(0))
 	domV4.Close()
 }
 
 func TestIssue17979_2(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -378,64 +357,15 @@ func TestIssue17979_2(t *testing.T) {
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 0, req.NumRows())
-	require.Equal(t, config.OOMActionCancel, config.GetGlobalConfig().OOMAction)
 }
 
-func TestIssue20900_1(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
-
-	ctx := context.Background()
-
-	store, dom := createStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	// test issue 20900, upgrade from v3.0 to v4.0.9+
-	seV3 := createSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(38))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	mustExec(t, seV3, "update mysql.tidb set variable_value=38 where variable_name='tidb_server_version'")
-	mustExec(t, seV3, "delete from mysql.tidb where variable_name='default_memory_quota_query'")
-	mustExec(t, seV3, "commit")
-	unsetStoreBootstrapped(store.UUID())
-	ver, err := getBootstrapVersion(seV3)
-	require.NoError(t, err)
-	require.Equal(t, int64(38), ver)
-	dom.Close()
-	domV4, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domV4.Close()
-	seV4 := createSessionAndSetID(t, store)
-	ver, err = getBootstrapVersion(seV4)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-	r := mustExec(t, seV4, "select @@tidb_mem_quota_query")
-	req := r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, "34359738368", req.GetRow(0).GetString(0))
-	r = mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
-	req = r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, "34359738368", req.GetRow(0).GetString(0))
-	require.Equal(t, int64(34359738368), seV4.GetSessionVars().MemQuotaQuery)
-}
+// TestIssue20900_2 tests that a user can upgrade from TiDB 2.1 to latest,
+// and their configuration remains similar. This helps protect against the
+// case that a user had a 32G query memory limit in 2.1, but it is now a 1G limit
+// in TiDB 4.0+. I tested this process, and it does correctly upgrade from 2.1 -> 4.0,
+// but from 4.0 -> 5.0, the new default is picked up.
 
 func TestIssue20900_2(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
-
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)

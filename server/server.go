@@ -206,6 +206,14 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
 		s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
 
+	// LoadTLSCertificates will auto generate certificates if autoTLS is enabled.
+	// It only returns an error if certificates are specified and invalid.
+	// In which case, we should halt server startup as a misconfiguration could
+	// lead to a connection downgrade.
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// Automatically reload auto-generated certificates.
 	// The certificates are re-created every 30 days and are valid for 90 days.
 	if autoReload {
@@ -223,18 +231,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		}()
 	}
 
-	if err != nil {
-		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
-	}
 	if tlsConfig != nil {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
 		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
 			zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
-	} else if cfg.Security.RequireSecureTransport {
-		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
-
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
@@ -350,7 +352,6 @@ func setTxnScope() {
 // Export config-related metrics
 func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
-	metrics.ConfigStatus.WithLabelValues("mem-quota-query").Set(float64(s.cfg.MemQuotaQuery))
 	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
 }
 
@@ -501,8 +502,8 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
-			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
+			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 				if authPlugin.OnConnectionEvent != nil {
@@ -530,6 +531,7 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
+		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 	s.rwlock.Lock()
@@ -732,6 +734,13 @@ func (s *Server) KillAllConnections() {
 		}
 		killConn(conn)
 	}
+
+	if s.dom != nil {
+		sysProcTracker := s.dom.SysProcTracker()
+		for connID := range sysProcTracker.GetSysProcessList() {
+			sysProcTracker.KillSysProcess(connID)
+		}
+	}
 }
 
 var gracefulCloseConnectionsTimeout = 15 * time.Second
@@ -830,6 +839,14 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 		}
 	}
 	return tsList
+}
+
+// InternalSessionExists is used for test
+func (s *Server) InternalSessionExists(se interface{}) bool {
+	s.sessionMapMutex.Lock()
+	_, ok := s.internalSessions[se]
+	s.sessionMapMutex.Unlock()
+	return ok
 }
 
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,

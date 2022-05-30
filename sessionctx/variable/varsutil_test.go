@@ -15,7 +15,6 @@
 package variable
 
 import (
-	"encoding/json"
 	"reflect"
 	"strconv"
 	"testing"
@@ -80,7 +79,6 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.ExecutorConcurrency)
 	require.Equal(t, DefMaxChunkSize, vars.MaxChunkSize)
 	require.Equal(t, DefDMLBatchSize, vars.DMLBatchSize)
-	require.Equal(t, config.GetGlobalConfig().MemQuotaQuery, vars.MemQuotaQuery)
 	require.Equal(t, int64(DefTiDBMemQuotaApplyCache), vars.MemQuotaApplyCache)
 	require.Equal(t, DefOptWriteRowID, vars.AllowWriteRowID)
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)
@@ -230,14 +228,19 @@ func TestVarsutil(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, ErrIncorrectScope))
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBConfig)
 	require.NoError(t, err)
-	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
+	jsonConfig, err := config.GetJSONConfig()
 	require.NoError(t, err)
-	require.Equal(t, config.HideConfig(string(bVal)), val)
+	require.Equal(t, jsonConfig, val)
 
 	require.Equal(t, DefTiDBOptimizerSelectivityLevel, v.OptimizerSelectivityLevel)
 	err = SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, "1")
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
+
+	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
+	err = SetSessionSystemVar(v, TiDBOptimizerEnableOuterJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.EnableOuterJoinReorder)
 
 	require.Equal(t, DefTiDBOptimizerEnableNewOFGB, v.OptimizerEnableNewOnlyFullGroupByCheck)
 	err = SetSessionSystemVar(v, TiDBOptimizerEnableNewOnlyFullGroupByCheck, "off")
@@ -277,19 +280,6 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
-
-	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "1")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.True(t, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
-	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "0")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-	require.False(t, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
 
 	err = SetSessionSystemVar(v, TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)

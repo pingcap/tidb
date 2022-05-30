@@ -28,7 +28,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
@@ -61,8 +60,10 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/sem"
@@ -382,7 +383,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.Name.O,         // TABLE_SCHEMA
@@ -419,7 +420,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 		for i, key := range index.Columns {
 			col := nameToCol[key.Name.L]
 			nullable := "YES"
-			if mysql.HasNotNullFlag(col.Flag) {
+			if mysql.HasNotNullFlag(col.GetFlag()) {
 				nullable = ""
 			}
 
@@ -677,10 +678,29 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 }
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
-	if err := tryFillViewColumnType(ctx, sctx, sctx.GetInfoSchema().(infoschema.InfoSchema), schema.Name, tbl); err != nil {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		return
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	if tbl.IsView() {
+		e.viewMu.Lock()
+		_, ok := e.viewSchemaMap[tbl.ID]
+		if !ok {
+			var viewLogicalPlan plannercore.Plan
+			// Build plan is not thread safe, there will be concurrency on sessionctx.
+			if err := runWithSystemSession(sctx, func(s sessionctx.Context) error {
+				planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
+				var err error
+				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl)
+				return errors.Trace(err)
+			}); err != nil {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				e.viewMu.Unlock()
+				return
+			}
+			e.viewSchemaMap[tbl.ID] = viewLogicalPlan.Schema()
+			e.viewOutputNamesMap[tbl.ID] = viewLogicalPlan.OutputNames()
+		}
+		e.viewMu.Unlock()
 	}
+
 	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []collate.WildcardPattern
 	var tableSchemaFilterEnable,
 		tableNameFilterEnable, columnsFilterEnable bool
@@ -715,6 +735,20 @@ ForColumnsTag:
 		if col.Hidden {
 			continue
 		}
+
+		ft := &col.FieldType
+		if tbl.IsView() {
+			e.viewMu.RLock()
+			if e.viewSchemaMap[tbl.ID] != nil {
+				// If this is a view, replace the column with the view column.
+				idx := expression.FindFieldNameIdxByColName(e.viewOutputNamesMap[tbl.ID], col.Name.L)
+				if idx >= 0 {
+					col1 := e.viewSchemaMap[tbl.ID].Columns[idx]
+					ft = col1.GetType()
+				}
+			}
+			e.viewMu.RUnlock()
+		}
 		if !extractor.SkipRequest {
 			if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.Name.L) {
 				continue
@@ -743,82 +777,82 @@ ForColumnsTag:
 		}
 
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
-		colLen, decimal := col.Flen, col.Decimal
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
+		colLen, decimal := ft.GetFlen(), ft.GetDecimal()
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
 		if decimal == types.UnspecifiedLength {
 			decimal = defaultDecimal
 		}
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen
 		}
-		if col.Tp == mysql.TypeSet {
+		if ft.GetType() == mysql.TypeSet {
 			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
 			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.Elems {
+			for _, ele := range ft.GetElems() {
 				colLen += len(ele)
 			}
-			if len(col.Elems) != 0 {
-				colLen += (len(col.Elems) - 1)
+			if len(ft.GetElems()) != 0 {
+				colLen += (len(ft.GetElems()) - 1)
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if col.Tp == mysql.TypeEnum {
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+		} else if ft.GetType() == mysql.TypeEnum {
 			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
 			// the longest string in the enum is 'cdef'
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.Elems {
+			for _, ele := range ft.GetElems() {
 				if len(ele) > colLen {
 					colLen = len(ele)
 				}
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if types.IsString(col.Tp) {
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+		} else if types.IsString(ft.GetType()) {
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if types.IsTypeFractionable(col.Tp) {
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+		} else if types.IsTypeFractionable(ft.GetType()) {
 			datetimePrecision = decimal
-		} else if types.IsTypeNumeric(col.Tp) {
+		} else if types.IsTypeNumeric(ft.GetType()) {
 			numericPrecision = colLen
-			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
+			if ft.GetType() != mysql.TypeFloat && ft.GetType() != mysql.TypeDouble {
 				numericScale = decimal
 			} else if decimal != -1 {
 				numericScale = decimal
 			}
 		}
-		columnType := col.FieldType.InfoSchemaStr()
+		columnType := ft.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
-			if col.Tp == mysql.TypeBit {
+			if ft.GetType() == mysql.TypeBit {
 				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
 				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
 				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
 			}
 		}
 		record := types.MakeDatums(
-			infoschema.CatalogVal,                // TABLE_CATALOG
-			schema.Name.O,                        // TABLE_SCHEMA
-			tbl.Name.O,                           // TABLE_NAME
-			col.Name.O,                           // COLUMN_NAME
-			i+1,                                  // ORIGINAL_POSITION
-			columnDefault,                        // COLUMN_DEFAULT
-			columnDesc.Null,                      // IS_NULLABLE
-			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
-			charMaxLen,                           // CHARACTER_MAXIMUM_LENGTH
-			charOctLen,                           // CHARACTER_OCTET_LENGTH
-			numericPrecision,                     // NUMERIC_PRECISION
-			numericScale,                         // NUMERIC_SCALE
-			datetimePrecision,                    // DATETIME_PRECISION
-			columnDesc.Charset,                   // CHARACTER_SET_NAME
-			columnDesc.Collation,                 // COLLATION_NAME
-			columnType,                           // COLUMN_TYPE
-			columnDesc.Key,                       // COLUMN_KEY
-			columnDesc.Extra,                     // EXTRA
+			infoschema.CatalogVal, // TABLE_CATALOG
+			schema.Name.O,         // TABLE_SCHEMA
+			tbl.Name.O,            // TABLE_NAME
+			col.Name.O,            // COLUMN_NAME
+			i+1,                   // ORIGINAL_POSITION
+			columnDefault,         // COLUMN_DEFAULT
+			columnDesc.Null,       // IS_NULLABLE
+			types.TypeToStr(ft.GetType(), ft.GetCharset()), // DATA_TYPE
+			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
+			charOctLen,           // CHARACTER_OCTET_LENGTH
+			numericPrecision,     // NUMERIC_PRECISION
+			numericScale,         // NUMERIC_SCALE
+			datetimePrecision,    // DATETIME_PRECISION
+			columnDesc.Charset,   // CHARACTER_SET_NAME
+			columnDesc.Collation, // COLLATION_NAME
+			columnType,           // COLUMN_TYPE
+			columnDesc.Key,       // COLUMN_KEY
+			columnDesc.Extra,     // EXTRA
 			strings.ToLower(privileges.PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)), // PRIVILEGES
 			columnDesc.Comment,      // COLUMN_COMMENT
 			col.GeneratedExprString, // GENERATION_EXPRESSION
@@ -996,7 +1030,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 			if tb.PKIsHandle {
 				var pkCol *model.ColumnInfo
 				for _, col := range tb.Cols() {
-					if mysql.HasPriKeyFlag(col.Flag) {
+					if mysql.HasPriKeyFlag(col.GetFlag()) {
 						pkCol = col
 						break
 					}
@@ -1399,7 +1433,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				record := types.MakeDatums(
 					infoschema.CatalogVal,        // CONSTRAINT_CATALOG
 					schema.Name.O,                // CONSTRAINT_SCHEMA
@@ -2582,15 +2616,18 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 type hugeMemTableRetriever struct {
 	dummyCloser
-	extractor   *plannercore.ColumnsTableExtractor
-	table       *model.TableInfo
-	columns     []*model.ColumnInfo
-	retrieved   bool
-	initialized bool
-	rows        [][]types.Datum
-	dbs         []*model.DBInfo
-	dbsIdx      int
-	tblIdx      int
+	extractor          *plannercore.ColumnsTableExtractor
+	table              *model.TableInfo
+	columns            []*model.ColumnInfo
+	retrieved          bool
+	initialized        bool
+	rows               [][]types.Datum
+	dbs                []*model.DBInfo
+	dbsIdx             int
+	tblIdx             int
+	viewMu             sync.RWMutex
+	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
+	viewOutputNamesMap map[int64]types.NameSlice    // table id to view output names
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -2810,9 +2847,9 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 			if column.Name.O == "TIFLASH_INSTANCE" {
 				continue
 			}
-			if column.Tp == mysql.TypeVarchar {
+			if column.GetType() == mysql.TypeVarchar {
 				row[index].SetString(fields[index], mysql.DefaultCollationName)
-			} else if column.Tp == mysql.TypeLonglong {
+			} else if column.GetType() == mysql.TypeLonglong {
 				if fields[index] == notNumber {
 					continue
 				}
@@ -2821,7 +2858,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 					return nil, errors.Trace(err)
 				}
 				row[index].SetInt64(value)
-			} else if column.Tp == mysql.TypeDouble {
+			} else if column.GetType() == mysql.TypeDouble {
 				if fields[index] == notNumber {
 					continue
 				}
@@ -2863,6 +2900,24 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 					"end_key":   "7480000000000000ff3a5f720000000000fa",
 				}),
 			},
+			{
+				ID:       "invalidIDtest",
+				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				RuleType: "key-range",
+				Data: convert(map[string]interface{}{
+					"start_key": "7480000000000000ff395f720000000000fa",
+					"end_key":   "7480000000000000ff3a5f720000000000fa",
+				}),
+			},
+			{
+				ID:       "schema/test/test_label",
+				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				RuleType: "key-range",
+				Data: convert(map[string]interface{}{
+					"start_key": "aaaaa",
+					"end_key":   "bbbbb",
+				}),
+			},
 		}
 		err = nil
 		skipValidateTable = true
@@ -2877,11 +2932,13 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 		skip := true
 		dbName, tableName, partitionName, err := checkRule(rule)
 		if err != nil {
-			return err
+			logutil.BgLogger().Warn("check table-rule failed", zap.String("ID", rule.ID), zap.Error(err))
+			continue
 		}
 		tableID, err := decodeTableIDFromRule(rule)
 		if err != nil {
-			return err
+			logutil.BgLogger().Warn("decode table ID from rule failed", zap.String("ID", rule.ID), zap.Error(err))
+			continue
 		}
 
 		if !skipValidateTable && tableOrPartitionNotExist(dbName, tableName, partitionName, is, tableID) {

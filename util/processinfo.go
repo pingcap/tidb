@@ -88,6 +88,11 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	}
 }
 
+func (pi *ProcessInfo) String() string {
+	rows := pi.ToRowForShow(false)
+	return fmt.Sprintf("{id:%v, user:%v, host:%v, db:%v, command:%v, time:%v, state:%v, info:%v}", rows...)
+}
+
 func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
 	if pi.CurTxnStartTS > 0 {
 		physicalTime := oracle.GetTimeFromTS(pi.CurTxnStartTS)
@@ -275,6 +280,7 @@ const (
 
 // GetAutoAnalyzeProcID returns processID for auto analyze
 // TODO support IDs for concurrent auto-analyze
-func GetAutoAnalyzeProcID() uint64 {
-	return reservedConnAnalyze
+func GetAutoAnalyzeProcID(serverIDGetter func() uint64) uint64 {
+	globalConnID := NewGlobalConnIDWithGetter(serverIDGetter, true)
+	return globalConnID.makeID(reservedConnAnalyze)
 }

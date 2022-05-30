@@ -585,6 +585,14 @@ func TestSetPwd(t *testing.T) {
 func TestKillStmt(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalKill = false
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	sm := &mockSessionManager{
@@ -595,10 +603,9 @@ func TestKillStmt(t *testing.T) {
 	result := tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
 
-	originCfg := config.GetGlobalConfig()
-	newCfg := *originCfg
-	newCfg.Experimental.EnableGlobalKill = true
-	config.StoreGlobalConfig(&newCfg)
+	newCfg2 := *originCfg
+	newCfg2.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg2)
 
 	// ZERO serverID, treated as truncated.
 	tk.MustExec("kill 1")
@@ -622,7 +629,6 @@ func TestKillStmt(t *testing.T) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
-	config.StoreGlobalConfig(originCfg)
 	// remote kill is tested in `tests/globalkilltest`
 }
 
@@ -726,6 +732,12 @@ partition by range (a) (
 
 	tk.MustExec("drop stats test_drop_gstats partition p0, p1, global")
 	checkPartitionStats("global")
+
+	tk.MustExec("analyze table test_drop_gstats")
+	checkPartitionStats("global", "p0", "p1", "global")
+
+	tk.MustExec("drop stats test_drop_gstats")
+	checkPartitionStats()
 }
 
 func TestDropStats(t *testing.T) {
@@ -1048,4 +1060,30 @@ func TestUserWithSetNames(t *testing.T) {
 	tk.MustExec("RENAME USER '\xd2\xbb'@'localhost' to '\xd2\xbb'")
 
 	tk.MustExec("drop user '\xd2\xbb';")
+}
+
+func TestStatementsCauseImplicitCommit(t *testing.T) {
+	// Test some of the implicit commit statements.
+	// See https://dev.mysql.com/doc/refman/5.7/en/implicit-commit.html
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table ic (id int primary key)")
+
+	cases := []string{
+		"create table xx (id int)",
+		"create user 'xx'@'127.0.0.1'",
+		"grant SELECT on test.ic to 'xx'@'127.0.0.1'",
+		"flush privileges",
+		"analyze table ic",
+	}
+	for i, sql := range cases {
+		tk.MustExec("begin")
+		tk.MustExec("insert into ic values (?)", i)
+		tk.MustExec(sql)
+		tk.MustQuery("select * from ic where id = ?", i).Check(testkit.Rows(strconv.FormatInt(int64(i), 10)))
+		// Clean up data
+		tk.MustExec("delete from ic")
+	}
 }

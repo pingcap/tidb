@@ -17,7 +17,11 @@ package lightning
 import (
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -30,12 +34,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -360,6 +361,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 			}
 		}
 		failpoint.Return(nil)
+	})
+
+	failpoint.Inject("SetCertExpiredSoon", func(val failpoint.Value) {
+		rootKeyPath := val.(string)
+		rootCaPath := taskCfg.Security.CAPath
+		keyPath := taskCfg.Security.KeyPath
+		certPath := taskCfg.Security.CertPath
+		if err := updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath, time.Second*10); err != nil {
+			panic(err)
+		}
 	})
 
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
@@ -896,40 +907,6 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, db, cfg.App.MetaSchemaName, tableMetaExist))
 }
 
-func UnsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
-	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
-		tableName := engine[:index]
-		engineID, err := strconv.Atoi(engine[index+1:])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ce, err := importer.UnsafeCloseEngine(ctx, nil, tableName, int32(engineID)) // #nosec G109
-		return ce, errors.Trace(err)
-	}
-
-	engineUUID, err := uuid.Parse(engine)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "<tidb-lightning-ctl>", engineUUID)
-	return ce, errors.Trace(err)
-}
-
-func CleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
-	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	ce, err := UnsafeCloseEngine(ctx, importer, engine)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return errors.Trace(ce.Cleanup(ctx))
-}
-
 func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
 	var m import_sstpb.SwitchMode
 	switch mode {
@@ -949,4 +926,58 @@ func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode s
 			return tikv.SwitchMode(c, tls, store.Address, m)
 		},
 	)
+}
+
+func updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath string, expiry time.Duration) error {
+	rootKey, err := parsePrivateKey(rootKeyPath)
+	if err != nil {
+		return err
+	}
+	rootCaPem, err := os.ReadFile(rootCaPath)
+	if err != nil {
+		return err
+	}
+	rootCaDer, _ := pem.Decode(rootCaPem)
+	rootCa, err := x509.ParseCertificate(rootCaDer.Bytes)
+	if err != nil {
+		return err
+	}
+	key, err := parsePrivateKey(keyPath)
+	if err != nil {
+		return err
+	}
+	certPem, err := os.ReadFile(certPath)
+	if err != nil {
+		panic(err)
+	}
+	certDer, _ := pem.Decode(certPem)
+	cert, err := x509.ParseCertificate(certDer.Bytes)
+	if err != nil {
+		return err
+	}
+	cert.NotBefore = time.Now()
+	cert.NotAfter = time.Now().Add(expiry)
+	derBytes, err := x509.CreateCertificate(rand.Reader, cert, rootCa, &key.PublicKey, rootKey)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), 0o600)
+}
+
+func parsePrivateKey(keyPath string) (*ecdsa.PrivateKey, error) {
+	keyPemBlock, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	var keyDERBlock *pem.Block
+	for {
+		keyDERBlock, keyPemBlock = pem.Decode(keyPemBlock)
+		if keyDERBlock == nil {
+			return nil, errors.New("failed to find PEM block with type ending in \"PRIVATE KEY\"")
+		}
+		if keyDERBlock.Type == "PRIVATE KEY" || strings.HasSuffix(keyDERBlock.Type, " PRIVATE KEY") {
+			break
+		}
+	}
+	return x509.ParseECPrivateKey(keyDERBlock.Bytes)
 }

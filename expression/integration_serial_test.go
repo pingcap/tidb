@@ -3752,9 +3752,6 @@ func TestPreparePlanCache(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	// Plan cache should now be off by default
-	require.False(t, plannercore.PreparedPlanCacheEnabled())
-
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -4181,8 +4178,6 @@ func TestNoopFunctions(t *testing.T) {
 		"SELECT * FROM t1 LOCK IN SHARE MODE",
 		"SELECT * FROM t1 GROUP BY a DESC",
 		"SELECT * FROM t1 GROUP BY a ASC",
-		"SELECT GET_LOCK('acdc', 10)",
-		"SELECT RELEASE_LOCK('acdc')",
 	}
 
 	for _, stmt := range stmts {

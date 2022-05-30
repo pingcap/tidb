@@ -20,13 +20,13 @@ import (
 	"testing"
 
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
 	if err != nil {
 		fmt.Fprint(os.Stderr, err.Error())
