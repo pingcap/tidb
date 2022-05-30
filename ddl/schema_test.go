@@ -324,14 +324,11 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 }
 
 func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state *model.SchemaState) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		historyJob, err := m.GetHistoryDDLJob(job.ID)
-		require.NoError(t, err)
-		require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
-		if state != nil {
-			require.Equal(t, historyJob.SchemaState, *state)
-		}
-		return nil
-	}))
+	se := testkit.NewTestKit(t, store).Session()
+	historyJob, err := ddl.GetHistoryJobByID(se, job.ID)
+	require.NoError(t, err)
+	require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
+	if state != nil {
+		require.Equal(t, historyJob.SchemaState, *state)
+	}
 }

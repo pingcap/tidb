@@ -1640,12 +1640,14 @@ func TestTimezonePushDown(t *testing.T) {
 		require.NoError(t, proto.Unmarshal(req.Data, dagReq))
 		require.Equal(t, systemTZ.String(), dagReq.GetTimeZoneName())
 	})
-	_, err := tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	rs, err := tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 	require.NoError(t, err)
+	rs[0].Close()
 
 	tk.MustExec(`set time_zone="System"`)
-	_, err = tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	rs, err = tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 	require.NoError(t, err)
+	rs[0].Close()
 
 	require.Equal(t, 2, count) // Make sure the hook function is called.
 }
@@ -4424,19 +4426,18 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	jobID, err := strconv.Atoi(row[0].(string))
 	require.NoError(t, err)
 
-	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMeta(txn)
-		job, err := tt.GetHistoryDDLJob(int64(jobID))
-		require.NoError(t, err)
-		require.NotNil(t, job)
-		// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
-		// See PR: 11561.
-		job.BinlogInfo = nil
-		job.SchemaName = ""
-		err = tt.AddHistoryDDLJob(job, true)
-		require.NoError(t, err)
-		return nil
-	})
+	job, err := ddl.GetHistoryJobByID(tk.Session(), int64(jobID))
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
+	// See PR: 11561.
+	job.BinlogInfo = nil
+	job.SchemaName = ""
+	err = sessiontxn.NewTxnInStmt(context.Background(), tk.Session())
+	require.NoError(t, err)
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	err = ddl.AddHistoryDDLJob(meta.NewMeta(txn), job, true)
 	require.NoError(t, err)
 
 	re = tk.MustQuery("admin show ddl jobs 1")
