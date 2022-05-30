@@ -33,11 +33,11 @@ func TestCloneConf(t *testing.T) {
 
 	c1.Store = "abc"
 	c1.Port = 2333
-	c1.Log.EnableSlowLog.Store(!c1.Log.EnableSlowLog.Load())
+	c1.Instance.EnableSlowLog.Store(!c1.Instance.EnableSlowLog.Load())
 	c1.RepairTableList = append(c1.RepairTableList, "abc")
 	require.NotEqual(t, c2.Store, c1.Store)
 	require.NotEqual(t, c2.Port, c1.Port)
-	require.NotEqual(t, c2.Log.EnableSlowLog, c1.Log.EnableSlowLog)
+	require.NotEqual(t, c2.Instance.EnableSlowLog, c1.Instance.EnableSlowLog)
 	require.NotEqual(t, fmt.Sprintf("%v", c2.RepairTableList), fmt.Sprintf("%v", c1.RepairTableList))
 }
 
@@ -53,18 +53,16 @@ func TestMergeConfigItems(t *testing.T) {
 	newConf.Performance.FeedbackProbability = 123
 	newConf.Performance.QueryFeedbackLimit = 123
 	newConf.Performance.PseudoEstimateRatio = 123
-	newConf.OOMAction = "panic"
-	newConf.MemQuotaQuery = 123
 	newConf.TiKVClient.StoreLimit = 123
 
 	// rejected
 	newConf.Store = "tiflash"
 	newConf.Port = 2333
 	newConf.AdvertiseAddress = "1.2.3.4"
-	newConf.Log.SlowThreshold = 2345
+	newConf.Instance.SlowThreshold = 2345
 
 	as, rs := MergeConfigItems(oldConf, newConf)
-	require.Equal(t, 10, len(as))
+	require.Equal(t, 8, len(as))
 	require.Equal(t, 3, len(rs))
 	for _, a := range as {
 		_, ok := dynamicConfigItems[a]
@@ -81,10 +79,8 @@ func TestMergeConfigItems(t *testing.T) {
 	require.Equal(t, newConf.Performance.FeedbackProbability, oldConf.Performance.FeedbackProbability)
 	require.Equal(t, newConf.Performance.QueryFeedbackLimit, oldConf.Performance.QueryFeedbackLimit)
 	require.Equal(t, newConf.Performance.PseudoEstimateRatio, oldConf.Performance.PseudoEstimateRatio)
-	require.Equal(t, newConf.OOMAction, oldConf.OOMAction)
-	require.Equal(t, newConf.MemQuotaQuery, oldConf.MemQuotaQuery)
 	require.Equal(t, newConf.TiKVClient.StoreLimit, oldConf.TiKVClient.StoreLimit)
-	require.Equal(t, newConf.Log.SlowThreshold, oldConf.Log.SlowThreshold)
+	require.Equal(t, newConf.Instance.SlowThreshold, oldConf.Instance.SlowThreshold)
 
 	require.Equal(t, oriConf.Store, oldConf.Store)
 	require.Equal(t, oriConf.Port, oldConf.Port)

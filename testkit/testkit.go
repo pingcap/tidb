@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build !codes
-// +build !codes
 
 package testkit
 
@@ -22,11 +21,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -56,6 +54,17 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		t:       t,
 		store:   store,
 		session: newSession(t, store),
+	}
+}
+
+// NewTestKitWithSession returns a new *TestKit.
+func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *TestKit {
+	return &TestKit{
+		require: require.New(t),
+		assert:  assert.New(t),
+		t:       t,
+		store:   store,
+		session: se,
 	}
 }
 
@@ -93,6 +102,49 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(rs, comment)
 	return tk.ResultSetToResult(rs, comment)
+}
+
+// MustIndexLookup checks whether the plan for the sql is IndexLookUp.
+func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+	tk.require.True(tk.HasPlan(sql, "IndexLookUp", args...))
+	return tk.MustQuery(sql, args...)
+}
+
+// MustPartition checks if the result execution plan must read specific partitions.
+func (tk *TestKit) MustPartition(sql string, partitions string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	ok := len(partitions) == 0
+	for i := range rs.rows {
+		if len(partitions) == 0 && strings.Contains(rs.rows[i][3], "partition:") {
+			ok = false
+		}
+		if len(partitions) != 0 && strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
+			ok = true
+		}
+	}
+	tk.require.True(ok)
+	return tk.MustQuery(sql, args...)
+}
+
+// MustPartitionByList checks if the result execution plan must read specific partitions by list.
+func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	ok := len(partitions) == 0
+	for i := range rs.rows {
+		if ok {
+			tk.require.NotContains(rs.rows[i][3], "partition:")
+		}
+		for index, partition := range partitions {
+			if !ok && strings.Contains(rs.rows[i][3], "partition:"+partition) {
+				partitions = append(partitions[:index], partitions[index+1:]...)
+			}
+		}
+
+	}
+	if !ok {
+		tk.require.Len(partitions, 0)
+	}
+	return tk.MustQuery(sql, args...)
 }
 
 // QueryToErr executes a sql statement and discard results.
@@ -154,7 +206,13 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 		parserWarns := warns[len(prevWarns):]
 		var rs0 sqlexec.RecordSet
 		for i, stmt := range stmts {
-			rs, err := tk.session.ExecuteStmt(ctx, stmt)
+			var rs sqlexec.RecordSet
+			var err error
+			if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
+				rs, err = session.HandleNonTransactionalDelete(ctx, s, tk.Session())
+			} else {
+				rs, err = tk.Session().ExecuteStmt(ctx, stmt)
+			}
 			if i == 0 {
 				rs0 = rs
 			}
@@ -214,19 +272,32 @@ func (tk *TestKit) RefreshConnectionID() {
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
-	tk.require.Error(err)
+	tk.require.Errorf(err, "sql: %s", sql)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	tk.require.Truef(ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	tk.require.Truef(ok, "sql: %s, expect type 'terror.Error', but obtain '%T': %v", sql, originErr, originErr)
 	sqlErr := terror.ToSQLError(tErr)
-	tk.require.Equalf(errCode, int(sqlErr.Code), "Assertion failed, origin err:\n  %v", sqlErr)
+	tk.require.Equalf(errCode, int(sqlErr.Code), "sql: %s, Assertion failed, origin err:\n  %v", sql, sqlErr)
 }
 
-// MustGetErrMsg executes a sql statement and assert it's error message.
+// MustGetErrMsg executes a sql statement and assert its error message.
 func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
 	err := tk.ExecToErr(sql)
+	tk.require.EqualError(err, errStr)
+}
+
+// MustContainErrMsg executes a sql statement and assert its error message containing errStr.
+func (tk *TestKit) MustContainErrMsg(sql string, errStr interface{}) {
+	err := tk.ExecToErr(sql)
 	tk.require.Error(err)
-	tk.require.Equal(errStr, err.Error())
+	tk.require.Contains(err.Error(), errStr)
+}
+
+// MustMatchErrMsg executes a sql statement and assert its error message matching errRx.
+func (tk *TestKit) MustMatchErrMsg(sql string, errRx interface{}) {
+	err := tk.ExecToErr(sql)
+	tk.require.Error(err)
+	tk.require.Regexp(errRx, err.Error())
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).
@@ -260,6 +331,30 @@ func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
 	tk.require.Equal(int64(tk.Session().LastInsertID()), insertID)
 }
 
+// MustPointGet checks whether the plan for the sql is Point_Get.
+func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	tk.require.Len(rs.rows, 1)
+	tk.require.Contains(rs.rows[0][0], "Point_Get", "plan %v", rs.rows[0][0])
+	return tk.MustQuery(sql, args...)
+}
+
+// UsedPartitions returns the partition names that will be used or all/dual.
+func (tk *TestKit) UsedPartitions(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	var usedPartitions [][]string
+	for i := range rs.rows {
+		index := strings.Index(rs.rows[i][3], "partition:")
+		if index != -1 {
+			p := rs.rows[i][3][index+len("partition:"):]
+			partitions := strings.Split(strings.SplitN(p, " ", 2)[0], ",")
+			usedPartitions = append(usedPartitions, partitions)
+		}
+	}
+	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	return &Result{rows: usedPartitions, comment: comment, assert: tk.assert, require: tk.require}
+}
+
 // WithPruneMode run test case under prune mode.
 func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
 	tk.MustExec("set @@tidb_partition_prune_mode=`" + string(mode) + "`")
@@ -267,27 +362,31 @@ func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
 	f()
 }
 
-// MockGC is used to make GC work in the test environment.
-func MockGC(tk *TestKit) (string, string, string, func()) {
-	originGC := ddl.IsEmulatorGCEnable()
-	resetGC := func() {
-		if originGC {
-			ddl.EmulatorGCEnable()
-		} else {
-			ddl.EmulatorGCDisable()
+func containGlobal(rs *Result) bool {
+	partitionNameCol := 2
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][partitionNameCol], "global") {
+			return true
 		}
 	}
+	return false
+}
 
-	// disable emulator GC.
-	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
-	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	// clear GC variables first.
-	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
-	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
+// MustNoGlobalStats checks if there is no global stats.
+func (tk *TestKit) MustNoGlobalStats(table string) bool {
+	if containGlobal(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
+		return false
+	}
+	if containGlobal(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
+		return false
+	}
+	if containGlobal(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
+		return false
+	}
+	return true
+}
+
+// CheckLastMessage checks last message after executing MustExec
+func (tk *TestKit) CheckLastMessage(msg string) {
+	tk.require.Equal(tk.Session().LastMessage(), msg)
 }

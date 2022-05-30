@@ -378,16 +378,14 @@
       {
         "SQL": "explain format = 'brief' select * from tlist where a in (0, 1, 2) and mod(a, 2)=0",
         "DynamicPlan": [
-          "Selection 24.00 root  eq(mod(list_partition_pruning.tlist.a, 2), 0)",
-          "└─TableReader 30.00 root partition:p0 data:Selection",
-          "  └─Selection 30.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+          "TableReader 24.00 root partition:p0 data:Selection",
+          "└─Selection 24.00 cop[tikv]  eq(mod(list_partition_pruning.tlist.a, 2), 0), in(list_partition_pruning.tlist.a, 0, 1, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Selection 24.00 root  eq(mod(list_partition_pruning.tlist.a, 2), 0)",
-          "└─TableReader 30.00 root  data:Selection",
-          "  └─Selection 30.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+          "TableReader 24.00 root  data:Selection",
+          "└─Selection 24.00 cop[tikv]  eq(mod(list_partition_pruning.tlist.a, 2), 0), in(list_partition_pruning.tlist.a, 0, 1, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -413,16 +411,14 @@
       {
         "SQL": "explain format = 'brief' select * from tcollist where a in (0, 1, 2) and mod(a, 2)=0",
         "DynamicPlan": [
-          "Selection 24.00 root  eq(mod(list_partition_pruning.tcollist.a, 2), 0)",
-          "└─TableReader 30.00 root partition:p0 data:Selection",
-          "  └─Selection 30.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
+          "TableReader 24.00 root partition:p0 data:Selection",
+          "└─Selection 24.00 cop[tikv]  eq(mod(list_partition_pruning.tcollist.a, 2), 0), in(list_partition_pruning.tcollist.a, 0, 1, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Selection 24.00 root  eq(mod(list_partition_pruning.tcollist.a, 2), 0)",
-          "└─TableReader 30.00 root  data:Selection",
-          "  └─Selection 30.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 2)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
+          "TableReader 24.00 root  data:Selection",
+          "└─Selection 24.00 cop[tikv]  eq(mod(list_partition_pruning.tcollist.a, 2), 0), in(list_partition_pruning.tcollist.a, 0, 1, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
         ]
       },
       {

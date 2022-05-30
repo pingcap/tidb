@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"runtime"
 	"runtime/trace"
 	"sort"
 	"strconv"
@@ -86,6 +85,7 @@ type IndexLookUpJoin struct {
 
 	stats    *indexLookUpJoinRuntimeStats
 	finished *atomic.Value
+	prepared bool
 }
 
 type outerCtx struct {
@@ -174,7 +174,6 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.cancelFunc = nil
-	e.startWorkers(ctx)
 	return nil
 }
 
@@ -258,6 +257,10 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 
 // Next implements the Executor interface.
 func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
+	if !e.prepared {
+		e.startWorkers(ctx)
+		e.prepared = true
+	}
 	if e.isOuterJoin {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
@@ -314,6 +317,10 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 		return task, nil
 	}
 
+	// The previous task has been processed, so release the occupied memory
+	if task != nil {
+		task.memTracker.Detach()
+	}
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
@@ -353,10 +360,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			ow.lookup.finished.Store(true)
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("outerWorker panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("outerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			err := errors.Errorf("%v", r)
 			task.doneCh <- err
@@ -473,10 +477,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			iw.lookup.finished.Store(true)
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("innerWorker panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("innerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err := errors.Errorf("%v", r)
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- err
@@ -555,7 +556,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				return nil, err
 			}
 			if rowIdx == 0 {
-				iw.lookup.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, numRows))
+				iw.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, numRows))
 			}
 			if dHashKey == nil {
 				// Append null to make lookUpKeys the same length as outer Result.
@@ -615,7 +616,7 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 		}
 		innerColType := iw.rowTypes[iw.hashCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
-		if err != nil && !(terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum)) {
+		if err != nil && !(terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.GetType() == mysql.TypeSet || innerColType.GetType() == mysql.TypeEnum)) {
 			// If the converted outerValue overflows or invalid to innerValue, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) || terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				return nil, nil, nil
@@ -764,6 +765,7 @@ func (e *IndexLookUpJoin) Close() error {
 	e.memTracker = nil
 	e.task = nil
 	e.finished.Store(false)
+	e.prepared = false
 	return e.baseExecutor.Close()
 }
 

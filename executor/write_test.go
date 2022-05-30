@@ -31,15 +31,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -303,16 +302,16 @@ func TestInsert(t *testing.T) {
 
 	tk.MustExec("create view v as select * from t")
 	_, err = tk.Exec("insert into v values(1,2)")
-	require.EqualError(t, err, "insert into view v is not supported now.")
+	require.EqualError(t, err, "insert into view v is not supported now")
 	_, err = tk.Exec("replace into v values(1,2)")
-	require.EqualError(t, err, "replace into view v is not supported now.")
+	require.EqualError(t, err, "replace into view v is not supported now")
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("insert into seq values()")
-	require.EqualError(t, err, "insert into sequence seq is not supported now.")
+	require.EqualError(t, err, "insert into sequence seq is not supported now")
 	_, err = tk.Exec("replace into seq values()")
-	require.EqualError(t, err, "replace into sequence seq is not supported now.")
+	require.EqualError(t, err, "replace into sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 
 	// issue 22851
@@ -951,7 +950,7 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 	err := tk.ExecToErr("insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);")
 	require.True(t, kv.ErrKeyExists.Equal(err))
 	tk.MustExec("commit;")
-	tk.MustQuery("select * from t order by c_int;").Check(testutil.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
+	tk.MustQuery("select * from t order by c_int;").Check(testkit.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
 	tk.MustExec("drop table t;")
 }
 
@@ -1139,8 +1138,6 @@ func TestReplace(t *testing.T) {
 }
 
 func TestReplaceWithCICollation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1733,7 +1730,7 @@ func TestDelete(t *testing.T) {
 
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("delete from seq")
-	require.EqualError(t, err, "delete sequence seq is not supported now.")
+	require.EqualError(t, err, "delete sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 }
 
@@ -1859,6 +1856,47 @@ func TestQualifiedDelete(t *testing.T) {
 
 	_, err := tk.Exec("delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1")
 	require.Error(t, err)
+}
+
+type testCase struct {
+	data1       []byte
+	data2       []byte
+	expected    []string
+	restData    []byte
+	expectedMsg string
+}
+
+func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
+	origin := ld.IgnoreLines
+	for _, tt := range tests {
+		ld.IgnoreLines = origin
+		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
+		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
+		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
+		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
+		require.NoError(t, err1)
+		require.False(t, reachLimit)
+		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
+		require.NoError(t, err1)
+		ld.SetMaxRowsInBatch(20000)
+		comment := fmt.Sprintf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data))
+		if tt.restData == nil {
+			require.Len(t, data, 0, comment)
+		} else {
+			require.Equal(t, tt.restData, data, comment)
+		}
+		ld.SetMessage()
+		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage())
+		ctx.StmtCommit()
+		txn, err := ctx.Txn(true)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
+		tk.MustExec(deleteSQL)
+	}
 }
 
 func TestLoadDataMissingColumn(t *testing.T) {
@@ -2273,7 +2311,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','")
 	ctx := tk.Session().(sessionctx.Context)
 	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.Nil(t, ctx.NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 
 	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	require.NoError(t, err)
@@ -2631,7 +2669,7 @@ func TestRebaseIfNeeded(t *testing.T) {
 	ctx.Store = store
 	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	require.Nil(t, ctx.NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(ctx, types.MakeDatums(30001, 2))
@@ -4256,9 +4294,6 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestIssue20724(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4272,9 +4307,6 @@ func TestIssue20724(t *testing.T) {
 }
 
 func TestIssue20840(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4289,9 +4321,6 @@ func TestIssue20840(t *testing.T) {
 }
 
 func TestIssueInsertPrefixIndexForNonUTF8Collation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

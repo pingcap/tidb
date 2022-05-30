@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
@@ -96,9 +98,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	}
 
 	if dsn.Vars != nil {
-		for k, v := range dsn.Vars {
-			vars[k] = v
-		}
+		maps.Copy(vars, dsn.Vars)
 	}
 
 	for k, v := range vars {
@@ -185,7 +185,7 @@ loopCreate:
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
-		return []string{}, err
+		return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
 	}
 
 	var res strings.Builder
@@ -210,7 +210,7 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 			node.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {
-			return []string{}, err
+			return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
 		}
 		ctx.WritePlain(";")
 		retStmts = append(retStmts, res.String())
@@ -253,7 +253,7 @@ func LoadSchemaInfo(
 		for _, tbl := range schema.Tables {
 			tblInfo, ok := tableMap[strings.ToLower(tbl.Name)]
 			if !ok {
-				return nil, errors.Errorf("table '%s' schema not found", tbl.Name)
+				return nil, common.ErrSchemaNotExists.GenWithStackByArgs(tbl.DB, tbl.Name)
 			}
 			tableName := tblInfo.Name.String()
 			if tblInfo.State != model.StatePublic {
@@ -265,13 +265,15 @@ func LoadSchemaInfo(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// Table names are case-sensitive in mydump.MDTableMeta.
+			// We should always use the original tbl.Name in checkpoints.
 			tableInfo := &checkpoints.TidbTableInfo{
 				ID:   tblInfo.ID,
 				DB:   schema.Name,
-				Name: tableName,
+				Name: tbl.Name,
 				Core: tblInfo,
 			}
-			dbInfo.Tables[tableName] = tableInfo
+			dbInfo.Tables[tbl.Name] = tableInfo
 		}
 
 		result[schema.Name] = dbInfo
@@ -371,9 +373,17 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, e
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
 // the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
-func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr int64) error {
-	logger := log.With(zap.String("table", tableName), zap.Int64("auto_increment", incr))
-	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr uint64) error {
+	var query string
+	logger := log.With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
+	if incr > math.MaxInt64 {
+		// automatically set max value
+		logger.Warn("auto_increment out of the maximum value TiDB supports, automatically set to the max", zap.Uint64("auto_increment", incr))
+		incr = math.MaxInt64
+		query = fmt.Sprintf("ALTER TABLE %s FORCE AUTO_INCREMENT=%d", tableName, incr)
+	} else {
+		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+	}
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_increment", logger)
 	task.End(zap.ErrorLevel, err)
@@ -386,8 +396,16 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 	return errors.Annotatef(err, "%s", query)
 }
 
-func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase int64) error {
-	logger := log.With(zap.String("table", tableName), zap.Int64("auto_random", randomBase))
+func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64, maxAutoRandom uint64) error {
+	logger := log.With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
+	if randomBase == maxAutoRandom+1 {
+		// insert a tuple with key maxAutoRandom
+		randomBase = maxAutoRandom
+	} else if randomBase > maxAutoRandom {
+		// TiDB does nothing when inserting an overflow value
+		logger.Warn("auto_random out of the maximum value TiDB supports")
+		return nil
+	}
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_random_base", logger)

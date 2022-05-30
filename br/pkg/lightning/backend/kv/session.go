@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -97,7 +98,7 @@ func (mb *kvMemBuf) Recycle(buf *bytesBuf) {
 
 func (mb *kvMemBuf) AllocateBuf(size int) {
 	mb.Lock()
-	size = utils.MaxInt(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
+	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
 	if len(mb.availableBufs) > 0 && mb.availableBufs[0].cap >= size {
 		mb.buf = mb.availableBufs[0]
 		mb.availableBufs = mb.availableBufs[1:]
@@ -219,6 +220,11 @@ func (t *transaction) GetTableInfo(id int64) *model.TableInfo {
 func (t *transaction) CacheTableInfo(id int64, info *model.TableInfo) {
 }
 
+// SetAssertion implements the kv.Transaction interface.
+func (t *transaction) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
+	return nil
+}
+
 // session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.
@@ -323,6 +329,10 @@ func (se *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 // Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
 func (se *session) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
+}
+
+// BuiltinFunctionUsageInc implements the sessionctx.Context interface.
+func (se *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
 }
 
 // GetStmtStats implements the sessionctx.Context interface.

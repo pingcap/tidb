@@ -15,7 +15,6 @@
 package variable
 
 import (
-	"encoding/json"
 	"reflect"
 	"strconv"
 	"testing"
@@ -63,7 +62,6 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.HashJoinConcurrency())
 	require.Equal(t, DefTiDBAllowBatchCop, vars.AllowBatchCop)
-	require.Equal(t, DefOptBCJ, vars.AllowBCJ)
 	require.Equal(t, ConcurrencyUnset, vars.projectionConcurrency)
 	require.Equal(t, ConcurrencyUnset, vars.hashAggPartialConcurrency)
 	require.Equal(t, ConcurrencyUnset, vars.hashAggFinalConcurrency)
@@ -81,13 +79,6 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.ExecutorConcurrency)
 	require.Equal(t, DefMaxChunkSize, vars.MaxChunkSize)
 	require.Equal(t, DefDMLBatchSize, vars.DMLBatchSize)
-	require.Equal(t, config.GetGlobalConfig().MemQuotaQuery, vars.MemQuotaQuery)
-	require.Equal(t, int64(DefTiDBMemQuotaHashJoin), vars.MemQuotaHashJoin)
-	require.Equal(t, int64(DefTiDBMemQuotaMergeJoin), vars.MemQuotaMergeJoin)
-	require.Equal(t, int64(DefTiDBMemQuotaSort), vars.MemQuotaSort)
-	require.Equal(t, int64(DefTiDBMemQuotaTopn), vars.MemQuotaTopn)
-	require.Equal(t, int64(DefTiDBMemQuotaIndexLookupReader), vars.MemQuotaIndexLookupReader)
-	require.Equal(t, int64(DefTiDBMemQuotaIndexLookupJoin), vars.MemQuotaIndexLookupJoin)
 	require.Equal(t, int64(DefTiDBMemQuotaApplyCache), vars.MemQuotaApplyCache)
 	require.Equal(t, DefOptWriteRowID, vars.AllowWriteRowID)
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)
@@ -208,17 +199,6 @@ func TestVarsutil(t *testing.T) {
 		require.Equal(t, mode, v.SQLMode)
 	}
 
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "1")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", "0")
-	require.True(t, terror.ErrorEqual(err, ErrWrongValueForVar))
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "0")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", "0")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "1")
-	require.True(t, terror.ErrorEqual(err, ErrWrongValueForVar))
-
 	// Combined sql_mode
 	err = SetSessionSystemVar(v, "sql_mode", "REAL_AS_FLOAT,ANSI_QUOTES")
 	require.NoError(t, err)
@@ -248,27 +228,24 @@ func TestVarsutil(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, ErrIncorrectScope))
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBConfig)
 	require.NoError(t, err)
-	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
+	jsonConfig, err := config.GetJSONConfig()
 	require.NoError(t, err)
-	require.Equal(t, config.HideConfig(string(bVal)), val)
-
-	err = SetSessionSystemVar(v, TiDBEnableStreaming, "1")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableStreaming)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.True(t, v.EnableStreaming)
-	err = SetSessionSystemVar(v, TiDBEnableStreaming, "0")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableStreaming)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-	require.False(t, v.EnableStreaming)
+	require.Equal(t, jsonConfig, val)
 
 	require.Equal(t, DefTiDBOptimizerSelectivityLevel, v.OptimizerSelectivityLevel)
 	err = SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, "1")
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
+
+	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
+	err = SetSessionSystemVar(v, TiDBOptimizerEnableOuterJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.EnableOuterJoinReorder)
+
+	require.Equal(t, DefTiDBOptimizerEnableNewOFGB, v.OptimizerEnableNewOnlyFullGroupByCheck)
+	err = SetSessionSystemVar(v, TiDBOptimizerEnableNewOnlyFullGroupByCheck, "off")
+	require.NoError(t, err)
+	require.Equal(t, false, v.OptimizerEnableNewOnlyFullGroupByCheck)
 
 	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, "4") // wrong scope global only
 	require.True(t, terror.ErrorEqual(err, errGlobalVariable))
@@ -303,19 +280,6 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
-
-	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "1")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.True(t, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
-	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "0")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-	require.False(t, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
 
 	err = SetSessionSystemVar(v, TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)

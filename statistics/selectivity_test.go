@@ -45,12 +45,9 @@ import (
 )
 
 func TestCollationColumnEstimate(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
@@ -76,7 +73,6 @@ func TestCollationColumnEstimate(t *testing.T) {
 }
 
 func BenchmarkSelectivity(b *testing.B) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(b)
 	defer clean()
 	testKit := testkit.NewTestKit(b, store)
@@ -115,7 +111,6 @@ func BenchmarkSelectivity(b *testing.B) {
 }
 
 func TestOutOfRangeEstimation(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -166,7 +161,6 @@ func TestOutOfRangeEstimation(t *testing.T) {
 }
 
 func TestEstimationForUnknownValues(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -245,7 +239,6 @@ func TestEstimationForUnknownValues(t *testing.T) {
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -279,7 +272,6 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 }
 
 func TestPrimaryKeySelectivity(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -308,7 +300,6 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 }
 
 func TestStatsVer2(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -377,7 +368,6 @@ func TestStatsVer2(t *testing.T) {
 }
 
 func TestTopNOutOfHist(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -416,7 +406,6 @@ func TestTopNOutOfHist(t *testing.T) {
 }
 
 func TestColumnIndexNullEstimation(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -451,7 +440,6 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 }
 
 func TestUniqCompEqualEst(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -478,7 +466,6 @@ func TestUniqCompEqualEst(t *testing.T) {
 }
 
 func TestSelectivity(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -573,7 +560,6 @@ func TestSelectivity(t *testing.T) {
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
 // consists several columns, and the first column has small NDV.
 func TestDiscreteDistribution(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -604,7 +590,6 @@ func TestDiscreteDistribution(t *testing.T) {
 }
 
 func TestSelectCombinedLowBound(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -631,7 +616,6 @@ func TestSelectCombinedLowBound(t *testing.T) {
 
 // TestDNFCondSelectivity tests selectivity calculation with DNF conditions covered by using independence assumption.
 func TestDNFCondSelectivity(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -701,7 +685,6 @@ func TestDNFCondSelectivity(t *testing.T) {
 }
 
 func TestIndexEstimationCrossValidate(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -710,11 +693,11 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, key(a,b))")
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3), (2, 2)")
 	tk.MustExec("analyze table t")
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64", `return(100000)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64", `return(100000)`))
 	tk.MustQuery("explain select * from t where a = 1 and b = 2").Check(testkit.Rows(
 		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
-	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"))
 
 	// Test issue 22466
 	tk.MustExec("drop table if exists t2")
@@ -731,7 +714,6 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 }
 
 func TestRangeStepOverflow(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -750,7 +732,6 @@ func TestRangeStepOverflow(t *testing.T) {
 }
 
 func TestSmallRangeEstimation(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
@@ -868,7 +849,11 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 		return nil, err
 	}
 	for i := 1; i <= 5; i++ {
-		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
+		statsTbl.Columns[int64(i)] = &statistics.Column{
+			Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:      tbl.Columns[i-1],
+			Loaded:    true,
+		}
 	}
 
 	// Set the value of two indices' histograms.

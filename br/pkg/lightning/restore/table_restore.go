@@ -17,6 +17,7 @@ package restore
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -200,18 +202,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
 		tr.logger.Error("fail to restoreEngines because indexengine is nil")
-		return errors.Errorf("table %v index engine checkpoint not found", tr.tableName)
-	}
-	// If there is an index engine only, it indicates no data needs to restore.
-	// So we can change status to imported directly and avoid opening engine.
-	if len(cp.Engines) == 1 {
-		if err := rc.saveStatusCheckpoint(pCtx, tr.tableName, indexEngineID, nil, checkpoints.CheckpointStatusImported); err != nil {
-			return errors.Trace(err)
-		}
-		if err := rc.saveStatusCheckpoint(pCtx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusIndexImported); err != nil {
-			return errors.Trace(err)
-		}
-		return nil
+		return common.ErrCheckpointNotFound.GenWithStack("table %v index engine checkpoint not found", tr.tableName)
 	}
 
 	ctx, cancel := context.WithCancel(pCtx)
@@ -548,7 +539,7 @@ func (tr *TableRestore) restoreEngine(
 			}
 			if err == nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
-				metric.BytesCounter.WithLabelValues(metric.TableStateWritten).Add(float64(cr.chunk.Checksum.SumSize()))
+				metric.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
 				if dataFlushStatus != nil && indexFlushStaus != nil {
 					if dataFlushStatus.Flushed() && indexFlushStaus.Flushed() {
 						saveCheckpoint(rc, tr, engineID, cr.chunk)
@@ -683,10 +674,7 @@ func (tr *TableRestore) postProcess(
 	forcePostProcess bool,
 	metaMgr tableMetaMgr,
 ) (bool, error) {
-	// there are no data in this table, no need to do post process
-	// this is important for tables that are just the dump table of views
-	// because at this stage, the table was already deleted and replaced by the related view
-	if !rc.backend.ShouldPostProcess() || len(cp.Engines) == 1 {
+	if !rc.backend.ShouldPostProcess() {
 		return false, nil
 	}
 
@@ -696,10 +684,18 @@ func (tr *TableRestore) postProcess(
 		tblInfo := tr.tableInfo.Core
 		var err error
 		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
-			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.AutoRandomType).Base()+1)
+			var maxAutoRandom, autoRandomTotalBits uint64
+			autoRandomTotalBits = 64
+			autoRandomBits := tblInfo.AutoRandomBits // range from (0, 15]
+			if !tblInfo.IsAutoRandomBitColUnsigned() {
+				// if auto_random is signed, leave one extra bit
+				autoRandomTotalBits = 63
+			}
+			maxAutoRandom = 1<<(autoRandomTotalBits-autoRandomBits) - 1
+			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxAutoRandom)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle
-			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.RowIDAllocType).Base()+1)
+			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)
 		}
 		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
@@ -710,8 +706,8 @@ func (tr *TableRestore) postProcess(
 	}
 
 	// tidb backend don't need checksum & analyze
-	if !rc.backend.ShouldPostProcess() {
-		tr.logger.Debug("skip checksum & analyze, not supported by this backend")
+	if rc.cfg.PostRestore.Checksum == config.OpLevelOff && rc.cfg.PostRestore.Analyze == config.OpLevelOff {
+		tr.logger.Debug("skip checksum & analyze, either because not supported by this backend or manually disabled")
 		err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped)
 		return false, errors.Trace(err)
 	}
@@ -877,7 +873,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 	}
 
 	if len(unknownCols) > 0 {
-		return colPerm, errors.Errorf("unknown columns in header %s", unknownCols)
+		return colPerm, common.ErrUnknownColumns.GenWithStackByArgs(strings.Join(unknownCols, ","), tableInfo.Name)
 	}
 
 	for _, colInfo := range tableInfo.Columns {
@@ -925,18 +921,27 @@ func (tr *TableRestore) importKV(
 ) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 	regionSplitSize := int64(rc.cfg.TikvImporter.RegionSplitSize)
+	regionSplitKeys := int64(rc.cfg.TikvImporter.RegionSplitKeys)
+
 	if regionSplitSize == 0 && rc.taskMgr != nil {
 		regionSplitSize = int64(config.SplitRegionSize)
 		if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 			if len(tasks) > 0 {
-				regionSplitSize = int64(config.SplitRegionSize) * int64(utils.MinInt(len(tasks), config.MaxSplitRegionSizeRatio))
+				regionSplitSize = int64(config.SplitRegionSize) * int64(mathutil.Min(len(tasks), config.MaxSplitRegionSizeRatio))
 			}
 			return nil, nil
 		}); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	err := closedEngine.Import(ctx, regionSplitSize)
+	if regionSplitKeys == 0 {
+		if regionSplitSize > int64(config.SplitRegionSize) {
+			regionSplitKeys = int64(float64(regionSplitSize) / float64(config.SplitRegionSize) * float64(config.SplitRegionKeys))
+		} else {
+			regionSplitKeys = int64(config.SplitRegionKeys)
+		}
+	}
+	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
 	if err == nil && saveCpErr == nil {
@@ -962,7 +967,7 @@ func (tr *TableRestore) compareChecksum(remoteChecksum *RemoteChecksum, localChe
 	if remoteChecksum.Checksum != localChecksum.Sum() ||
 		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
 		remoteChecksum.TotalBytes != localChecksum.SumSize() {
-		return errors.Errorf("checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
+		return common.ErrChecksumMismatch.GenWithStackByArgs(
 			remoteChecksum.Checksum, localChecksum.Sum(),
 			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
 			remoteChecksum.TotalBytes, localChecksum.SumSize(),

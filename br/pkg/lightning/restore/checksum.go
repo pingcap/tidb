@@ -32,10 +32,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -279,12 +279,8 @@ func newTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanCon
 	}
 }
 
-func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
-	physicalTS, logicalTS, err := e.manager.pdClient.GetTS(ctx)
-	if err != nil {
-		return nil, errors.Annotate(err, "fetch tso from pd failed")
-	}
-	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, oracle.ComposeTS(physicalTS, logicalTS)).
+func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
+	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
 		Build()
 	if err != nil {
@@ -314,11 +310,11 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 			zap.Int("concurrency", distSQLScanConcurrency), zap.Int("retry", i))
 
 		// do not retry context.Canceled error
-		if !utils.IsRetryableError(err) {
+		if !common.IsRetryableError(err) {
 			break
 		}
 		if distSQLScanConcurrency > minDistSQLScanConcurrency {
-			distSQLScanConcurrency = utils.MaxInt(distSQLScanConcurrency/2, minDistSQLScanConcurrency)
+			distSQLScanConcurrency = mathutil.Max(distSQLScanConcurrency/2, minDistSQLScanConcurrency)
 		}
 	}
 
@@ -327,13 +323,17 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 
 func (e *tikvChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
 	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
-	err := e.manager.addOneJob(ctx, tbl, oracle.ComposeTS(time.Now().Unix()*1000, 0))
+	physicalTS, logicalTS, err := e.manager.pdClient.GetTS(ctx)
 	if err != nil {
+		return nil, errors.Annotate(err, "fetch tso from pd failed")
+	}
+	ts := oracle.ComposeTS(physicalTS, logicalTS)
+	if err := e.manager.addOneJob(ctx, tbl, ts); err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer e.manager.removeOneJob(tbl)
 
-	return e.checksumDB(ctx, tableInfo)
+	return e.checksumDB(ctx, tableInfo, ts)
 }
 
 type tableChecksumTS struct {

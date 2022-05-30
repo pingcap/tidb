@@ -12,67 +12,57 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
-	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
-func ExportTestDropAndTruncatePartition(t *testing.T) {
-	store := testCreateStoreT(t, "test_store")
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
+func TestDropAndTruncatePartition(t *testing.T) {
+	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	defer clean()
+
+	d := domain.DDL()
+	dbInfo, err := testSchemaInfo(store, "test_partition")
 	require.NoError(t, err)
-	defer func() {
-		err := d.Stop()
-		require.NoError(t, err)
-	}()
-	dbInfo, err := testSchemaInfo(d, "test_partition")
-	require.NoError(t, err)
-	testCreateSchemaT(t, testNewContext(d), d, dbInfo)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
 	// generate 5 partition in tableInfo.
-	tblInfo, partIDs := buildTableInfoWithPartition(t, d)
-	ctx := testNewContext(d)
-	testCreateTableT(t, ctx, d, dbInfo, tblInfo)
-
+	tblInfo, partIDs := buildTableInfoWithPartition(t, store)
+	ctx := testkit.NewTestKit(t, store).Session()
+	testCreateTable(t, ctx, d, dbInfo, tblInfo)
 	testDropPartition(t, ctx, d, dbInfo, tblInfo, []string{"p0", "p1"})
-
 	testTruncatePartition(t, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]})
 }
 
-func buildTableInfoWithPartition(t *testing.T, d *ddl) (*model.TableInfo, []int64) {
+func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableInfo, []int64) {
 	tbl := &model.TableInfo{
 		Name: model.NewCIStr("t"),
 	}
+	tbl.MaxColumnID++
 	col := &model.ColumnInfo{
 		Name:      model.NewCIStr("c"),
 		Offset:    0,
 		State:     model.StatePublic,
 		FieldType: *types.NewFieldType(mysql.TypeLong),
-		ID:        allocateColumnID(tbl),
+		ID:        tbl.MaxColumnID,
 	}
-	genIDs, err := d.genGlobalIDs(1)
+	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	tbl.ID = genIDs[0]
 	tbl.Columns = []*model.ColumnInfo{col}
 	tbl.Charset = "utf8"
 	tbl.Collate = "utf8_bin"
 
-	partIDs, err := d.genGlobalIDs(5)
+	partIDs, err := genGlobalIDs(store, 5)
 	require.NoError(t, err)
 	partInfo := &model.PartitionInfo{
 		Type:   model.PartitionTypeRange,
@@ -112,20 +102,22 @@ func buildTableInfoWithPartition(t *testing.T, d *ddl) (*model.TableInfo, []int6
 
 func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
 	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partNames},
+		SchemaID:    dbInfo.ID,
+		TableID:     tblInfo.ID,
+		SchemaState: model.StatePublic,
+		Type:        model.ActionDropTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{partNames},
 	}
 }
 
-func testDropPartition(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
+func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
 	job := buildDropPartitionJob(dbInfo, tblInfo, partNames)
-	err := d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
-	v := getSchemaVerT(t, ctx)
-	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -139,11 +131,12 @@ func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, p
 	}
 }
 
-func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64) *model.Job {
+func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64) *model.Job {
 	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids)
-	err := d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
-	v := getSchemaVerT(t, ctx)
-	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }

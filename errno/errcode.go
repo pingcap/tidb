@@ -657,6 +657,7 @@ const (
 	ErrBinlogUnsafeLimit                                     = 1668
 	ErrBinlogUnsafeInsertDelayed                             = 1669
 	ErrBinlogUnsafeAutoincColumns                            = 1671
+	ErrBinlogUnsafeSystemFunction                            = 1674
 	ErrBinlogUnsafeNontransAfterTrans                        = 1675
 	ErrMessageAndStatement                                   = 1676
 	ErrInsideTransactionPreventsSwitchBinlogFormat           = 1679
@@ -825,6 +826,8 @@ const (
 	ErrInvalidFieldSize                                      = 3013
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029
+	ErrUserLockWrongName                                     = 3057
+	ErrUserLockDeadlock                                      = 3058
 	ErrIncorrectType                                         = 3064
 	ErrFieldInOrderNotSelect                                 = 3065
 	ErrAggregateInOrderNotSelect                             = 3066
@@ -899,6 +902,7 @@ const (
 	ErrWrongKeyColumnFunctionalIndex                         = 3761
 	ErrFunctionalIndexOnField                                = 3762
 	ErrGeneratedColumnRowValueIsNotAllowed                   = 3764
+	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
@@ -1007,11 +1011,17 @@ const (
 	ErrMultiStatementDisabled              = 8130
 	ErrPartitionStatsMissing               = 8131
 	ErrNotSupportedWithSem                 = 8132
-	ErrDataInConsistentExtraIndex          = 8133
-	ErrDataInConsistentMisMatchIndex       = 8134
+	ErrDataInconsistentMismatchCount       = 8133
+	ErrDataInconsistentMismatchIndex       = 8134
 	ErrAsOf                                = 8135
 	ErrVariableNoLongerSupported           = 8136
 	ErrAnalyzeMissColumn                   = 8137
+	ErrInconsistentRowValue                = 8138
+	ErrInconsistentHandle                  = 8139
+	ErrInconsistentIndexedValue            = 8140
+	ErrAssertionFailed                     = 8141
+	ErrInstanceScope                       = 8142
+	ErrNonTransactionalJobFailure          = 8143
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1037,7 +1047,7 @@ const (
 	ErrWriteOnSnapshot                    = 8220
 	ErrInvalidKey                         = 8221
 	ErrInvalidIndexKey                    = 8222
-	ErrDataInConsistent                   = 8223
+	ErrDataInconsistent                   = 8223
 	ErrDDLJobNotFound                     = 8224
 	ErrCancelFinishedDDLJob               = 8225
 	ErrCannotCancelDDLJob                 = 8226
@@ -1057,6 +1067,7 @@ const (
 	ErrPlacementPolicyInUse               = 8241
 	ErrOptOnCacheTable                    = 8242
 	ErrHTTPServiceError                   = 8243
+	ErrPartitionColumnStatsMissing        = 8244
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

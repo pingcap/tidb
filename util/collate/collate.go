@@ -78,11 +78,6 @@ type WildcardPattern interface {
 	DoMatch(str string) bool
 }
 
-// EnableNewCollations enables the new collation.
-func EnableNewCollations() {
-	SetNewCollationEnabledForTest(true)
-}
-
 // SetNewCollationEnabledForTest sets if the new collation are enabled in test.
 // Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
 func SetNewCollationEnabledForTest(flag bool) {
@@ -103,7 +98,7 @@ func NewCollationEnabled() bool {
 func CompatibleCollate(collate1, collate2 string) bool {
 	if (collate1 == "utf8mb4_general_ci" || collate1 == "utf8_general_ci") && (collate2 == "utf8mb4_general_ci" || collate2 == "utf8_general_ci") {
 		return true
-	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
+	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin" || collate1 == "latin1_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
 		return true
 	} else if (collate1 == "utf8mb4_unicode_ci" || collate1 == "utf8_unicode_ci") && (collate2 == "utf8mb4_unicode_ci" || collate2 == "utf8_unicode_ci") {
 		return true
@@ -371,6 +366,9 @@ func ProtoToCollation(c int32) string {
 }
 
 func init() {
+	// Set it to 1 in init() to make sure the tests enable the new collation, it would be covered in bootstrap().
+	newCollationEnabled = 1
+
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
 

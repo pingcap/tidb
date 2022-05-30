@@ -38,6 +38,8 @@ const (
 	ScopeGlobal ScopeFlag = 1 << 0
 	// ScopeSession means the system variable can only be changed in current session.
 	ScopeSession ScopeFlag = 1 << 1
+	// ScopeInstance means it is similar to global but doesn't propagate to other TiDB servers.
+	ScopeInstance ScopeFlag = 1 << 2
 
 	// TypeStr is the default
 	TypeStr TypeFlag = 0
@@ -64,6 +66,19 @@ const (
 	Warn = "WARN"
 	// IntOnly means enable for int type
 	IntOnly = "INT_ONLY"
+
+	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
+	// even if the performance might be slowed down.
+	AssertionStrictStr = "STRICT"
+	// AssertionFastStr is a choice of variable TiDBTxnAssertionLevel that means assertions that doesn't affect
+	// performance should be performed.
+	AssertionFastStr = "FAST"
+	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
+	AssertionOffStr = "OFF"
+	// OOMActionCancel constants represents the valid action configurations for OOMAction "CANCEL".
+	OOMActionCancel = "CANCEL"
+	// OOMActionLog constants represents the valid action configurations for OOMAction "LOG".
+	OOMActionLog = "LOG"
 )
 
 // Global config name list.
@@ -239,6 +254,11 @@ func (sv *SysVar) HasGlobalScope() bool {
 	return sv.Scope&ScopeGlobal != 0
 }
 
+// HasInstanceScope returns true if the scope for the sysVar includes instance
+func (sv *SysVar) HasInstanceScope() bool {
+	return sv.Scope&ScopeInstance != 0
+}
+
 // Validate checks if system variable satisfies specific restriction.
 func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// Check that the scope is correct first.
@@ -260,10 +280,6 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 
 // ValidateFromType provides automatic validation based on the SysVar's type
 func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
-	// TODO: this is a temporary solution for issue: https://github.com/pingcap/tidb/issues/31538, an elegant solution is needed.
-	if value == "" && sv.IsNoop {
-		return value, nil
-	}
 	// Some sysvars in TiDB have a special behavior where the empty string means
 	// "use the config file value". This needs to be cleaned up once the behavior
 	// for instance variables is determined.
@@ -294,7 +310,7 @@ func (sv *SysVar) validateScope(scope ScopeFlag) error {
 	if sv.ReadOnly || sv.Scope == ScopeNone {
 		return ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
 	}
-	if scope == ScopeGlobal && !sv.HasGlobalScope() {
+	if scope == ScopeGlobal && !(sv.HasGlobalScope() || sv.HasInstanceScope()) {
 		return errLocalVariable.FastGenByArgs(sv.Name)
 	}
 	if scope == ScopeSession && !sv.HasSessionScope() {
@@ -389,7 +405,6 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 	if val > sv.MaxValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
 		return strconv.FormatUint(sv.MaxValue, 10), nil
-
 	}
 	return value, nil
 }
@@ -510,6 +525,22 @@ func (sv *SysVar) SkipInit() bool {
 	return !sv.HasSessionScope()
 }
 
+// SkipSysvarCache returns true if the sysvar should not re-execute on peers
+// This doesn't make sense for the GC variables because they are based in tikv
+// tables. We'd effectively be reading and writing to the same table, which
+// could be in an unsafe manner. In future these variables might be converted
+// to not use a different table internally, but to do that we need to first
+// fix upgrade/downgrade so we know that older servers won't be in the cluster
+// which update only these values.
+func (sv *SysVar) SkipSysvarCache() bool {
+	switch sv.Name {
+	case TiDBGCEnable, TiDBGCRunInterval, TiDBGCLifetime,
+		TiDBGCConcurrency, TiDBGCScanLockMode:
+		return true
+	}
+	return false
+}
+
 var sysVars map[string]*SysVar
 var sysVarsLock sync.RWMutex
 
@@ -554,12 +585,12 @@ func SetSysVar(name string, value string) {
 func GetSysVars() map[string]*SysVar {
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	copy := make(map[string]*SysVar, len(sysVars))
+	m := make(map[string]*SysVar, len(sysVars))
 	for name, sv := range sysVars {
 		tmp := *sv
-		copy[name] = &tmp
+		m[name] = &tmp
 	}
-	return copy
+	return m
 }
 
 func init() {

@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -119,7 +119,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, true, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
+	require.Equal(t, true, config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load())
 	txn1, err := dbt.GetDB().Begin()
 	require.NoError(t, err)
 	_, err = txn1.Exec("insert t2 values (unhex('F0A48BAE'));")
@@ -134,7 +134,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, false, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
+	require.Equal(t, false, config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load())
 	dbt.MustExec("insert t2 values (unhex('f09f8c80'));")
 
 	// test deadlock_history_capacity
@@ -185,7 +185,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	// restore original value.
-	config.GetGlobalConfig().CheckMb4ValueInUTF8.Store(true)
+	config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(true)
 }
 
 func TestAllServerInfo(t *testing.T) {
@@ -264,15 +264,15 @@ func TestTiFlashReplica(t *testing.T) {
 
 	defer func(originGC bool) {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			ddlutil.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			ddlutil.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(ddlutil.IsEmulatorGCEnable())
 
 	// Disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table DDL.
-	ddl.EmulatorGCDisable()
+	ddlutil.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
