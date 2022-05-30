@@ -83,8 +83,9 @@ type HashJoinExec struct {
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker   // track disk usage.
 
-	outerMatchedStatus []*bitmap.ConcurrentBitmap
-	useOuterToBuild    bool
+	outerMatchedStatus   []*bitmap.ConcurrentBitmap
+	outerUnMatchedIsNull []*bitmap.ConcurrentBitmap
+	useOuterToBuild      bool
 
 	prepared    bool
 	isOuterJoin bool
@@ -148,6 +149,7 @@ func (e *HashJoinExec) Close() error {
 		terror.Call(e.rowContainer.Close)
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
+	e.outerUnMatchedIsNull = e.outerUnMatchedIsNull[:0]
 
 	if e.stats != nil && e.rowContainer != nil {
 		e.stats.hashStat = *e.rowContainer.stat
@@ -388,7 +390,7 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
 		}
 		for j := 0; j < chk.NumRows(); j++ {
 			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
-				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
+				e.joiners[workerID].onMissMatch(e.outerUnMatchedIsNull[i].UnsafeIsSet(j), chk.GetRow(j), joinResult.chk)
 			}
 			if joinResult.chk.IsFull() {
 				e.joinResultCh <- joinResult
@@ -508,6 +510,8 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		for i := range outerMatchStatus {
 			if outerMatchStatus[i] == outerRowMatched {
 				e.outerMatchedStatus[rowsPtrs[rowIdx+i].ChkIdx].Set(int(rowsPtrs[rowIdx+i].RowIdx))
+			} else if outerMatchStatus[i] == outerRowHasNull {
+				e.outerUnMatchedIsNull[rowsPtrs[rowIdx+i].ChkIdx].Set(int(rowsPtrs[rowIdx+i].RowIdx))
 			}
 		}
 		rowIdx += len(outerMatchStatus)
@@ -784,7 +788,8 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
-			e.memTracker.Consume(bitMap.BytesConsumed())
+			e.outerUnMatchedIsNull = append(e.outerUnMatchedIsNull, bitmap.NewConcurrentBitmap(chk.NumRows()))
+			e.memTracker.Consume(2 * bitMap.BytesConsumed())
 			if len(e.outerFilter) == 0 {
 				err = e.rowContainer.PutChunk(chk, e.isNullEQ)
 			} else {
