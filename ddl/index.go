@@ -57,7 +57,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
-
+	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 	// The sum of length of all index columns.
 	sumLength := 0
 	for _, ip := range indexPartSpecifications {
@@ -77,17 +77,17 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		sumLength += indexColumnLength
 
 		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > config.GetGlobalConfig().MaxIndexLength {
+		if sumLength > maxIndexLength {
 			if ctx == nil || ctx.GetSessionVars().StrictSQLMode || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
-				return nil, dbterror.ErrTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+				return nil, dbterror.ErrTooLongKey.GenWithStackByArgs(maxIndexLength)
 			}
 			colLenPerUint, err := getIndexColumnLength(col, 1)
 			if err != nil {
 				return nil, err
 			}
-			indexColLen = config.GetGlobalConfig().MaxIndexLength / colLenPerUint
+			indexColLen = maxIndexLength / colLenPerUint
 			// produce warning message
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(config.GetGlobalConfig().MaxIndexLength))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(maxIndexLength))
 		}
 
 		idxParts = append(idxParts, &model.IndexColumn{

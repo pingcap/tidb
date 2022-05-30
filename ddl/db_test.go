@@ -1472,7 +1472,7 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 }
 
 // for issue #34931
-func TestNonRestrictedSqlMode(t *testing.T) {
+func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1494,9 +1494,14 @@ func TestNonRestrictedSqlMode(t *testing.T) {
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `id` int(11) DEFAULT NULL,\n  `name` varchar(2048) DEFAULT NULL,\n  KEY `name` (`name`(1024))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
+	// For a unique index, an error occurs regardless of SQL mode because reducing
+	//the index length might enable insertion of nonunique entries that do not meet
+	//the specified uniqueness requirement.
 	sql = "create table t1 (id int, name varchar(2048), unique index(name)) charset=utf8;"
 	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 
+	// The multiple column index in which the length sum exceeds the maximum size
+	// will return an error instead produce a warning.
 	sql = "create table t3 (id int, name varchar(512), alias varchar(1024), index(name,alias)) charset=utf8;"
 	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 }
