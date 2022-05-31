@@ -547,32 +547,6 @@ type RegionsInfo struct {
 	Regions []RegionInfo `json:"regions"`
 }
 
-// NewRegionsInfo returns RegionsInfo
-func NewRegionsInfo() *RegionsInfo {
-	return &RegionsInfo{
-		Regions: make([]RegionInfo, 0),
-	}
-}
-
-// Merge merged 2 regionsInfo into one
-func (r *RegionsInfo) Merge(other *RegionsInfo) *RegionsInfo {
-	newRegionsInfo := &RegionsInfo{
-		Regions: make([]RegionInfo, 0, r.Count+other.Count),
-	}
-	m := make(map[int64]RegionInfo, r.Count+other.Count)
-	for _, region := range r.Regions {
-		m[region.ID] = region
-	}
-	for _, region := range other.Regions {
-		m[region.ID] = region
-	}
-	for _, region := range m {
-		newRegionsInfo.Regions = append(newRegionsInfo.Regions, region)
-	}
-	newRegionsInfo.Count = int64(len(newRegionsInfo.Regions))
-	return newRegionsInfo
-}
-
 // ReplicationStatus represents the replication mode status of the region.
 type ReplicationStatus struct {
 	State   string `json:"state"`

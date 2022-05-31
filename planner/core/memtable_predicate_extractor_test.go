@@ -1043,6 +1043,184 @@ func TestInspectionRuleTableExtractor(t *testing.T) {
 	}
 }
 
+func TestTikvRegionStatusTableExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	se.GetSessionVars().StmtCtx.TimeZone = time.Local
+	var cases = []struct {
+		sql                             string
+		skipRequest                     bool
+		DBNames, TableNames, IndexNames set.StringSet
+		TableIDs, IndexIDs              set.Int64Set
+	}{
+		// Test full data, it will not call Extract() and executor(retriver) will panic and remind user to add conditions to save network IO.
+		{
+			sql: "select * from information_schema.tikv_region_status",
+		},
+		// Test `db_name` column.
+		{
+			sql:     "select * from information_schema.tikv_region_status where db_name='db1'",
+			DBNames: set.NewStringSet("db1"),
+		},
+		{
+			sql:     "select * from information_schema.tikv_region_status where db_name in('db1')",
+			DBNames: set.NewStringSet("db1"),
+		},
+		{
+
+			sql:         "select * from information_schema.tikv_region_status where db_name='db1' and db_name='db2'",
+			skipRequest: true,
+		},
+		{
+
+			sql:         "select * from information_schema.tikv_region_status where db_name in ('db1') and db_name in ('db2')",
+			skipRequest: true,
+		},
+		{
+			sql:     "select * from information_schema.tikv_region_status where db_name in('db1','db2')",
+			DBNames: set.NewStringSet("db1", "db2"),
+		},
+		{
+			sql:     "select * from information_schema.tikv_region_status where db_name in('db1','db2') and db_name='db1'",
+			DBNames: set.NewStringSet("db1"),
+		},
+		// Test `table_name` column.
+		{
+			sql:        "select * from information_schema.tikv_region_status where table_name='table1'",
+			TableNames: set.NewStringSet("table1"),
+		},
+		{
+			sql:        "select * from information_schema.tikv_region_status where table_name in('table1')",
+			TableNames: set.NewStringSet("table1"),
+		},
+		{
+
+			sql:         "select * from information_schema.tikv_region_status where table_name='table1' and table_name='table2'",
+			skipRequest: true,
+		},
+		{
+
+			sql:         "select * from information_schema.tikv_region_status where table_name in ('table1') and table_name in ('table2')",
+			skipRequest: true,
+		},
+		{
+			sql:        "select * from information_schema.tikv_region_status where table_name in('table1','table2')",
+			TableNames: set.NewStringSet("table1", "table2"),
+		},
+		{
+			sql:        "select * from information_schema.tikv_region_status where table_name in('table1','table2') and table_name='table1'",
+			TableNames: set.NewStringSet("table1"),
+		},
+		// Test `index_name` column.
+		{
+			sql:        "select * from information_schema.tikv_region_status where index_name='index1'",
+			IndexNames: set.NewStringSet("index1"),
+		},
+		{
+			sql:        "select * from information_schema.tikv_region_status where index_name in('index1')",
+			IndexNames: set.NewStringSet("index1"),
+		},
+		{
+
+			sql:         "select * from information_schema.tikv_region_status where index_name='index1' and index_name='index2'",
+			skipRequest: true,
+		},
+		{
+
+			sql:         "select * from information_schema.tikv_region_status where index_name in ('index1') and index_name in ('index2')",
+			skipRequest: true,
+		},
+		{
+			sql:        "select * from information_schema.tikv_region_status where index_name in('index1','index2')",
+			IndexNames: set.NewStringSet("index1", "index2"),
+		},
+		{
+			sql:        "select * from information_schema.tikv_region_status where index_name in('index1','index2') and index_name='index1'",
+			IndexNames: set.NewStringSet("index1"),
+		},
+		// Test `table_id` column.
+		{
+			sql:      "select * from information_schema.tikv_region_status where table_id=1",
+			TableIDs: set.NewInt64Set(1),
+		},
+		{
+			sql:      "select * from information_schema.tikv_region_status where table_id in(1)",
+			TableIDs: set.NewInt64Set(1),
+		},
+		{
+
+			sql:         "select * from information_schema.tikv_region_status where table_id=1 and table_id=2",
+			skipRequest: true,
+		},
+		{
+
+			sql:         "select * from information_schema.tikv_region_status where table_id in (1) and table_id in (2)",
+			skipRequest: true,
+		},
+		{
+			sql:      "select * from information_schema.tikv_region_status where table_id in(1,2)",
+			TableIDs: set.NewInt64Set(1, 2),
+		},
+		{
+			sql:      "select * from information_schema.tikv_region_status where table_id in(1,2) and table_id=1",
+			TableIDs: set.NewInt64Set(1),
+		},
+		// Test `index_id` column.
+		{
+			sql:      "select * from information_schema.tikv_region_status where index_id=1",
+			IndexIDs: set.NewInt64Set(1),
+		},
+		{
+			sql:      "select * from information_schema.tikv_region_status where index_id in(1)",
+			IndexIDs: set.NewInt64Set(1),
+		},
+		{
+
+			sql:         "select * from information_schema.tikv_region_status where index_id=1 and index_id=2",
+			skipRequest: true,
+		},
+		{
+
+			sql:         "select * from information_schema.tikv_region_status where index_id in (1) and index_id in (2)",
+			skipRequest: true,
+		},
+		{
+			sql:      "select * from information_schema.tikv_region_status where index_id in(1,2)",
+			IndexIDs: set.NewInt64Set(1, 2),
+		},
+		{
+			sql:      "select * from information_schema.tikv_region_status where index_id in(1,2) and index_id=1",
+			IndexIDs: set.NewInt64Set(1),
+		},
+	}
+
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor, "SQL: %v", ca.sql)
+		tikvRegionStatusExtractor := logicalMemTable.Extractor.(*plannercore.TikvRegionStatusExtractor)
+		require.EqualValues(t, ca.skipRequest, tikvRegionStatusExtractor.SkipRequest, "SQL: %v", ca.sql)
+		if len(ca.DBNames) > 0 {
+			require.EqualValues(t, ca.DBNames, tikvRegionStatusExtractor.DBNames, "SQL: %v", ca.sql)
+		}
+		if len(ca.TableNames) > 0 {
+			require.EqualValues(t, ca.TableNames, tikvRegionStatusExtractor.TableNames, "SQL: %v", ca.sql)
+		}
+		if len(ca.IndexNames) > 0 {
+			require.EqualValues(t, ca.IndexNames, tikvRegionStatusExtractor.IndexNames, "SQL: %v", ca.sql)
+		}
+		if len(ca.TableIDs) > 0 {
+			require.EqualValues(t, ca.TableIDs, tikvRegionStatusExtractor.TableIDs, "SQL: %v", ca.sql)
+		}
+		if len(ca.IndexIDs) > 0 {
+			require.EqualValues(t, ca.IndexIDs, tikvRegionStatusExtractor.IndexIDs, "SQL: %v", ca.sql)
+		}
+	}
+}
+
 func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -1704,41 +1882,4 @@ func TestPredicateQuery(t *testing.T) {
 	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
 	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
 	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
-}
-
-func TestTikvRegionStatusExtractor(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-
-	var cases = []struct {
-		sql      string
-		tableIDs []int64
-	}{
-		{
-			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id = 1",
-			tableIDs: []int64{1},
-		},
-		{
-			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id = 1 or table_id = 2",
-			tableIDs: []int64{1, 2},
-		},
-		{
-			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id in (1,2,3)",
-			tableIDs: []int64{1, 2, 3},
-		},
-	}
-	parser := parser.New()
-	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
-		rse := logicalMemTable.Extractor.(*plannercore.TiKVRegionStatusExtractor)
-		tableids := rse.GetTablesID()
-		sort.Slice(tableids, func(i, j int) bool {
-			return tableids[i] < tableids[j]
-		})
-		require.Equal(t, ca.tableIDs, tableids)
-	}
 }
