@@ -376,6 +376,13 @@ func (txn *LazyTxn) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
+// RollbackMemDBToCheckpoint overrides the Transaction interface.
+func (txn *LazyTxn) RollbackMemDBToCheckpoint(savepoint *tikv.MemDBCheckpoint) {
+	txn.flushStmtBuf()
+	txn.Transaction.RollbackMemDBToCheckpoint(savepoint)
+	txn.cleanup()
+}
+
 // LockKeys Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	failpoint.Inject("beforeLockKeys", func() {})
