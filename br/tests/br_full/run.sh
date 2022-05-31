@@ -30,7 +30,7 @@ done
 
 # backup full and kill tikv to test reset connection
 echo "backup with limit start..."
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/reset-retryable-error=1*return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/reset-retryable-error=1*return(\"Unavailable\")->1*return(\"Internal\")"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-limit" --concurrency 4
 export GO_FAILPOINTS=""
 
@@ -54,6 +54,7 @@ unset BR_LOG_TO_TERM
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/backup-storage-error=1*return(\"connection refused\")->1*return(\"InternalError\");github.com/pingcap/tidb/br/pkg/backup/backup-timeout-error=1*return(\"not read from or written to within the timeout period\")"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-lz4" --concurrency 4 --compression lz4 --log-file $test_log
+
 export GO_FAILPOINTS=""
 size_lz4=$(du -d 0 $TEST_DIR/$DB-lz4 | awk '{print $1}')
 
