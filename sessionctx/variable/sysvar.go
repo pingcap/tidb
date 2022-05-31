@@ -797,7 +797,6 @@ var defaultSysVars = []*SysVar{
 			return err
 		},
 	},
-	// variable for concurrent DDL feature.
 	{Scope: ScopeGlobal, Name: TiDBEnableConcurrentDDL, Value: BoolToOnOff(DefTiDBEnableConcurrentDDL), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
 		AllowConcurrentDDL.Store(TiDBOptOn(val))
 		return nil
