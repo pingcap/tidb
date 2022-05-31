@@ -971,7 +971,7 @@ func TestAllHistory(t *testing.T) {
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
 	txnMeta := meta.NewMeta(txn)
-	data, err := ddl.GetAllHistoryDDLJobs(txnMeta)
+	data, err := ddl.GetAllHistoryDDLJobs(s, txnMeta)
 	require.NoError(t, err)
 	err = decoder.Decode(&jobs)
 

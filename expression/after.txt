@@ -1,0 +1,28 @@
+goos: darwin
+goarch: amd64
+pkg: github.com/pingcap/tidb/expression
+cpu: Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz
+BenchmarkVectorizedBuiltinTimeFuncGenerated
+BenchmarkVectorizedBuiltinTimeFuncGenerated-16    	1000000000	         0.1878 ns/op
+BenchmarkVectorizedBuiltinTimeFuncGenerated-16    	1000000000	         0.1900 ns/op
+BenchmarkVectorizedBuiltinTimeFuncGenerated-16    	1000000000	         0.1931 ns/op
+BenchmarkVectorizedBuiltinTimeFuncGenerated-16    	1000000000	         0.1928 ns/op
+BenchmarkVectorizedBuiltinTimeFuncGenerated-16    	1000000000	         0.1940 ns/op
+BenchmarkVectorizedBuiltinTimeFuncGenerated-16    	1000000000	         0.1935 ns/op
+BenchmarkVectorizedBuiltinTimeFuncGenerated-16    	1000000000	         0.1957 ns/op
+BenchmarkVectorizedBuiltinTimeFuncGenerated-16    	1000000000	         0.1935 ns/op
+BenchmarkVectorizedBuiltinTimeFuncGenerated-16    	1000000000	         0.1985 ns/op
+BenchmarkVectorizedBuiltinTimeFuncGenerated-16    	1000000000	         0.1978 ns/op
+BenchmarkVectorizedBuiltinTimeFunc
+BenchmarkVectorizedBuiltinTimeFunc-16             	1000000000	         0.03997 ns/op
+BenchmarkVectorizedBuiltinTimeFunc-16             	1000000000	         0.04446 ns/op
+BenchmarkVectorizedBuiltinTimeFunc-16             	1000000000	         0.04468 ns/op
+BenchmarkVectorizedBuiltinTimeFunc-16             	1000000000	         0.04129 ns/op
+BenchmarkVectorizedBuiltinTimeFunc-16             	1000000000	         0.03891 ns/op
+BenchmarkVectorizedBuiltinTimeFunc-16             	1000000000	         0.03887 ns/op
+BenchmarkVectorizedBuiltinTimeFunc-16             	1000000000	         0.03910 ns/op
+BenchmarkVectorizedBuiltinTimeFunc-16             	1000000000	         0.04482 ns/op
+BenchmarkVectorizedBuiltinTimeFunc-16             	1000000000	         0.04047 ns/op
+BenchmarkVectorizedBuiltinTimeFunc-16             	1000000000	         0.03935 ns/op
+PASS
+ok  	github.com/pingcap/tidb/expression	30.224s

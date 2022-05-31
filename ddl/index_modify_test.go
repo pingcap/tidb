@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -834,6 +835,7 @@ func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL strin
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_drop_indexes")
 	tk.MustExec(createSQL)
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	done := make(chan error, 1)
 
 	num := 100
@@ -882,19 +884,21 @@ func testDropIndexesIfExists(t *testing.T, store kv.Storage) {
 		"[ddl:1091]index i3 doesn't exist",
 	)
 	tk.MustExec("alter table test_drop_indexes_if_exists drop index i1, drop index if exists i3;")
-	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1091|index i3 doesn't exist"))
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Note|1091|index i3 doesn't exist"))
 
 	// Verify the impact of deletion order when dropping duplicate indexes.
-	tk.MustGetErrMsg(
+	tk.MustGetErrCode(
 		"alter table test_drop_indexes_if_exists drop index i2, drop index i2;",
-		"[ddl:1091]index i2 doesn't exist",
+		errno.ErrUnsupportedDDLOperation,
 	)
-	tk.MustGetErrMsg(
+	tk.MustGetErrCode(
 		"alter table test_drop_indexes_if_exists drop index if exists i2, drop index i2;",
-		"[ddl:1091]index i2 doesn't exist",
+		errno.ErrUnsupportedDDLOperation,
 	)
-	tk.MustExec("alter table test_drop_indexes_if_exists drop index i2, drop index if exists i2;")
-	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1091|index i2 doesn't exist"))
+	tk.MustGetErrCode(
+		"alter table test_drop_indexes_if_exists drop index i2, drop index if exists i2;",
+		errno.ErrUnsupportedDDLOperation,
+	)
 }
 
 func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
@@ -910,10 +914,12 @@ func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
 	}
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i2;")
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table add index i1(c1)")
-	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i1;")
+	tk.MustGetErrCode("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i1;",
+		errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column c2;")
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table add column c1 int")
-	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column if exists c1;")
+	tk.MustGetErrCode("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column if exists c1;",
+		errno.ErrUnsupportedDDLOperation)
 }
 
 func TestDropPrimaryKey(t *testing.T) {

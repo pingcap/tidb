@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -340,6 +341,16 @@ type CancelDDLJobsExec struct {
 // Open implements the Executor Open interface.
 func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
+	if variable.AllowConcurrencyDDL.Load() {
+		newSess, err := e.getSysSession()
+		if err != nil {
+			return err
+		}
+		e.errs, err = ddl.CancelConcurrencyJobs(newSess, e.jobIDs)
+		e.releaseSysSession(newSess)
+		return err
+	}
+	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
 	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		e.errs, err = ddl.CancelJobs(txn, e.jobIDs)
 		return
@@ -356,7 +367,7 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendString(0, strconv.FormatInt(e.jobIDs[i], 10))
-		if e.errs[i] != nil {
+		if e.errs != nil && e.errs[i] != nil {
 			req.AppendString(1, fmt.Sprintf("error: %v", e.errs[i]))
 		} else {
 			req.AppendString(1, "successful")
@@ -492,13 +503,13 @@ type DDLJobRetriever struct {
 	TZLoc          *time.Location
 }
 
-func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
+func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
 	m := meta.NewMeta(txn)
-	jobs, err := ddl.GetAllDDLJobs(m)
+	jobs, err := ddl.GetAllDDLJobs(sess, m)
 	if err != nil {
 		return err
 	}
-	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIterator(sess, m)
 	if err != nil {
 		return err
 	}
@@ -567,6 +578,22 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		req.AppendNull(10)
 	}
 	req.AppendString(11, job.State.String())
+	if job.Type == model.ActionMultiSchemaChange {
+		for _, subJob := range job.MultiSchemaInfo.SubJobs {
+			req.AppendInt64(0, job.ID)
+			req.AppendString(1, schemaName)
+			req.AppendString(2, tableName)
+			req.AppendString(3, subJob.Type.String()+" /* subjob */")
+			req.AppendString(4, subJob.SchemaState.String())
+			req.AppendInt64(5, job.SchemaID)
+			req.AppendInt64(6, job.TableID)
+			req.AppendInt64(7, subJob.RowCount)
+			req.AppendNull(8)
+			req.AppendNull(9)
+			req.AppendNull(10)
+			req.AppendString(11, subJob.State.String())
+		}
+	}
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {
@@ -589,18 +616,35 @@ type ShowDDLJobQueriesExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
+	var err error
+	var jobs []*model.Job
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
+	session, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+	defer func() {
+		_ = session.CommitTxn(context.Background())
+		e.releaseSysSession(session)
+	}()
+	err = sessiontxn.NewTxn(context.Background(), session)
 	if err != nil {
 		return err
 	}
-	historyJobs, err := ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	txn, err := session.Txn(true)
+	if err != nil {
+		return err
+	}
+	session.GetSessionVars().SetInTxn(true)
+
+	jobs, err = ddl.GetAllDDLJobs(session, meta.NewMeta(txn))
+	if err != nil {
+		return err
+	}
+
+	historyJobs, err := ddl.GetHistoryDDLJobs(session, txn, ddl.DefNumHistoryJobs)
 	if err != nil {
 		return err
 	}
@@ -645,11 +689,13 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if e.jobNumber == 0 {
 		e.jobNumber = ddl.DefNumHistoryJobs
 	}
-	err = e.DDLJobRetriever.initial(txn)
+	sess, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	return nil
+	err = e.DDLJobRetriever.initial(txn, sess)
+	e.releaseSysSession(sess)
+	return err
 }
 
 // Next implements the Executor Next interface.

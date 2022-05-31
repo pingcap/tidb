@@ -1540,6 +1540,17 @@ var defaultSysVars = []*SysVar{
 		s.BatchPendingTiFlashCount = b
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBLastDDLInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
+		info, err := json.Marshal(s.LastDDLInfo)
+		if err != nil {
+			return "", err
+		}
+		return string(info), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableConcurrencyDDL, Value: BoolToOnOff(DefTiDBEnableConcurrencyDDL), Hidden: true, Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		AllowConcurrencyDDL.Store(TiDBOptOn(val))
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIgnorePreparedCacheCloseStmt, Value: BoolToOnOff(DefTiDBIgnorePreparedCacheCloseStmt), Type: TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.IgnorePreparedCacheCloseStmt = TiDBOptOn(s)

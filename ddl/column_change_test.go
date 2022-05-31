@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -96,11 +97,14 @@ func TestColumnAdd(t *testing.T) {
 		}
 	}
 	tc.OnJobUpdatedExported = func(job *model.Job) {
+		if job.NotStarted() {
+			return
+		}
 		jobID = job.ID
 		tbl := external.GetTableByName(t, internal, "test", "t")
 		if job.SchemaState != model.StatePublic {
 			for _, col := range tbl.Cols() {
-				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
+				assert.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
 			}
 		}
 	}
@@ -224,7 +228,7 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 		return errors.Trace(err)
 	}
 	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), [][]string{
-		{"1", "2", "<nil>"},
+		{"1", "2", "3"},
 		{"2", "3", "3"},
 	})
 	if err != nil {
@@ -236,7 +240,7 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 		return errors.Trace(err)
 	}
 	got := fmt.Sprintf("%v", row)
-	expect := fmt.Sprintf("%v", []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(nil)})
+	expect := fmt.Sprintf("%v", []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)})
 	if got != expect {
 		return errors.Errorf("expect %v, got %v", expect, got)
 	}
@@ -390,10 +394,7 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 }
 
 func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	tran := meta.NewMeta(txn)
-	historyJob, err := tran.GetHistoryDDLJob(id)
+	historyJob, err := ddl.GetHistoryJobByID(ctx, id)
 	require.NoError(t, err)
 	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
 

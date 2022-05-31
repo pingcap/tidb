@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -120,7 +121,12 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)
-		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+		var e *meta.Element
+		var start, end kv.Key
+		var physicalID int64
+		internalTk := testkit.NewTestKit(t, store)
+		e, start, end, physicalID, err = ddl.GetDDLReorgHandleForTest(currJob, m, internalTk.Session())
+
 		require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 		require.Nil(t, e)
 		require.Nil(t, start)

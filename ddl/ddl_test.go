@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -327,6 +328,9 @@ func TestBuildJobDependence(t *testing.T) {
 }
 
 func TestNotifyDDLJob(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("skip")
+	}
 	store := createMockStore(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -358,7 +362,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	// Ensure that the notification is not handled in workers `start` function.
 	d.cancel()
 	for _, worker := range d.workers {
-		worker.close()
+		worker.Close()
 	}
 
 	job := &model.Job{
@@ -401,7 +405,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	// Ensure that the notification is not handled by worker's "start".
 	d1.cancel()
 	for _, worker := range d1.workers {
-		worker.close()
+		worker.Close()
 	}
 	d1.ownerManager.RetireOwner()
 	d1.asyncNotifyWorker(job)
@@ -513,6 +517,9 @@ func (k testCtxKeyType) String() string {
 const testCtxKey testCtxKeyType = 0
 
 func TestReorg(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("skip")
+	}
 	tests := []struct {
 		isCommonHandle bool
 		handle         kv.Handle
@@ -618,7 +625,7 @@ func TestReorg(t *testing.T) {
 					require.NoError(t, err)
 
 					m = meta.NewMeta(txn)
-					info, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, nil)
+					info, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, nil, nil)
 					require.NoError(t, err1)
 					require.Equal(t, info.StartKey, kv.Key(handle.Encoded()))
 					require.Equal(t, info.currElement, e)
@@ -647,18 +654,18 @@ func TestReorg(t *testing.T) {
 			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
 				var err1 error
-				_, err1 = getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
+				_, err1 = getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, []*meta.Element{element}, nil)
 				require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err1))
 				require.Equal(t, job.SnapshotVer, uint64(0))
 				return nil
 			})
 			require.NoError(t, err)
 			job.SnapshotVer = uint64(1)
-			err = info.UpdateReorgMeta(info.StartKey)
+			err = info.UpdateReorgMeta(info.StartKey, nil)
 			require.NoError(t, err)
 			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
-				info1, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
+				info1, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, []*meta.Element{element}, nil)
 				require.NoError(t, err1)
 				require.Equal(t, info1.currElement, info.currElement)
 				require.Equal(t, info1.StartKey, info.StartKey)
@@ -733,6 +740,9 @@ func TestGetDDLInfo(t *testing.T) {
 }
 
 func TestGetDDLJobs(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("skip test on allow concurrent DDL")
+	}
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -752,12 +762,12 @@ func TestGetDDLJobs(t *testing.T) {
 		err = m.EnQueueDDLJob(jobs[i])
 		require.NoError(t, err)
 
-		currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
+		currJobs, err := GetAllDDLJobs(nil, meta.NewMeta(txn))
 		require.NoError(t, err)
 		require.Len(t, currJobs, i+1)
 
 		currJobs2 = currJobs2[:0]
-		err = IterAllDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
+		err = IterAllDDLJobs(nil, txn, func(jobs []*model.Job) (b bool, e error) {
 			for _, job := range jobs {
 				if job.NotStarted() {
 					currJobs2 = append(currJobs2, job)
@@ -771,7 +781,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs2, i+1)
 	}
 
-	currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
+	currJobs, err := GetAllDDLJobs(nil, meta.NewMeta(txn))
 	require.NoError(t, err)
 
 	for i, job := range jobs {
@@ -786,6 +796,9 @@ func TestGetDDLJobs(t *testing.T) {
 }
 
 func TestGetDDLJobsIsSort(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("skip test on allow concurrent DDL")
+	}
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -803,7 +816,7 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	m = meta.NewMeta(txn, meta.AddIndexJobListKey)
 	enQueueDDLJobs(t, m, model.ActionAddIndex, 5, 10)
 
-	currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
+	currJobs, err := GetAllDDLJobs(nil, meta.NewMeta(txn))
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 
@@ -815,6 +828,9 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 }
 
 func TestCancelJobs(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("this test case is for old ddl")
+	}
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -928,6 +944,9 @@ func TestCancelJobs(t *testing.T) {
 }
 
 func TestGetHistoryDDLJobs(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("skip test on allow concurrent DDL")
+	}
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -943,10 +962,10 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err = AddHistoryDDLJob(m, jobs[i], true)
+		err = AddHistoryDDLJob(nil, m, jobs[i], true)
 		require.NoError(t, err)
 
-		historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
+		historyJobs, err := GetHistoryDDLJobs(nil, txn, DefNumHistoryJobs)
 		require.NoError(t, err)
 
 		if i+1 > MaxHistoryJobs {
@@ -957,7 +976,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	}
 
 	delta := cnt - MaxHistoryJobs
-	historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
+	historyJobs, err := GetHistoryDDLJobs(nil, txn, DefNumHistoryJobs)
 	require.NoError(t, err)
 	require.Len(t, historyJobs, MaxHistoryJobs)
 
@@ -969,7 +988,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	}
 
 	var historyJobs2 []*model.Job
-	err = IterHistoryDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
+	err = IterHistoryDDLJobs(nil, txn, func(jobs []*model.Job) (b bool, e error) {
 		for _, job := range jobs {
 			historyJobs2 = append(historyJobs2, job)
 			if len(historyJobs2) == DefNumHistoryJobs {
@@ -995,8 +1014,6 @@ func TestIsJobRollbackable(t *testing.T) {
 		{model.ActionDropIndex, model.StateDeleteOnly, false},
 		{model.ActionDropSchema, model.StateDeleteOnly, false},
 		{model.ActionDropColumn, model.StateDeleteOnly, false},
-		{model.ActionDropColumns, model.StateDeleteOnly, false},
-		{model.ActionDropIndexes, model.StateDeleteOnly, false},
 	}
 	job := &model.Job{}
 	for _, ca := range cases {

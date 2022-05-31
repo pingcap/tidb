@@ -64,12 +64,8 @@ func TestSingle(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic),
 	)
-	err = d.Start(nil)
-	require.NoError(t, err)
-	defer func() {
-		_ = d.Stop()
-	}()
 
+	require.NoError(t, d.OwnerManager().CampaignOwner())
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
 
@@ -130,8 +126,9 @@ func TestCluster(t *testing.T) {
 		WithInfoCache(ic),
 	)
 
-	err = d.Start(nil)
-	require.NoError(t, err)
+	go func() {
+		require.NoError(t, d.OwnerManager().CampaignOwner())
+	}()
 
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
@@ -146,9 +143,9 @@ func TestCluster(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic2),
 	)
-	err = d1.Start(nil)
-	require.NoError(t, err)
-
+	go func() {
+		require.NoError(t, d1.OwnerManager().CampaignOwner())
+	}()
 	isOwner = checkOwner(d1, false)
 	require.False(t, isOwner)
 
@@ -160,8 +157,7 @@ func TestCluster(t *testing.T) {
 	isOwner = checkOwner(d, false)
 	require.False(t, isOwner)
 
-	err = d.Stop()
-	require.NoError(t, err)
+	d.OwnerManager().Cancel()
 
 	// d3 (not owner) stop
 	cli3 := cluster.Client(3)
@@ -174,22 +170,17 @@ func TestCluster(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic3),
 	)
-	err = d3.Start(nil)
-	require.NoError(t, err)
-	defer func() {
-		err = d3.Stop()
-		require.NoError(t, err)
+	go func() {
+		require.NoError(t, d3.OwnerManager().CampaignOwner())
 	}()
 
 	isOwner = checkOwner(d3, false)
 	require.False(t, isOwner)
 
-	err = d3.Stop()
-	require.NoError(t, err)
+	d3.OwnerManager().Cancel()
 
 	// Cancel the owner context, there is no owner.
-	err = d1.Stop()
-	require.NoError(t, err)
+	d1.OwnerManager().Cancel()
 
 	session, err := concurrency.NewSession(cliRW)
 	require.NoError(t, err)

@@ -76,6 +76,7 @@ var (
 	mPolicyPrefix     = "Policy"
 	mPolicyGlobalID   = []byte("PolicyGlobalID")
 	mPolicyMagicByte  = CurrentMagicByteVer
+	mInitDDLTable     = []byte("initDDLTable")
 )
 
 const (
@@ -117,6 +118,7 @@ type Meta struct {
 	txn        *structure.TxStructure
 	StartTS    uint64 // StartTS is the txn's start TS.
 	jobListKey JobListKeyType
+	Diff       *model.SchemaDiff
 }
 
 // NewMeta creates a Meta in transaction txn.
@@ -486,6 +488,53 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	}
 
 	return m.txn.HSet(dbKey, tableKey, data)
+}
+
+// WriteDDLTables creates a table with tableInfo in database.
+func (m *Meta) WriteDDLTables() error {
+	return m.txn.Set(mInitDDLTable, []byte("some value"))
+}
+
+// CreateMySQLSchema create mysql schema
+func (m *Meta) CreateMySQLSchema() (int64, error) {
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return 0, err
+	}
+	if len(dbs) != 0 {
+		for _, db := range dbs {
+			if db.Name.L == "mysql" {
+				return db.ID, nil
+			}
+		}
+	}
+
+	id, err := m.GenGlobalID()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	db := model.DBInfo{
+		ID:      id,
+		Name:    model.NewCIStr("mysql"),
+		Charset: mysql.UTF8MB4Charset,
+		Collate: mysql.UTF8MB4DefaultCollation,
+		State:   model.StatePublic,
+	}
+	data, err := json.Marshal(db)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return db.ID, m.txn.HSet(mDBs, m.dbKey(db.ID), data)
+}
+
+// CheckDDLTableExists check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckDDLTableExists() (bool, error) {
+	v, err := m.txn.Get(mInitDDLTable)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return len(v) != 0, nil
 }
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
@@ -1221,6 +1270,33 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, phy
 	}
 	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID, element), []byte(strconv.FormatInt(physicalTableID, 10)))
 	return errors.Trace(err)
+}
+
+// ClearALLDDLReorgHandle clears all reorganization related handles.
+func (m *Meta) ClearALLDDLReorgHandle() error {
+	return m.txn.HClear(mDDLJobReorgKey)
+}
+
+// ClearALLDDLJob clears all DDL jobs.
+func (m *Meta) ClearALLDDLJob() error {
+	if err := m.txn.LClear(mDDLJobAddIdxList); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.LClear(mDDLJobListKey); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.LClear(mDDLJobHistoryKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// ClearALLHistoryJob clears all DDL jobs.
+func (m *Meta) ClearALLHistoryJob() error {
+	if err := m.txn.HClear(mDDLJobHistoryKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // RemoveReorgElement removes the element of the reorganization information.

@@ -4436,12 +4436,16 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	// See PR: 11561.
 	job.BinlogInfo = nil
 	job.SchemaName = ""
-	err = sessiontxn.NewTxnInStmt(context.Background(), tk.Session())
+	b, err := job.Encode(true)
 	require.NoError(t, err)
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
-	err = ddl.AddHistoryDDLJob(meta.NewMeta(txn), job, true)
-	require.NoError(t, err)
+	if variable.AllowConcurrencyDDL.Load() {
+		tk.MustExec(fmt.Sprintf("update mysql.tidb_ddl_history set job_meta = 0x%x where job_id = %d", b, job.ID))
+	} else {
+		txn, err := tk.Session().Txn(true)
+		require.NoError(t, err)
+		err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
+		require.NoError(t, err)
+	}
 
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
@@ -5626,10 +5630,8 @@ func TestIssue10435(t *testing.T) {
 }
 
 func TestAdmin(t *testing.T) {
-	var cluster testutils.Cluster
 	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
-		cluster = c
 	}))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -5688,7 +5690,7 @@ func TestAdmin(t *testing.T) {
 	require.Equal(t, 12, row.Len())
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err := ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, ddl.DefNumHistoryJobs)
 	require.Greater(t, len(historyJobs), 1)
 	require.Greater(t, len(row.GetString(1)), 0)
 	require.NoError(t, err)
@@ -5713,7 +5715,7 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJobs, err = ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	historyJobs, err = ddl.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
 	require.NoError(t, err)
@@ -5777,16 +5779,10 @@ func TestAdmin(t *testing.T) {
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err = ddl.GetHistoryDDLJobs(txn, 20)
+	historyJobs, err = ddl.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, 20)
 	require.NoError(t, err)
 
-	// Split region for history ddl job queues.
-	m := meta.NewMeta(txn)
-	startKey := meta.DDLJobHistoryKey(m, 0)
-	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
-	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
-
-	historyJobs2, err := ddl.GetHistoryDDLJobs(txn, 20)
+	historyJobs2, err := ddl.GetHistoryDDLJobs(testkit.NewTestKit(t, store).Session(), txn, 20)
 	require.NoError(t, err)
 	require.Equal(t, historyJobs2, historyJobs)
 }

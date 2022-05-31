@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
@@ -2811,7 +2812,52 @@ func loadCollationParameter(se *session) (bool, error) {
 	return false, nil
 }
 
-var errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
+var (
+	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
+	// DDLJobTables is a list of tables definitions used in concurrent DDL.
+	DDLJobTables     = []string{
+		"create table tidb_ddl_job(job_id bigint not null, reorg int, schema_id bigint, table_id bigint, job_meta longblob, processing bigint, is_drop_schema int, primary key(job_id))",
+		"create table tidb_ddl_reorg(job_id bigint not null, ele_id bigint, curr_ele_id bigint, curr_ele_type blob, start_key blob, end_key blob, physical_id bigint)",
+		"create table tidb_ddl_history(job_id bigint not null, job_meta longblob, job_seq bigint not null, primary key(job_id), index(job_seq))",
+	}
+)
+
+// InitMetaTable is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+func InitMetaTable(store kv.Storage) error {
+	return kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		exists, err := t.CheckDDLTableExists()
+		if err != nil || exists {
+			return errors.Trace(err)
+		}
+		dbid, err := t.CreateMySQLSchema()
+		if err != nil {
+			return err
+		}
+		p := parser.New()
+		for _, s := range DDLJobTables {
+			stmt, err := p.ParseOneStmt(s, "", "")
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tblInfo.State = model.StatePublic
+			tblInfo.ID, err = t.GenGlobalID()
+			tblInfo.UpdateTS = t.StartTS
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = t.CreateTableOrView(dbid, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return t.WriteDDLTables()
+	})
+}
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
@@ -2823,6 +2869,18 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		})
 		if err != nil {
 			return nil, err
+		}
+	}
+	if variable.AllowConcurrencyDDL.Load() {
+		for {
+			err := InitMetaTable(store)
+			if err == nil {
+				break
+			}
+			if !kv.ErrWriteConflictInTiDB.Equal(err) {
+				logutil.BgLogger().Fatal("check bootstrap error",
+					zap.Error(err))
+			}
 		}
 	}
 	ver := getStoreBootstrapVersion(store)

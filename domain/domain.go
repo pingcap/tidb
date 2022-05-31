@@ -286,8 +286,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			return nil, nil, err
 		}
 		if diff == nil {
-			// If diff is missing for any version between used and new version, we fall back to full reload.
-			return nil, nil, fmt.Errorf("failed to get schemadiff")
+			continue
 		}
 		diffs = append(diffs, diff)
 	}
@@ -794,7 +793,14 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	sysFac := func() (pools.Resource, error) {
 		return sysExecutorFactory(do)
 	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
+	var capacity int
+	if variable.AllowConcurrencyDDL.Load() {
+		// reorgWorker + generalWorker + sessForAddDDL + PollTiFlashRoutine + limitDDLJobs
+		capacity = (10+1)*5 + 1 + 1 + 1 + 100
+	} else {
+		capacity = 10
+	}
+	sysCtxPool := pools.NewResourcePool(sysFac, capacity, capacity, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback

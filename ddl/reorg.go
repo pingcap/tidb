@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -256,11 +257,12 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 
 		switch reorgInfo.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
+			metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String())).Set(0)
 		case model.ActionModifyColumn:
-			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
+			metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String())).Set(0)
 		}
-		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+		err1 := w.RemoveDDLReorgHandle(t, job, reorgInfo.elements)
+		if err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 			return errors.Trace(err1)
 		}
@@ -283,8 +285,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a reorgInfo's handle.
 		// Since daemon-worker is triggered by timer to store the info half-way.
 		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
-		err := t.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
-
+		err := w.UpdateDDLReorgStartHandle(t, job, currentElement, doneKey)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
 			zap.Duration("waitTime", waitTimeout),
 			zap.ByteString("elementType", currentElement.TypeKey),
@@ -324,9 +325,9 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	}
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblAddIndex, reorgInfo.SchemaName, tblInfo.Name.String())).Set(progress * 100)
 	case model.ActionModifyColumn:
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String())).Set(progress * 100)
 	}
 }
 
@@ -578,7 +579,7 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element, wk *worker) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -627,7 +628,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		err = UpdateDDLReorgHandle(t, wk.sess, job, start, end, pid, elements[0], wk.concurrentDDL)
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -647,7 +648,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		})
 
 		var err error
-		element, start, end, pid, err = t.GetDDLReorgHandle(job)
+		element, start, end, pid, err = getDDLReorgHandle(job, t, wk.sess, wk.concurrentDDL)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -670,7 +671,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element, wk *worker) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -696,7 +697,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 			zap.String("startHandle", tryDecodeToHandleString(start)),
 			zap.String("endHandle", tryDecodeToHandleString(end)))
 
-		err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		err = UpdateDDLReorgHandle(t, wk.sess, job, start, end, pid, elements[0], wk.concurrentDDL)
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -705,7 +706,8 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 		element = elements[0]
 	} else {
 		var err error
-		element, start, end, pid, err = t.GetDDLReorgHandle(job)
+		element, start, end, pid, err = getDDLReorgHandle(job, t, wk.sess, wk.concurrentDDL)
+
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -728,9 +730,29 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 	return &info, nil
 }
 
-func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
+func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) error {
 	if startKey == nil && r.EndKey == nil {
 		return nil
+	}
+
+	if variable.AllowConcurrencyDDL.Load() {
+		se, err := pool.get()
+		if err != nil {
+			return err
+		}
+		defer pool.put(se)
+
+		sess := newSession(se)
+		err = sess.begin()
+		if err != nil {
+			return err
+		}
+
+		err = UpdateDDLReorgHandle(nil, sess, r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement, true)
+		if err != nil {
+			return err
+		}
+		return sess.commit()
 	}
 
 	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {

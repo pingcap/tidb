@@ -638,7 +638,10 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+	var element *meta.Element
+	var start, end kv.Key
+	var physicalID int64
+	element, start, end, physicalID, err = ddl.GetDDLReorgHandleForTest(currJob, m, testkit.NewTestKit(t, store).Session())
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)
@@ -1089,10 +1092,10 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 				for _, DDLSQL := range curCase.tk2DDL {
 					tk2.MustExec(DDLSQL)
 				}
-				hook := &ddl.TestDDLCallback{}
+				hook := &ddl.TestDDLCallback{Do: dom}
 				prepared := false
 				committed := false
-				hook.OnJobUpdatedExported = func(job *model.Job) {
+				hook.OnJobRunBeforeExported = func(job *model.Job) {
 					if job.SchemaState == startState {
 						if !prepared {
 							tk.MustExec("begin pessimistic")
@@ -1101,7 +1104,10 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 							}
 							prepared = true
 						}
-					} else if job.SchemaState == endState {
+					}
+				}
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.SchemaState == endState {
 						if !committed {
 							if curCase.failCommit {
 								err := tk.ExecToErr("commit")
@@ -1250,7 +1256,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 
 	var cancelErr error
 	var rs []sqlexec.RecordSet
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	d := dom.DDL()
 	originalHook := d.GetHook()
 	d.SetHook(hook)
@@ -1262,6 +1268,8 @@ func TestCancelJobWriteConflict(t *testing.T) {
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
 			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL", `return(true)`))
+			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL")) }()
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}

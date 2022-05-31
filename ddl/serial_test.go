@@ -464,7 +464,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	require.NoError(t, checkErr)
 	require.Error(t, err)
 	errMsg := err.Error()
-	require.True(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job"))
+	require.Truef(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job"), "%v", errMsg)
 }
 
 func TestRecoverTableByJobID(t *testing.T) {
