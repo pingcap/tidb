@@ -402,10 +402,23 @@ func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	sort.Strings(dbs)
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		fieldFilter       string
+	)
+
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
 	// let information_schema be the first database
 	moveInfoSchemaToFront(dbs)
 	for _, d := range dbs {
 		if checker != nil && !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, d) {
+			continue
+		} else if fieldFilter != "" && strings.ToLower(d) != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(strings.ToLower(d)) {
 			continue
 		}
 		e.appendRow([]interface{}{
@@ -465,24 +478,19 @@ func (e *ShowExec) fetchShowTables() error {
 	var (
 		tableTypes        = make(map[string]string)
 		fieldPatternsLike collate.WildcardPattern
-		FieldFilterEnable bool
 		fieldFilter       string
 	)
+
 	if e.Extractor != nil {
-		extractor := (e.Extractor).(*plannercore.ShowTablesTableExtractor)
-		if extractor.FieldPatterns != "" {
-			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
-			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
-		}
-		FieldFilterEnable = extractor.Field != ""
-		fieldFilter = extractor.Field
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 	for _, v := range schemaTables {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
 			continue
-		} else if FieldFilterEnable && v.Meta().Name.L != fieldFilter {
+		} else if fieldFilter != "" && v.Meta().Name.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Meta().Name.L) {
 			continue
@@ -563,17 +571,12 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	}
 	var (
 		fieldPatternsLike collate.WildcardPattern
-		FieldFilterEnable bool
 		fieldFilter       string
 	)
+
 	if e.Extractor != nil {
-		extractor := (e.Extractor).(*plannercore.ShowColumnsTableExtractor)
-		if extractor.FieldPatterns != "" {
-			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
-			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
-		}
-		FieldFilterEnable = extractor.Field != ""
-		fieldFilter = extractor.Field
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -594,7 +597,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		return err
 	}
 	for _, col := range cols {
-		if FieldFilterEnable && col.Name.L != fieldFilter {
+		if fieldFilter != "" && col.Name.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
@@ -787,17 +790,12 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	)
 	var (
 		fieldPatternsLike collate.WildcardPattern
-		FieldFilterEnable bool
 		fieldFilter       string
 	)
+
 	if e.Extractor != nil {
-		extractor := (e.Extractor).(*plannercore.ShowVariablesExtractor)
-		if extractor.FieldPatterns != "" {
-			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
-			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
-		}
-		FieldFilterEnable = extractor.Field != ""
-		fieldFilter = extractor.Field
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 	if e.GlobalScope {
 		// Collect global scope variables,
@@ -806,7 +804,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
-				if FieldFilterEnable && v.Name != fieldFilter {
+				if fieldFilter != "" && v.Name != fieldFilter {
 					continue
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
@@ -828,7 +826,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
-		if FieldFilterEnable && v.Name != fieldFilter {
+		if fieldFilter != "" && v.Name != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue

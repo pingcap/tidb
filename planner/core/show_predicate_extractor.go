@@ -20,14 +20,20 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
+const (
+	FieldKey    = "field"
+	TableKey    = "table"
+	DatabaseKey = "database"
+)
+
 var (
-	_ ShowPredicateExtractor = &ShowColumnsTableExtractor{}
-	_ ShowPredicateExtractor = &ShowTablesTableExtractor{}
-	_ ShowPredicateExtractor = &ShowVariablesExtractor{}
+	_ ShowPredicateExtractor = &ShowBaseExtractor{}
 )
 
 // ShowPredicateExtractor is used to extract some predicates from `PatternLikeExpr` clause
@@ -42,13 +48,21 @@ type ShowPredicateExtractor interface {
 	// Extract predicates which can be pushed down and returns whether the extractor can extract predicates.
 	Extract(show *ast.ShowStmt) bool
 	explainInfo() string
+	Field() string
+	FieldPatternLike() collate.WildcardPattern
 }
 
 // ShowBaseExtractor is the definition of base extractor for derived predicates.
 type ShowBaseExtractor struct {
-	Field string
+	ast.ShowStmtType
 
-	FieldPatterns string
+	field string
+
+	fieldPattern string
+}
+
+func newShowBaseExtractor(showStatement ast.ShowStmtType) ShowPredicateExtractor {
+	return &ShowBaseExtractor{ShowStmtType: showStatement}
 }
 
 // Extract implements the ShowPredicateExtractor interface.
@@ -61,35 +75,10 @@ func (e *ShowBaseExtractor) Extract(show *ast.ShowStmt) bool {
 			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
 			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
 			if stringutil.IsExactMatch(patTypes) {
-				e.Field = strings.ToLower(string(patValue))
+				e.field = strings.ToLower(string(patValue))
 				return true
 			}
-			e.FieldPatterns = strings.ToLower(string(patValue))
-			return true
-		}
-	}
-	return false
-}
-
-// ShowColumnsTableExtractor is used to extract some predicates of tables table.
-type ShowColumnsTableExtractor struct {
-	ShowBaseExtractor
-}
-
-// Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
-	if show.Pattern != nil && show.Pattern.Pattern != nil {
-		pattern := show.Pattern
-		switch pattern.Pattern.(type) {
-		case *driver.ValueExpr:
-			// It is used in `SHOW COLUMNS FROM t LIKE `abc``.
-			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
-			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
-			if stringutil.IsExactMatch(patTypes) {
-				e.Field = strings.ToLower(string(patValue))
-				return true
-			}
-			e.FieldPatterns = strings.ToLower(string(patValue))
+			e.fieldPattern = strings.ToLower(string(patValue))
 			return true
 		case *ast.ColumnNameExpr:
 			// It is used in `SHOW COLUMNS FROM t LIKE abc`.
@@ -98,20 +87,32 @@ func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
 		}
 	} else if show.Column != nil && show.Column.Name.L != "" {
 		// it is used in `DESCRIBE t COLUMN`.
-		e.Field = show.Column.Name.L
+		e.field = show.Column.Name.L
 		return true
 	}
 	return false
 }
 
-func (e *ShowColumnsTableExtractor) explainInfo() string {
-	r := new(bytes.Buffer)
-	if len(e.Field) > 0 {
-		r.WriteString(fmt.Sprintf("field:[%s], ", e.Field))
+// explainInfo implements the ShowPredicateExtractor interface.
+func (e *ShowBaseExtractor) explainInfo() string {
+	fieldKey := ""
+	switch e.ShowStmtType {
+	case ast.ShowVariables, ast.ShowColumns:
+		fieldKey = FieldKey
+	case ast.ShowTables:
+		fieldKey = TableKey
+	case ast.ShowTableStatus:
+	case ast.ShowDatabases:
+		fieldKey = DatabaseKey
 	}
 
-	if len(e.FieldPatterns) > 0 {
-		r.WriteString(fmt.Sprintf("field_pattern:[%s], ", e.FieldPatterns))
+	r := new(bytes.Buffer)
+	if len(e.field) > 0 {
+		r.WriteString(fmt.Sprintf("%s:[%s], ", fieldKey, e.field))
+	}
+
+	if len(e.fieldPattern) > 0 {
+		r.WriteString(fmt.Sprintf("%s_pattern:[%s], ", fieldKey, e.fieldPattern))
 	}
 
 	// remove the last ", " in the message info
@@ -122,48 +123,12 @@ func (e *ShowColumnsTableExtractor) explainInfo() string {
 	return s
 }
 
-// ShowTablesTableExtractor is used to extract some predicates of tables.
-type ShowTablesTableExtractor struct {
-	ShowBaseExtractor
+func (e *ShowBaseExtractor) Field() string {
+	return e.field
 }
 
-func (e *ShowTablesTableExtractor) explainInfo() string {
-	r := new(bytes.Buffer)
-	if len(e.Field) > 0 {
-		r.WriteString(fmt.Sprintf("table:[%s], ", e.Field))
-	}
-
-	if len(e.FieldPatterns) > 0 {
-		r.WriteString(fmt.Sprintf("table_pattern:[%s], ", e.FieldPatterns))
-	}
-
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
-}
-
-// ShowVariablesExtractor is used to extract some predicates of variables.
-type ShowVariablesExtractor struct {
-	ShowBaseExtractor
-}
-
-func (e *ShowVariablesExtractor) explainInfo() string {
-	r := new(bytes.Buffer)
-	if len(e.Field) > 0 {
-		r.WriteString(fmt.Sprintf("variable:[%s], ", e.Field))
-	}
-
-	if len(e.FieldPatterns) > 0 {
-		r.WriteString(fmt.Sprintf("variable_pattern:[%s], ", e.FieldPatterns))
-	}
-
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
+func (e *ShowBaseExtractor) FieldPatternLike() collate.WildcardPattern {
+	fieldPatternsLike := collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+	fieldPatternsLike.Compile(e.fieldPattern, byte('\\'))
+	return fieldPatternsLike
 }

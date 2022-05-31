@@ -2933,20 +2933,10 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	isSequence := false
 
 	switch show.Tp {
-	case ast.ShowColumns:
-		var extractor ShowColumnsTableExtractor
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns:
+		extractor := newShowBaseExtractor(show.Tp)
 		if extractor.Extract(show) {
-			p.Extractor = &extractor
-			// avoid to build Selection.
-			show.Pattern = nil
-		}
-	case ast.ShowTables:
-		if p.DBName == "" {
-			return nil, ErrNoDB
-		}
-		var extractor ShowTablesTableExtractor
-		if extractor.Extract(show) {
-			p.Extractor = &extractor
+			p.Extractor = extractor
 			// Avoid building Selection.
 			show.Pattern = nil
 		}
@@ -3012,15 +3002,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
 		}
+
 	}
-	if show.Tp == ast.ShowVariables {
-		var extractor ShowVariablesExtractor
-		if extractor.Extract(show) {
-			p.Extractor = &extractor
-			// Avoid building Selection.
-			show.Pattern = nil
-		}
-	}
+
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
 	p.names = names
