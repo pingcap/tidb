@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/ddl/label"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
@@ -2412,7 +2413,11 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 		// Calculate rows.
 		res = make([][]types.Datum, 0, end-start)
-        lockWaitsStart := mathutil.Min(start, len(r.lockWaits))
+		// data_lock_waits contains both lockWaits (pessimistic lock waiting)
+		// and resolving (optimistic lock "waiting") info
+		// first we'll return the lockWaits, and then resolving, so we need to
+		// do some index calculation here
+		lockWaitsStart := mathutil.Min(start, len(r.lockWaits))
 		resolvingStart := start - lockWaitsStart
 		lockWaitsEnd := mathutil.Min(end, len(r.lockWaits))
 		resolvingEnd := end - lockWaitsEnd
@@ -2435,7 +2440,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 							decodedKeyStr = string(decodedKeyBytes)
 						}
 					} else {
-						logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+						logutil.Logger(ctx).Warn("decode key failed", zap.Error(err))
 					}
 					row = append(row, types.NewDatum(decodedKeyStr))
 				case infoschema.DataLockWaitsColumnTrxID:
@@ -2471,7 +2476,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 				case infoschema.DataLockWaitsColumnKey:
 					row = append(row, types.NewDatum(strings.ToUpper(hex.EncodeToString(resolving.Key))))
 				case infoschema.DataLockWaitsColumnKeyInfo:
-					infoSchema := sctx.GetInfoSchema().(infoschema.InfoSchema)
+					infoSchema := domain.GetDomain(sctx).InfoSchema()
 					var decodedKeyStr interface{} = nil
 					decodedKey, err := keydecoder.DecodeKey(resolving.Key, infoSchema)
 					if err == nil {
@@ -2482,7 +2487,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 							decodedKeyStr = string(decodedKeyBytes)
 						}
 					} else {
-						logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+						logutil.Logger(ctx).Warn("decode key failed", zap.Error(err))
 					}
 					row = append(row, types.NewDatum(decodedKeyStr))
 				case infoschema.DataLockWaitsColumnTrxID:
@@ -2637,7 +2642,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 								value = types.NewDatum(string(decodedKeyJSON))
 							}
 						} else {
-							logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+							logutil.Logger(ctx).Warn("decode key failed", zap.Error(err))
 						}
 					}
 					row = append(row, value)
