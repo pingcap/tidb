@@ -897,10 +897,27 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
+		// In multiple schema change, we don't run the job.
+		// Instead, merge all the jobs into one pending job.
+		return appendToSubJobs(mci, job)
+	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
 	d.limitJobCh <- task
+
+	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
+		if val.(bool) {
+			// The same job will be put to the DDL queue twice.
+			task1 := &limitJobTask{job, make(chan error)}
+			d.limitJobCh <- task1
+			<-task.err
+			// The second job result is used for test.
+			task = task1
+		}
+	})
+
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
 	err := <-task.err
 	if err != nil {
@@ -983,11 +1000,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 				}
 			}
 
-			if historyJob.MultiSchemaInfo != nil && len(historyJob.MultiSchemaInfo.Warnings) != 0 {
-				for _, warning := range historyJob.MultiSchemaInfo.Warnings {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-				}
-			}
+			appendMultiChangeWarningsToOwnerCtx(ctx, historyJob)
 
 			logutil.BgLogger().Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
@@ -997,21 +1010,16 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
 			return errors.Trace(historyJob.Error)
 		}
-		// Only for JobStateCancelled job which is adding columns or drop columns or drop indexes.
-		if historyJob.IsCancelled() && (historyJob.Type == model.ActionAddColumns || historyJob.Type == model.ActionDropColumns || historyJob.Type == model.ActionDropIndexes) {
-			if historyJob.MultiSchemaInfo != nil && len(historyJob.MultiSchemaInfo.Warnings) != 0 {
-				for _, warning := range historyJob.MultiSchemaInfo.Warnings {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-				}
-			}
-			logutil.BgLogger().Info("[ddl] DDL job is cancelled", zap.Int64("jobID", jobID))
-			return nil
-		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
 }
 
-func (d *ddl) callHookOnChanged(err error) error {
+func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
+	if job.State == model.JobStateNone {
+		// In multiple schema change, we don't call the hook because
+		// the job does not run yet.
+		return err
+	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -1229,6 +1237,9 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		}
 		if !job.IsRollbackable() {
 			errs[i] = dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		if job.IsCancelling() {
 			continue
 		}
 

@@ -56,29 +56,6 @@ func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context,
 	return id
 }
 
-func testCreateColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64,
-	colNames []string, positions []string, defaultValue interface{}, dom *domain.Domain) int64 {
-	sql := "alter table t1 add column "
-	for i, colName := range colNames {
-		if i != 0 {
-			sql += ", add column "
-		}
-		sql += fmt.Sprintf("%s int %s", colName, positions[i])
-		if defaultValue != nil {
-			sql += fmt.Sprintf(" default %v", defaultValue)
-		}
-	}
-	tk.MustExec(sql)
-	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
-	id := int64(idi)
-	v := getSchemaVer(t, ctx)
-	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
-	require.True(t, exist)
-	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
-	return id
-}
-
 func testDropColumnInternal(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64, colName string, isError bool, dom *domain.Domain) int64 {
 	sql := fmt.Sprintf("alter table t1 drop column %s ", colName)
 	_, err := tk.Exec(sql)
@@ -118,31 +95,6 @@ func testCreateIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 	}
 	sql := fmt.Sprintf("alter table t1 add %s index %s(%s)", un, indexName, colName)
 	tk.MustExec(sql)
-
-	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
-	id := int64(idi)
-	v := getSchemaVer(t, ctx)
-	require.NoError(t, dom.Reload())
-	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
-	require.True(t, exist)
-	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
-	return id
-}
-
-func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64, colName []string, isError bool, dom *domain.Domain) int64 {
-	sql := "alter table t1 drop column "
-	for i, name := range colName {
-		if i != 0 {
-			sql += ", drop column "
-		}
-		sql += name
-	}
-	_, err := tk.Exec(sql)
-	if isError {
-		require.Error(t, err)
-	} else {
-		require.NoError(t, err)
-	}
 
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
@@ -700,82 +652,6 @@ func TestAddColumn(t *testing.T) {
 	testCheckJobDone(t, store, jobID, false)
 }
 
-func TestAddColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
-
-	newColNames := []string{"c4", "c5", "c6"}
-	positions := make([]string, 3)
-	for i := range positions {
-		positions[i] = ""
-	}
-	defaultColValue := int64(4)
-
-	var mu sync.Mutex
-	var hookErr error
-	checkOK := false
-
-	var tableID int64
-	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t1' and table_schema='test';")
-	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
-	tableID = int64(tableIDi)
-	tbl := testGetTable(t, dom, tableID)
-
-	ctx := testNewContext(store)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
-	require.NoError(t, err)
-	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
-	handle, err := tbl.AddRecord(ctx, oldRow)
-	require.NoError(t, err)
-
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-
-	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
-		mu.Lock()
-		defer mu.Unlock()
-		if checkOK {
-			return
-		}
-
-		tbl := testGetTable(t, dom, tableID)
-		for _, newColName := range newColNames {
-			newCol := table.FindCol(tbl.(*tables.TableCommon).Columns, newColName)
-			if newCol == nil {
-				return
-			}
-
-			checkAddColumn(t, newCol.State, tableID, handle, newCol, oldRow, defaultColValue, dom, store, 3)
-
-			if newCol.State == model.StatePublic {
-				checkOK = true
-			}
-		}
-	}
-
-	d.SetHook(tc)
-
-	jobID := testCreateColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColNames, positions, defaultColValue, dom)
-
-	testCheckJobDone(t, store, jobID, true)
-	mu.Lock()
-	hErr := hookErr
-	ok := checkOK
-	mu.Unlock()
-	require.NoError(t, hErr)
-	require.True(t, ok)
-
-	jobID = testDropTable(tk, t, "test", "t1", dom)
-	testCheckJobDone(t, store, jobID, false)
-}
-
 func TestDropColumnInColumnTest(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -826,71 +702,6 @@ func TestDropColumnInColumnTest(t *testing.T) {
 	d.SetHook(tc)
 
 	jobID := testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colName, false, dom)
-	testCheckJobDone(t, store, jobID, false)
-	mu.Lock()
-	hErr := hookErr
-	ok := checkOK
-	mu.Unlock()
-	require.NoError(t, hErr)
-	require.True(t, ok)
-
-	jobID = testDropTable(tk, t, "test", "t1", dom)
-	testCheckJobDone(t, store, jobID, false)
-}
-
-func TestDropColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, c4 int);")
-
-	var tableID int64
-	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t1' and table_schema='test';")
-	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
-	tableID = int64(tableIDi)
-	tbl := testGetTable(t, dom, tableID)
-
-	ctx := testNewContext(store)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
-	require.NoError(t, err)
-
-	colNames := []string{"c3", "c4"}
-	defaultColValue := int64(4)
-	row := types.MakeDatums(int64(1), int64(2), int64(3))
-	_, err = tbl.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
-	require.NoError(t, err)
-
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-
-	checkOK := false
-	var hookErr error
-	var mu sync.Mutex
-
-	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
-		mu.Lock()
-		defer mu.Unlock()
-		if checkOK {
-			return
-		}
-		tbl := testGetTable(t, dom, tableID)
-		for _, colName := range colNames {
-			col := table.FindCol(tbl.(*tables.TableCommon).Columns, colName)
-			if col == nil {
-				checkOK = true
-				return
-			}
-		}
-	}
-
-	d.SetHook(tc)
-
-	jobID := testDropColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colNames, false, dom)
 	testCheckJobDone(t, store, jobID, false)
 	mu.Lock()
 	hErr := hookErr
