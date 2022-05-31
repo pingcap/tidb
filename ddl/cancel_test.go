@@ -239,10 +239,6 @@ func TestCancel(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillSlow"))
 	}()
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillSlow"))
-	}()
 	hook := &ddl.TestDDLCallback{Do: dom}
 	i := atomicutil.NewInt64(0)
 	cancel := false

@@ -498,6 +498,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 		}
 		return GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, handleJobAndTableInfo)
 	}
+
 	err = IterAllDDLJobs(ctx, txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
