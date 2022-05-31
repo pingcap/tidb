@@ -373,8 +373,8 @@ func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 	e.joinWorkerWaitGroup.Done()
 }
 
-// Concurrently handling unmatched rows from the hash table
-func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
+// Concurrently handling rows from the hash table
+func (e *HashJoinExec) handleRowsFromHashTable(workerID uint) {
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
 		return
@@ -389,7 +389,11 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
 			return
 		}
 		for j := 0; j < chk.NumRows(); j++ {
-			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
+			if e.outerMatchedStatus[i].UnsafeIsSet(j) {
+				// To satisfy property of semi join, we unify process matched rows to avoid duplicate row
+				e.joiners[workerID].onMatch(chk.GetRow(j), joinResult.chk)
+			} else {
+				// Process unmatched outer rows
 				e.joiners[workerID].onMissMatch(e.outerUnMatchedIsNull[i].UnsafeIsSet(j), chk.GetRow(j), joinResult.chk)
 			}
 			if joinResult.chk.IsFull() {
@@ -416,7 +420,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 		for i := uint(0); i < e.concurrency; i++ {
 			var workerID = i
 			e.joinWorkerWaitGroup.Add(1)
-			go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTable(workerID) }, e.handleJoinWorkerPanic)
+			go util.WithRecovery(func() { e.handleRowsFromHashTable(workerID) }, e.handleJoinWorkerPanic)
 		}
 		e.joinWorkerWaitGroup.Wait()
 	}
