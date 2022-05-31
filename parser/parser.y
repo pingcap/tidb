@@ -8172,7 +8172,7 @@ HelpStmt:
 	}
 
 SelectStmtBasic:
-	"SELECT" SelectStmtOpts SelectStmtFieldList
+	"SELECT" SelectStmtOpts SelectStmtFieldList HavingClause
 	{
 		st := &ast.SelectStmt{
 			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
@@ -8182,6 +8182,9 @@ SelectStmtBasic:
 		}
 		if st.SelectStmtOpts.TableHints != nil {
 			st.TableHints = st.SelectStmtOpts.TableHints
+		}
+		if $4 != nil {
+			st.Having = $4.(*ast.HavingClause)
 		}
 		$$ = st
 	}
