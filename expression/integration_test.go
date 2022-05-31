@@ -648,7 +648,7 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery("select ord('123'), ord(123), ord(''), ord('你好'), ord(NULL), ord('👍')")
 	result.Check(testkit.Rows("49 49 0 14990752 <nil> 4036989325"))
 	result = tk.MustQuery("select ord(X''), ord(X'6161'), ord(X'e4bd'), ord(X'e4bda0'), ord(_ascii'你'), ord(_latin1'你')")
-	result.Check(testkit.Rows("0 97 228 228 228 14990752"))
+	result.Check(testkit.Rows("0 97 228 228 228 228"))
 
 	// for space
 	result = tk.MustQuery(`select space(0), space(2), space(-1), space(1.1), space(1.9)`)
