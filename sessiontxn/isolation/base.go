@@ -159,6 +159,9 @@ func (p *baseTxnContextProvider) activeTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
+	sessVars := p.sctx.GetSessionVars()
+	sessVars.TxnCtx.StartTS = txn.StartTS()
+
 	if p.causalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
