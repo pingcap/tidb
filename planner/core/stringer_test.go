@@ -89,11 +89,11 @@ func TestPlanStringer(t *testing.T) {
 			plan: "Show(database_pattern:[%t%])",
 		},
 		{
-			sql:  "show table status like 'T%'",
+			sql:  "show table status in test like 'T%'",
 			plan: "Show(table_pattern:[t%])",
 		},
 		{
-			sql:  "show table status like '%T%'",
+			sql:  "show table status in test like '%T%'",
 			plan: "Show(table_pattern:[%t%])",
 		},
 	}
