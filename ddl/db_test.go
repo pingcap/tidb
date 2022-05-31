@@ -24,7 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -33,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	parsertypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -1479,29 +1483,59 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("drop table if exists t3")
+	r := tk.MustQuery("select @@sql_mode")
+	defaultSqlMode := r.Rows()[0][0].(string)
 
-	// test in strict sql mode
-	sql := "create table t1 (id int, name varchar(2048), index(name)) charset=utf8;"
-	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 
-	tk.MustExec("set @@sql_mode=''")
+	for _, cs := range charset.CharacterSetInfos {
+		tableName := fmt.Sprintf("t_%s", cs.Name)
+		tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+		tk.MustExec(fmt.Sprintf("set @@sql_mode='%s'", defaultSqlMode))
 
-	err := tk.ExecToErr("create table t2 (id int, name varchar(2048), index(name)) charset=utf8;")
-	require.NoError(t, err)
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `id` int(11) DEFAULT NULL,\n  `name` varchar(2048) DEFAULT NULL,\n  KEY `name` (`name`(1024))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
+		// test in strict sql mode
+		expectKeyLength := maxIndexLength / cs.Maxlen
+		length := 2 * expectKeyLength
+		sql := fmt.Sprintf("create table %s (id int, name varchar(%d), index(name)) charset=%s;", tableName, length, cs.Name)
+		tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 
-	// For a unique index, an error occurs regardless of SQL mode because reducing
-	//the index length might enable insertion of nonunique entries that do not meet
-	//the specified uniqueness requirement.
-	sql = "create table t1 (id int, name varchar(2048), unique index(name)) charset=utf8;"
-	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+		tk.MustExec("set @@sql_mode=''")
 
-	// The multiple column index in which the length sum exceeds the maximum size
-	// will return an error instead produce a warning.
-	sql = "create table t3 (id int, name varchar(512), alias varchar(1024), index(name,alias)) charset=utf8;"
-	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+		err := tk.ExecToErr(sql)
+		require.NoError(t, err)
+
+		require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+
+		warnErr := tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err
+		tErr := errors.Cause(warnErr).(*terror.Error)
+		sqlErr := terror.ToSQLError(tErr)
+		require.Equal(t, errno.ErrTooLongKey, int(sqlErr.Code))
+
+		typ := "varchar"
+		if cs.Name == charset.CharsetBin {
+			typ = "varbinary"
+		}
+		rows := fmt.Sprintf("%s CREATE TABLE `%s` (\n  `id` int(11) DEFAULT NULL,\n  `name` %s(%d) DEFAULT NULL,\n  KEY `name` (`name`(%d))\n) ENGINE=InnoDB DEFAULT CHARSET=%s",
+			tableName, tableName, typ, length, expectKeyLength, cs.Name)
+		if cs.Name != charset.CharsetBin {
+			rows += fmt.Sprintf(" COLLATE=%s", cs.DefaultCollation)
+		}
+		tk.MustQuery(fmt.Sprintf("show create table %s", tableName)).Check(testkit.Rows(rows))
+
+		ukTable := fmt.Sprintf("t_%s_uk", cs.Name)
+		mkTable := fmt.Sprintf("t_%s_mk", cs.Name)
+		tk.MustExec(fmt.Sprintf("drop table if exists %s", ukTable))
+		tk.MustExec(fmt.Sprintf("drop table if exists %s", mkTable))
+
+		// For a unique index, an error occurs regardless of SQL mode because reducing
+		//the index length might enable insertion of non-unique entries that do not meet
+		//the specified uniqueness requirement.
+		sql = fmt.Sprintf("create table %s (id int, name varchar(%d), unique index(name)) charset=%s;", ukTable, length, cs.Name)
+		tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+
+		// The multiple column index in which the length sum exceeds the maximum size
+		// will return an error instead produce a warning.
+		sql = fmt.Sprintf("create table %s (id int, name varchar(%d), age int, index(name, age)) charset=%s;", mkTable, expectKeyLength, cs.Name)
+		tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+	}
 }
