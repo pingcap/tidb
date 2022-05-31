@@ -26,8 +26,6 @@ import (
 )
 
 func TestLockwaiterBasic(t *testing.T) {
-	t.Parallel()
-
 	mgr := NewManager(&config.DefaultConf)
 
 	keyHash := uint64(100)

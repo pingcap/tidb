@@ -29,7 +29,6 @@ import (
 )
 
 func TestCompareFunctionWithRefine(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
@@ -84,7 +83,6 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 }
 
 func TestCompare(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
@@ -144,8 +142,8 @@ func TestCompare(t *testing.T) {
 		bf, err := funcs[test.funcName].getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{test.arg0, test.arg1}))
 		require.NoError(t, err)
 		args := bf.getArgs()
-		require.Equal(t, test.tp, args[0].GetType().Tp)
-		require.Equal(t, test.tp, args[1].GetType().Tp)
+		require.Equal(t, test.tp, args[0].GetType().GetType())
+		require.Equal(t, test.tp, args[1].GetType().GetType())
 		res, isNil, err := bf.evalInt(chunk.Row{})
 		require.NoError(t, err)
 		require.False(t, isNil)
@@ -157,20 +155,19 @@ func TestCompare(t *testing.T) {
 	bf, err := funcs[ast.LT].getFunction(ctx, []Expression{decimalCol, stringCon})
 	require.NoError(t, err)
 	args := bf.getArgs()
-	require.Equal(t, mysql.TypeNewDecimal, args[0].GetType().Tp)
-	require.Equal(t, mysql.TypeNewDecimal, args[1].GetType().Tp)
+	require.Equal(t, mysql.TypeNewDecimal, args[0].GetType().GetType())
+	require.Equal(t, mysql.TypeNewDecimal, args[1].GetType().GetType())
 
 	// test <time column> <cmp> <non-time const>
 	timeCol := &Column{RetType: types.NewFieldType(mysql.TypeDatetime)}
 	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{timeCol, stringCon})
 	require.NoError(t, err)
 	args = bf.getArgs()
-	require.Equal(t, mysql.TypeDatetime, args[0].GetType().Tp)
-	require.Equal(t, mysql.TypeDatetime, args[1].GetType().Tp)
+	require.Equal(t, mysql.TypeDatetime, args[0].GetType().GetType())
+	require.Equal(t, mysql.TypeDatetime, args[1].GetType().GetType())
 }
 
 func TestCoalesce(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	cases := []struct {
@@ -216,7 +213,6 @@ func TestCoalesce(t *testing.T) {
 }
 
 func TestIntervalFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	sc := ctx.GetSessionVars().StmtCtx
@@ -274,7 +270,6 @@ func TestIntervalFunc(t *testing.T) {
 
 // greatest/least function is compatible with MySQL 8.0
 func TestGreatestLeastFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
@@ -355,6 +350,10 @@ func TestGreatestLeastFunc(t *testing.T) {
 		{
 			[]interface{}{905969664.0, 4556, "1990-06-16 17:22:56.005534"},
 			"905969664", "1990-06-16 17:22:56.005534", false, false,
+		},
+		{
+			[]interface{}{105969664.0, 120000, types.Duration{Duration: 20*time.Hour + 0*time.Minute + 0*time.Second}},
+			"20:00:00", "105969664", false, false,
 		},
 	} {
 		f0, err := newFunctionForTest(ctx, ast.Greatest, primitiveValsToConstants(ctx, test.args)...)

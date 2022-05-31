@@ -21,8 +21,6 @@ import (
 )
 
 func TestHashString(t *testing.T) {
-	t.Parallel()
-
 	actual, err := hashString("127.0.0.1")
 	require.NoError(t, err)
 	require.Equal(t, "4b84b15bff6ee5796152495a230e45e3d7e947d9", actual)
@@ -50,8 +48,6 @@ func TestParseAddress(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		test := test
 		t.Run(test.src, func(t *testing.T) {
-			t.Parallel()
-
 			host, port, err := parseAddressAndHash(test.src)
 			require.NoError(t, err)
 

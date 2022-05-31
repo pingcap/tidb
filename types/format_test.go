@@ -24,8 +24,6 @@ import (
 )
 
 func TestTimeFormatMethod(t *testing.T) {
-	t.Parallel()
-
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tblDate := []struct {
@@ -81,8 +79,6 @@ func TestTimeFormatMethod(t *testing.T) {
 }
 
 func TestStrToDate(t *testing.T) {
-	t.Parallel()
-
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tests := []struct {

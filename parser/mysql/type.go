@@ -16,15 +16,15 @@ package mysql
 // MySQL type information.
 const (
 	TypeUnspecified byte = 0
-	TypeTiny        byte = 1
-	TypeShort       byte = 2
-	TypeLong        byte = 3
+	TypeTiny        byte = 1 // TINYINT
+	TypeShort       byte = 2 // SMALLINT
+	TypeLong        byte = 3 // INT
 	TypeFloat       byte = 4
 	TypeDouble      byte = 5
 	TypeNull        byte = 6
 	TypeTimestamp   byte = 7
-	TypeLonglong    byte = 8
-	TypeInt24       byte = 9
+	TypeLonglong    byte = 8 // BIGINT
+	TypeInt24       byte = 9 // MEDIUMINT
 	TypeDate        byte = 10
 	/* TypeDuration original name was TypeTime, renamed to TypeDuration to resolve the conflict with Go type Time.*/
 	TypeDuration byte = 11

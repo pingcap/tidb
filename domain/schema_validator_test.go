@@ -16,18 +16,17 @@ package domain
 
 import (
 	"math/rand"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
 func TestSchemaValidator(t *testing.T) {
-	t.Parallel()
 	t.Run("general", subTestSchemaValidatorGeneral)
 	t.Run("enqueue", subTestEnqueue)
 	t.Run("enqueueActionType", subTestEnqueueActionType)
@@ -39,9 +38,8 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
 	exit := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go serverFunc(lease, leaseGrantCh, oracleCh, exit, &wg)
+	var wg util.WaitGroupWrapper
+	wg.Run(func() { serverFunc(lease, leaseGrantCh, oracleCh, exit) })
 
 	validator := NewSchemaValidator(lease, nil).(*schemaValidator)
 	require.True(t, validator.IsStarted())
@@ -247,8 +245,7 @@ func getGreaterVersionItem(t *testing.T, lease time.Duration, leaseGrantCh chan 
 // serverFunc plays the role as a remote server, runs in a separate goroutine.
 // It can grant lease and provide timestamp oracle.
 // Caller should communicate with it through channel to mock network.
-func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh chan uint64, exit chan struct{}, wg *sync.WaitGroup) {
-	defer wg.Done()
+func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh chan uint64, exit chan struct{}) {
 	var version int64
 	leaseTS := uint64(time.Now().UnixNano())
 	ticker := time.NewTicker(lease)

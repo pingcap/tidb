@@ -24,7 +24,7 @@
       },
       {
         "SQL": "select count(1) from t1 where cos(a) > 0 group by a, b",
-        "AggInput": "[]",
+        "AggInput": "[{[1 2] 3.2}]",
         "JoinInput": ""
       },
       {
@@ -275,7 +275,7 @@
         "SQL": "select count(tmp.a_sum) from (select t1.a as a, t1.b as b, sum(a) over() as a_sum from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
           "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#5)->Column#6",
-          "└─Window 4.00 root  sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#5 over()",
+          "└─Window 4.00 root  sum(cast(test.t1.a, decimal(10,0) BINARY))->Column#5 over()",
           "  └─TableReader 4.00 root  data:TableFullScan",
           "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
         ]

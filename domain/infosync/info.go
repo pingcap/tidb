@@ -16,7 +16,6 @@ package infosync
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +24,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,10 +37,12 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -49,9 +51,8 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -91,18 +92,22 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli          *clientv3.Client
-	info             *ServerInfo
-	serverInfoPath   string
-	minStartTS       uint64
-	minStartTSPath   string
-	manager          util2.SessionManager
-	session          *concurrency.Session
-	topologySession  *concurrency.Session
-	prometheusAddr   string
-	modifyTime       time.Time
-	labelRuleManager LabelRuleManager
-	placementManager PlacementManager
+	etcdCli        *clientv3.Client
+	info           *ServerInfo
+	serverInfoPath string
+	minStartTS     uint64
+	minStartTSPath string
+	managerMu      struct {
+		mu sync.RWMutex
+		util2.SessionManager
+	}
+	session                 *concurrency.Session
+	topologySession         *concurrency.Session
+	prometheusAddr          string
+	modifyTime              time.Time
+	labelRuleManager        LabelRuleManager
+	placementManager        PlacementManager
+	tiflashPlacementManager TiFlashPlacementManager
 }
 
 // ServerInfo is server static information.
@@ -181,51 +186,87 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if err != nil {
 		return nil, err
 	}
-	if etcdCli != nil {
-		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
-		is.placementManager = initPlacementManager(etcdCli.Endpoints())
-	} else {
-		is.labelRuleManager = initLabelRuleManager([]string{})
-		is.placementManager = initPlacementManager([]string{})
-	}
+	is.labelRuleManager = initLabelRuleManager(etcdCli)
+	is.placementManager = initPlacementManager(etcdCli)
+	is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
 
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) error {
-	err := is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	err := is.newSessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 	if err != nil {
 		return err
 	}
 	if skipRegisterToDashboard {
 		return nil
 	}
-	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	return is.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 }
 
 // SetSessionManager set the session manager for InfoSyncer.
 func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
-	is.manager = manager
+	is.managerMu.mu.Lock()
+	defer is.managerMu.mu.Unlock()
+	is.managerMu.SessionManager = manager
 }
 
 // GetSessionManager get the session manager.
 func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
-	return is.manager
+	is.managerMu.mu.RLock()
+	defer is.managerMu.mu.RUnlock()
+	return is.managerMu.SessionManager
 }
 
-func initLabelRuleManager(addrs []string) LabelRuleManager {
-	if len(addrs) == 0 {
+func initLabelRuleManager(etcdCli *clientv3.Client) LabelRuleManager {
+	if etcdCli == nil {
 		return &mockLabelManager{labelRules: map[string][]byte{}}
 	}
-	return &PDLabelManager{addrs: addrs}
+	return &PDLabelManager{etcdCli: etcdCli}
 }
 
-func initPlacementManager(addrs []string) PlacementManager {
-	if len(addrs) == 0 {
+func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
+	if etcdCli == nil {
 		return &mockPlacementManager{}
 	}
-	return &PDPlacementManager{addrs: addrs}
+	return &PDPlacementManager{etcdCli: etcdCli}
+}
+
+func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManager {
+	if etcdCli == nil {
+		m := mockTiFlashPlacementManager{}
+		return &m
+	}
+	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
+	return &TiFlashPDPlacementManager{etcdCli: etcdCli}
+}
+
+// GetMockTiFlash can only be used in tests to get MockTiFlash
+func GetMockTiFlash() *MockTiFlash {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil
+	}
+
+	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
+	if ok {
+		return m.tiflash
+	}
+	return nil
+}
+
+// SetMockTiFlash can only be used in tests to set MockTiFlash
+func SetMockTiFlash(tiflash *MockTiFlash) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+
+	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
+	if ok {
+		m.tiflash = tiflash
+	}
 }
 
 // GetServerInfo gets self server static information.
@@ -334,11 +375,11 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 	return progressMap, nil
 }
 
-func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) ([]byte, error) {
+func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
 	var err error
 	var req *http.Request
 	var res *http.Response
-	for _, addr := range addrs {
+	for idx, addr := range addrs {
 		url := util2.ComposeURL(addr, route)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
@@ -349,14 +390,22 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		}
 		start := time.Now()
 		res, err = doRequestWithFailpoint(req)
-		metrics.PDApiExecutionHistogram.WithLabelValues("placement").Observe(time.Since(start).Seconds())
 		if err == nil {
+			metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
+			metrics.PDAPIRequestCounter.WithLabelValues(apiName, res.Status).Inc()
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
 				terror.Log(res.Body.Close())
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
+				logutil.BgLogger().Warn("response not 200",
+					zap.String("method", method),
+					zap.String("hosts", addr),
+					zap.String("url", url),
+					zap.Int("http status", res.StatusCode),
+					zap.Int("address order", idx),
+				)
 				err = ErrHTTPServiceError.FastGen("%s", bodyBytes)
 				if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusPreconditionFailed {
 					err = nil
@@ -366,6 +415,15 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			terror.Log(res.Body.Close())
 			return bodyBytes, err
 		}
+		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
+		logutil.BgLogger().Warn("fail to doRequest",
+			zap.Error(err),
+			zap.Bool("retry next address", idx == len(addrs)-1),
+			zap.String("method", method),
+			zap.String("hosts", addr),
+			zap.String("url", url),
+			zap.Int("address order", idx),
+		)
 	}
 	return nil, err
 }
@@ -383,30 +441,6 @@ func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) 
 		return
 	}
 	return util2.InternalHTTPClient().Do(req)
-}
-
-// GetReplicationState is used to check if regions in the given keyranges are replicated from PD.
-func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (bool, error) {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return false, err
-	}
-
-	if is.etcdCli == nil {
-		return false, nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return false, errors.Errorf("pd unavailable")
-	}
-
-	res, err := doRequest(ctx, addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
-	if err == nil && res != nil {
-		return string(res) == "true\n", nil
-	}
-	return false, err
 }
 
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
@@ -591,11 +625,12 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 
 // ReportMinStartTS reports self server min start timestamp to ETCD.
 func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
-	if is.manager == nil {
-		// Server may not start in time.
+	sm := is.GetSessionManager()
+	if sm == nil {
 		return
 	}
-	pl := is.manager.ShowProcessList()
+	pl := sm.ShowProcessList()
+	innerSessionStartTSList := sm.GetInternalSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -604,20 +639,32 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
-	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
-
+	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
 	minStartTS := oracle.GoTimeToTS(now)
+	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
+		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
 	for _, info := range pl {
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
 		}
 	}
 
-	is.minStartTS = minStartTS
+	for _, innerTS := range innerSessionStartTSList {
+		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("Internal Session Transaction StartTS", innerTS))
+		kv.PrintLongTimeInternalTxn(now, innerTS, false)
+		if innerTS > startTSLowerLimit && innerTS < minStartTS {
+			minStartTS = innerTS
+		}
+	}
+
+	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)
+
 	err = is.storeMinStartTS(context.Background())
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
 	}
+	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("final minStartTS", is.minStartTS))
 }
 
 // Done returns a channel that closes when the info syncer is no longer being refreshed.
@@ -638,12 +685,12 @@ func (is *InfoSyncer) TopologyDone() <-chan struct{} {
 
 // Restart restart the info syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) Restart(ctx context.Context) error {
-	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	return is.newSessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 }
 
 // RestartTopology restart the topology syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
-	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	return is.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 }
 
 // GetAllTiDBTopology gets all tidb topology
@@ -673,7 +720,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return nil
 	}
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", is.serverInfoPath)
-	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
+	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
 	if err != nil {
 		return err
 	}
@@ -692,7 +739,7 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 		return nil
 	}
 	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s:%d", TopologyInformationPath, is.info.IP, is.info.Port)
-	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
+	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
 	}
@@ -856,7 +903,7 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {
-			info.StartTimestamp = 1282967700000
+			info.StartTimestamp = 1282967700
 			info.Labels = map[string]string{
 				"foo": "bar",
 			}
@@ -924,4 +971,136 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 		return nil, nil
 	}
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
+}
+
+// SetTiFlashPlacementRule is a helper function to set placement rule.
+// It is discouraged to use SetTiFlashPlacementRule directly,
+// use `ConfigureTiFlashPDForTable`/`ConfigureTiFlashPDForPartitions` instead.
+func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Info("SetTiFlashPlacementRule", zap.String("ruleID", rule.ID))
+	return is.tiflashPlacementManager.SetPlacementRule(ctx, rule)
+}
+
+// DeleteTiFlashPlacementRule is to delete placement rule for certain group.
+func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
+	return is.tiflashPlacementManager.DeletePlacementRule(ctx, group, ruleID)
+}
+
+// GetTiFlashGroupRules to get all placement rule in a certain group.
+func GetTiFlashGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.GetGroupRules(ctx, group)
+}
+
+// PostTiFlashAccelerateSchedule sends `regions/accelerate-schedule` request.
+func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Info("PostTiFlashAccelerateSchedule", zap.Int64("tableID", tableID))
+	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
+}
+
+// GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
+func GetTiFlashPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.GetPDRegionRecordStats(ctx, tableID, stats)
+}
+
+// GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
+func GetTiFlashStoresStat(ctx context.Context) (*helper.StoresStat, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.GetStoresStat(ctx)
+}
+
+// CloseTiFlashManager closes TiFlash manager.
+func CloseTiFlashManager(ctx context.Context) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	is.tiflashPlacementManager.Close(ctx)
+}
+
+// ConfigureTiFlashPDForTable configures pd rule for unpartitioned tables.
+func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx := context.Background()
+	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
+	ruleNew := MakeNewRule(id, count, *locationLabels)
+	if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+		return errors.Trace(e)
+	}
+	return nil
+}
+
+// ConfigureTiFlashPDForPartitions configures pd rule for all partition in partitioned tables.
+func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string, tableID int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx := context.Background()
+	for _, p := range *definitions {
+		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
+		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
+		if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+			return errors.Trace(e)
+		}
+		if accel {
+			e := is.tiflashPlacementManager.PostAccelerateSchedule(ctx, p.ID)
+			if e != nil {
+				return errors.Trace(e)
+			}
+		}
+	}
+	return nil
+}
+
+// StoreInternalSession is the entry function for store an internal session to SessionManager.
+func StoreInternalSession(se interface{}) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return
+	}
+	sm.StoreInternalSession(se)
+}
+
+// DeleteInternalSession is the entry function for delete an internal session from SessionManager.
+func DeleteInternalSession(se interface{}) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return
+	}
+	sm.DeleteInternalSession(se)
 }

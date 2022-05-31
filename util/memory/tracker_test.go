@@ -22,27 +22,37 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSetLabel(t *testing.T) {
-	t.Parallel()
-
 	tracker := NewTracker(1, -1)
 	require.Equal(t, 1, tracker.label)
 	require.Equal(t, int64(0), tracker.BytesConsumed())
-	require.Equal(t, int64(-1), tracker.bytesHardLimit)
+	require.Equal(t, int64(-1), tracker.GetBytesLimit())
 	require.Nil(t, tracker.getParent())
 	require.Equal(t, 0, len(tracker.mu.children))
 	tracker.SetLabel(2)
 	require.Equal(t, 2, tracker.label)
 	require.Equal(t, int64(0), tracker.BytesConsumed())
-	require.Equal(t, int64(-1), tracker.bytesHardLimit)
+	require.Equal(t, int64(-1), tracker.GetBytesLimit())
 	require.Nil(t, tracker.getParent())
 	require.Equal(t, 0, len(tracker.mu.children))
+}
+
+func TestSetLabel2(t *testing.T) {
+	tracker := NewTracker(1, -1)
+	tracker2 := NewTracker(2, -1)
+	tracker2.AttachTo(tracker)
+	tracker2.Consume(10)
+	require.Equal(t, tracker.BytesConsumed(), int64(10))
+	tracker2.SetLabel(10)
+	require.Equal(t, tracker.BytesConsumed(), int64(10))
+	tracker2.Detach()
+	require.Equal(t, tracker.BytesConsumed(), int64(0))
 }
 
 func TestConsume(t *testing.T) {
@@ -73,8 +83,6 @@ func TestConsume(t *testing.T) {
 }
 
 func TestOOMAction(t *testing.T) {
-	t.Parallel()
-
 	tracker := NewTracker(1, 100)
 	// make sure no panic here.
 	tracker.Consume(10000)
@@ -120,6 +128,25 @@ func TestOOMAction(t *testing.T) {
 	require.True(t, action1.called)
 	require.True(t, action2.called) // SoftLimit fallback
 	require.True(t, action3.called) // HardLimit
+
+	// test fallback
+	action1 = &mockAction{}
+	action2 = &mockAction{}
+	action3 = &mockAction{}
+	action4 := &mockAction{}
+	action5 := &mockAction{}
+	tracker.SetActionOnExceed(action1)
+	tracker.FallbackOldAndSetNewAction(action2)
+	tracker.FallbackOldAndSetNewAction(action3)
+	tracker.FallbackOldAndSetNewAction(action4)
+	tracker.FallbackOldAndSetNewAction(action5)
+	require.Equal(t, action1, tracker.actionMuForHardLimit.actionOnExceed)
+	require.Equal(t, action2, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action2.SetFinished()
+	require.Equal(t, action3, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action3.SetFinished()
+	action4.SetFinished()
+	require.Equal(t, action5, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
 }
 
 type mockAction struct {
@@ -144,8 +171,6 @@ func (a *mockAction) GetPriority() int64 {
 }
 
 func TestAttachTo(t *testing.T) {
-	t.Parallel()
-
 	oldParent := NewTracker(1, -1)
 	newParent := NewTracker(2, -1)
 	child := NewTracker(3, -1)
@@ -168,8 +193,6 @@ func TestAttachTo(t *testing.T) {
 }
 
 func TestDetach(t *testing.T) {
-	t.Parallel()
-
 	parent := NewTracker(1, -1)
 	child := NewTracker(2, -1)
 	child.Consume(100)
@@ -187,8 +210,6 @@ func TestDetach(t *testing.T) {
 }
 
 func TestReplaceChild(t *testing.T) {
-	t.Parallel()
-
 	oldChild := NewTracker(1, -1)
 	oldChild.Consume(100)
 	newChild := NewTracker(2, -1)
@@ -231,8 +252,6 @@ func TestReplaceChild(t *testing.T) {
 }
 
 func TestToString(t *testing.T) {
-	t.Parallel()
-
 	parent := NewTracker(1, -1)
 	child1 := NewTracker(2, 1000)
 	child2 := NewTracker(3, -1)
@@ -270,8 +289,6 @@ func TestToString(t *testing.T) {
 }
 
 func TestMaxConsumed(t *testing.T) {
-	t.Parallel()
-
 	r := NewTracker(1, -1)
 	c1 := NewTracker(2, -1)
 	c2 := NewTracker(3, -1)
@@ -291,7 +308,7 @@ func TestMaxConsumed(t *testing.T) {
 		}
 		consumed += b
 		tracker.Consume(b)
-		maxConsumed = mathutil.MaxInt64(maxConsumed, consumed)
+		maxConsumed = mathutil.Max(maxConsumed, consumed)
 
 		require.Equal(t, consumed, r.BytesConsumed())
 		require.Equal(t, maxConsumed, r.MaxConsumed())
@@ -299,8 +316,6 @@ func TestMaxConsumed(t *testing.T) {
 }
 
 func TestGlobalTracker(t *testing.T) {
-	t.Parallel()
-
 	r := NewGlobalTracker(1, -1)
 	c1 := NewTracker(2, -1)
 	c2 := NewTracker(3, -1)
@@ -388,8 +403,6 @@ func parseByte(str string) (int64, error) {
 }
 
 func TestFormatBytesWithPrune(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		b string
 		s string
@@ -435,14 +448,10 @@ func TestFormatBytesWithPrune(t *testing.T) {
 }
 
 func TestErrorCode(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, errno.ErrMemExceedThreshold, int(terror.ToSQLError(errMemExceedThreshold).Code))
 }
 
 func TestOOMActionPriority(t *testing.T) {
-	t.Parallel()
-
 	tracker := NewTracker(1, 100)
 	// make sure no panic here.
 	tracker.Consume(10000)

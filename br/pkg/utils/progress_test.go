@@ -20,8 +20,6 @@ func (t *testWriter) Write(p []byte) (int, error) {
 }
 
 func TestProgress(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var p string

@@ -33,8 +33,6 @@ func (a testSlice) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a testSlice) Less(i, j int) bool { return a[i] < a[j] }
 
 func TestPercentile(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeLonglong, 5, nil, 2),
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeFloat, 5, nil, 2.0),

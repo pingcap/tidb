@@ -20,7 +20,6 @@ import (
 )
 
 func TestSQLMode(t *testing.T) {
-	t.Parallel()
 	// ref https://dev.mysql.com/doc/internals/en/query-event.html#q-sql-mode-code,
 	hardCode := []struct {
 		code  SQLMode

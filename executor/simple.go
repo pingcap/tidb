@@ -42,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -50,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -113,7 +116,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	if e.autoNewTxn() {
 		// Commit the old transaction, like DDL.
-		if err := e.ctx.NewTxn(ctx); err != nil {
+		if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 			return err
 		}
 		defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()
@@ -132,6 +135,10 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeBegin(ctx, x)
 	case *ast.CommitStmt:
 		e.executeCommit(x)
+	case *ast.SavepointStmt:
+		err = e.executeSavepoint(x)
+	case *ast.ReleaseSavepointStmt:
+		err = e.executeReleaseSavepoint(x)
 	case *ast.RollbackStmt:
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
@@ -160,7 +167,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.ShutdownStmt:
 		err = e.executeShutdown(x)
 	case *ast.AdminStmt:
-		err = e.executeAdminReloadStatistics(x)
+		err = e.executeAdmin(x)
 	}
 	e.done = true
 	return err
@@ -588,52 +595,40 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 			}
 		}
 	}
-	if e.staleTxnStartTS > 0 {
-		if err := e.ctx.NewStaleTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
-			return err
-		}
-		// With START TRANSACTION, autocommit remains disabled until you end
-		// the transaction with COMMIT or ROLLBACK. The autocommit mode then
-		// reverts to its previous state.
-		vars := e.ctx.GetSessionVars()
-		if err := vars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-			return errors.Trace(err)
-		}
-		vars.SetInTxn(true)
+
+	return sessiontxn.GetTxnManager(e.ctx).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+		Type:                  sessiontxn.EnterNewTxnWithBeginStmt,
+		TxnMode:               s.Mode,
+		CausalConsistencyOnly: s.CausalConsistencyOnly,
+		StaleReadTS:           e.staleTxnStartTS,
+	})
+}
+
+// ErrSavepointNotSupportedWithBinlog export for testing.
+var ErrSavepointNotSupportedWithBinlog = errors.New("SAVEPOINT is not supported when binlog is enabled")
+
+func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	if !sessVars.InTxn() && sessVars.IsAutocommit() {
 		return nil
 	}
-	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
-	// need to call NewTxn, which commits the existing transaction and begins a new one.
-	// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
-	// always create a new transaction.
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txnCtx.History != nil || txnCtx.IsStaleness {
-		err := e.ctx.NewTxn(ctx)
-		if err != nil {
-			return err
-		}
-	}
-	// With START TRANSACTION, autocommit remains disabled until you end
-	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
-	// reverts to its previous state.
-	e.ctx.GetSessionVars().SetInTxn(true)
-	// Call ctx.Txn(true) to active pending txn.
-	txnMode := s.Mode
-	if txnMode == "" {
-		txnMode = e.ctx.GetSessionVars().TxnMode
-	}
-	if txnMode == ast.Pessimistic {
-		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	if sessVars.BinlogClient != nil {
+		return ErrSavepointNotSupportedWithBinlog
 	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		txn.SetOption(kv.Pessimistic, true)
-	}
-	if s.CausalConsistencyOnly {
-		txn.SetOption(kv.GuaranteeLinearizability, false)
+	memDBCheckpoint := txn.GetMemDBCheckpoint()
+	txnCtx.AddSavepoint(s.Name, memDBCheckpoint)
+	return nil
+}
+
+func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error {
+	deleted := e.ctx.GetSessionVars().TxnCtx.DeleteSavepoint(s.Name)
+	if !deleted {
+		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
 	}
 	return nil
 }
@@ -732,11 +727,23 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
-	sessVars.SetInTxn(false)
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
+	if s.SavepointName != "" {
+		if !txn.Valid() {
+			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
+		}
+		savepointRecord := sessVars.TxnCtx.RollbackToSavepoint(s.SavepointName)
+		if savepointRecord == nil {
+			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
+		}
+		txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
+		return nil
+	}
+
+	sessVars.SetInTxn(false)
 	if txn.Valid() {
 		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
 		if sessVars.TxnCtx.IsPessimistic {
@@ -785,6 +792,12 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
+		if len(spec.User.Username) > auth.UserNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
+		}
+		if len(spec.User.Hostname) > auth.HostNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
+		}
 		if len(users) > 0 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
@@ -966,25 +979,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			stmt, err := exec.ParseWithParams(ctx,
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil,
 				`UPDATE %n.%n SET authentication_string=%?, plugin=%? WHERE Host=%? and User=%?;`,
 				mysql.SystemDB, mysql.UserTable, pwd, spec.AuthOpt.AuthPlugin, strings.ToLower(spec.User.Hostname), spec.User.Username,
 			)
-			if err != nil {
-				return err
-			}
-			_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
 			}
 		}
 
 		if len(privData) > 0 {
-			stmt, err := exec.ParseWithParams(ctx, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
-			if err != nil {
-				return err
-			}
-			_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
 			}
@@ -1088,6 +1093,12 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
+		if len(newUser.Username) > auth.UserNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
+		}
+		if len(newUser.Hostname) > auth.HostNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
+		}
 		exists, err := userExistsInternal(sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
 			return err
@@ -1358,11 +1369,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
-	if err != nil {
-		return false, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	if err != nil {
 		return false, err
 	}
@@ -1441,11 +1448,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 
 	// update mysql.user
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
-	if err != nil {
-		return err
-	}
-	_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
+	_, _, err = exec.ExecRestrictedSQL(ctx, nil, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
 	if err != nil {
 		return err
 	}
@@ -1453,7 +1456,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
-	if !config.GetGlobalConfig().Experimental.EnableGlobalKill {
+	if !config.GetGlobalConfig().EnableGlobalKill {
 		conf := config.GetGlobalConfig()
 		if s.TiDBExtension || conf.CompatibleKillQuery {
 			sm := e.ctx.GetSessionManager()
@@ -1538,8 +1541,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 	if err != nil {
 		return err
 	}
-
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, false, nil)
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, &kv.ClientSendOption{})
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return err
@@ -1585,7 +1587,7 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 			config.GetGlobalConfig().Security.RSAKeySize,
 		)
 		if err != nil {
-			if !s.NoRollbackOnError || config.GetGlobalConfig().Security.RequireSecureTransport {
+			if !s.NoRollbackOnError || tls.RequireSecureTransport.Load() {
 				return err
 			}
 			logutil.BgLogger().Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")
@@ -1604,6 +1606,9 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 		if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Table.TableInfo, s.PartitionNames); err != nil {
 			return err
 		}
+		if len(s.PartitionNames) == 0 {
+			statsIDs = append(statsIDs, s.Table.TableInfo.ID)
+		}
 	}
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
@@ -1612,8 +1617,20 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 }
 
 func (e *SimpleExec) autoNewTxn() bool {
+	// Some statements cause an implicit commit
+	// See https://dev.mysql.com/doc/refman/5.7/en/implicit-commit.html
 	switch e.Statement.(type) {
-	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt:
+	// Data definition language (DDL) statements that define or modify database objects.
+	// (handled in DDL package)
+	// Statements that implicitly use or modify tables in the mysql database.
+	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt, *ast.RevokeRoleStmt, *ast.GrantRoleStmt:
+		return true
+	// Transaction-control and locking statements.  BEGIN, LOCK TABLES, SET autocommit = 1 (if the value is not already 1), START TRANSACTION, UNLOCK TABLES.
+	// (handled in other place)
+	// Data loading statements. LOAD DATA
+	// (handled in other place)
+	// Administrative statements. TODO: ANALYZE TABLE, CACHE INDEX, CHECK TABLE, FLUSH, LOAD INDEX INTO CACHE, OPTIMIZE TABLE, REPAIR TABLE, RESET (but not RESET PERSIST).
+	case *ast.FlushStmt:
 		return true
 	}
 	return false
@@ -1659,6 +1676,16 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	}
 }
 
+func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
+	switch s.Tp {
+	case ast.AdminReloadStatistics:
+		return e.executeAdminReloadStatistics(s)
+	case ast.AdminFlushPlanCache:
+		return e.executeAdminFlushPlanCache(s)
+	}
+	return nil
+}
+
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminReloadStatistics {
 		return errors.New("This AdminStmt is not ADMIN RELOAD STATS_EXTENDED")
@@ -1667,4 +1694,26 @@ func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
 	}
 	return domain.GetDomain(e.ctx).StatsHandle().ReloadExtendedStatistics()
+}
+
+func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
+	if s.Tp != ast.AdminFlushPlanCache {
+		return errors.New("This AdminStmt is not ADMIN FLUSH PLAN_CACHE")
+	}
+	if s.StatementScope == ast.StatementScopeGlobal {
+		return errors.New("Do not support the 'admin flush global scope.'")
+	}
+	if !plannercore.PreparedPlanCacheEnabled() {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("The plan cache is disable. So there no need to flush the plan cache"))
+		return nil
+	}
+	now := types.NewTime(types.FromGoTime(time.Now().In(e.ctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
+	e.ctx.GetSessionVars().LastUpdateTime4PC = now
+	e.ctx.PreparedPlanCache().DeleteAll()
+	if s.StatementScope == ast.StatementScopeInstance {
+		// Record the timestamp. When other sessions want to use the plan cache,
+		// it will check the timestamp first to decide whether the plan cache should be flushed.
+		domain.GetDomain(e.ctx).SetExpiredTimeStamp4PC(now)
+	}
+	return nil
 }

@@ -20,14 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCaseWhen(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg []interface{}
@@ -51,7 +50,7 @@ func TestCaseWhen(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.Ret), d)
+		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
 	require.NoError(t, err)
@@ -60,7 +59,6 @@ func TestCaseWhen(t *testing.T) {
 }
 
 func TestIf(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
@@ -98,7 +96,7 @@ func TestIf(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.Ret), d)
+		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
 	require.NoError(t, err)
@@ -109,7 +107,6 @@ func TestIf(t *testing.T) {
 }
 
 func TestIfNull(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		arg1     interface{}

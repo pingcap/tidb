@@ -16,7 +16,7 @@
 
 set -eux
 
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownWriteRows=sleep(50);github.com/pingcap/tidb/br/pkg/lightning/restore/SetMinDeliverBytes=return(1)'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownWriteRows=sleep(100);github.com/pingcap/tidb/br/pkg/lightning/restore/SetMinDeliverBytes=return(1)'
 
 for CFG in chunk engine; do
   rm -f "$TEST_DIR/lightning-tidb.log"

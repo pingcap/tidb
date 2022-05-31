@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/pingcap/errors"
 
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
@@ -19,8 +20,6 @@ import (
 )
 
 func TestDumpBlock(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -28,6 +27,7 @@ func TestDumpBlock(t *testing.T) {
 	}()
 
 	mock.ExpectQuery(fmt.Sprintf("SHOW CREATE DATABASE `%s`", escapeString(database))).
+		WillDelayFor(time.Second).
 		WillReturnRows(sqlmock.NewRows([]string{"Database", "Create Database"}).
 			AddRow("test", "CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	mock.ExpectQuery(fmt.Sprintf("SELECT DEFAULT_COLLATION_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '%s'", escapeString(database))).
@@ -38,6 +38,7 @@ func TestDumpBlock(t *testing.T) {
 	defer cancel()
 	conn, err := db.Conn(tctx)
 	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
 
 	d := &Dumper{
 		tctx:      tctx,
@@ -54,19 +55,19 @@ func TestDumpBlock(t *testing.T) {
 		time.Sleep(time.Second)
 		return context.Canceled
 	})
+
 	writerCtx := tctx.WithContext(writingCtx)
 	// simulate taskChan is full
 	taskChan := make(chan Task, 1)
 	taskChan <- &TaskDatabaseMeta{}
 	d.conf.Tables = DatabaseTables{}.AppendTable(database, nil)
 	d.conf.ServerInfo.ServerType = version.ServerTypeMySQL
-	require.ErrorIs(t, d.dumpDatabases(writerCtx, conn, taskChan), context.Canceled)
 	require.ErrorIs(t, wg.Wait(), writerErr)
+	// if writerCtx is canceled , QuerySQL in `dumpDatabases` will return sqlmock.ErrCancelled
+	require.ErrorIs(t, d.dumpDatabases(writerCtx, baseConn, taskChan), sqlmock.ErrCancelled)
 }
 
 func TestDumpTableMeta(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -77,6 +78,7 @@ func TestDumpTableMeta(t *testing.T) {
 	defer cancel()
 	conn, err := db.Conn(tctx)
 	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
 
 	conf := DefaultConfig()
 	conf.NoSchemas = true
@@ -94,7 +96,7 @@ func TestDumpTableMeta(t *testing.T) {
 		}
 		mock.ExpectQuery(fmt.Sprintf("SELECT \\* FROM `%s`.`%s`", database, table)).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-		meta, err := dumpTableMeta(conf, conn, database, &TableInfo{Type: TableTypeBase, Name: table})
+		meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
 		require.NoError(t, err)
 		require.Equal(t, database, meta.DatabaseName())
 		require.Equal(t, table, meta.TableName())
@@ -106,24 +108,22 @@ func TestDumpTableMeta(t *testing.T) {
 }
 
 func TestGetListTableTypeByConf(t *testing.T) {
-	t.Parallel()
-
 	conf := defaultConfigForTest(t)
 	cases := []struct {
 		serverInfo  version.ServerInfo
 		consistency string
 		expected    listTableType
 	}{
-		{version.ParseServerInfo("5.7.25-TiDB-3.0.6"), consistencyTypeSnapshot, listTableByShowTableStatus},
+		{version.ParseServerInfo("5.7.25-TiDB-3.0.6"), ConsistencyTypeSnapshot, listTableByShowTableStatus},
 		// no bug version
-		{version.ParseServerInfo("8.0.2"), consistencyTypeLock, listTableByInfoSchema},
-		{version.ParseServerInfo("8.0.2"), consistencyTypeFlush, listTableByShowTableStatus},
-		{version.ParseServerInfo("8.0.23"), consistencyTypeNone, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.2"), ConsistencyTypeLock, listTableByInfoSchema},
+		{version.ParseServerInfo("8.0.2"), ConsistencyTypeFlush, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.23"), ConsistencyTypeNone, listTableByShowTableStatus},
 
 		// bug version
-		{version.ParseServerInfo("8.0.3"), consistencyTypeLock, listTableByInfoSchema},
-		{version.ParseServerInfo("8.0.3"), consistencyTypeFlush, listTableByShowFullTables},
-		{version.ParseServerInfo("8.0.3"), consistencyTypeNone, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.3"), ConsistencyTypeLock, listTableByInfoSchema},
+		{version.ParseServerInfo("8.0.3"), ConsistencyTypeFlush, listTableByShowFullTables},
+		{version.ParseServerInfo("8.0.3"), ConsistencyTypeNone, listTableByShowTableStatus},
 	}
 
 	for _, x := range cases {
@@ -134,8 +134,6 @@ func TestGetListTableTypeByConf(t *testing.T) {
 }
 
 func TestAdjustDatabaseCollation(t *testing.T) {
-	t.Parallel()
-
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()
 	parser1 := parser.New()
@@ -150,16 +148,21 @@ func TestAdjustDatabaseCollation(t *testing.T) {
 		"CREATE DATABASE `test` CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci",
 	}
 	charsetAndDefaultCollationMap := map[string]string{"utf8mb4": "utf8mb4_general_ci"}
+
+	for _, originSQL := range originSQLs {
+		newSQL, err := adjustDatabaseCollation(tctx, LooseCollationCompatible, parser1, originSQL, charsetAndDefaultCollationMap)
+		require.NoError(t, err)
+		require.Equal(t, originSQL, newSQL)
+	}
+
 	for i, originSQL := range originSQLs {
-		newSQL, err := adjustDatabaseCollation(tctx, parser1, originSQL, charsetAndDefaultCollationMap)
+		newSQL, err := adjustDatabaseCollation(tctx, StrictCollationCompatible, parser1, originSQL, charsetAndDefaultCollationMap)
 		require.NoError(t, err)
 		require.Equal(t, expectedSQLs[i], newSQL)
 	}
 }
 
 func TestAdjustTableCollation(t *testing.T) {
-	t.Parallel()
-
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()
 
@@ -192,9 +195,17 @@ func TestAdjustTableCollation(t *testing.T) {
 	}
 
 	charsetAndDefaultCollationMap := map[string]string{"utf8mb4": "utf8mb4_general_ci"}
+
+	for _, originSQL := range originSQLs {
+		newSQL, err := adjustTableCollation(tctx, LooseCollationCompatible, parser1, originSQL, charsetAndDefaultCollationMap)
+		require.NoError(t, err)
+		require.Equal(t, originSQL, newSQL)
+	}
+
 	for i, originSQL := range originSQLs {
-		newSQL, err := adjustTableCollation(tctx, parser1, originSQL, charsetAndDefaultCollationMap)
+		newSQL, err := adjustTableCollation(tctx, StrictCollationCompatible, parser1, originSQL, charsetAndDefaultCollationMap)
 		require.NoError(t, err)
 		require.Equal(t, expectedSQLs[i], newSQL)
 	}
+
 }

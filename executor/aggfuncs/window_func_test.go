@@ -77,7 +77,7 @@ func testWindowFunc(t *testing.T, p windowTest) {
 		err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 		require.NoError(t, err)
 		dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-		result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[i], collate.GetCollator(desc.RetTp.Collate))
+		result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[i], collate.GetCollator(desc.RetTp.GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, result)
 		resultChk.Reset()
@@ -171,8 +171,6 @@ func buildWindowMemTesterWithArgs(funcName string, tp byte, args []expression.Ex
 }
 
 func TestWindowFunctions(t *testing.T) {
-	t.Parallel()
-
 	tests := []windowTest{
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 1, 1, 1),
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 0, 2, 1, 1),

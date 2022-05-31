@@ -24,8 +24,6 @@ import (
 )
 
 func TestSchemaCheckerSimple(t *testing.T) {
-	t.Parallel()
-
 	lease := 5 * time.Millisecond
 	validator := NewSchemaValidator(lease, nil)
 	checker := &SchemaChecker{SchemaValidator: validator}

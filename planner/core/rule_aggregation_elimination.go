@@ -67,7 +67,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
 			proj.SetChildren(agg.children[0])
-			appendAggregationEliminateTraceStep(agg, uniqueKey, opt)
+			appendAggregationEliminateTraceStep(agg, proj, uniqueKey, opt)
 			return proj
 		}
 	}
@@ -116,17 +116,26 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 	}
 }
 
-func appendAggregationEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, opt *logicalOptimizeOp) {
-	opt.appendStepToCurrent(agg.ID(), agg.TP(),
-		fmt.Sprintf("%s is a unique key", uniqueKey.String()),
-		"aggregation is simplified to a projection")
+func appendAggregationEliminateTraceStep(agg *LogicalAggregation, proj *LogicalProjection, uniqueKey expression.KeyInfo, opt *logicalOptimizeOp) {
+	reason := func() string {
+		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
+	}
+	action := func() string {
+		return fmt.Sprintf("%v_%v is simplified to a %v_%v", agg.TP(), agg.ID(), proj.TP(), proj.ID())
+	}
+
+	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, af *aggregation.AggFuncDesc,
 	opt *logicalOptimizeOp) {
-	opt.appendStepToCurrent(agg.ID(), agg.TP(),
-		fmt.Sprintf("%s is a unique key", uniqueKey.String()),
-		fmt.Sprintf("%s(distinct ...) is simplified to %s(...)", af.Name, af.Name))
+	reason := func() string {
+		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
+	}
+	action := func() string {
+		return fmt.Sprintf("%s(distinct ...) is simplified to %s(...)", af.Name, af.Name)
+	}
+	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 // ConvertAggToProj convert aggregation to projection.
@@ -149,7 +158,9 @@ func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool,
 func rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) (bool, expression.Expression) {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
-		if aggFunc.Mode == aggregation.FinalMode {
+		if aggFunc.Mode == aggregation.FinalMode &&
+			len(aggFunc.Args) == 1 &&
+			mysql.HasNotNullFlag(aggFunc.Args[0].GetType().GetFlag()) {
 			return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 		}
 		return true, rewriteCount(ctx, aggFunc.Args, aggFunc.RetTp)
@@ -168,7 +179,7 @@ func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetT
 	// If is count(expr not null), we will change it to constant 1.
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
-		if mysql.HasNotNullFlag(expr.GetType().Flag) {
+		if mysql.HasNotNullFlag(expr.GetType().GetFlag()) {
 			isNullExprs = append(isNullExprs, expression.NewZero())
 		} else {
 			isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)

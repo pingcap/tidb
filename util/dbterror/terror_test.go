@@ -28,8 +28,6 @@ func genErrMsg(pattern string, a ...interface{}) string {
 }
 
 func TestErrorRedact(t *testing.T) {
-	t.Parallel()
-
 	original := errors.RedactLogEnabled.Load()
 	errors.RedactLogEnabled.Store(true)
 	defer func() { errors.RedactLogEnabled.Store(original) }()

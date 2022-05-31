@@ -52,7 +52,7 @@ func TestWriteInsert(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
-	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf)
+	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, defaultMetrics)
 	require.NoError(t, err)
 	require.Equal(t, uint64(4), n)
 
@@ -64,8 +64,8 @@ func TestWriteInsert(t *testing.T) {
 		"(3,'male','john@mail.com','020-1256','healthy'),\n" +
 		"(4,'female','sarah@mail.com','020-1235','healthy');\n"
 	require.Equal(t, expected, bf.String())
-	require.Equal(t, ReadGauge(finishedRowsGauge, conf.Labels), float64(len(data)))
-	require.Equal(t, ReadGauge(finishedSizeGauge, conf.Labels), float64(len(expected)))
+	require.Equal(t, ReadGauge(defaultMetrics.finishedRowsGauge, conf.Labels), float64(len(data)))
+	require.Equal(t, ReadGauge(defaultMetrics.finishedSizeGauge, conf.Labels), float64(len(expected)))
 }
 
 func TestWriteInsertReturnsError(t *testing.T) {
@@ -90,7 +90,7 @@ func TestWriteInsertReturnsError(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
-	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf)
+	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, defaultMetrics)
 	require.ErrorIs(t, err, rowErr)
 	require.Equal(t, uint64(3), n)
 
@@ -102,8 +102,8 @@ func TestWriteInsertReturnsError(t *testing.T) {
 		"(3,'male','john@mail.com','020-1256','healthy');\n"
 	require.Equal(t, expected, bf.String())
 	// error occurred, should revert pointer to zero
-	require.Equal(t, ReadGauge(finishedRowsGauge, conf.Labels), float64(0))
-	require.Equal(t, ReadGauge(finishedSizeGauge, conf.Labels), float64(0))
+	require.Equal(t, ReadGauge(defaultMetrics.finishedRowsGauge, conf.Labels), float64(0))
+	require.Equal(t, ReadGauge(defaultMetrics.finishedSizeGauge, conf.Labels), float64(0))
 }
 
 func TestWriteInsertInCsv(t *testing.T) {
@@ -121,19 +121,19 @@ func TestWriteInsertInCsv(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	// test nullValue
-	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N"}
 	conf := configForWriteCSV(cfg, true, opt)
-	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
+	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, defaultMetrics)
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
-	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
-		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
-		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\n" +
-		"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"healthy\"\n"
+	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\r\n" +
+		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\r\n" +
+		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\r\n" +
+		"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"healthy\"\r\n"
 	require.Equal(t, expected, bf.String())
-	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
-	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
+	require.Equal(t, float64(len(data)), ReadGauge(defaultMetrics.finishedRowsGauge, conf.Labels))
+	require.Equal(t, float64(len(expected)), ReadGauge(defaultMetrics.finishedSizeGauge, conf.Labels))
 
 	RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 
@@ -142,17 +142,17 @@ func TestWriteInsertInCsv(t *testing.T) {
 	opt.delimiter = quotationMark
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	conf = configForWriteCSV(cfg, true, opt)
-	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
+	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, defaultMetrics)
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
-	expected = "1,'male','bob@mail.com','020-1234',\\N\n" +
-		"2,'female','sarah@mail.com','020-1253','healthy'\n" +
-		"3,'male','john@mail.com','020-1256','healthy'\n" +
-		"4,'female','sarah@mail.com','020-1235','healthy'\n"
+	expected = "1,'male','bob@mail.com','020-1234',\\N\r\n" +
+		"2,'female','sarah@mail.com','020-1253','healthy'\r\n" +
+		"3,'male','john@mail.com','020-1256','healthy'\r\n" +
+		"4,'female','sarah@mail.com','020-1235','healthy'\r\n"
 	require.Equal(t, expected, bf.String())
-	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
-	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
+	require.Equal(t, float64(len(data)), ReadGauge(defaultMetrics.finishedRowsGauge, conf.Labels))
+	require.Equal(t, float64(len(expected)), ReadGauge(defaultMetrics.finishedSizeGauge, conf.Labels))
 
 	RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 
@@ -161,17 +161,17 @@ func TestWriteInsertInCsv(t *testing.T) {
 	opt.separator = []byte(";")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	conf = configForWriteCSV(cfg, true, opt)
-	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
+	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, defaultMetrics)
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
-	expected = "1;'male';'bob@mail.com';'020-1234';\\N\n" +
-		"2;'female';'sarah@mail.com';'020-1253';'healthy'\n" +
-		"3;'male';'john@mail.com';'020-1256';'healthy'\n" +
-		"4;'female';'sarah@mail.com';'020-1235';'healthy'\n"
+	expected = "1;'male';'bob@mail.com';'020-1234';\\N\r\n" +
+		"2;'female';'sarah@mail.com';'020-1253';'healthy'\r\n" +
+		"3;'male';'john@mail.com';'020-1256';'healthy'\r\n" +
+		"4;'female';'sarah@mail.com';'020-1235';'healthy'\r\n"
 	require.Equal(t, expected, bf.String())
-	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
-	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
+	require.Equal(t, float64(len(data)), ReadGauge(defaultMetrics.finishedRowsGauge, conf.Labels))
+	require.Equal(t, float64(len(expected)), ReadGauge(defaultMetrics.finishedSizeGauge, conf.Labels))
 
 	RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 
@@ -182,18 +182,18 @@ func TestWriteInsertInCsv(t *testing.T) {
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
 	conf = configForWriteCSV(cfg, false, opt)
-	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
+	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, defaultMetrics)
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
-	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\n" +
-		"1&;,?mamamalema&;,?mabob@mamail.comma&;,?ma020-1234ma&;,?\\N\n" +
-		"2&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1253ma&;,?mahealthyma\n" +
-		"3&;,?mamamalema&;,?majohn@mamail.comma&;,?ma020-1256ma&;,?mahealthyma\n" +
-		"4&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1235ma&;,?mahealthyma\n"
+	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\r\n" +
+		"1&;,?mamamalema&;,?mabob@mamail.comma&;,?ma020-1234ma&;,?\\N\r\n" +
+		"2&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1253ma&;,?mahealthyma\r\n" +
+		"3&;,?mamamalema&;,?majohn@mamail.comma&;,?ma020-1256ma&;,?mahealthyma\r\n" +
+		"4&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1235ma&;,?mahealthyma\r\n"
 	require.Equal(t, expected, bf.String())
-	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
-	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
+	require.Equal(t, float64(len(data)), ReadGauge(defaultMetrics.finishedRowsGauge, conf.Labels))
+	require.Equal(t, float64(len(expected)), ReadGauge(defaultMetrics.finishedSizeGauge, conf.Labels))
 
 	RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 }
@@ -217,18 +217,18 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	// test nullValue
-	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N"}
 	conf := configForWriteCSV(cfg, true, opt)
-	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
+	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, defaultMetrics)
 	require.Equal(t, uint64(3), n)
 	require.ErrorIs(t, err, rowErr)
 
-	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
-		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
-		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\n"
+	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\r\n" +
+		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\r\n" +
+		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\r\n"
 	require.Equal(t, expected, bf.String())
-	require.Equal(t, float64(0), ReadGauge(finishedRowsGauge, conf.Labels))
-	require.Equal(t, float64(0), ReadGauge(finishedSizeGauge, conf.Labels))
+	require.Equal(t, float64(0), ReadGauge(defaultMetrics.finishedRowsGauge, conf.Labels))
+	require.Equal(t, float64(0), ReadGauge(defaultMetrics.finishedSizeGauge, conf.Labels))
 
 	RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 }
@@ -252,15 +252,15 @@ func TestSQLDataTypes(t *testing.T) {
 		bf := storage.NewBufferWriter()
 
 		conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
-		n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf)
+		n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, defaultMetrics)
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), n)
 
 		lines := strings.Split(bf.String(), "\n")
 		require.Len(t, lines, 3)
 		require.Equal(t, fmt.Sprintf("(%s);", result), lines[1])
-		require.Equal(t, float64(1), ReadGauge(finishedRowsGauge, conf.Labels))
-		require.Equal(t, float64(len(bf.String())), ReadGauge(finishedSizeGauge, conf.Labels))
+		require.Equal(t, float64(1), ReadGauge(defaultMetrics.finishedRowsGauge, conf.Labels))
+		require.Equal(t, float64(len(bf.String())), ReadGauge(defaultMetrics.finishedSizeGauge, conf.Labels))
 
 		RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 	}
@@ -316,8 +316,8 @@ func createMockConfig(t *testing.T) (cfg *Config, clean func()) {
 
 	clean = func() {
 		RemoveLabelValuesWithTaskInMetrics(cfg.Labels)
-		require.Equal(t, float64(0), ReadGauge(finishedRowsGauge, cfg.Labels))
-		require.Equal(t, float64(0), ReadGauge(finishedSizeGauge, cfg.Labels))
+		require.Equal(t, float64(0), ReadGauge(defaultMetrics.finishedRowsGauge, cfg.Labels))
+		require.Equal(t, float64(0), ReadGauge(defaultMetrics.finishedSizeGauge, cfg.Labels))
 	}
 
 	return

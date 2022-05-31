@@ -18,112 +18,84 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"runtime/debug"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testMemoryLeak{})
-
-type testMemoryLeak struct {
-	store  kv.Storage
-	domain *domain.Domain
-}
-
-func (s *testMemoryLeak) SetUpSuite(c *C) {
-	var err error
-	s.store, err = mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	s.domain, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testMemoryLeak) TearDownSuite(c *C) {
-	s.domain.Close()
-	c.Assert(s.store.Close(), IsNil)
-}
-
-func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
-	c.Skip("too slow")
-
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "create database test_mem")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test_mem")
-	c.Assert(err, IsNil)
+func TestPBMemoryLeak(t *testing.T) {
+	debug.SetGCPercent(1000)
+	defer debug.SetGCPercent(100)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_mem")
+	tk.MustExec("use test_mem")
 
 	// prepare data
 	totalSize := uint64(256 << 20) // 256MB
 	blockSize := uint64(8 << 10)   // 8KB
 	delta := totalSize / 5
 	numRows := totalSize / blockSize
-	_, err = se.Execute(context.Background(), fmt.Sprintf("create table t (c varchar(%v))", blockSize))
-	c.Assert(err, IsNil)
-	defer func() {
-		_, err = se.Execute(context.Background(), "drop table t")
-		c.Assert(err, IsNil)
-	}()
+	tk.MustExec(fmt.Sprintf("create table t (c varchar(%v))", blockSize))
 	sql := fmt.Sprintf("insert into t values (space(%v))", blockSize)
 	for i := uint64(0); i < numRows; i++ {
-		_, err = se.Execute(context.Background(), sql)
-		c.Assert(err, IsNil)
+		tk.MustExec(sql)
 	}
 
 	// read data
 	runtime.GC()
-	allocatedBegin, inUseBegin := s.readMem()
-	records, err := se.Execute(context.Background(), "select * from t")
-	c.Assert(err, IsNil)
+	allocatedBegin, inUseBegin := readMem()
+	records, err := tk.Session().Execute(context.Background(), "select * from t")
+	require.NoError(t, err)
 	record := records[0]
 	rowCnt := 0
 	chk := record.NewChunk(nil)
 	for {
-		c.Assert(record.Next(context.Background(), chk), IsNil)
+		require.NoError(t, record.Next(context.Background(), chk))
 		rowCnt += chk.NumRows()
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
-	c.Assert(rowCnt, Equals, int(numRows))
+	require.Equal(t, int(numRows), rowCnt)
 
 	// check memory before close
 	runtime.GC()
-	allocatedAfter, inUseAfter := s.readMem()
-	c.Assert(allocatedAfter-allocatedBegin, GreaterEqual, totalSize)
-	c.Assert(s.memDiff(inUseAfter, inUseBegin), Less, delta)
+	allocatedAfter, inUseAfter := readMem()
+	require.GreaterOrEqual(t, allocatedAfter-allocatedBegin, totalSize)
+	require.Less(t, memDiff(inUseAfter, inUseBegin), delta)
 
-	se.Close()
 	runtime.GC()
-	allocatedFinal, inUseFinal := s.readMem()
-	c.Assert(allocatedFinal-allocatedAfter, Less, delta)
-	c.Assert(s.memDiff(inUseFinal, inUseAfter), Less, delta)
+	allocatedFinal, inUseFinal := readMem()
+	require.Less(t, allocatedFinal-allocatedAfter, delta)
+	require.Less(t, memDiff(inUseFinal, inUseAfter), delta)
 }
 
 // nolint:unused
-func (s *testMemoryLeak) readMem() (allocated, heapInUse uint64) {
+func readMem() (allocated, heapInUse uint64) {
 	var stat runtime.MemStats
 	runtime.ReadMemStats(&stat)
 	return stat.TotalAlloc, stat.HeapInuse
 }
 
 // nolint:unused
-func (s *testMemoryLeak) memDiff(m1, m2 uint64) uint64 {
+func memDiff(m1, m2 uint64) uint64 {
 	if m1 > m2 {
 		return m1 - m2
 	}
 	return m2 - m1
 }
 
-func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
+func TestGlobalMemoryTrackerOnCleanUp(t *testing.T) {
 	// TODO: assert the memory consume has happened in another way
 	originConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
@@ -133,12 +105,12 @@ func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
 	tk.MustExec("insert t (id) values (2)")
 	tk.MustExec("insert t (id) values (3)")
 	afterConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
-	c.Assert(originConsume, Equals, afterConsume)
+	require.Equal(t, afterConsume, originConsume)
 
 	// assert update
 	tk.MustExec("update t set id = 4 where id = 1")
 	tk.MustExec("update t set id = 5 where id = 2")
 	tk.MustExec("update t set id = 6 where id = 3")
 	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
-	c.Assert(originConsume, Equals, afterConsume)
+	require.Equal(t, afterConsume, originConsume)
 }

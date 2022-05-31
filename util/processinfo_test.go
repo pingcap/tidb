@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,10 +23,9 @@ import (
 )
 
 func TestGlobalConnID(t *testing.T) {
-	t.Parallel()
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
-	newCfg.Experimental.EnableGlobalKill = true
+	newCfg.EnableGlobalKill = true
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		config.StoreGlobalConfig(originCfg)

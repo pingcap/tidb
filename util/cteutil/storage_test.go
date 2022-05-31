@@ -25,8 +25,6 @@ import (
 )
 
 func TestStorageBasic(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 1
 	storage := NewStorageRowContainer(fields, chkSize)
@@ -59,8 +57,6 @@ func TestStorageBasic(t *testing.T) {
 }
 
 func TestOpenAndClose(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 1
 	storage := NewStorageRowContainer(fields, chkSize)
@@ -82,8 +78,6 @@ func TestOpenAndClose(t *testing.T) {
 }
 
 func TestAddAndGetChunk(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 
@@ -112,8 +106,6 @@ func TestAddAndGetChunk(t *testing.T) {
 }
 
 func TestSpillToDisk(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 	storage := NewStorageRowContainer(fields, chkSize)
@@ -169,8 +161,6 @@ func TestSpillToDisk(t *testing.T) {
 }
 
 func TestReopen(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 	storage := NewStorageRowContainer(fields, chkSize)
@@ -214,8 +204,6 @@ func TestReopen(t *testing.T) {
 }
 
 func TestSwapData(t *testing.T) {
-	t.Parallel()
-
 	tp1 := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 	storage1 := NewStorageRowContainer(tp1, chkSize)

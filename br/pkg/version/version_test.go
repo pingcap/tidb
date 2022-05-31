@@ -148,11 +148,20 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
-		// Restore across major version isn't allowed.
+		// Restore across one major version allowed.
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v4.0.0-rc.1"}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBackup(semver.New("5.0.0-rc")))
+		require.NoError(t, err)
+	}
+
+	{
+		// Restore across two major versions isn't allowed.
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v4.0.0-rc.1"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBackup(semver.New("6.0.0")))
 		require.Error(t, err)
 	}
 
@@ -165,11 +174,28 @@ func TestCheckClusterVersion(t *testing.T) {
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.NoError(t, err)
 	}
+
+	{
+		build.ReleaseVersion = "v6.0.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v5.4.0"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.NoError(t, err)
+	}
+
+	{
+		build.ReleaseVersion = "v6.0.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v4.4.0"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.Error(t, err)
+	}
+
 }
 
 func TestCompareVersion(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, -1, semver.New("4.0.0-rc").Compare(*semver.New("4.0.0-rc.2")))
 	require.Equal(t, -1, semver.New("4.0.0-beta.3").Compare(*semver.New("4.0.0-rc.2")))
 	require.Equal(t, -1, semver.New("4.0.0-rc.1").Compare(*semver.New("4.0.0")))
@@ -210,8 +236,6 @@ func TestNextMajorVersion(t *testing.T) {
 }
 
 func TestExtractTiDBVersion(t *testing.T) {
-	t.Parallel()
-
 	vers, err := ExtractTiDBVersion("5.7.10-TiDB-v2.1.0-rc.1-7-g38c939f")
 	require.NoError(t, err)
 	require.Equal(t, *semver.New("2.1.0-rc.1"), *vers)
@@ -257,8 +281,6 @@ func TestExtractTiDBVersion(t *testing.T) {
 }
 
 func TestCheckVersion(t *testing.T) {
-	t.Parallel()
-
 	err := CheckVersion("TiNB", *semver.New("2.3.5"), *semver.New("2.1.0"), *semver.New("3.0.0"))
 	require.NoError(t, err)
 
@@ -285,8 +307,6 @@ func versionEqualCheck(source *semver.Version, target *semver.Version) (result b
 }
 
 func TestNormalizeBackupVersion(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		target string
 		source string
@@ -307,7 +327,6 @@ func TestNormalizeBackupVersion(t *testing.T) {
 }
 
 func TestDetectServerInfo(t *testing.T) {
-	t.Parallel()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()

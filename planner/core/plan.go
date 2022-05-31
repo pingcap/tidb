@@ -19,14 +19,15 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -66,21 +67,33 @@ type Plan interface {
 	SetOutputNames(names types.NameSlice)
 
 	SelectBlockOffset() int
+
+	buildPlanTrace() *tracing.PlanTrace
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
 	if p.TaskTp == property.MppTaskType {
-		if mpp, ok := tsk.(*mppTask); ok && !mpp.invalid() {
-			return mpp.enforceExchanger(p)
+		mpp, ok := tsk.(*mppTask)
+		if !ok || mpp.invalid() {
+			return invalidTask
 		}
-		return &mppTask{}
+		if !p.IsSortItemAllForPartition() {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
+			return invalidTask
+		}
+		tsk = mpp.enforceExchanger(p)
 	}
-	if p.IsEmpty() || tsk.plan() == nil {
+	if p.IsSortItemEmpty() || tsk.plan() == nil {
 		return tsk
 	}
-	tsk = tsk.convertToRootTask(ctx)
+	if p.TaskTp != property.MppTaskType {
+		tsk = tsk.convertToRootTask(ctx)
+	}
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.SortItems))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
+	sort := PhysicalSort{
+		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
+		IsPartialSort: p.IsSortItemAllForPartition(),
+	}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
@@ -237,10 +250,10 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan)
+	PredicatePushDown([]expression.Expression, *logicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns.
-	PruneColumns([]*expression.Column) error
+	PruneColumns([]*expression.Column, *logicalOptimizeOp) error
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -250,7 +263,7 @@ type LogicalPlan interface {
 	// If planCounter > 0, the clock_th plan generated in this function will be returned.
 	// If planCounter = 0, the plan generated in this function will not be considered.
 	// If planCounter = -1, then we will not force plan.
-	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error)
+	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *physicalOptimizeOp) (task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -259,7 +272,7 @@ type LogicalPlan interface {
 	BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema)
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *LogicalTopN) LogicalPlan
+	pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan
 
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
@@ -307,13 +320,16 @@ type LogicalPlan interface {
 	// canPushToCop check if we might push this plan to a specific store.
 	canPushToCop(store kv.StoreType) bool
 
-	// buildLogicalPlanTrace clone necessary information from LogicalPlan
-	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
+	// ExtractFD derive the FDSet from the tree bottom up.
+	ExtractFD() *fd.FDSet
 }
 
 // PhysicalPlan is a tree of the physical operators.
 type PhysicalPlan interface {
 	Plan
+
+	// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+	GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error)
 
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -347,9 +363,11 @@ type PhysicalPlan interface {
 	Stats() *property.StatsInfo
 
 	// Cost returns the estimated cost of the subplan.
+	// Deprecated: use the new method GetPlanCost
 	Cost() float64
 
 	// SetCost set the cost of the subplan.
+	// Deprecated: use the new method GetPlanCost
 	SetCost(cost float64)
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
@@ -370,6 +388,23 @@ type baseLogicalPlan struct {
 	self         LogicalPlan
 	maxOneRow    bool
 	children     []LogicalPlan
+	// fdSet is a set of functional dependencies(FDs) which powers many optimizations,
+	// including eliminating unnecessary DISTINCT operators, simplifying ORDER BY columns,
+	// removing Max1Row operators, and mapping semi-joins to inner-joins.
+	// for now, it's hard to maintain in individual operator, build it from bottom up when using.
+	fdSet *fd.FDSet
+}
+
+// ExtractFD return the children[0]'s fdSet if there are no adding/removing fd in this logic plan.
+func (p *baseLogicalPlan) ExtractFD() *fd.FDSet {
+	if p.fdSet != nil {
+		return p.fdSet
+	}
+	fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+	for _, ch := range p.children {
+		fds.AddFrom(ch.ExtractFD())
+	}
+	return fds
 }
 
 func (p *baseLogicalPlan) MaxOneRow() bool {
@@ -381,15 +416,6 @@ func (p *baseLogicalPlan) ExplainInfo() string {
 	return ""
 }
 
-// buildLogicalPlanTrace implements LogicalPlan
-func (p *baseLogicalPlan) buildLogicalPlanTrace(plan Plan) *tracing.LogicalPlanTrace {
-	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: plan.ExplainInfo()}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace(child))
-	}
-	return planTrace
-}
-
 type basePhysicalPlan struct {
 	basePlan
 
@@ -397,6 +423,10 @@ type basePhysicalPlan struct {
 	self             PhysicalPlan
 	children         []PhysicalPlan
 	cost             float64
+
+	// used by the new cost interface
+	planCostInit bool
+	planCost     float64
 }
 
 // Cost implements PhysicalPlan interface.
@@ -593,11 +623,11 @@ func (p *baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) error {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	if len(p.children) == 0 {
 		return nil
 	}
-	return p.children[0].PruneColumns(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols, opt)
 }
 
 // basePlan implements base Plan interface.
@@ -710,4 +740,28 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 // Context implements Plan Context interface.
 func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
+}
+
+// buildPlanTrace implements Plan
+func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.Cost()}
+	for _, child := range p.Children() {
+		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
+	}
+	return planTrace
+}
+
+// buildPlanTrace implements Plan
+func (p *baseLogicalPlan) buildPlanTrace() *tracing.PlanTrace {
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
+	for _, child := range p.Children() {
+		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
+	}
+	return planTrace
+}
+
+// buildPlanTrace implements Plan
+func (p *basePlan) buildPlanTrace() *tracing.PlanTrace {
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
+	return planTrace
 }

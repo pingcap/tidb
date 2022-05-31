@@ -314,6 +314,7 @@ import (
 	begin                 "BEGIN"
 	bernoulli             "BERNOULLI"
 	binding               "BINDING"
+	bindingCache          "BINDING_CACHE"
 	bindings              "BINDINGS"
 	binlog                "BINLOG"
 	bitType               "BIT"
@@ -370,12 +371,14 @@ import (
 	delayKeyWrite         "DELAY_KEY_WRITE"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
+	disabled              "DISABLED"
 	discard               "DISCARD"
 	disk                  "DISK"
 	do                    "DO"
 	duplicate             "DUPLICATE"
 	dynamic               "DYNAMIC"
 	enable                "ENABLE"
+	enabled               "ENABLED"
 	encryption            "ENCRYPTION"
 	end                   "END"
 	enforced              "ENFORCED"
@@ -537,6 +540,7 @@ import (
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
 	san                   "SAN"
+	savepoint             "SAVEPOINT"
 	second                "SECOND"
 	secondaryEngine       "SECONDARY_ENGINE"
 	secondaryLoad         "SECONDARY_LOAD"
@@ -666,6 +670,7 @@ import (
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
 	plan                  "PLAN"
+	planCache             "PLAN_CACHE"
 	position              "POSITION"
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
@@ -703,12 +708,14 @@ import (
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
 	verboseType           "VERBOSE"
+	trueCardCost          "TRUE_CARD_COST"
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
+	batch                      "BATCH"
 	buckets                    "BUCKETS"
 	builtins                   "BUILTINS"
 	cancel                     "CANCEL"
@@ -720,6 +727,7 @@ import (
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
 	drainer                    "DRAINER"
+	dry                        "DRY"
 	jobs                       "JOBS"
 	job                        "JOB"
 	nodeID                     "NODE_ID"
@@ -727,6 +735,7 @@ import (
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
 	pump                       "PUMP"
+	run                        "RUN"
 	samples                    "SAMPLES"
 	sampleRate                 "SAMPLERATE"
 	statistics                 "STATISTICS"
@@ -747,7 +756,6 @@ import (
 	reset                      "RESET"
 	regions                    "REGIONS"
 	region                     "REGION"
-	builtinAddDate
 	builtinBitAnd
 	builtinBitOr
 	builtinBitXor
@@ -765,7 +773,6 @@ import (
 	builtinMin
 	builtinNow
 	builtinPosition
-	builtinSubDate
 	builtinSubstring
 	builtinSum
 	builtinSysDate
@@ -809,35 +816,37 @@ import (
 
 %token not2
 %type	<expr>
-	Expression             "expression"
-	MaxValueOrExpression   "maxvalue or expression"
-	BoolPri                "boolean primary expression"
-	ExprOrDefault          "expression or default"
-	PredicateExpr          "Predicate expression factor"
-	SetExpr                "Set variable statement value's expression"
-	BitExpr                "bit expression"
-	SimpleExpr             "simple expression"
-	SimpleIdent            "Simple Identifier expression"
-	SumExpr                "aggregate functions"
-	FunctionCallGeneric    "Function call with Identifier"
-	FunctionCallKeyword    "Function call with keyword as function name"
-	FunctionCallNonKeyword "Function call with nonkeyword as function name"
-	Literal                "literal value"
-	Variable               "User or system variable"
-	SystemVariable         "System defined variable name"
-	UserVariable           "User defined variable name"
-	SubSelect              "Sub Select"
-	StringLiteral          "text literal"
-	ExpressionOpt          "Optional expression"
-	SignedLiteral          "Literal or NumLiteral with sign"
-	DefaultValueExpr       "DefaultValueExpr(Now or Signed Literal)"
-	NowSymOptionFraction   "NowSym with optional fraction part"
-	CharsetNameOrDefault   "Character set name or default"
-	NextValueForSequence   "Default nextval expression"
-	FunctionNameSequence   "Function with sequence function call"
-	WindowFuncCall         "WINDOW function call"
-	RepeatableOpt          "Repeatable optional in sample clause"
-	ProcedureCall          "Procedure call with Identifier or identifier"
+	Expression                      "expression"
+	MaxValueOrExpression            "maxvalue or expression"
+	BoolPri                         "boolean primary expression"
+	ExprOrDefault                   "expression or default"
+	PredicateExpr                   "Predicate expression factor"
+	SetExpr                         "Set variable statement value's expression"
+	BitExpr                         "bit expression"
+	SimpleExpr                      "simple expression"
+	SimpleIdent                     "Simple Identifier expression"
+	SumExpr                         "aggregate functions"
+	FunctionCallGeneric             "Function call with Identifier"
+	FunctionCallKeyword             "Function call with keyword as function name"
+	FunctionCallNonKeyword          "Function call with nonkeyword as function name"
+	Literal                         "literal value"
+	Variable                        "User or system variable"
+	SystemVariable                  "System defined variable name"
+	UserVariable                    "User defined variable name"
+	SubSelect                       "Sub Select"
+	StringLiteral                   "text literal"
+	ExpressionOpt                   "Optional expression"
+	SignedLiteral                   "Literal or NumLiteral with sign"
+	DefaultValueExpr                "DefaultValueExpr(Now or Signed Literal)"
+	NowSymOptionFraction            "NowSym with optional fraction part"
+	NowSymOptionFractionParentheses "NowSym with optional fraction part within potential parentheses"
+	CharsetNameOrDefault            "Character set name or default"
+	NextValueForSequence            "Default nextval expression"
+	BuiltinFunction                 "Default builtin functions for columns"
+	FunctionNameSequence            "Function with sequence function call"
+	WindowFuncCall                  "WINDOW function call"
+	RepeatableOpt                   "Repeatable optional in sample clause"
+	ProcedureCall                   "Procedure call with Identifier or identifier"
 
 %type	<statement>
 	AdminStmt                  "Check table statement or show ddl statement"
@@ -897,6 +906,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
+	NonTransactionalDeleteStmt "Non-transactional delete statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -910,9 +920,12 @@ import (
 	RevokeStmt                 "Revoke statement"
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
+	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
+	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
 	ChangeStmt                 "Change statement"
+	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
 	SetDefaultRoleStmt         "Set default statement for some user"
 	ShowImportStmt             "SHOW IMPORT statement"
@@ -1020,6 +1033,7 @@ import (
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
+	StatementScope                         "The scope of statement"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -1163,6 +1177,7 @@ import (
 	StatementList                          "statement list"
 	StatsPersistentVal                     "stats_persistent value"
 	StatsType                              "stats type value"
+	BindingStatusType                      "binding status type value"
 	StringList                             "string list"
 	SubPartDefinition                      "SubPartition definition"
 	SubPartDefinitionList                  "SubPartition definition list"
@@ -1193,6 +1208,7 @@ import (
 	TableSampleUnitOpt                     "table sample unit optional"
 	TableToTable                           "rename table to table"
 	TableToTableList                       "rename table to table by list"
+	TextString                             "text string item"
 	TextStringList                         "text string list"
 	TimeUnit                               "Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
 	TimestampUnit                          "Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
@@ -1307,13 +1323,14 @@ import (
 	BRIEBooleanOptionName                  "Name of a BRIE option which takes a boolean as input"
 	BRIEStringOptionName                   "Name of a BRIE option which takes a string as input"
 	BRIEKeywordOptionName                  "Name of a BRIE option which takes a case-insensitive string as input"
-	PlacementOption                        "Anonymous or direct placement option"
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
+	DryRunOptions                          "Dry run options"
+	OptionalShardColumn                    "Optional shard column"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1391,7 +1408,6 @@ import (
 	StringName                      "string literal or identifier"
 	StringNameOrBRIEOptionKeyword   "string literal or identifier or keyword used for BRIE options"
 	Symbol                          "Constraint Symbol"
-	TextString                      "text string item"
 
 %precedence empty
 %precedence as
@@ -1498,6 +1514,13 @@ AlterTableStmt:
 			AnalyzeOpts:    $10.([]ast.AnalyzeOpt),
 		}
 	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "TIFLASH" "REPLICA"
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:       $4.(*ast.TableName),
+			ReplicaKind: ast.CompactReplicaKindTiFlash,
+		}
+	}
 
 PlacementOptionList:
 	DirectPlacementOption
@@ -1524,7 +1547,12 @@ DirectPlacementOption:
 	}
 |	"FOLLOWERS" EqOpt LengthNum
 	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: $3.(uint64)}
+		cnt := $3.(uint64)
+		if cnt == 0 {
+			yylex.AppendError(yylex.Errorf("FOLLOWERS must be positive"))
+			return 1
+		}
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: cnt}
 	}
 |	"VOTERS" EqOpt LengthNum
 	{
@@ -1558,10 +1586,6 @@ DirectPlacementOption:
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLearnerConstraints, StrValue: $3}
 	}
-
-PlacementOption:
-	DirectPlacementOption
-|	PlacementPolicyOption
 
 PlacementPolicyOption:
 	"PLACEMENT" "POLICY" EqOpt stringLit
@@ -2797,7 +2821,7 @@ ColumnDef:
 		tp := types.NewFieldType(mysql.TypeLonglong)
 		options := []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
 		options = append(options, $3.([]*ast.ColumnOption)...)
-		tp.Flag |= mysql.UnsignedFlag
+		tp.AddFlag(mysql.UnsignedFlag)
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: tp, Options: options}
 		if !colDef.Validate() {
 			yylex.AppendError(yylex.Errorf("Invalid column definition"))
@@ -3032,7 +3056,7 @@ ColumnOption:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.endOffset(&yyS[yypt-1])
 		expr := $4
-		expr.SetText(parser.src[startOffset:endOffset])
+		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
 
 		$$ = &ast.ColumnOption{
 			Tp:     ast.ColumnOptionGenerated,
@@ -3317,19 +3341,46 @@ ReferOpt:
 
 /*
  * The DEFAULT clause specifies a default value for a column.
- * With one exception, the default value must be a constant;
- * it cannot be a function or an expression. This means, for example,
- * that you cannot set the default for a date column to be the value of
- * a function such as NOW() or CURRENT_DATE. The exception is that you
- * can specify CURRENT_TIMESTAMP as the default for a TIMESTAMP or DATETIME column.
+ * It can be a function or an expression. This means, for example,
+ * that you can set the default for a date column to be the value of
+ * a function such as NOW() or CURRENT_DATE. While in MySQL 8.0
+ * expression default values are required to be enclosed in parentheses,
+ * they are NOT required so in TiDB.
  *
- * See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
- *      https://github.com/mysql/mysql-server/blob/5.7/sql/sql_yacc.yy#L6832
+ * See https://dev.mysql.com/doc/refman/8.0/en/create-table.html
+ *     https://dev.mysql.com/doc/refman/8.0/en/data-type-defaults.html
  */
 DefaultValueExpr:
-	NowSymOptionFraction
+	NowSymOptionFractionParentheses
 |	SignedLiteral
 |	NextValueForSequence
+|	BuiltinFunction
+
+BuiltinFunction:
+	'(' BuiltinFunction ')'
+	{
+		$$ = $2.(*ast.FuncCallExpr)
+	}
+|	identifier '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+		}
+	}
+|	identifier '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:   $3.([]ast.ExprNode),
+		}
+	}
+
+NowSymOptionFractionParentheses:
+	'(' NowSymOptionFractionParentheses ')'
+	{
+		$$ = $2.(*ast.FuncCallExpr)
+	}
+|	NowSymOptionFraction
 
 NowSymOptionFraction:
 	NowSym
@@ -3413,6 +3464,16 @@ StatsType:
 |	"CORRELATION"
 	{
 		$$ = ast.StatsTypeCorrelation
+	}
+
+BindingStatusType:
+	"ENABLED"
+	{
+		$$ = ast.BindingStatusTypeEnabled
+	}
+|	"DISABLED"
+	{
+		$$ = ast.BindingStatusTypeDisabled
 	}
 
 CreateStatisticsStmt:
@@ -3657,7 +3718,7 @@ DatabaseOption:
 			UintValue: placementOptions.UintValue,
 		}
 	}
-|	PlacementOption
+|	PlacementPolicyOption
 	{
 		placementOptions := $1.(*ast.PlacementOption)
 		$$ = &ast.DatabaseOption{
@@ -3665,6 +3726,17 @@ DatabaseOption:
 			Tp:        ast.DatabaseOptionType(placementOptions.Tp),
 			Value:     placementOptions.StrValue,
 			UintValue: placementOptions.UintValue,
+		}
+	}
+|	"SET" "TIFLASH" "REPLICA" LengthNum LocationLabelList
+	{
+		tiflashReplicaSpec := &ast.TiFlashReplicaSpec{
+			Count:  $4.(uint64),
+			Labels: $5.([]string),
+		}
+		$$ = &ast.DatabaseOption{
+			Tp:             ast.DatabaseSetTiFlashReplica,
+			TiFlashReplica: tiflashReplicaSpec,
 		}
 	}
 
@@ -3713,7 +3785,7 @@ CreateTableStmt:
 		stmt.OnDuplicate = $9.(ast.OnDuplicateKeyHandlingType)
 		stmt.Select = $11.(*ast.CreateTableStmt).Select
 		if ($12 != nil && stmt.TemporaryKeyword != ast.TemporaryGlobal) || (stmt.TemporaryKeyword == ast.TemporaryGlobal && $12 == nil) {
-			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE|PRESERVE ROWS must appear together"))
+			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together"))
 		} else {
 			if stmt.TemporaryKeyword == ast.TemporaryGlobal {
 				stmt.OnCommitDelete = $12.(bool)
@@ -3730,7 +3802,7 @@ CreateTableStmt:
 			TemporaryKeyword: $2.(ast.TemporaryKeyword),
 		}
 		if ($7 != nil && tmp.TemporaryKeyword != ast.TemporaryGlobal) || (tmp.TemporaryKeyword == ast.TemporaryGlobal && $7 == nil) {
-			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE|PRESERVE ROWS must appear together"))
+			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together"))
 		} else {
 			if tmp.TemporaryKeyword == ast.TemporaryGlobal {
 				tmp.OnCommitDelete = $7.(bool)
@@ -4026,7 +4098,7 @@ PartDefOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionNodegroup, UintValue: $3.(uint64)}
 	}
-|	PlacementOption
+|	PlacementPolicyOption
 	{
 		placementOptions := $1.(*ast.PlacementOption)
 		$$ = &ast.TableOption{
@@ -4169,7 +4241,7 @@ CreateViewStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
 		selStmt := $10.(ast.StmtNode)
-		selStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 		x := &ast.CreateViewStmt{
 			OrReplace: $2.(bool),
 			ViewName:  $7.(*ast.TableName),
@@ -4184,7 +4256,7 @@ CreateViewStmt:
 		if $11 != nil {
 			x.CheckOption = $11.(model.ViewCheckOption)
 			endOffset := parser.startOffset(&yyS[yypt])
-			selStmt.SetText(strings.TrimSpace(parser.src[startOffset:endOffset]))
+			selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 		} else {
 			x.CheckOption = model.CheckOptionCascaded
 		}
@@ -4527,7 +4599,7 @@ TraceStmt:
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$2.SetText(string(parser.src[startOffset:]))
+		$2.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "FORMAT" "=" stringLit TraceableStmt
 	{
@@ -4537,7 +4609,7 @@ TraceStmt:
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$5.SetText(string(parser.src[startOffset:]))
+		$5.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "PLAN" TraceableStmt
 	{
@@ -4546,7 +4618,7 @@ TraceStmt:
 			TracePlan: true,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$3.SetText(string(parser.src[startOffset:]))
+		$3.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "PLAN" "TARGET" "=" stringLit TraceableStmt
 	{
@@ -4556,7 +4628,7 @@ TraceStmt:
 			TracePlanTarget: $5,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$6.SetText(string(parser.src[startOffset:]))
+		$6.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 
 ExplainSym:
@@ -4634,6 +4706,22 @@ ExplainStmt:
 			Analyze: true,
 		}
 	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType ExplainableStmt
+	{
+		$$ = &ast.ExplainStmt{
+			Stmt:    $6,
+			Format:  $5,
+			Analyze: true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit ExplainableStmt
+	{
+		$$ = &ast.ExplainStmt{
+			Stmt:    $6,
+			Format:  $5,
+			Analyze: true,
+		}
+	}
 
 ExplainFormatType:
 	"TRADITIONAL"
@@ -4642,6 +4730,19 @@ ExplainFormatType:
 |	"DOT"
 |	"BRIEF"
 |	"VERBOSE"
+|	"TRUE_CARD_COST"
+
+SavepointStmt:
+	"SAVEPOINT" Identifier
+	{
+		$$ = &ast.SavepointStmt{Name: $2}
+	}
+
+ReleaseSavepointStmt:
+	"RELEASE" "SAVEPOINT" Identifier
+	{
+		$$ = &ast.ReleaseSavepointStmt{Name: $3}
+	}
 
 /*******************************************************************
  * Backup / restore / import statements
@@ -5489,7 +5590,7 @@ FieldList:
 		last := fl[len(fl)-1]
 		if last.Expr != nil && last.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-1])
-			last.SetText(parser.src[last.Offset:lastEnd])
+			last.SetText(parser.lexer.client, parser.src[last.Offset:lastEnd])
 		}
 		newField := $3.(*ast.SelectField)
 		newField.Offset = parser.startOffset(&yyS[yypt])
@@ -5722,6 +5823,7 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"ATTRIBUTES"
+|	"BINDING_CACHE"
 |	"STATS_OPTIONS"
 |	"STATS_SAMPLE_RATE"
 |	"STATS_COL_CHOICE"
@@ -5868,7 +5970,9 @@ UnReservedKeyword:
 |	"PROCESSLIST"
 |	"SQL_NO_CACHE"
 |	"DISABLE"
+|	"DISABLED"
 |	"ENABLE"
+|	"ENABLED"
 |	"REVERSE"
 |	"PRIVILEGES"
 |	"NO"
@@ -5898,6 +6002,7 @@ UnReservedKeyword:
 |	"PRECEDING"
 |	"QUERY"
 |	"QUERIES"
+|	"SAVEPOINT"
 |	"SECOND"
 |	"SEPARATOR"
 |	"SHARE"
@@ -6055,6 +6160,7 @@ UnReservedKeyword:
 
 TiDBKeyword:
 	"ADMIN"
+|	"BATCH"
 |	"BUCKETS"
 |	"BUILTINS"
 |	"CANCEL"
@@ -6093,6 +6199,8 @@ TiDBKeyword:
 |	"REGIONS"
 |	"REGION"
 |	"RESET"
+|	"DRY"
+|	"RUN"
 
 NotKeywordToken:
 	"ADDDATE"
@@ -6123,6 +6231,7 @@ NotKeywordToken:
 |	"RUNNING"
 |	"PLACEMENT"
 |	"PLAN"
+|	"PLAN_CACHE"
 |	"POSITION"
 |	"PREDICATE"
 |	"S3"
@@ -6168,6 +6277,7 @@ NotKeywordToken:
 |	"LEARNER"
 |	"LEARNERS"
 |	"VERBOSE"
+|	"TRUE_CARD_COST"
 |	"VOTER"
 |	"VOTERS"
 |	"CONSTRAINTS"
@@ -6231,7 +6341,6 @@ ProcedureCall:
  *
  *  Insert Statements
  *
- *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
 	"INSERT" TableOptimizerHintsOpt PriorityOpt IgnoreOptional IntoOpt TableName PartitionNameListOpt InsertValues OnDuplicateKeyUpdate
@@ -6405,7 +6514,6 @@ OnDuplicateKeyUpdate:
  *  Replace Statements
  *  See https://dev.mysql.com/doc/refman/5.7/en/replace.html
  *
- *  TODO: support PARTITION
  **********************************************************************************/
 ReplaceIntoStmt:
 	"REPLACE" PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
@@ -6453,12 +6561,12 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
-		tp.Charset = $1
-		tp.Collate = co
-		if tp.Collate == charset.CollationBin {
-			tp.Flag |= mysql.BinaryFlag
+		tp.SetCharset($1)
+		tp.SetCollate(co)
+		if tp.GetCollate() == charset.CollationBin {
+			tp.AddFlag(mysql.BinaryFlag)
 		}
 		$$ = expr
 	}
@@ -6477,12 +6585,12 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
-		tp.Charset = $1
-		tp.Collate = co
-		if tp.Collate == charset.CollationBin {
-			tp.Flag |= mysql.BinaryFlag
+		tp.SetCharset($1)
+		tp.SetCollate(co)
+		if tp.GetCollate() == charset.CollationBin {
+			tp.AddFlag(mysql.BinaryFlag)
 		}
 		$$ = expr
 	}
@@ -6493,12 +6601,12 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
-		tp.Charset = $1
-		tp.Collate = co
-		if tp.Collate == charset.CollationBin {
-			tp.Flag |= mysql.BinaryFlag
+		tp.SetCharset($1)
+		tp.SetCollate(co)
+		if tp.GetCollate() == charset.CollationBin {
+			tp.AddFlag(mysql.BinaryFlag)
 		}
 		$$ = expr
 	}
@@ -6754,7 +6862,7 @@ SimpleExpr:
 		startOffset := parser.startOffset(&yyS[yypt-1])
 		endOffset := parser.endOffset(&yyS[yypt])
 		expr := $2
-		expr.SetText(parser.src[startOffset:endOffset])
+		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
 		$$ = &ast.ParenthesesExpr{Expr: expr}
 	}
 |	'(' ExpressionList ',' Expression ')'
@@ -6782,16 +6890,16 @@ SimpleExpr:
 		tp := $3.GetType()
 		switch $2 {
 		case "d":
-			tp.Charset = ""
-			tp.Collate = ""
+			tp.SetCharset("")
+			tp.SetCollate("")
 			$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.DateLiteral), Args: []ast.ExprNode{$3}}
 		case "t":
-			tp.Charset = ""
-			tp.Collate = ""
+			tp.SetCharset("")
+			tp.SetCollate("")
 			$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimeLiteral), Args: []ast.ExprNode{$3}}
 		case "ts":
-			tp.Charset = ""
-			tp.Collate = ""
+			tp.SetCharset("")
+			tp.SetCollate("")
 			$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimestampLiteral), Args: []ast.ExprNode{$3}}
 		default:
 			$$ = $3
@@ -6800,13 +6908,13 @@ SimpleExpr:
 |	"BINARY" SimpleExpr %prec neg
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#operator_binary
-		x := types.NewFieldType(mysql.TypeString)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
-		x.Flag |= mysql.BinaryFlag
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CharsetBin)
+		tp.AddFlag(mysql.BinaryFlag)
 		$$ = &ast.FuncCastExpr{
 			Expr:         $2,
-			Tp:           x,
+			Tp:           tp,
 			FunctionType: ast.CastBinaryOperator,
 		}
 	}
@@ -6814,12 +6922,12 @@ SimpleExpr:
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		tp := $5.(*types.FieldType)
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
-		if tp.Flen == types.UnspecifiedLength {
-			tp.Flen = defaultFlen
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
+		if tp.GetFlen() == types.UnspecifiedLength {
+			tp.SetFlen(defaultFlen)
 		}
-		if tp.Decimal == types.UnspecifiedLength {
-			tp.Decimal = defaultDecimal
+		if tp.GetDecimal() == types.UnspecifiedLength {
+			tp.SetDecimal(defaultDecimal)
 		}
 		explicitCharset := parser.explicitCharset
 		parser.explicitCharset = false
@@ -6845,12 +6953,12 @@ SimpleExpr:
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 		tp := $5.(*types.FieldType)
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
-		if tp.Flen == types.UnspecifiedLength {
-			tp.Flen = defaultFlen
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
+		if tp.GetFlen() == types.UnspecifiedLength {
+			tp.SetFlen(defaultFlen)
 		}
-		if tp.Decimal == types.UnspecifiedLength {
-			tp.Decimal = defaultDecimal
+		if tp.GetDecimal() == types.UnspecifiedLength {
+			tp.SetDecimal(defaultDecimal)
 		}
 		explicitCharset := parser.explicitCharset
 		parser.explicitCharset = false
@@ -7234,8 +7342,8 @@ FunctionNameDateArith:
 |	builtinDateSub
 
 FunctionNameDateArithMultiForms:
-	builtinAddDate
-|	builtinSubDate
+	addDate
+|	subDate
 
 TrimDirection:
 	"BOTH"
@@ -7686,153 +7794,161 @@ ElseOpt:
 CastType:
 	"BINARY" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeVarString)
-		x.Flen = $2.(int) // TODO: Flen should be the flen of expression
-		if x.Flen != types.UnspecifiedLength {
-			x.Tp = mysql.TypeString
+		tp := types.NewFieldType(mysql.TypeVarString)
+		tp.SetFlen($2.(int)) // TODO: Flen should be the flen of expression
+		if tp.GetFlen() != types.UnspecifiedLength {
+			tp.SetType(mysql.TypeString)
 		}
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		x.Flag |= mysql.BinaryFlag
-		$$ = x
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		$$ = tp
 	}
 |	Char OptFieldLen OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeVarString)
-		x.Flen = $2.(int) // TODO: Flen should be the flen of expression
-		x.Charset = $3.(*ast.OptBinary).Charset
+		tp := types.NewFieldType(mysql.TypeVarString)
+		tp.SetFlen($2.(int)) // TODO: Flen should be the flen of expression
+		tp.SetCharset($3.(*ast.OptBinary).Charset)
 		if $3.(*ast.OptBinary).IsBinary {
-			x.Flag |= mysql.BinaryFlag
-			x.Charset = charset.CharsetBin
-			x.Collate = charset.CollationBin
-		} else if x.Charset != "" {
-			co, err := charset.GetDefaultCollation(x.Charset)
+			tp.AddFlag(mysql.BinaryFlag)
+			tp.SetCharset(charset.CharsetBin)
+			tp.SetCollate(charset.CollationBin)
+		} else if tp.GetCharset() != "" {
+			co, err := charset.GetDefaultCollation(tp.GetCharset())
 			if err != nil {
-				yylex.AppendError(yylex.Errorf("Get collation error for charset: %s", x.Charset))
+				yylex.AppendError(yylex.Errorf("Get collation error for charset: %s", tp.GetCharset()))
 				return 1
 			}
-			x.Collate = co
+			tp.SetCollate(co)
 			parser.explicitCharset = true
 		} else {
-			x.Charset = parser.charset
-			x.Collate = parser.collation
+			tp.SetCharset(parser.charset)
+			tp.SetCollate(parser.collation)
 		}
-		$$ = x
+		$$ = tp
 	}
 |	"DATE"
 	{
-		x := types.NewFieldType(mysql.TypeDate)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		x.Flag |= mysql.BinaryFlag
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeDate)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		$$ = tp
 	}
 |	"YEAR"
 	{
-		x := types.NewFieldType(mysql.TypeYear)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		x.Flag |= mysql.BinaryFlag
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeYear)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		$$ = tp
 	}
 |	"DATETIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDatetime)
-		x.Flen, _ = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDatetime)
-		x.Decimal = $2.(int)
-		if x.Decimal > 0 {
-			x.Flen = x.Flen + 1 + x.Decimal
+		tp := types.NewFieldType(mysql.TypeDatetime)
+		flen, _ := mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDatetime)
+		tp.SetFlen(flen)
+		tp.SetDecimal($2.(int))
+		if tp.GetDecimal() > 0 {
+			tp.SetFlen(tp.GetFlen() + 1 + tp.GetDecimal())
 		}
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		x.Flag |= mysql.BinaryFlag
-		$$ = x
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		$$ = tp
 	}
 |	"DECIMAL" FloatOpt
 	{
 		fopt := $2.(*ast.FloatOpt)
-		x := types.NewFieldType(mysql.TypeNewDecimal)
-		x.Flen = fopt.Flen
-		x.Decimal = fopt.Decimal
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		x.Flag |= mysql.BinaryFlag
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeNewDecimal)
+		tp.SetFlen(fopt.Flen)
+		tp.SetDecimal(fopt.Decimal)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		$$ = tp
 	}
 |	"TIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDuration)
-		x.Flen, _ = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDuration)
-		x.Decimal = $2.(int)
-		if x.Decimal > 0 {
-			x.Flen = x.Flen + 1 + x.Decimal
+		tp := types.NewFieldType(mysql.TypeDuration)
+		flen, _ := mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDuration)
+		tp.SetFlen(flen)
+		tp.SetDecimal($2.(int))
+		if tp.GetDecimal() > 0 {
+			tp.SetFlen(tp.GetFlen() + 1 + tp.GetDecimal())
 		}
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		x.Flag |= mysql.BinaryFlag
-		$$ = x
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		$$ = tp
 	}
 |	"SIGNED" OptInteger
 	{
-		x := types.NewFieldType(mysql.TypeLonglong)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		x.Flag |= mysql.BinaryFlag
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		$$ = tp
 	}
 |	"UNSIGNED" OptInteger
 	{
-		x := types.NewFieldType(mysql.TypeLonglong)
-		x.Flag |= mysql.UnsignedFlag | mysql.BinaryFlag
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		tp.AddFlag(mysql.UnsignedFlag | mysql.BinaryFlag)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
 	}
 |	"JSON"
 	{
-		x := types.NewFieldType(mysql.TypeJSON)
-		x.Flag |= mysql.BinaryFlag | (mysql.ParseToJSONFlag)
-		x.Charset = mysql.DefaultCharset
-		x.Collate = mysql.DefaultCollationName
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeJSON)
+		tp.AddFlag(mysql.BinaryFlag | mysql.ParseToJSONFlag)
+		tp.SetCharset(mysql.DefaultCharset)
+		tp.SetCollate(mysql.DefaultCollationName)
+		$$ = tp
 	}
 |	"DOUBLE"
 	{
-		x := types.NewFieldType(mysql.TypeDouble)
-		x.Flen, x.Decimal = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDouble)
-		x.Flag |= mysql.BinaryFlag
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeDouble)
+		flen, decimal := mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDouble)
+		tp.SetFlen(flen)
+		tp.SetDecimal(decimal)
+		tp.AddFlag(mysql.BinaryFlag)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
 	}
 |	"FLOAT" FloatOpt
 	{
-		x := types.NewFieldType(mysql.TypeFloat)
+		tp := types.NewFieldType(mysql.TypeFloat)
 		fopt := $2.(*ast.FloatOpt)
 		if fopt.Flen >= 54 {
 			yylex.AppendError(ErrTooBigPrecision.GenWithStackByArgs(fopt.Flen, "CAST", 53))
 		} else if fopt.Flen >= 25 {
-			x = types.NewFieldType(mysql.TypeDouble)
+			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-		x.Flen, x.Decimal = mysql.GetDefaultFieldLengthAndDecimalForCast(x.Tp)
-		x.Flag |= mysql.BinaryFlag
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		$$ = x
+		flen, decimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
+		tp.SetFlen(flen)
+		tp.SetDecimal(decimal)
+		tp.AddFlag(mysql.BinaryFlag)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
 	}
 |	"REAL"
 	{
-		var x *types.FieldType
+		var tp *types.FieldType
 		if parser.lexer.GetSQLMode().HasRealAsFloatMode() {
-			x = types.NewFieldType(mysql.TypeFloat)
+			tp = types.NewFieldType(mysql.TypeFloat)
 		} else {
-			x = types.NewFieldType(mysql.TypeDouble)
+			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-		x.Flen, x.Decimal = mysql.GetDefaultFieldLengthAndDecimalForCast(x.Tp)
-		x.Flag |= mysql.BinaryFlag
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		$$ = x
+		flen, decimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
+		tp.SetFlen(flen)
+		tp.SetDecimal(decimal)
+		tp.AddFlag(mysql.BinaryFlag)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
 	}
 
 Priority:
@@ -7998,6 +8114,14 @@ RollbackStmt:
 	{
 		$$ = &ast.RollbackStmt{CompletionType: $2.(ast.CompletionType)}
 	}
+|	"ROLLBACK" "TO" Identifier
+	{
+		$$ = &ast.RollbackStmt{SavepointName: $3}
+	}
+|	"ROLLBACK" "TO" "SAVEPOINT" Identifier
+	{
+		$$ = &ast.RollbackStmt{SavepointName: $4}
+	}
 
 CompletionTypeWithinTransaction:
 	"AND" "CHAIN" "NO" "RELEASE"
@@ -8048,7 +8172,7 @@ HelpStmt:
 	}
 
 SelectStmtBasic:
-	"SELECT" SelectStmtOpts SelectStmtFieldList
+	"SELECT" SelectStmtOpts SelectStmtFieldList HavingClause
 	{
 		st := &ast.SelectStmt{
 			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
@@ -8058,6 +8182,9 @@ SelectStmtBasic:
 		}
 		if st.SelectStmtOpts.TableHints != nil {
 			st.TableHints = st.SelectStmtOpts.TableHints
+		}
+		if $4 != nil {
+			st.Having = $4.(*ast.HavingClause)
 		}
 		$$ = st
 	}
@@ -8069,7 +8196,7 @@ SelectStmtFromDualTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-1].offset - 1
-			lastField.SetText(parser.src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
@@ -8084,7 +8211,7 @@ SelectStmtFromTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-5])
-			lastField.SetText(parser.src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
 			st.Where = $4.(ast.ExprNode)
@@ -8202,7 +8329,7 @@ SelectStmt:
 					lastEnd--
 				}
 			}
-			lastField.SetText(src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.lexer.client, src[lastField.Offset:lastEnd])
 		}
 		if $2 != nil {
 			st.Where = $2.(ast.ExprNode)
@@ -8335,6 +8462,9 @@ WithClause:
 	{
 		ws := $3.(*ast.WithClause)
 		ws.IsRecursive = true
+		for _, cte := range ws.CTEs {
+			cte.IsRecursive = true
+		}
 		$$ = ws
 	}
 
@@ -8619,7 +8749,7 @@ OptLeadLagInfo:
 	}
 |	',' paramMarker OptLLDefault
 	{
-		args := []ast.ExprNode{ast.NewValueExpr($2, parser.charset, parser.collation)}
+		args := []ast.ExprNode{ast.NewParamMarkerExpr(yyS[yypt-1].offset)}
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
@@ -9144,14 +9274,14 @@ SubSelect:
 		parser.setLastSelectFieldText(rs, endOffset)
 		src := parser.src
 		// See the implementation of yyParse function
-		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SetOprStmt ')'
 	{
 		rs := $2.(*ast.SetOprStmt)
 		src := parser.src
-		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SelectStmtWithClause ')'
@@ -9161,7 +9291,7 @@ SubSelect:
 		parser.setLastSelectFieldText(rs, endOffset)
 		src := parser.src
 		// See the implementation of yyParse function
-		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SubSelect ')'
@@ -9179,11 +9309,11 @@ SubSelect:
 			endOffset := parser.endOffset(&yyS[yypt])
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
-			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -9886,11 +10016,11 @@ Username:
 	}
 |	StringName '@' StringName
 	{
-		$$ = &auth.UserIdentity{Username: $1, Hostname: $3}
+		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.ToLower($3)}
 	}
 |	StringName singleAtIdentifier
 	{
-		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.TrimPrefix($2, "@")}
+		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.ToLower(strings.TrimPrefix($2, "@"))}
 	}
 |	"CURRENT_USER" OptionalBraces
 	{
@@ -9924,11 +10054,11 @@ RoleNameString:
 RolenameComposed:
 	StringName '@' StringName
 	{
-		$$ = &auth.RoleIdentity{Username: $1, Hostname: $3}
+		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.ToLower($3)}
 	}
 |	StringName singleAtIdentifier
 	{
-		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.TrimPrefix($2, "@")}
+		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.ToLower(strings.TrimPrefix($2, "@"))}
 	}
 
 RolenameWithoutIdent:
@@ -10146,6 +10276,13 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminResetTelemetryID,
+		}
+	}
+|	"ADMIN" "FLUSH" StatementScope "PLAN_CACHE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp:             ast.AdminFlushPlanCache,
+			StatementScope: $3.(ast.StatementScope),
 		}
 	}
 
@@ -10560,9 +10697,17 @@ ShowTargetFilterable:
 			Extended: true,
 		}
 	}
+|	builtinCount '(' '*' ')' "WARNINGS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings, CountWarningsOrErrors: true}
+	}
 |	"WARNINGS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings}
+	}
+|	builtinCount '(' '*' ')' "ERRORS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowErrors, CountWarningsOrErrors: true}
 	}
 |	"ERRORS"
 	{
@@ -10600,6 +10745,12 @@ ShowTargetFilterable:
 		$$ = &ast.ShowStmt{
 			Tp:     ast.ShowTriggers,
 			DBName: $2,
+		}
+	}
+|	"BINDING_CACHE" "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowBindingCacheStatus,
 		}
 	}
 |	"PROCEDURE" "STATUS"
@@ -10727,6 +10878,23 @@ GlobalScope:
 |	"SESSION"
 	{
 		$$ = false
+	}
+
+StatementScope:
+	{
+		$$ = ast.StatementScopeSession
+	}
+|	"GLOBAL"
+	{
+		$$ = ast.StatementScopeGlobal
+	}
+|	"INSTANCE"
+	{
+		$$ = ast.StatementScopeInstance
+	}
+|	"SESSION"
+	{
+		$$ = ast.StatementScopeSession
 	}
 
 OptFull:
@@ -10948,9 +11116,11 @@ Statement:
 |	RenameUserStmt
 |	ReplaceIntoStmt
 |	RecoverTableStmt
+|	ReleaseSavepointStmt
 |	ResumeImportStmt
 |	RevokeStmt
 |	RevokeRoleStmt
+|	SavepointStmt
 |	SetOprStmt
 |	SelectStmt
 |	SelectStmtWithClause
@@ -10968,6 +11138,7 @@ Statement:
 		$$ = sel
 	}
 |	SetStmt
+|	SetBindingStmt
 |	SetRoleStmt
 |	SetDefaultRoleStmt
 |	SplitRegionStmt
@@ -10983,6 +11154,7 @@ Statement:
 |	ShutdownStmt
 |	RestartStmt
 |	HelpStmt
+|	NonTransactionalDeleteStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -11008,6 +11180,8 @@ TraceableStmt:
 |	LoadDataStmt
 |	BeginTransactionStmt
 |	CommitStmt
+|	SavepointStmt
+|	ReleaseSavepointStmt
 |	RollbackStmt
 |	SetStmt
 
@@ -11040,7 +11214,7 @@ StatementList:
 		if $1 != nil {
 			s := $1
 			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(lexer.stmtText())
+				s.SetText(parser.lexer.client, lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
 		}
@@ -11050,7 +11224,7 @@ StatementList:
 		if $3 != nil {
 			s := $3
 			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(lexer.stmtText())
+				s.SetText(parser.lexer.client, lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
 		}
@@ -11413,90 +11587,90 @@ NumericType:
 	IntegerType OptFieldLen FieldOpts
 	{
 		// TODO: check flen 0
-		x := types.NewFieldType($1.(byte))
-		x.Flen = $2.(int)
+		tp := types.NewFieldType($1.(byte))
+		tp.SetFlen($2.(int))
 		if $2.(int) != types.UnspecifiedLength && types.TiDBStrictIntegerDisplayWidth {
 			yylex.AppendError(ErrWarnDeprecatedIntegerDisplayWidth)
 			parser.lastErrorAsWarn()
 		}
 		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
-				x.Flag |= mysql.UnsignedFlag
+				tp.AddFlag(mysql.UnsignedFlag)
 			}
 			if o.IsZerofill {
-				x.Flag |= mysql.ZerofillFlag
+				tp.AddFlag(mysql.ZerofillFlag)
 			}
 		}
-		$$ = x
+		$$ = tp
 	}
 |	BooleanType FieldOpts
 	{
 		// TODO: check flen 0
-		x := types.NewFieldType($1.(byte))
-		x.Flen = 1
+		tp := types.NewFieldType($1.(byte))
+		tp.SetFlen(1)
 		for _, o := range $2.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
-				x.Flag |= mysql.UnsignedFlag
+				tp.AddFlag(mysql.UnsignedFlag)
 			}
 			if o.IsZerofill {
-				x.Flag |= mysql.ZerofillFlag
+				tp.AddFlag(mysql.ZerofillFlag)
 			}
 		}
-		$$ = x
+		$$ = tp
 	}
 |	FixedPointType FloatOpt FieldOpts
 	{
 		fopt := $2.(*ast.FloatOpt)
-		x := types.NewFieldType($1.(byte))
-		x.Flen = fopt.Flen
-		x.Decimal = fopt.Decimal
+		tp := types.NewFieldType($1.(byte))
+		tp.SetFlen(fopt.Flen)
+		tp.SetDecimal(fopt.Decimal)
 		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
-				x.Flag |= mysql.UnsignedFlag
+				tp.AddFlag(mysql.UnsignedFlag)
 			}
 			if o.IsZerofill {
-				x.Flag |= mysql.ZerofillFlag
+				tp.AddFlag(mysql.ZerofillFlag)
 			}
 		}
-		$$ = x
+		$$ = tp
 	}
 |	FloatingPointType FloatOpt FieldOpts
 	{
 		fopt := $2.(*ast.FloatOpt)
-		x := types.NewFieldType($1.(byte))
+		tp := types.NewFieldType($1.(byte))
 		// check for a double(10) for syntax error
-		if x.Tp == mysql.TypeDouble && parser.strictDoubleFieldType {
+		if tp.GetType() == mysql.TypeDouble && parser.strictDoubleFieldType {
 			if fopt.Flen != types.UnspecifiedLength && fopt.Decimal == types.UnspecifiedLength {
 				yylex.AppendError(ErrSyntax)
 				return 1
 			}
 		}
-		x.Flen = fopt.Flen
-		if x.Tp == mysql.TypeFloat && fopt.Decimal == types.UnspecifiedLength && x.Flen <= mysql.MaxDoublePrecisionLength {
-			if x.Flen > mysql.MaxFloatPrecisionLength {
-				x.Tp = mysql.TypeDouble
+		tp.SetFlen(fopt.Flen)
+		if tp.GetType() == mysql.TypeFloat && fopt.Decimal == types.UnspecifiedLength && tp.GetFlen() <= mysql.MaxDoublePrecisionLength {
+			if tp.GetFlen() > mysql.MaxFloatPrecisionLength {
+				tp.SetType(mysql.TypeDouble)
 			}
-			x.Flen = types.UnspecifiedLength
+			tp.SetFlen(types.UnspecifiedLength)
 		}
-		x.Decimal = fopt.Decimal
+		tp.SetDecimal(fopt.Decimal)
 		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
-				x.Flag |= mysql.UnsignedFlag
+				tp.AddFlag(mysql.UnsignedFlag)
 			}
 			if o.IsZerofill {
-				x.Flag |= mysql.ZerofillFlag
+				tp.AddFlag(mysql.ZerofillFlag)
 			}
 		}
-		$$ = x
+		$$ = tp
 	}
 |	BitValueType OptFieldLen
 	{
-		x := types.NewFieldType($1.(byte))
-		x.Flen = $2.(int)
-		if x.Flen == types.UnspecifiedLength {
-			x.Flen = 1
+		tp := types.NewFieldType($1.(byte))
+		tp.SetFlen($2.(int))
+		if tp.GetFlen() == types.UnspecifiedLength {
+			tp.SetFlen(1)
 		}
-		$$ = x
+		$$ = tp
 	}
 
 IntegerType:
@@ -11605,158 +11779,160 @@ BitValueType:
 StringType:
 	Char FieldLen OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int)
-		x.Charset = $3.(*ast.OptBinary).Charset
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetFlen($2.(int))
+		tp.SetCharset($3.(*ast.OptBinary).Charset)
 		if $3.(*ast.OptBinary).IsBinary {
-			x.Flag |= mysql.BinaryFlag
+			tp.AddFlag(mysql.BinaryFlag)
 		}
-		$$ = x
+		$$ = tp
 	}
 |	Char OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeString)
-		x.Charset = $2.(*ast.OptBinary).Charset
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetCharset($2.(*ast.OptBinary).Charset)
 		if $2.(*ast.OptBinary).IsBinary {
-			x.Flag |= mysql.BinaryFlag
+			tp.AddFlag(mysql.BinaryFlag)
 		}
-		$$ = x
+		$$ = tp
 	}
 |	NChar FieldLen OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int)
-		x.Charset = $3.(*ast.OptBinary).Charset
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetFlen($2.(int))
+		tp.SetCharset($3.(*ast.OptBinary).Charset)
 		if $3.(*ast.OptBinary).IsBinary {
-			x.Flag |= mysql.BinaryFlag
+			tp.AddFlag(mysql.BinaryFlag)
 		}
-		$$ = x
+		$$ = tp
 	}
 |	NChar OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeString)
-		x.Charset = $2.(*ast.OptBinary).Charset
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetCharset($2.(*ast.OptBinary).Charset)
 		if $2.(*ast.OptBinary).IsBinary {
-			x.Flag |= mysql.BinaryFlag
+			tp.AddFlag(mysql.BinaryFlag)
 		}
-		$$ = x
+		$$ = tp
 	}
 |	Varchar FieldLen OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $2.(int)
-		x.Charset = $3.(*ast.OptBinary).Charset
+		tp := types.NewFieldType(mysql.TypeVarchar)
+		tp.SetFlen($2.(int))
+		tp.SetCharset($3.(*ast.OptBinary).Charset)
 		if $3.(*ast.OptBinary).IsBinary {
-			x.Flag |= mysql.BinaryFlag
+			tp.AddFlag(mysql.BinaryFlag)
 		}
-		$$ = x
+		$$ = tp
 	}
 |	NVarchar FieldLen OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $2.(int)
-		x.Charset = $3.(*ast.OptBinary).Charset
+		tp := types.NewFieldType(mysql.TypeVarchar)
+		tp.SetFlen($2.(int))
+		tp.SetCharset($3.(*ast.OptBinary).Charset)
 		if $3.(*ast.OptBinary).IsBinary {
-			x.Flag |= mysql.BinaryFlag
+			tp.AddFlag(mysql.BinaryFlag)
 		}
-		$$ = x
+		$$ = tp
 	}
 |	"BINARY" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
-		x.Flag |= mysql.BinaryFlag
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetFlen($2.(int))
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CharsetBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		$$ = tp
 	}
 |	"VARBINARY" FieldLen
 	{
-		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $2.(int)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
-		x.Flag |= mysql.BinaryFlag
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeVarchar)
+		tp.SetFlen($2.(int))
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CharsetBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		$$ = tp
 	}
 |	BlobType
 	{
-		x := $1.(*types.FieldType)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
-		x.Flag |= mysql.BinaryFlag
-		$$ = x
+		tp := $1.(*types.FieldType)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CharsetBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		$$ = tp
 	}
 |	TextType OptCharsetWithOptBinary
 	{
-		x := $1.(*types.FieldType)
-		x.Charset = $2.(*ast.OptBinary).Charset
+		tp := $1.(*types.FieldType)
+		tp.SetCharset($2.(*ast.OptBinary).Charset)
 		if $2.(*ast.OptBinary).IsBinary {
-			x.Flag |= mysql.BinaryFlag
+			tp.AddFlag(mysql.BinaryFlag)
 		}
-		$$ = x
+		$$ = tp
 	}
 |	"ENUM" '(' TextStringList ')' OptCharsetWithOptBinary
 	{
-		x := types.NewFieldType(mysql.TypeEnum)
-		x.Elems = $3.([]string)
+		tp := types.NewFieldType(mysql.TypeEnum)
+		elems := $3.([]*ast.TextString)
+		opt := $5.(*ast.OptBinary)
+		tp.SetElems(ast.TransformTextStrings(elems, opt.Charset))
 		fieldLen := -1 // enum_flen = max(ele_flen)
-		for i := range x.Elems {
-			x.Elems[i] = strings.TrimRight(x.Elems[i], " ")
-			if len(x.Elems[i]) > fieldLen {
-				fieldLen = len(x.Elems[i])
+		for i := range tp.GetElems() {
+			tp.SetElem(i, strings.TrimRight(tp.GetElem(i), " "))
+			if len(tp.GetElem(i)) > fieldLen {
+				fieldLen = len(tp.GetElem(i))
 			}
 		}
-		x.Flen = fieldLen
-		opt := $5.(*ast.OptBinary)
-		x.Charset = opt.Charset
+		tp.SetFlen(fieldLen)
+		tp.SetCharset(opt.Charset)
 		if opt.IsBinary {
-			x.Flag |= mysql.BinaryFlag
+			tp.AddFlag(mysql.BinaryFlag)
 		}
-		$$ = x
+		$$ = tp
 	}
 |	"SET" '(' TextStringList ')' OptCharsetWithOptBinary
 	{
-		x := types.NewFieldType(mysql.TypeSet)
-		x.Elems = $3.([]string)
-		fieldLen := len(x.Elems) - 1 // set_flen = sum(ele_flen) + number_of_ele - 1
-		for i := range x.Elems {
-			x.Elems[i] = strings.TrimRight(x.Elems[i], " ")
-			fieldLen += len(x.Elems[i])
-		}
-		x.Flen = fieldLen
+		tp := types.NewFieldType(mysql.TypeSet)
+		elems := $3.([]*ast.TextString)
 		opt := $5.(*ast.OptBinary)
-		x.Charset = opt.Charset
-		if opt.IsBinary {
-			x.Flag |= mysql.BinaryFlag
+		tp.SetElems(ast.TransformTextStrings(elems, opt.Charset))
+		fieldLen := len(tp.GetElems()) - 1 // set_flen = sum(ele_flen) + number_of_ele - 1
+		for i := range tp.GetElems() {
+			tp.SetElem(i, strings.TrimRight(tp.GetElem(i), " "))
+			fieldLen += len(tp.GetElem(i))
 		}
-		$$ = x
+		tp.SetFlen(fieldLen)
+		tp.SetCharset(opt.Charset)
+		if opt.IsBinary {
+			tp.AddFlag(mysql.BinaryFlag)
+		}
+		$$ = tp
 	}
 |	"JSON"
 	{
-		x := types.NewFieldType(mysql.TypeJSON)
-		x.Decimal = 0
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CollationBin
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeJSON)
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
 	}
 |	"LONG" Varchar OptCharsetWithOptBinary
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
-		x.Charset = $3.(*ast.OptBinary).Charset
+		tp := types.NewFieldType(mysql.TypeMediumBlob)
+		tp.SetCharset($3.(*ast.OptBinary).Charset)
 		if $3.(*ast.OptBinary).IsBinary {
-			x.Flag |= mysql.BinaryFlag
+			tp.AddFlag(mysql.BinaryFlag)
 		}
-		$$ = x
+		$$ = tp
 	}
 |	"LONG" OptCharsetWithOptBinary
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
-		x.Charset = $2.(*ast.OptBinary).Charset
+		tp := types.NewFieldType(mysql.TypeMediumBlob)
+		tp.SetCharset($2.(*ast.OptBinary).Charset)
 		if $2.(*ast.OptBinary).IsBinary {
-			x.Flag |= mysql.BinaryFlag
+			tp.AddFlag(mysql.BinaryFlag)
 		}
-		$$ = x
+		$$ = tp
 	}
 
 Char:
@@ -11791,52 +11967,52 @@ Year:
 BlobType:
 	"TINYBLOB"
 	{
-		x := types.NewFieldType(mysql.TypeTinyBlob)
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeTinyBlob)
+		$$ = tp
 	}
 |	"BLOB" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeBlob)
-		x.Flen = $2.(int)
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeBlob)
+		tp.SetFlen($2.(int))
+		$$ = tp
 	}
 |	"MEDIUMBLOB"
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeMediumBlob)
+		$$ = tp
 	}
 |	"LONGBLOB"
 	{
-		x := types.NewFieldType(mysql.TypeLongBlob)
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeLongBlob)
+		$$ = tp
 	}
 |	"LONG" "VARBINARY"
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeMediumBlob)
+		$$ = tp
 	}
 
 TextType:
 	"TINYTEXT"
 	{
-		x := types.NewFieldType(mysql.TypeTinyBlob)
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeTinyBlob)
+		$$ = tp
 	}
 |	"TEXT" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeBlob)
-		x.Flen = $2.(int)
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeBlob)
+		tp.SetFlen($2.(int))
+		$$ = tp
 	}
 |	"MEDIUMTEXT"
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeMediumBlob)
+		$$ = tp
 	}
 |	"LONGTEXT"
 	{
-		x := types.NewFieldType(mysql.TypeLongBlob)
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeLongBlob)
+		$$ = tp
 	}
 
 OptCharsetWithOptBinary:
@@ -11871,48 +12047,48 @@ OptCharsetWithOptBinary:
 DateAndTimeType:
 	"DATE"
 	{
-		x := types.NewFieldType(mysql.TypeDate)
-		$$ = x
+		tp := types.NewFieldType(mysql.TypeDate)
+		$$ = tp
 	}
 |	"DATETIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDatetime)
-		x.Flen = mysql.MaxDatetimeWidthNoFsp
-		x.Decimal = $2.(int)
-		if x.Decimal > 0 {
-			x.Flen = x.Flen + 1 + x.Decimal
+		tp := types.NewFieldType(mysql.TypeDatetime)
+		tp.SetFlen(mysql.MaxDatetimeWidthNoFsp)
+		tp.SetDecimal($2.(int))
+		if tp.GetDecimal() > 0 {
+			tp.SetFlen(tp.GetFlen() + 1 + tp.GetDecimal())
 		}
-		$$ = x
+		$$ = tp
 	}
 |	"TIMESTAMP" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeTimestamp)
-		x.Flen = mysql.MaxDatetimeWidthNoFsp
-		x.Decimal = $2.(int)
-		if x.Decimal > 0 {
-			x.Flen = x.Flen + 1 + x.Decimal
+		tp := types.NewFieldType(mysql.TypeTimestamp)
+		tp.SetFlen(mysql.MaxDatetimeWidthNoFsp)
+		tp.SetDecimal($2.(int))
+		if tp.GetDecimal() > 0 {
+			tp.SetFlen(tp.GetFlen() + 1 + tp.GetDecimal())
 		}
-		$$ = x
+		$$ = tp
 	}
 |	"TIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDuration)
-		x.Flen = mysql.MaxDurationWidthNoFsp
-		x.Decimal = $2.(int)
-		if x.Decimal > 0 {
-			x.Flen = x.Flen + 1 + x.Decimal
+		tp := types.NewFieldType(mysql.TypeDuration)
+		tp.SetFlen(mysql.MaxDurationWidthNoFsp)
+		tp.SetDecimal($2.(int))
+		if tp.GetDecimal() > 0 {
+			tp.SetFlen(tp.GetFlen() + 1 + tp.GetDecimal())
 		}
-		$$ = x
+		$$ = tp
 	}
 |	Year OptFieldLen FieldOpts
 	{
-		x := types.NewFieldType(mysql.TypeYear)
-		x.Flen = $2.(int)
-		if x.Flen != types.UnspecifiedLength && x.Flen != 4 {
+		tp := types.NewFieldType(mysql.TypeYear)
+		tp.SetFlen($2.(int))
+		if tp.GetFlen() != types.UnspecifiedLength && tp.GetFlen() != 4 {
 			yylex.AppendError(ErrInvalidYearColumnLength.GenWithStackByArgs())
 			return -1
 		}
-		$$ = x
+		$$ = tp
 	}
 
 FieldLen:
@@ -12032,23 +12208,26 @@ StringList:
 
 TextString:
 	stringLit
+	{
+		$$ = &ast.TextString{Value: $1}
+	}
 |	hexLit
 	{
-		$$ = $1.(ast.BinaryLiteral).ToString()
+		$$ = &ast.TextString{Value: $1.(ast.BinaryLiteral).ToString(), IsBinaryLiteral: true}
 	}
 |	bitLit
 	{
-		$$ = $1.(ast.BinaryLiteral).ToString()
+		$$ = &ast.TextString{Value: $1.(ast.BinaryLiteral).ToString(), IsBinaryLiteral: true}
 	}
 
 TextStringList:
 	TextString
 	{
-		$$ = []string{$1}
+		$$ = []*ast.TextString{$1.(*ast.TextString)}
 	}
 |	TextStringList ',' TextString
 	{
-		$$ = append($1.([]string), $3)
+		$$ = append($1.([]*ast.TextString), $3.(*ast.TextString))
 	}
 
 StringName:
@@ -12557,11 +12736,11 @@ CreateBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(strings.TrimSpace(parser.src[startOffset:endOffset]))
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
@@ -12584,7 +12763,7 @@ DropBindingStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		originStmt := $5
-		originStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.DropBindingStmt{
 			OriginNode:  originStmt,
@@ -12598,16 +12777,50 @@ DropBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(strings.TrimSpace(parser.src[startOffset:endOffset]))
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.DropBindingStmt{
 			OriginNode:  originStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
+		}
+
+		$$ = x
+	}
+
+SetBindingStmt:
+	"SET" "BINDING" BindingStatusType "FOR" BindableStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		originStmt := $5
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			OriginNode:        originStmt,
+		}
+
+		$$ = x
+	}
+|	"SET" "BINDING" BindingStatusType "FOR" BindableStmt "USING" BindableStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt-2])
+		endOffset := parser.startOffset(&yyS[yypt-1])
+		originStmt := $5
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+
+		startOffset = parser.startOffset(&yyS[yypt])
+		hintedStmt := $7
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			OriginNode:        originStmt,
+			HintedNode:        hintedStmt,
 		}
 
 		$$ = x
@@ -13293,6 +13506,43 @@ TableLockList:
 	}
 
 /********************************************************************
+ * Non-transactional Delete Statement
+ * Split a SQL on a column. Used for bulk delete that doesn't need ACID.
+ *******************************************************************/
+NonTransactionalDeleteStmt:
+	"BATCH" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
+	{
+		$$ = &ast.NonTransactionalDeleteStmt{
+			DryRun:      $5.(int),
+			ShardColumn: $2.(*ast.ColumnName),
+			Limit:       getUint64FromNUM($4),
+			DeleteStmt:  $6.(*ast.DeleteStmt),
+		}
+	}
+
+DryRunOptions:
+	{
+		$$ = ast.NoDryRun
+	}
+|	"DRY" "RUN"
+	{
+		$$ = ast.DryRunSplitDml
+	}
+|	"DRY" "RUN" "QUERY"
+	{
+		$$ = ast.DryRunQuery
+	}
+
+OptionalShardColumn:
+	{
+		$$ = (*ast.ColumnName)(nil)
+	}
+|	"ON" ColumnName
+	{
+		$$ = $2.(*ast.ColumnName)
+	}
+
+/********************************************************************
  * Kill Statement
  * See https://dev.mysql.com/doc/refman/5.7/en/kill.html
  *******************************************************************/
@@ -13689,7 +13939,7 @@ PlanReplayerStmt:
 			Limit:   nil,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}
@@ -13705,7 +13955,7 @@ PlanReplayerStmt:
 			Limit:   nil,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}

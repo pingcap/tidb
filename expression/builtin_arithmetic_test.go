@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -30,73 +30,69 @@ import (
 )
 
 func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
-	t.Parallel()
-
 	ret := &types.FieldType{}
-	a := &types.FieldType{
-		Decimal: 1,
-		Flen:    3,
-	}
-	b := &types.FieldType{
-		Decimal: 0,
-		Flen:    2,
-	}
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, 6, ret.Flen)
+	a := &types.FieldType{}
+	a.SetDecimal(1)
+	a.SetFlen(3)
 
-	b.Flen = 65
+	b := &types.FieldType{}
+	b.SetDecimal(0)
+	b.SetFlag(2)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, mysql.MaxRealWidth, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, 4, ret.GetFlen())
+
+	b.SetFlen(65)
+	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, mysql.MaxRealWidth, ret.GetFlen())
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, false, false)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, mysql.MaxDecimalWidth, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, mysql.MaxDecimalWidth, ret.GetFlen())
 
-	b.Flen = types.UnspecifiedLength
+	b.SetFlen(types.UnspecifiedLength)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, types.UnspecifiedLength, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
-	b.Decimal = types.UnspecifiedLength
+	b.SetDecimal(types.UnspecifiedLength)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, types.UnspecifiedLength, ret.Decimal)
-	require.Equal(t, types.UnspecifiedLength, ret.Flen)
+	require.Equal(t, types.UnspecifiedLength, ret.GetDecimal())
+	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
 	ret = &types.FieldType{}
-	a = &types.FieldType{
-		Decimal: 1,
-		Flen:    3,
-	}
-	b = &types.FieldType{
-		Decimal: 0,
-		Flen:    2,
-	}
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, 8, ret.Flen)
+	a = &types.FieldType{}
+	a.SetDecimal(1)
+	a.SetFlen(3)
 
-	b.Flen = 65
+	b = &types.FieldType{}
+	b.SetDecimal(0)
+	b.SetFlen(2)
+
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, mysql.MaxRealWidth, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, 6, ret.GetFlen())
+
+	b.SetFlen(65)
+	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, mysql.MaxRealWidth, ret.GetFlen())
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, false, true)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, mysql.MaxDecimalWidth, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, mysql.MaxDecimalWidth, ret.GetFlen())
 
-	b.Flen = types.UnspecifiedLength
+	b.SetFlen(types.UnspecifiedLength)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, types.UnspecifiedLength, ret.Flen)
+	require.Equal(t, 1, ret.GetDecimal())
+	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
-	b.Decimal = types.UnspecifiedLength
+	b.SetDecimal(types.UnspecifiedLength)
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, types.UnspecifiedLength, ret.Decimal)
-	require.Equal(t, types.UnspecifiedLength, ret.Flen)
+	require.Equal(t, types.UnspecifiedLength, ret.GetDecimal())
+	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 }
 
 func TestArithmeticPlus(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
@@ -193,7 +189,6 @@ func TestArithmeticPlus(t *testing.T) {
 }
 
 func TestArithmeticMinus(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
@@ -272,7 +267,6 @@ func TestArithmeticMinus(t *testing.T) {
 }
 
 func TestArithmeticMultiply(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []interface{}
@@ -320,7 +314,7 @@ func TestArithmeticMultiply(t *testing.T) {
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		if tc.expect[1] == nil {
 			require.NoError(t, err)
-			trequire.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
+			testutil.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
 		} else {
 			require.Error(t, err)
 			require.Regexp(t, tc.expect[1], err.Error())
@@ -329,7 +323,6 @@ func TestArithmeticMultiply(t *testing.T) {
 }
 
 func TestArithmeticDivide(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	testCases := []struct {
@@ -394,12 +387,11 @@ func TestArithmeticDivide(t *testing.T) {
 		}
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tc.expect), val)
+		testutil.DatumEqual(t, types.NewDatum(tc.expect), val)
 	}
 }
 
 func TestArithmeticIntDivide(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []interface{}
@@ -506,7 +498,7 @@ func TestArithmeticIntDivide(t *testing.T) {
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		if tc.expect[1] == nil {
 			require.NoError(t, err)
-			trequire.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
+			testutil.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
 		} else {
 			require.Error(t, err)
 			require.Regexp(t, tc.expect[1], err.Error())
@@ -515,7 +507,6 @@ func TestArithmeticIntDivide(t *testing.T) {
 }
 
 func TestArithmeticMod(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []interface{}
@@ -663,12 +654,11 @@ func TestArithmeticMod(t *testing.T) {
 			require.Equal(t, tipb.ScalarFuncSig_ModDecimal, sig.PbCode())
 		}
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tc.expect), val)
+		testutil.DatumEqual(t, types.NewDatum(tc.expect), val)
 	}
 }
 
 func TestDecimalErrOverflow(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	testCases := []struct {
 		args   []float64

@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 )
 
@@ -27,6 +28,15 @@ var (
 			Subsystem: "server",
 			Name:      "panic_total",
 			Help:      "Counter of panic.",
+		}, []string{LblType})
+
+	// MemoryUsage measures the usage gauge of memory.
+	MemoryUsage = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "memory_usage",
+			Help:      "Memory Usage",
 		}, []string{LblType})
 )
 
@@ -66,6 +76,10 @@ func RetLabel(err error) string {
 
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.
 func RegisterMetrics() {
+	// use new go collector
+	prometheus.DefaultRegisterer.Unregister(prometheus.NewGoCollector())
+	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollections(collectors.GoRuntimeMetricsCollection | collectors.GoRuntimeMemStatsCollection)))
+
 	prometheus.MustRegister(AutoAnalyzeCounter)
 	prometheus.MustRegister(AutoAnalyzeHistogram)
 	prometheus.MustRegister(AutoIDHistogram)
@@ -96,6 +110,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(HandleJobHistogram)
 	prometheus.MustRegister(SignificantFeedbackCounter)
 	prometheus.MustRegister(FastAnalyzeHistogram)
+	prometheus.MustRegister(SyncLoadCounter)
+	prometheus.MustRegister(SyncLoadTimeoutCounter)
+	prometheus.MustRegister(SyncLoadHistogram)
+	prometheus.MustRegister(ReadStatsHistogram)
 	prometheus.MustRegister(JobsGauge)
 	prometheus.MustRegister(KeepAliveCounter)
 	prometheus.MustRegister(LoadPrivilegeCounter)
@@ -107,8 +125,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
 	prometheus.MustRegister(PanicCounter)
 	prometheus.MustRegister(PlanCacheCounter)
+	prometheus.MustRegister(PlanCacheMissCounter)
 	prometheus.MustRegister(PseudoEstimation)
-	prometheus.MustRegister(PacketIOHistogram)
+	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)
 	prometheus.MustRegister(QueryTotalCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
@@ -139,7 +158,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GCJobFailureCounter)
 	prometheus.MustRegister(GCRegionTooManyLocksCounter)
 	prometheus.MustRegister(GCWorkerCounter)
-	prometheus.MustRegister(GCUnsafeDestroyRangeFailuresCounterVec)
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
@@ -157,7 +175,16 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TopSQLIgnoredCounter)
 	prometheus.MustRegister(TopSQLReportDurationHistogram)
 	prometheus.MustRegister(TopSQLReportDataHistogram)
-	prometheus.MustRegister(PDApiExecutionHistogram)
+	prometheus.MustRegister(PDAPIExecutionHistogram)
+	prometheus.MustRegister(PDAPIRequestCounter)
+	prometheus.MustRegister(CPUProfileCounter)
+	prometheus.MustRegister(ReadFromTableCacheCounter)
+	prometheus.MustRegister(LoadTableCacheDurationHistogram)
+	prometheus.MustRegister(NonTransactionalDeleteCount)
+	prometheus.MustRegister(MemoryUsage)
+	prometheus.MustRegister(StatsCacheLRUCounter)
+	prometheus.MustRegister(StatsCacheLRUGauge)
+	prometheus.MustRegister(StatsHealthyGauge)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

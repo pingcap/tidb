@@ -15,7 +15,6 @@ import (
 )
 
 func TestLogRanges(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		count  int
 		expect string

@@ -29,8 +29,6 @@ import (
 )
 
 func TestGrantGlobal(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -71,8 +69,6 @@ func TestGrantGlobal(t *testing.T) {
 }
 
 func TestGrantDBScope(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -112,8 +108,6 @@ func TestGrantDBScope(t *testing.T) {
 }
 
 func TestWithGrantOption(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -138,8 +132,6 @@ func TestWithGrantOption(t *testing.T) {
 }
 
 func TestGrantTableScope(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -184,8 +176,6 @@ func TestGrantTableScope(t *testing.T) {
 }
 
 func TestGrantColumnScope(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -232,8 +222,6 @@ func TestGrantColumnScope(t *testing.T) {
 }
 
 func TestIssue2456(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -246,8 +234,6 @@ func TestIssue2456(t *testing.T) {
 }
 
 func TestNoAutoCreateUser(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -260,8 +246,6 @@ func TestNoAutoCreateUser(t *testing.T) {
 }
 
 func TestCreateUserWhenGrant(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -277,9 +261,18 @@ func TestCreateUserWhenGrant(t *testing.T) {
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 }
 
-func TestGrantPrivilegeAtomic(t *testing.T) {
-	t.Parallel()
+func TestCreateUserWithTooLongName(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
+	tk := testkit.NewTestKit(t, store)
+	err := tk.ExecToErr("CREATE USER '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost'")
+	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
+	err = tk.ExecToErr("CREATE USER 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X'")
+	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
+}
+
+func TestGrantPrivilegeAtomic(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -334,8 +327,6 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 }
 
 func TestIssue2654(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -348,8 +339,6 @@ func TestIssue2654(t *testing.T) {
 }
 
 func TestGrantUnderANSIQuotes(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -364,8 +353,6 @@ func TestGrantUnderANSIQuotes(t *testing.T) {
 }
 
 func TestMaintainRequire(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -439,8 +426,6 @@ func TestMaintainRequire(t *testing.T) {
 }
 
 func TestMaintainAuthString(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -452,8 +437,6 @@ func TestMaintainAuthString(t *testing.T) {
 }
 
 func TestGrantOnNonExistTable(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -515,8 +498,6 @@ func TestGrantOnNonExistTable(t *testing.T) {
 }
 
 func TestIssue22721(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -531,8 +512,6 @@ func TestIssue22721(t *testing.T) {
 }
 
 func TestPerformanceSchemaPrivGrant(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -581,8 +560,6 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 }
 
 func TestGrantDynamicPrivs(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -617,8 +594,6 @@ func TestGrantDynamicPrivs(t *testing.T) {
 }
 
 func TestNonExistTableIllegalGrant(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

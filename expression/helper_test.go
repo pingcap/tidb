@@ -33,8 +33,6 @@ import (
 )
 
 func TestGetTimeValue(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
@@ -44,7 +42,7 @@ func TestGetTimeValue(t *testing.T) {
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
 
 	sessionVars := ctx.GetSessionVars()
-	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "default")
+	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "0")
 	require.NoError(t, err)
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
@@ -130,8 +128,6 @@ func TestGetTimeValue(t *testing.T) {
 }
 
 func TestIsCurrentTimestampExpr(t *testing.T) {
-	t.Parallel()
-
 	buildTimestampFuncCallExpr := func(i int64) *ast.FuncCallExpr {
 		var args []ast.ExprNode
 		if i != 0 {
@@ -144,21 +140,24 @@ func TestIsCurrentTimestampExpr(t *testing.T) {
 	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), nil)
 	require.True(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), &types.FieldType{Decimal: 3})
+	ft := &types.FieldType{}
+	ft.SetDecimal(3)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), ft)
 	require.True(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), ft)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), ft)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), &types.FieldType{Decimal: 0})
+
+	ft1 := &types.FieldType{}
+	ft1.SetDecimal(0)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), ft1)
 	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), nil)
 	require.False(t, v)
 }
 
 func TestCurrentTimestampTimeZone(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 

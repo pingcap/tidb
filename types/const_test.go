@@ -25,8 +25,6 @@ import (
 )
 
 func TestGetSQLMode(t *testing.T) {
-	t.Parallel()
-
 	positiveCases := []struct {
 		arg string
 	}{
@@ -59,8 +57,6 @@ func TestGetSQLMode(t *testing.T) {
 }
 
 func TestSQLMode(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		arg                           string
 		hasNoZeroDateMode             bool
@@ -87,8 +83,6 @@ func TestSQLMode(t *testing.T) {
 }
 
 func TestRealAsFloatMode(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -111,8 +105,6 @@ func TestRealAsFloatMode(t *testing.T) {
 }
 
 func TestPipesAsConcatMode(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -123,8 +115,6 @@ func TestPipesAsConcatMode(t *testing.T) {
 }
 
 func TestIssue22387(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -138,8 +128,6 @@ func TestIssue22387(t *testing.T) {
 }
 
 func TestIssue22389(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -157,8 +145,6 @@ func TestIssue22389(t *testing.T) {
 }
 
 func TestIssue22390(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -177,8 +163,6 @@ func TestIssue22390(t *testing.T) {
 }
 
 func TestIssue22442(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -191,8 +175,6 @@ func TestIssue22442(t *testing.T) {
 }
 
 func TestIssue22444(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -205,8 +187,6 @@ func TestIssue22444(t *testing.T) {
 }
 
 func TestIssue22445(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -220,8 +200,6 @@ func TestIssue22445(t *testing.T) {
 }
 
 func TestIssue22446(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -234,8 +212,6 @@ func TestIssue22446(t *testing.T) {
 }
 
 func TestIssue22447(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -250,8 +226,6 @@ func TestIssue22447(t *testing.T) {
 }
 
 func TestNoUnsignedSubtractionMode(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -338,8 +312,6 @@ func TestNoUnsignedSubtractionMode(t *testing.T) {
 }
 
 func TestHighNotPrecedenceMode(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -360,8 +332,6 @@ func TestHighNotPrecedenceMode(t *testing.T) {
 }
 
 func TestIgnoreSpaceMode(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -426,8 +396,6 @@ func TestIgnoreSpaceMode(t *testing.T) {
 }
 
 func TestNoBackslashEscapesMode(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -441,8 +409,6 @@ func TestNoBackslashEscapesMode(t *testing.T) {
 }
 
 func TestServerStatus(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		arg            uint16
 		IsCursorExists bool

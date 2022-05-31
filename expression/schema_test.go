@@ -48,7 +48,6 @@ func (s *schemaGenerator) generateSchema(colCount int) *Schema {
 }
 
 func TestSchemaString(t *testing.T) {
-	t.Parallel()
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: []", schema.String())
@@ -57,7 +56,6 @@ func TestSchemaString(t *testing.T) {
 }
 
 func TestSchemaRetrieveColumn(t *testing.T) {
-	t.Parallel()
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	colOutSchema := &Column{
@@ -70,7 +68,6 @@ func TestSchemaRetrieveColumn(t *testing.T) {
 }
 
 func TestSchemaIsUniqueKey(t *testing.T) {
-	t.Parallel()
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	generateKeys4Schema(schema)
@@ -88,7 +85,6 @@ func TestSchemaIsUniqueKey(t *testing.T) {
 }
 
 func TestSchemaContains(t *testing.T) {
-	t.Parallel()
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	colOutSchema := &Column{
@@ -101,7 +97,6 @@ func TestSchemaContains(t *testing.T) {
 }
 
 func TestSchemaColumnsIndices(t *testing.T) {
-	t.Parallel()
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	colOutSchema := &Column{
@@ -117,7 +112,6 @@ func TestSchemaColumnsIndices(t *testing.T) {
 }
 
 func TestSchemaColumnsByIndices(t *testing.T) {
-	t.Parallel()
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	indices := []int{0, 1, 2, 3}
@@ -128,7 +122,6 @@ func TestSchemaColumnsByIndices(t *testing.T) {
 }
 
 func TestSchemaMergeSchema(t *testing.T) {
-	t.Parallel()
 	s := &schemaGenerator{}
 	lSchema := s.generateSchema(5)
 	generateKeys4Schema(lSchema)
@@ -150,7 +143,6 @@ func TestSchemaMergeSchema(t *testing.T) {
 }
 
 func TestGetUsedList(t *testing.T) {
-	t.Parallel()
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
 	var usedCols []*Column

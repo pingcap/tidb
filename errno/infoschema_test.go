@@ -21,8 +21,6 @@ import (
 )
 
 func TestCopySafety(t *testing.T) {
-	t.Parallel()
-
 	IncrementError(123, "user", "host")
 	IncrementError(321, "user2", "host2")
 	IncrementWarning(123, "user", "host")

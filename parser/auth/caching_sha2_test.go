@@ -21,7 +21,6 @@ import (
 )
 
 func TestCheckShaPasswordGood(t *testing.T) {
-	t.Parallel()
 	pwd := "foobar"
 	pwhash, _ := hex.DecodeString("24412430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 	r, err := CheckShaPassword(pwhash, pwd)
@@ -30,7 +29,6 @@ func TestCheckShaPasswordGood(t *testing.T) {
 }
 
 func TestCheckShaPasswordBad(t *testing.T) {
-	t.Parallel()
 	pwd := "not_foobar"
 	pwhash, _ := hex.DecodeString("24412430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 	r, err := CheckShaPassword(pwhash, pwd)
@@ -39,7 +37,6 @@ func TestCheckShaPasswordBad(t *testing.T) {
 }
 
 func TestCheckShaPasswordShort(t *testing.T) {
-	t.Parallel()
 	pwd := "not_foobar"
 	pwhash, _ := hex.DecodeString("aaaaaaaa")
 	_, err := CheckShaPassword(pwhash, pwd)
@@ -47,7 +44,6 @@ func TestCheckShaPasswordShort(t *testing.T) {
 }
 
 func TestCheckShaPasswordDigetTypeIncompatible(t *testing.T) {
-	t.Parallel()
 	pwd := "not_foobar"
 	pwhash, _ := hex.DecodeString("24422430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 	_, err := CheckShaPassword(pwhash, pwd)
@@ -55,7 +51,6 @@ func TestCheckShaPasswordDigetTypeIncompatible(t *testing.T) {
 }
 
 func TestCheckShaPasswordIterationsInvalid(t *testing.T) {
-	t.Parallel()
 	pwd := "not_foobar"
 	pwhash, _ := hex.DecodeString("24412430304124031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 	_, err := CheckShaPassword(pwhash, pwd)
@@ -65,7 +60,6 @@ func TestCheckShaPasswordIterationsInvalid(t *testing.T) {
 // The output from NewSha2Password is not stable as the hash is based on the genrated salt.
 // This is why CheckShaPassword is used here.
 func TestNewSha2Password(t *testing.T) {
-	t.Parallel()
 	pwd := "testpwd"
 	pwhash := NewSha2Password(pwd)
 	r, err := CheckShaPassword([]byte(pwhash), pwd)

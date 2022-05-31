@@ -25,8 +25,6 @@ import (
 )
 
 func TestSimpleProjDual(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -40,8 +38,6 @@ func TestSimpleProjDual(t *testing.T) {
 }
 
 func TestPKIsHandleRangeScan(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -72,8 +68,6 @@ func TestPKIsHandleRangeScan(t *testing.T) {
 }
 
 func TestIndexScan(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -104,8 +98,6 @@ func TestIndexScan(t *testing.T) {
 }
 
 func TestBasicShow(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -121,8 +113,6 @@ func TestBasicShow(t *testing.T) {
 }
 
 func TestSort(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -152,8 +142,6 @@ func TestSort(t *testing.T) {
 }
 
 func TestAggregation(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -186,8 +174,6 @@ func TestAggregation(t *testing.T) {
 }
 
 func TestPushdownDistinctEnable(t *testing.T) {
-	t.Parallel()
-
 	var input []string
 	var output []struct {
 		SQL    string
@@ -203,8 +189,6 @@ func TestPushdownDistinctEnable(t *testing.T) {
 }
 
 func TestPushdownDistinctDisable(t *testing.T) {
-	t.Parallel()
-
 	var input []string
 	var output []struct {
 		SQL    string
@@ -253,8 +237,6 @@ func doTestPushdownDistinct(t *testing.T, vars, input []string, output []struct 
 }
 
 func TestSimplePlans(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -284,8 +266,6 @@ func TestSimplePlans(t *testing.T) {
 }
 
 func TestJoin(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -321,8 +301,6 @@ func TestJoin(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -354,8 +332,6 @@ func TestApply(t *testing.T) {
 }
 
 func TestMemTableScan(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -382,8 +358,6 @@ func TestMemTableScan(t *testing.T) {
 }
 
 func TestTopN(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -413,8 +387,6 @@ func TestTopN(t *testing.T) {
 }
 
 func TestCascadePlannerHashedPartTable(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -449,8 +421,6 @@ func TestCascadePlannerHashedPartTable(t *testing.T) {
 }
 
 func TestInlineProjection(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

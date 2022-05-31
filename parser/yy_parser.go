@@ -139,17 +139,16 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 // ParseSQL parses a query string to raw ast.StmtNode.
 func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
 	resetParams(parser)
+	parser.lexer.reset(sql)
 	for _, p := range params {
 		if err := p.ApplyOn(parser); err != nil {
 			return nil, nil, err
 		}
 	}
-	sql = parser.lexer.tryDecodeToUTF8String(sql)
 	parser.src = sql
 	parser.result = parser.result[:0]
 
 	var l yyLexer
-	parser.lexer.reset(sql)
 	l = &parser.lexer
 	yyParse(l, parser)
 
@@ -218,8 +217,8 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 		return
 	}
 	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-	if lastField.Offset+len(lastField.Text()) >= len(parser.src)-1 {
-		lastField.SetText(parser.src[lastField.Offset:lastEnd])
+	if lastField.Offset+len(lastField.OriginalText()) >= len(parser.src)-1 {
+		lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 	}
 }
 
@@ -258,7 +257,7 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 			return toDecimal(l, lval, str)
 		}
 		l.AppendError(l.Errorf("integer literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 
 	switch {
@@ -290,10 +289,10 @@ func toFloat(l yyLexer, lval *yySymType, str string) int {
 		e := err.(*strconv.NumError)
 		if e.Err == strconv.ErrRange {
 			l.AppendError(types.ErrIllegalValueForType.GenWithStackByArgs("double", str))
-			return int(unicode.ReplacementChar)
+			return invalid
 		}
 		l.AppendError(l.Errorf("float literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 
 	lval.item = n
@@ -305,7 +304,7 @@ func toHex(l yyLexer, lval *yySymType, str string) int {
 	h, err := ast.NewHexLiteral(str)
 	if err != nil {
 		l.AppendError(l.Errorf("hex literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 	lval.item = h
 	return hexLit
@@ -316,7 +315,7 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 	b, err := ast.NewBitLiteral(str)
 	if err != nil {
 		l.AppendError(l.Errorf("bit literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 	lval.item = b
 	return bitLit
@@ -396,7 +395,6 @@ var (
 func resetParams(p *Parser) {
 	p.charset = mysql.DefaultCharset
 	p.collation = mysql.DefaultCollationName
-	p.lexer.encoding = charset.UTF8Encoding
 }
 
 // ParseParam represents the parameter of parsing.
@@ -414,6 +412,7 @@ func (c CharsetConnection) ApplyOn(p *Parser) error {
 	} else {
 		p.charset = string(c)
 	}
+	p.lexer.connection = charset.FindEncoding(string(c))
 	return nil
 }
 
@@ -436,6 +435,6 @@ type CharsetClient string
 
 // ApplyOn implements ParseParam interface.
 func (c CharsetClient) ApplyOn(p *Parser) error {
-	p.lexer.encoding = charset.NewEncoding(string(c))
+	p.lexer.client = charset.FindEncoding(string(c))
 	return nil
 }

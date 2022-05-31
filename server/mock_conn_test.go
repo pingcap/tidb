@@ -24,8 +24,6 @@ import (
 )
 
 func TestMockConn(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	server := CreateMockServer(t, store)

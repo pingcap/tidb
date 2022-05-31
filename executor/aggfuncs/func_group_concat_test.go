@@ -34,15 +34,11 @@ import (
 )
 
 func TestMergePartialResult4GroupConcat(t *testing.T) {
-	t.Parallel()
-
 	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, "0 1 2 3 4", "2 3 4", "0 1 2 3 4 2 3 4")
 	testMergePartialResult(t, test)
 }
 
 func TestGroupConcat(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 
 	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, nil, "0 1 2 3 4")
@@ -67,18 +63,16 @@ func TestGroupConcat(t *testing.T) {
 }
 
 func TestMemGroupConcat(t *testing.T) {
-	t.Parallel()
-
 	multiArgsTest1 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
 		aggfuncs.DefPartialResult4GroupConcatSize+aggfuncs.DefBytesBufferSize, groupConcatMultiArgsUpdateMemDeltaGens, false)
 	multiArgsTest2 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
-		aggfuncs.DefPartialResult4GroupConcatDistinctSize+aggfuncs.DefBytesBufferSize+set.DefStringSetBucketMemoryUsage, groupConcatDistinctMultiArgsUpdateMemDeltaGens, true)
+		aggfuncs.DefPartialResult4GroupConcatDistinctSize+aggfuncs.DefBytesBufferSize+hack.DefBucketMemoryUsageForSetString, groupConcatDistinctMultiArgsUpdateMemDeltaGens, true)
 
 	multiArgsTest3 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
 		aggfuncs.DefPartialResult4GroupConcatOrderSize+aggfuncs.DefTopNRowsSize, groupConcatOrderMultiArgsUpdateMemDeltaGens, false)
 	multiArgsTest3.multiArgsAggTest.orderBy = true
 	multiArgsTest4 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
-		aggfuncs.DefPartialResult4GroupConcatOrderDistinctSize+aggfuncs.DefTopNRowsSize+set.DefStringSetBucketMemoryUsage, groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens, true)
+		aggfuncs.DefPartialResult4GroupConcatOrderDistinctSize+aggfuncs.DefTopNRowsSize+hack.DefBucketMemoryUsageForSetString, groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens, true)
 	multiArgsTest4.multiArgsAggTest.orderBy = true
 
 	multiArgsTests := []multiArgsAggMemTest{multiArgsTest1, multiArgsTest2, multiArgsTest3, multiArgsTest4}

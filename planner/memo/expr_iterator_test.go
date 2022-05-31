@@ -23,8 +23,6 @@ import (
 )
 
 func TestNewExprIterFromGroupElem(t *testing.T) {
-	t.Parallel()
-
 	ctx := plannercore.MockContext()
 	schema := expression.NewSchema()
 
@@ -67,8 +65,6 @@ func TestNewExprIterFromGroupElem(t *testing.T) {
 }
 
 func TestExprIterNext(t *testing.T) {
-	t.Parallel()
-
 	ctx := plannercore.MockContext()
 	schema := expression.NewSchema()
 
@@ -116,8 +112,6 @@ func TestExprIterNext(t *testing.T) {
 }
 
 func TestExprIterReset(t *testing.T) {
-	t.Parallel()
-
 	ctx := plannercore.MockContext()
 	schema := expression.NewSchema()
 
@@ -190,8 +184,6 @@ func TestExprIterReset(t *testing.T) {
 }
 
 func TestExprIterWithEngineType(t *testing.T) {
-	t.Parallel()
-
 	ctx := plannercore.MockContext()
 	schema := expression.NewSchema()
 

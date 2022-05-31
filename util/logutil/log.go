@@ -179,12 +179,14 @@ func SetLevel(level string) error {
 
 type ctxLogKeyType struct{}
 
-var ctxLogKey = ctxLogKeyType{}
+// CtxLogKey indicates the context key for logger
+// public for test usage.
+var CtxLogKey = ctxLogKeyType{}
 
 // Logger gets a contextual logger from current context.
 // contextual logger will output common fields from context.
 func Logger(ctx context.Context) *zap.Logger {
-	if ctxlogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+	if ctxlogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
 		return ctxlogger
 	}
 	return log.L()
@@ -198,30 +200,31 @@ func BgLogger() *zap.Logger {
 // WithConnID attaches connId to context.
 func WithConnID(ctx context.Context, connID uint64) context.Context {
 	var logger *zap.Logger
-	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+	if ctxLogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = log.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint64("conn", connID)))
+	return context.WithValue(ctx, CtxLogKey, logger.With(zap.Uint64("conn", connID)))
 }
 
 // WithTraceLogger attaches trace identifier to context
 func WithTraceLogger(ctx context.Context, connID uint64) context.Context {
 	var logger *zap.Logger
-	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+	if ctxLogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = log.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, wrapTraceLogger(ctx, connID, logger))
+	return context.WithValue(ctx, CtxLogKey, wrapTraceLogger(ctx, connID, logger))
 }
 
 func wrapTraceLogger(ctx context.Context, connID uint64, logger *zap.Logger) *zap.Logger {
 	return logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		tl := &traceLog{ctx: ctx}
-		traceCore := log.NewTextCore(log.NewTextEncoder(&log.Config{}), tl, tl).
-			With([]zapcore.Field{zap.Uint64("conn", connID)})
+		// cfg.Format == "", never return error
+		enc, _ := log.NewTextEncoder(&log.Config{})
+		traceCore := log.NewTextCore(enc, tl, tl).With([]zapcore.Field{zap.Uint64("conn", connID)})
 		return zapcore.NewTee(traceCore, core)
 	}))
 }
@@ -246,12 +249,12 @@ func (t *traceLog) Sync() error {
 // WithKeyValue attaches key/value to context.
 func WithKeyValue(ctx context.Context, key, value string) context.Context {
 	var logger *zap.Logger
-	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+	if ctxLogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = log.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, logger.With(zap.String(key, value)))
+	return context.WithValue(ctx, CtxLogKey, logger.With(zap.String(key, value)))
 }
 
 // TraceEventKey presents the TraceEventKey in span log.

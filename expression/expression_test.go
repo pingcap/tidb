@@ -28,17 +28,15 @@ import (
 )
 
 func TestNewValuesFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	res := NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	require.Equal(t, "values", res.FuncName.O)
-	require.Equal(t, mysql.TypeLonglong, res.RetType.Tp)
+	require.Equal(t, mysql.TypeLonglong, res.RetType.GetType())
 	_, ok := res.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
 }
 
 func TestEvaluateExprWithNull(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).add("col1", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
@@ -59,7 +57,6 @@ func TestEvaluateExprWithNull(t *testing.T) {
 }
 
 func TestEvaluateExprWithNullAndParameters(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
@@ -83,7 +80,6 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 }
 
 func TestConstant(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	require.False(t, NewZero().IsCorrelated())
@@ -97,14 +93,13 @@ func TestConstant(t *testing.T) {
 }
 
 func TestIsBinaryLiteral(t *testing.T) {
-	t.Parallel()
 	col := &Column{RetType: types.NewFieldType(mysql.TypeEnum)}
 	require.False(t, IsBinaryLiteral(col))
-	col.RetType.Tp = mysql.TypeSet
+	col.RetType.SetType(mysql.TypeSet)
 	require.False(t, IsBinaryLiteral(col))
-	col.RetType.Tp = mysql.TypeBit
+	col.RetType.SetType(mysql.TypeBit)
 	require.False(t, IsBinaryLiteral(col))
-	col.RetType.Tp = mysql.TypeDuration
+	col.RetType.SetType(mysql.TypeDuration)
 	require.False(t, IsBinaryLiteral(col))
 
 	con := &Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum([]byte{byte(0), byte(1)})}
@@ -114,7 +109,6 @@ func TestIsBinaryLiteral(t *testing.T) {
 }
 
 func TestConstItem(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sf := newFunction(ast.Rand)
 	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
@@ -127,7 +121,6 @@ func TestConstItem(t *testing.T) {
 }
 
 func TestVectorizable(t *testing.T) {
-	t.Parallel()
 	exprs := make([]Expression, 0, 4)
 	sf := newFunction(ast.Rand)
 	column := &Column{
@@ -199,9 +192,13 @@ func (builder *testTableBuilder) build() *model.TableInfo {
 	for i, colName := range builder.columnNames {
 		tp := builder.tps[i]
 		fieldType := types.NewFieldType(tp)
-		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
-		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
-		fieldType.Flag = builder.flags[i]
+		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.SetFlen(flen)
+		fieldType.SetDecimal(decimal)
+		charset, collate := types.DefaultCharsetForType(tp)
+		fieldType.SetCharset(charset)
+		fieldType.SetCollate(collate)
+		fieldType.SetFlag(builder.flags[i])
 		ti.Columns = append(ti.Columns, &model.ColumnInfo{
 			ID:        int64(i + 1),
 			Name:      model.NewCIStr(colName),
@@ -227,7 +224,6 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 }
 
 func TestEvalExpr(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}

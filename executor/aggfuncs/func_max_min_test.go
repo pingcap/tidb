@@ -43,7 +43,7 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 		if row.IsNull(0) {
 			continue
 		}
-		switch dataType.Tp {
+		switch dataType.GetType() {
 		case mysql.TypeString:
 			curVal := row.GetString(0)
 			if i == 0 {
@@ -95,8 +95,6 @@ func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 }
 
 func TestMergePartialResult4MaxMin(t *testing.T) {
-	t.Parallel()
-
 	elems := []string{"e", "d", "c", "b", "a"}
 	enumA, _ := types.ParseEnum(elems, "a", mysql.DefaultCollationName)
 	enumC, _ := types.ParseEnum(elems, "c", mysql.DefaultCollationName)
@@ -106,7 +104,7 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 	setED, _ := types.ParseSet(elems, "e,d", mysql.DefaultCollationName) // setED.Value == 3
 
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
-	unsignedType.Flag |= mysql.UnsignedFlag
+	unsignedType.AddFlag(mysql.UnsignedFlag)
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, 4, 4, 4),
 		buildAggTesterWithFieldType(ast.AggFuncMax, unsignedType, 5, 4, 4, 4),
@@ -135,17 +133,14 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.funcName, func(t *testing.T) {
-			t.Parallel()
 			testMergePartialResult(t, test)
 		})
 	}
 }
 
 func TestMaxMin(t *testing.T) {
-	t.Parallel()
-
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
-	unsignedType.Flag |= mysql.UnsignedFlag
+	unsignedType.AddFlag(mysql.UnsignedFlag)
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, nil, 4),
 		buildAggTesterWithFieldType(ast.AggFuncMax, unsignedType, 5, nil, 4),
@@ -170,15 +165,12 @@ func TestMaxMin(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.funcName, func(t *testing.T) {
-			t.Parallel()
 			testAggFunc(t, test)
 		})
 	}
 }
 
 func TestMemMaxMin(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
@@ -229,7 +221,6 @@ func TestMemMaxMin(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.aggTest.funcName, func(t *testing.T) {
-			t.Parallel()
 			testAggMemFunc(t, test)
 		})
 	}
@@ -268,8 +259,6 @@ func testMaxSlidingWindow(tk *testkit.TestKit, tc maxSlidingWindowTestCase) {
 }
 
 func TestMaxSlidingWindow(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -348,8 +337,6 @@ func TestMaxSlidingWindow(t *testing.T) {
 }
 
 func TestDequeReset(t *testing.T) {
-	t.Parallel()
-
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
@@ -360,8 +347,6 @@ func TestDequeReset(t *testing.T) {
 }
 
 func TestDequePushPop(t *testing.T) {
-	t.Parallel()
-
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})

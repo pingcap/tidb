@@ -22,14 +22,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/stretchr/testify/require"
 )
-
-type securitySuite struct{}
-
-var _ = Suite(&securitySuite{})
 
 func respondPathHandler(w http.ResponseWriter, req *http.Request) {
 	_, _ = io.WriteString(w, `{"path":"`)
@@ -37,27 +34,27 @@ func respondPathHandler(w http.ResponseWriter, req *http.Request) {
 	_, _ = io.WriteString(w, `"}`)
 }
 
-func (s *securitySuite) TestGetJSONInsecure(c *C) {
+func TestGetJSONInsecure(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(respondPathHandler))
 	defer mockServer.Close()
 
 	ctx := context.Background()
 	u, err := url.Parse(mockServer.URL)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tls, err := common.NewTLS("", "", "", u.Host)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	var result struct{ Path string }
 	err = tls.GetJSON(ctx, "/aaa", &result)
-	c.Assert(err, IsNil)
-	c.Assert(result.Path, Equals, "/aaa")
+	require.NoError(t, err)
+	require.Equal(t, "/aaa", result.Path)
 	err = tls.GetJSON(ctx, "/bbbb", &result)
-	c.Assert(err, IsNil)
-	c.Assert(result.Path, Equals, "/bbbb")
+	require.NoError(t, err)
+	require.Equal(t, "/bbbb", result.Path)
 }
 
-func (s *securitySuite) TestGetJSONSecure(c *C) {
+func TestGetJSONSecure(t *testing.T) {
 	mockServer := httptest.NewTLSServer(http.HandlerFunc(respondPathHandler))
 	defer mockServer.Close()
 
@@ -66,34 +63,47 @@ func (s *securitySuite) TestGetJSONSecure(c *C) {
 
 	var result struct{ Path string }
 	err := tls.GetJSON(ctx, "/ccc", &result)
-	c.Assert(err, IsNil)
-	c.Assert(result.Path, Equals, "/ccc")
+	require.NoError(t, err)
+	require.Equal(t, "/ccc", result.Path)
 	err = tls.GetJSON(ctx, "/dddd", &result)
-	c.Assert(err, IsNil)
-	c.Assert(result.Path, Equals, "/dddd")
+	require.NoError(t, err)
+	require.Equal(t, "/dddd", result.Path)
 }
 
-func (s *securitySuite) TestInvalidTLS(c *C) {
-	tempDir := c.MkDir()
-
+func TestInvalidTLS(t *testing.T) {
+	tempDir := t.TempDir()
 	caPath := filepath.Join(tempDir, "ca.pem")
 	_, err := common.NewTLS(caPath, "", "", "localhost")
-	c.Assert(err, ErrorMatches, "could not read ca certificate:.*")
+	require.Regexp(t, "could not read ca certificate:.*", err.Error())
 
 	err = os.WriteFile(caPath, []byte("invalid ca content"), 0o644)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = common.NewTLS(caPath, "", "", "localhost")
-	c.Assert(err, ErrorMatches, "failed to append ca certs")
+	require.Regexp(t, "failed to append ca certs", err.Error())
+
+	err = os.WriteFile(caPath, []byte(`-----BEGIN CERTIFICATE-----
+MIIBITCBxwIUf04/Hucshr7AynmgF8JeuFUEf9EwCgYIKoZIzj0EAwIwEzERMA8G
+A1UEAwwIYnJfdGVzdHMwHhcNMjIwNDEzMDcyNDQxWhcNMjIwNDE1MDcyNDQxWjAT
+MREwDwYDVQQDDAhicl90ZXN0czBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABL+X
+wczUg0AbaFFaCI+FAk3K9vbB9JeIORgGKS+F1TKip5tvm96g7S5lq8SgY38SXVc3
+0yS3YqWZqnRjWi+sLwIwCgYIKoZIzj0EAwIDSQAwRgIhAJcpSwsUhqkM08LK1gYC
+ze4ZnCkwJdP2VdpI3WZsoI7zAiEAjP8X1c0iFwYxdAbQAveX+9msVrzyUpZOohi4
+RtgQTNI=
+-----END CERTIFICATE-----
+`), 0o644)
+	require.NoError(t, err)
 
 	certPath := filepath.Join(tempDir, "test.pem")
 	keyPath := filepath.Join(tempDir, "test.key")
-	_, err = common.NewTLS(caPath, certPath, keyPath, "localhost")
-	c.Assert(err, ErrorMatches, "could not load client key pair: open.*")
+	tls, err := common.NewTLS(caPath, certPath, keyPath, "localhost")
+	_, err = tls.TLSConfig().GetCertificate(nil)
+	require.Regexp(t, "could not load client key pair: open.*", err.Error())
 
 	err = os.WriteFile(certPath, []byte("invalid cert content"), 0o644)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = os.WriteFile(keyPath, []byte("invalid key content"), 0o600)
-	c.Assert(err, IsNil)
-	_, err = common.NewTLS(caPath, certPath, keyPath, "localhost")
-	c.Assert(err, ErrorMatches, "could not load client key pair: tls.*")
+	require.NoError(t, err)
+	tls, err = common.NewTLS(caPath, certPath, keyPath, "localhost")
+	_, err = tls.TLSConfig().GetCertificate(nil)
+	require.Regexp(t, "could not load client key pair: tls.*", err.Error())
 }

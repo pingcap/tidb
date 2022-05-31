@@ -2,9 +2,11 @@ package backend_test
 
 import (
 	"context"
+	"database/sql/driver"
 	"testing"
 	"time"
 
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -39,7 +41,6 @@ func (s *backendSuite) tearDownTest() {
 }
 
 func TestOpenCloseImportCleanUpEngine(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 	ctx := context.Background()
@@ -53,7 +54,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 		Return(nil).
 		After(openCall)
 	importCall := s.mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID, gomock.Any()).
+		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
 		Return(nil).
 		After(closeCall)
 	s.mockBackend.EXPECT().
@@ -65,14 +66,13 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 	require.NoError(t, err)
 	closedEngine, err := engine.Close(ctx, nil)
 	require.NoError(t, err)
-	err = closedEngine.Import(ctx, 1)
+	err = closedEngine.Import(ctx, 1, 1)
 	require.NoError(t, err)
 	err = closedEngine.Cleanup(ctx)
 	require.NoError(t, err)
 }
 
 func TestUnsafeCloseEngine(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -94,7 +94,6 @@ func TestUnsafeCloseEngine(t *testing.T) {
 }
 
 func TestUnsafeCloseEngineWithUUID(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -116,7 +115,6 @@ func TestUnsafeCloseEngineWithUUID(t *testing.T) {
 }
 
 func TestWriteEngine(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -155,7 +153,6 @@ func TestWriteEngine(t *testing.T) {
 }
 
 func TestWriteToEngineWithNothing(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -179,7 +176,6 @@ func TestWriteToEngineWithNothing(t *testing.T) {
 }
 
 func TestOpenEngineFailed(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -193,7 +189,6 @@ func TestOpenEngineFailed(t *testing.T) {
 }
 
 func TestWriteEngineFailed(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -221,7 +216,6 @@ func TestWriteEngineFailed(t *testing.T) {
 }
 
 func TestWriteBatchSendFailedWithRetry(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -249,7 +243,6 @@ func TestWriteBatchSendFailedWithRetry(t *testing.T) {
 }
 
 func TestImportFailedNoRetry(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -257,18 +250,17 @@ func TestImportFailedNoRetry(t *testing.T) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable import error"))
 
 	closedEngine, err := s.backend.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
 	require.NoError(t, err)
-	err = closedEngine.Import(ctx, 1)
+	err = closedEngine.Import(ctx, 1, 1)
 	require.Error(t, err)
 	require.Regexp(t, "^fake unrecoverable import error", err.Error())
 }
 
 func TestImportFailedWithRetry(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -276,20 +268,19 @@ func TestImportFailedWithRetry(t *testing.T) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any()).
-		Return(errors.New("fake recoverable import error")).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.Annotate(driver.ErrBadConn, "fake recoverable import error")).
 		MinTimes(2)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
 
 	closedEngine, err := s.backend.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
 	require.NoError(t, err)
-	err = closedEngine.Import(ctx, 1)
+	err = closedEngine.Import(ctx, 1, 1)
 	require.Error(t, err)
-	require.Regexp(t, "fake recoverable import error$", err.Error())
+	require.Contains(t, err.Error(), "fake recoverable import error")
 }
 
 func TestImportFailedRecovered(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -297,22 +288,21 @@ func TestImportFailedRecovered(t *testing.T) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any()).
-		Return(errors.New("fake recoverable import error"))
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(gmysql.ErrInvalidConn)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
 
 	closedEngine, err := s.backend.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
 	require.NoError(t, err)
-	err = closedEngine.Import(ctx, 1)
+	err = closedEngine.Import(ctx, 1, 1)
 	require.NoError(t, err)
 }
 
 //nolint:interfacer // change test case signature causes check panicking.
 func TestClose(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -322,7 +312,6 @@ func TestClose(t *testing.T) {
 }
 
 func TestMakeEmptyRows(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -332,7 +321,6 @@ func TestMakeEmptyRows(t *testing.T) {
 }
 
 func TestNewEncoder(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
@@ -346,7 +334,6 @@ func TestNewEncoder(t *testing.T) {
 }
 
 func TestCheckDiskQuota(t *testing.T) {
-	t.Parallel()
 	s := createBackendSuite(t)
 	defer s.tearDownTest()
 

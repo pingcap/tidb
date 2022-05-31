@@ -61,7 +61,6 @@ func (n *checkExpr) reset() {
 }
 
 func TestExpresionsVisitorCover(t *testing.T) {
-	t.Parallel()
 	ce := &checkExpr{}
 	stmts :=
 		[]struct {
@@ -102,7 +101,6 @@ func TestExpresionsVisitorCover(t *testing.T) {
 }
 
 func TestUnaryOperationExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"++1", "++1"},
 		{"--1", "--1"},
@@ -119,7 +117,6 @@ func TestUnaryOperationExprRestore(t *testing.T) {
 }
 
 func TestColumnNameExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"abc", "`abc`"},
 		{"`abc`", "`abc`"},
@@ -136,7 +133,6 @@ func TestColumnNameExprRestore(t *testing.T) {
 }
 
 func TestIsNullExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"a is null", "`a` IS NULL"},
 		{"a is not null", "`a` IS NOT NULL"},
@@ -148,7 +144,6 @@ func TestIsNullExprRestore(t *testing.T) {
 }
 
 func TestIsTruthRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"a is true", "`a` IS TRUE"},
 		{"a is not true", "`a` IS NOT TRUE"},
@@ -162,7 +157,6 @@ func TestIsTruthRestore(t *testing.T) {
 }
 
 func TestBetweenExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"b between 1 and 2", "`b` BETWEEN 1 AND 2"},
 		{"b not between 1 and 2", "`b` NOT BETWEEN 1 AND 2"},
@@ -177,7 +171,6 @@ func TestBetweenExprRestore(t *testing.T) {
 }
 
 func TestCaseExpr(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"case when 1 then 2 end", "CASE WHEN 1 THEN 2 END"},
 		{"case when 1 then 'a' when 2 then 'b' end", "CASE WHEN 1 THEN _UTF8MB4'a' WHEN 2 THEN _UTF8MB4'b' END"},
@@ -192,7 +185,6 @@ func TestCaseExpr(t *testing.T) {
 }
 
 func TestBinaryOperationExpr(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"'a'!=1", "_UTF8MB4'a'!=1"},
 		{"a!=1", "`a`!=1"},
@@ -220,7 +212,6 @@ func TestBinaryOperationExpr(t *testing.T) {
 }
 
 func TestBinaryOperationExprWithFlags(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"'a'!=1", "_UTF8MB4'a' != 1"},
 		{"a!=1", "`a` != 1"},
@@ -239,7 +230,6 @@ func TestBinaryOperationExprWithFlags(t *testing.T) {
 }
 
 func TestParenthesesExpr(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"(1+2)*3", "(1+2)*3"},
 		{"1+2*3", "1+2*3"},
@@ -251,7 +241,6 @@ func TestParenthesesExpr(t *testing.T) {
 }
 
 func TestWhenClause(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"when 1 then 2", "WHEN 1 THEN 2"},
 		{"when 1 then 'a'", "WHEN 1 THEN _UTF8MB4'a'"},
@@ -264,7 +253,6 @@ func TestWhenClause(t *testing.T) {
 }
 
 func TestDefaultExpr(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"default", "DEFAULT"},
 		{"default(i)", "DEFAULT(`i`)"},
@@ -276,7 +264,6 @@ func TestDefaultExpr(t *testing.T) {
 }
 
 func TestPatternInExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"'a' in ('b')", "_UTF8MB4'a' IN (_UTF8MB4'b')"},
 		{"2 in (0,3,7)", "2 IN (0,3,7)"},
@@ -291,7 +278,6 @@ func TestPatternInExprRestore(t *testing.T) {
 }
 
 func TestPatternLikeExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"a like 't1'", "`a` LIKE _UTF8MB4't1'"},
 		{"a like 't1%'", "`a` LIKE _UTF8MB4't1%'"},
@@ -309,7 +295,6 @@ func TestPatternLikeExprRestore(t *testing.T) {
 }
 
 func TestValuesExpr(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"values(a)", "VALUES(`a`)"},
 		{"values(a)+values(b)", "VALUES(`a`)+VALUES(`b`)"},
@@ -321,7 +306,6 @@ func TestValuesExpr(t *testing.T) {
 }
 
 func TestPatternRegexpExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"a regexp 't1'", "`a` REGEXP _UTF8MB4't1'"},
 		{"a regexp '^[abc][0-9]{11}|ok$'", "`a` REGEXP _UTF8MB4'^[abc][0-9]{11}|ok$'"},
@@ -339,7 +323,6 @@ func TestPatternRegexpExprRestore(t *testing.T) {
 }
 
 func TestRowExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"(1,2)", "ROW(1,2)"},
 		{"(col1,col2)", "ROW(`col1`,`col2`)"},
@@ -353,7 +336,6 @@ func TestRowExprRestore(t *testing.T) {
 }
 
 func TestMaxValueExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"maxvalue", "MAXVALUE"},
 	}
@@ -364,7 +346,6 @@ func TestMaxValueExprRestore(t *testing.T) {
 }
 
 func TestPositionExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"1", "1"},
 	}
@@ -376,7 +357,6 @@ func TestPositionExprRestore(t *testing.T) {
 }
 
 func TestExistsSubqueryExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"EXISTS (SELECT 2)", "EXISTS (SELECT 2)"},
 		{"NOT EXISTS (SELECT 2)", "NOT EXISTS (SELECT 2)"},
@@ -390,7 +370,6 @@ func TestExistsSubqueryExprRestore(t *testing.T) {
 }
 
 func TestVariableExpr(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"@a>1", "@`a`>1"},
 		{"@`aB`+1", "@`aB`+1"},
@@ -401,7 +380,6 @@ func TestVariableExpr(t *testing.T) {
 		{"@``", "@``"},
 		{"@", "@``"},
 		{"@@``", "@@``"},
-		{"@@", "@@``"},
 		{"@@var", "@@`var`"},
 		{"@@global.b='foo'", "@@GLOBAL.`b`=_UTF8MB4'foo'"},
 		{"@@session.'C'", "@@SESSION.`c`"},
@@ -414,7 +392,6 @@ func TestVariableExpr(t *testing.T) {
 }
 
 func TestMatchAgainstExpr(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{`MATCH(content, title) AGAINST ('search for')`, "MATCH (`content`,`title`) AGAINST (_UTF8MB4'search for')"},
 		{`MATCH(content) AGAINST ('search for' IN BOOLEAN MODE)`, "MATCH (`content`) AGAINST (_UTF8MB4'search for' IN BOOLEAN MODE)"},

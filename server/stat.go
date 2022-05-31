@@ -16,7 +16,9 @@ package server
 
 import (
 	"crypto/x509"
+	"time"
 
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -25,11 +27,13 @@ import (
 var (
 	serverNotAfter  = "Ssl_server_not_after"
 	serverNotBefore = "Ssl_server_not_before"
+	upTime          = "Uptime"
 )
 
 var defaultStatus = map[string]*variable.StatusVal{
 	serverNotAfter:  {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},
 	serverNotBefore: {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},
+	upTime:          {Scope: variable.ScopeGlobal, Value: 0},
 }
 
 // GetScope gets the status variables scope.
@@ -57,5 +61,15 @@ func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, erro
 			}
 		}
 	}
+
+	var err error
+	info := serverInfo{}
+	info.ServerInfo, err = infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
+	} else {
+		m[upTime] = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
+	}
+
 	return m, nil
 }

@@ -77,7 +77,7 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 			continue
 		}
 		// If column has not null flag, [null, null] should be removed.
-		if mysql.HasNotNullFlag(tp.Flag) && endPoint.value.Kind() == types.KindNull {
+		if mysql.HasNotNullFlag(tp.GetFlag()) && endPoint.value.Kind() == types.KindNull {
 			continue
 		}
 
@@ -86,6 +86,7 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
+			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
 		}
 		ranges = append(ranges, ran)
 	}
@@ -100,32 +101,41 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		if tp.Tp == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
+		if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
+			// do not ignore these errors if in prepared plan building for safety
+			return nil, errors.Trace(err)
+		}
+		if tp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
-		} else if tp.Tp == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
+		} else if tp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
-		} else if tp.Tp == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
+		} else if tp.GetType() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
 			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
-		} else if point.value.Kind() == types.KindMysqlTime && tp.Tp == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
+		} else if point.value.Kind() == types.KindMysqlTime && tp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
 			// See issue #28424: query failed after add index
 			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select
-		} else if tp.Tp == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
+		} else if tp.GetType() == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
 			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
 			// We should cover Enum upper overflow, and convert to the biggest value.
 			if point.value.GetInt64() > 0 {
-				upperEnum, err := types.ParseEnumValue(tp.Elems, uint64(len(tp.Elems)))
+				upperEnum, err := types.ParseEnumValue(tp.GetElems(), uint64(len(tp.GetElems())))
 				if err != nil {
 					return nil, err
 				}
-				casted.SetMysqlEnum(upperEnum, tp.Collate)
+				casted.SetMysqlEnum(upperEnum, tp.GetCollate())
 			}
+		} else if terror.ErrorEqual(err, charset.ErrInvalidCharacterString) {
+			// The invalid string can be produced by changing datum's underlying bytes directly.
+			// For example, newBuildFromPatternLike calculates the end point by adding 1 to bytes.
+			// We need to skip these invalid strings.
+			return point, nil
 		} else {
 			return point, errors.Trace(err)
 		}
 	}
-	valCmpCasted, err := point.value.Compare(sc, &casted, collate.GetCollator(tp.Collate))
+	valCmpCasted, err := point.value.Compare(sc, &casted, collate.GetCollator(tp.GetCollate()))
 	if err != nil {
 		return point, errors.Trace(err)
 	}
@@ -211,11 +221,15 @@ func appendPoints2IndexRange(sctx sessionctx.Context, origin *Range, rangePoints
 		copy(highVal, origin.HighVal)
 		highVal[len(origin.HighVal)] = endPoint.value
 
+		collators := make([]collate.Collator, len(origin.Collators)+1)
+		copy(collators, origin.Collators)
+		collators[len(origin.Collators)] = collate.GetCollator(ft.GetCollate())
 		ir := &Range{
 			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
 			HighVal:     highVal,
 			HighExclude: endPoint.excl,
+			Collators:   collators,
 		}
 		newRanges = append(newRanges, ir)
 	}
@@ -231,11 +245,13 @@ func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
 		for _, r := range ranges {
 			lowVal := append(pointRange.LowVal, r.LowVal...)
 			highVal := append(pointRange.HighVal, r.HighVal...)
+			collators := append(pointRange.Collators, r.Collators...)
 			newRange := &Range{
 				LowVal:      lowVal,
 				LowExclude:  r.LowExclude,
 				HighVal:     highVal,
 				HighExclude: r.HighExclude,
+				Collators:   collators,
 			}
 			newRanges = append(newRanges, newRange)
 		}
@@ -249,7 +265,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 	ranges := make([]*Range, 0, len(rangePoints)/2)
 	var minValueDatum, maxValueDatum types.Datum
 	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
-	if mysql.HasUnsignedFlag(tp.Flag) {
+	if mysql.HasUnsignedFlag(tp.GetFlag()) {
 		minValueDatum.SetUint64(0)
 		maxValueDatum.SetUint64(math.MaxUint64)
 	} else {
@@ -288,6 +304,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
+			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
 		}
 		ranges = append(ranges, ran)
 	}
@@ -299,7 +316,8 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond))
+		collator := collate.GetCollator(tp.GetCollate())
+		rangePoints = rb.intersection(rangePoints, rb.build(cond, collator), collator)
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
@@ -341,7 +359,7 @@ func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.C
 // BuildColumnRange builds range from access conditions for general columns.
 func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int) ([]*Range, error) {
 	if len(conds) == 0 {
-		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
+		return FullRange(), nil
 	}
 	return buildColumnRange(conds, sctx, tp, false, colLen)
 }
@@ -359,7 +377,7 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	}
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessCondition[i])
+		point := rb.build(accessCondition[i], collate.GetCollator(newTp[i].GetCollate()))
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
@@ -375,7 +393,8 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessCondition); i++ {
-		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
+		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
+		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i], collator), collator)
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
@@ -510,7 +529,7 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 // If it's binary or ascii encoded, we will cut it by bytes rather than characters.
 func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
-		colCharset := tp.Charset
+		colCharset := tp.GetCharset()
 		colValue := v.GetBytes()
 		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
 			if len(colValue) > length {
@@ -518,7 +537,7 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 				if v.Kind() == types.KindBytes {
 					v.SetBytes(colValue[:length])
 				} else {
-					v.SetString(v.GetString()[:length], tp.Collate)
+					v.SetString(v.GetString()[:length], tp.GetCollate())
 				}
 				return true
 			}
@@ -526,7 +545,7 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 			rs := bytes.Runes(colValue)
 			truncateStr := string(rs[:length])
 			// truncate value and limit its length
-			v.SetString(truncateStr, tp.Collate)
+			v.SetString(truncateStr, tp.GetCollate())
 			return true
 		}
 	}
@@ -536,7 +555,7 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 // ReachPrefixLen checks whether the length of v is equal to the prefix length.
 func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
-		colCharset := tp.Charset
+		colCharset := tp.GetCharset()
 		colValue := v.GetBytes()
 		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
 			return len(colValue) == length
@@ -549,18 +568,18 @@ func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 // We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
 // Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldType of column a.
 func newFieldType(tp *types.FieldType) *types.FieldType {
-	switch tp.Tp {
+	switch tp.GetType() {
 	// To avoid overflow error.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		newTp := types.NewFieldType(mysql.TypeLonglong)
-		newTp.Flag = tp.Flag
-		newTp.Charset = tp.Charset
+		newTp.SetFlag(tp.GetFlag())
+		newTp.SetCharset(tp.GetCharset())
 		return newTp
 	// To avoid data truncate error.
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		newTp := types.NewFieldTypeWithCollation(tp.Tp, tp.Collate, types.UnspecifiedLength)
-		newTp.Charset = tp.Charset
+		newTp := types.NewFieldTypeWithCollation(tp.GetType(), tp.GetCollate(), types.UnspecifiedLength)
+		newTp.SetCharset(tp.GetCharset())
 		return newTp
 	default:
 		return tp
@@ -631,7 +650,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 
 			// sanity check: only last column of the `Range` can be an interval
 			if j < len(ran.LowVal)-1 {
-				cmp, err := ran.LowVal[j].CompareDatum(sc, &ran.HighVal[j])
+				cmp, err := ran.LowVal[j].Compare(sc, &ran.HighVal[j], ran.Collators[j])
 				if err != nil {
 					return "", errors.New("comparing values error: " + err.Error())
 				}
@@ -639,8 +658,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 					return "", errors.New("unexpected form of range")
 				}
 			}
-
-			str, err := RangeSingleColToString(sc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j])
+			str, err := RangeSingleColToString(sc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j], ran.Collators[j])
 			if err != nil {
 				return "false", err
 			}
@@ -667,7 +685,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 }
 
 // RangeSingleColToString prints a single column of a Range into a string which can appear in an SQL as a condition.
-func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.Datum, lowExclude, highExclude bool, colName string) (string, error) {
+func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.Datum, lowExclude, highExclude bool, colName string, collator collate.Collator) (string, error) {
 	// case 1: low and high are both special values(null, min not null, max value)
 	lowKind := lowVal.Kind()
 	highKind := highVal.Kind()
@@ -689,7 +707,7 @@ func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
 
 	// case 2: low value and high value are the same, and low value and high value are both inclusive.
-	cmp, err := lowVal.CompareDatum(sc, &highVal)
+	cmp, err := lowVal.Compare(sc, &highVal, collator)
 	if err != nil {
 		return "false", errors.Trace(err)
 	}

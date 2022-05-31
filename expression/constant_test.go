@@ -65,8 +65,6 @@ func newFunctionWithType(funcName string, tp *types.FieldType, args ...Expressio
 }
 
 func TestConstantPropagation(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		solver     []PropagateConstantSolver
 		conditions []Expression
@@ -193,8 +191,6 @@ func TestConstantPropagation(t *testing.T) {
 }
 
 func TestConstantFolding(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		condition Expression
 		result    string
@@ -231,7 +227,6 @@ func TestConstantFolding(t *testing.T) {
 }
 
 func TestConstantFoldingCharsetConvert(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		condition Expression
 		result    string
@@ -288,8 +283,6 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 }
 
 func TestDeferredParamNotNull(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	testTime := time.Now()
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
@@ -319,18 +312,18 @@ func TestDeferredParamNotNull(t *testing.T) {
 	cstBit := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 10}, RetType: newBinaryLiteralFieldType()}
 	cstEnum := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 11}, RetType: newEnumFieldType()}
 
-	require.Equal(t, mysql.TypeVarString, cstJSON.GetType().Tp)
-	require.Equal(t, mysql.TypeNewDecimal, cstDec.GetType().Tp)
-	require.Equal(t, mysql.TypeLonglong, cstInt.GetType().Tp)
-	require.Equal(t, mysql.TypeLonglong, cstUint.GetType().Tp)
-	require.Equal(t, mysql.TypeTimestamp, cstTime.GetType().Tp)
-	require.Equal(t, mysql.TypeDuration, cstDuration.GetType().Tp)
-	require.Equal(t, mysql.TypeBlob, cstBytes.GetType().Tp)
-	require.Equal(t, mysql.TypeVarString, cstBinary.GetType().Tp)
-	require.Equal(t, mysql.TypeVarString, cstBit.GetType().Tp)
-	require.Equal(t, mysql.TypeFloat, cstFloat32.GetType().Tp)
-	require.Equal(t, mysql.TypeDouble, cstFloat64.GetType().Tp)
-	require.Equal(t, mysql.TypeEnum, cstEnum.GetType().Tp)
+	require.Equal(t, mysql.TypeVarString, cstJSON.GetType().GetType())
+	require.Equal(t, mysql.TypeNewDecimal, cstDec.GetType().GetType())
+	require.Equal(t, mysql.TypeLonglong, cstInt.GetType().GetType())
+	require.Equal(t, mysql.TypeLonglong, cstUint.GetType().GetType())
+	require.Equal(t, mysql.TypeTimestamp, cstTime.GetType().GetType())
+	require.Equal(t, mysql.TypeDuration, cstDuration.GetType().GetType())
+	require.Equal(t, mysql.TypeBlob, cstBytes.GetType().GetType())
+	require.Equal(t, mysql.TypeVarString, cstBinary.GetType().GetType())
+	require.Equal(t, mysql.TypeVarString, cstBit.GetType().GetType())
+	require.Equal(t, mysql.TypeFloat, cstFloat32.GetType().GetType())
+	require.Equal(t, mysql.TypeDouble, cstFloat64.GetType().GetType())
+	require.Equal(t, mysql.TypeEnum, cstEnum.GetType().GetType())
 
 	d, _, err := cstInt.EvalInt(ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -356,8 +349,6 @@ func TestDeferredParamNotNull(t *testing.T) {
 }
 
 func TestDeferredExprNotNull(t *testing.T) {
-	t.Parallel()
-
 	m := &MockExpr{}
 	ctx := mock.NewContext()
 	cst := &Constant{DeferredExpr: m, RetType: newIntFieldType()}
@@ -433,8 +424,6 @@ func TestDeferredExprNotNull(t *testing.T) {
 }
 
 func TestVectorizedConstant(t *testing.T) {
-	t.Parallel()
-
 	// fixed-length type with/without Sel
 	for _, cst := range []*Constant{
 		{RetType: newIntFieldType(), Value: types.NewIntDatum(2333)},
@@ -490,8 +479,6 @@ func TestVectorizedConstant(t *testing.T) {
 }
 
 func TestGetTypeThreadSafe(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
 		types.NewIntDatum(1),
@@ -500,4 +487,24 @@ func TestGetTypeThreadSafe(t *testing.T) {
 	ft1 := con.GetType()
 	ft2 := con.GetType()
 	require.NotSame(t, ft1, ft2)
+}
+
+func TestSpecificConstant(t *testing.T) {
+	one := NewOne()
+	require.Equal(t, one.Value, types.NewDatum(1))
+	require.Equal(t, one.RetType.GetType(), mysql.TypeTiny)
+	require.Equal(t, one.RetType.GetFlen(), 1)
+	require.Equal(t, one.RetType.GetDecimal(), 0)
+
+	zero := NewZero()
+	require.Equal(t, zero.Value, types.NewDatum(0))
+	require.Equal(t, zero.RetType.GetType(), mysql.TypeTiny)
+	require.Equal(t, zero.RetType.GetFlen(), 1)
+	require.Equal(t, zero.RetType.GetDecimal(), 0)
+
+	null := NewNull()
+	require.Equal(t, null.Value, types.NewDatum(nil))
+	require.Equal(t, null.RetType.GetType(), mysql.TypeTiny)
+	require.Equal(t, null.RetType.GetFlen(), 1)
+	require.Equal(t, null.RetType.GetDecimal(), 0)
 }

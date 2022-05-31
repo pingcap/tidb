@@ -73,7 +73,6 @@ func testReadAtWithCase(t *testing.T, testCase readAtTestCase) {
 }
 
 func TestReadAt(t *testing.T) {
-	t.Parallel()
 	ctrCipher1, err := NewCtrCipher()
 	require.NoError(t, err)
 	ctrCipher2, err := NewCtrCipher()

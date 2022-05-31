@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -130,6 +131,12 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 // eliminatePhysicalProjection should be called after physical optimization to
 // eliminate the redundant projection left after logical projection elimination.
 func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
+	failpoint.Inject("DisableProjectionPostOptimization", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(p)
+		}
+	})
+
 	oldSchema := p.Schema()
 	newRoot := doPhysicalProjectionElimination(p)
 	newCols := newRoot.Schema().Columns
@@ -184,7 +191,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
 				foldedExpr := expression.FoldConstant(proj.Exprs[i])
 				// the folded expr should have the same null flag with the original expr, especially for the projection under union, so forcing it here.
-				foldedExpr.GetType().Flag = (foldedExpr.GetType().Flag & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType().Flag & mysql.NotNullFlag)
+				foldedExpr.GetType().SetFlag((foldedExpr.GetType().GetFlag() & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType().GetFlag() & mysql.NotNullFlag))
 				proj.Exprs[i] = foldedExpr
 			}
 			p.Children()[0] = child.Children()[0]
@@ -300,7 +307,7 @@ func (*projectionEliminator) name() string {
 func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *logicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(
-			fmt.Sprintf("Proj[%v] is eliminated, Proj[%v]'s expressions changed into[", child.ID(), parent.ID()))
+			fmt.Sprintf("%v_%v is eliminated, %v_%v's expressions changed into[", child.TP(), child.ID(), parent.TP(), parent.ID()))
 		for i, expr := range parent.Exprs {
 			if i > 0 {
 				buffer.WriteString(",")
@@ -309,13 +316,19 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *logi
 		}
 		buffer.WriteString("]")
 		return buffer.String()
-	}()
-	reason := fmt.Sprintf("Proj[%v]'s child proj[%v] is redundant", parent.ID(), child.ID())
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v's child %v_%v is redundant", parent.TP(), parent.ID(), child.TP(), child.ID())
+	}
 	opt.appendStepToCurrent(child.ID(), child.TP(), reason, action)
 }
 
 func appendProjEliminateTraceStep(proj *LogicalProjection, opt *logicalOptimizeOp) {
-	reason := fmt.Sprintf("Proj[%v]'s Exprs are all Columns", proj.ID())
-	action := fmt.Sprintf("Proj[%v] is eliminated", proj.ID())
+	reason := func() string {
+		return fmt.Sprintf("%v_%v's Exprs are all Columns", proj.TP(), proj.ID())
+	}
+	action := func() string {
+		return fmt.Sprintf("%v_%v is eliminated", proj.TP(), proj.ID())
+	}
 	opt.appendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }

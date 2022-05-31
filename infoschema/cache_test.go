@@ -22,15 +22,11 @@ import (
 )
 
 func TestNewCache(t *testing.T) {
-	t.Parallel()
-
 	ic := infoschema.NewCache(16)
 	require.NotNil(t, ic)
 }
 
 func TestInsert(t *testing.T) {
-	t.Parallel()
-
 	ic := infoschema.NewCache(3)
 	require.NotNil(t, ic)
 
@@ -101,8 +97,6 @@ func TestInsert(t *testing.T) {
 }
 
 func TestGetByVersion(t *testing.T) {
-	t.Parallel()
-
 	ic := infoschema.NewCache(2)
 	require.NotNil(t, ic)
 	is1 := infoschema.MockInfoSchemaWithSchemaVer(nil, 1)
@@ -118,8 +112,6 @@ func TestGetByVersion(t *testing.T) {
 }
 
 func TestGetLatest(t *testing.T) {
-	t.Parallel()
-
 	ic := infoschema.NewCache(16)
 	require.NotNil(t, ic)
 	require.Nil(t, ic.GetLatest())

@@ -22,8 +22,6 @@ import (
 )
 
 func TestApplyAttributesSpec(t *testing.T) {
-	t.Parallel()
-
 	// valid case
 	spec := &ast.AttributesSpec{Attributes: "key=value,key1=value1"}
 	rule := NewRule()
@@ -51,8 +49,6 @@ func TestApplyAttributesSpec(t *testing.T) {
 }
 
 func TestDefaultOrEmpty(t *testing.T) {
-	t.Parallel()
-
 	specs := []*ast.AttributesSpec{{Attributes: ""}, {Default: true}}
 	for i := range specs {
 		rule := NewRule()
@@ -65,8 +61,6 @@ func TestDefaultOrEmpty(t *testing.T) {
 }
 
 func TestReset(t *testing.T) {
-	t.Parallel()
-
 	spec := &ast.AttributesSpec{Attributes: "key=value"}
 	rule := NewRule()
 	require.NoError(t, rule.ApplyAttributesSpec(spec))
@@ -81,14 +75,14 @@ func TestReset(t *testing.T) {
 	require.Equal(t, rule.Index, 2)
 
 	r := rule.Data[0].(map[string]string)
-	require.Equal(t, "7480000000000000ff015f720000000000fa", r["start_key"])
-	require.Equal(t, "7480000000000000ff025f720000000000fa", r["end_key"])
+	require.Equal(t, "7480000000000000ff0100000000000000f8", r["start_key"])
+	require.Equal(t, "7480000000000000ff0200000000000000f8", r["end_key"])
 	r = rule.Data[1].(map[string]string)
-	require.Equal(t, "7480000000000000ff025f720000000000fa", r["start_key"])
-	require.Equal(t, "7480000000000000ff035f720000000000fa", r["end_key"])
+	require.Equal(t, "7480000000000000ff0200000000000000f8", r["start_key"])
+	require.Equal(t, "7480000000000000ff0300000000000000f8", r["end_key"])
 	r = rule.Data[2].(map[string]string)
-	require.Equal(t, "7480000000000000ff035f720000000000fa", r["start_key"])
-	require.Equal(t, "7480000000000000ff045f720000000000fa", r["end_key"])
+	require.Equal(t, "7480000000000000ff0300000000000000f8", r["start_key"])
+	require.Equal(t, "7480000000000000ff0400000000000000f8", r["end_key"])
 
 	r1 := rule.Clone()
 	require.Equal(t, r1, rule)
@@ -103,8 +97,8 @@ func TestReset(t *testing.T) {
 	require.Equal(t, rule.Index, 3)
 
 	r = r2.Data[0].(map[string]string)
-	require.Equal(t, "7480000000000000ff025f720000000000fa", r["start_key"])
-	require.Equal(t, "7480000000000000ff035f720000000000fa", r["end_key"])
+	require.Equal(t, "7480000000000000ff0200000000000000f8", r["start_key"])
+	require.Equal(t, "7480000000000000ff0300000000000000f8", r["end_key"])
 
 	// default case
 	spec = &ast.AttributesSpec{Default: true}

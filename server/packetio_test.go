@@ -25,9 +25,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPacketIOWrite(t *testing.T) {
-	t.Parallel()
+func BenchmarkPacketIOWrite(b *testing.B) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var outBuffer bytes.Buffer
+		pkt := &packetIO{bufWriter: bufio.NewWriter(&outBuffer)}
+		_ = pkt.writePacket([]byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe})
+	}
+}
 
+func TestPacketIOWrite(t *testing.T) {
 	// Test write one packet
 	var outBuffer bytes.Buffer
 	pkt := &packetIO{bufWriter: bufio.NewWriter(&outBuffer)}
@@ -53,18 +60,16 @@ func TestPacketIOWrite(t *testing.T) {
 }
 
 func TestPacketIORead(t *testing.T) {
-	t.Parallel()
-
 	var inBuffer bytes.Buffer
 	_, err := inBuffer.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x01})
 	require.NoError(t, err)
 	// Test read one packet
 	brc := newBufferedReadConn(&bytesConn{inBuffer})
 	pkt := newPacketIO(brc)
-	bytes, err := pkt.readPacket()
+	readBytes, err := pkt.readPacket()
 	require.NoError(t, err)
 	require.Equal(t, uint8(1), pkt.sequence)
-	require.Equal(t, []byte{0x01}, bytes)
+	require.Equal(t, []byte{0x01}, readBytes)
 
 	inBuffer.Reset()
 	buf := make([]byte, mysql.MaxPayloadLen+9)
@@ -83,11 +88,11 @@ func TestPacketIORead(t *testing.T) {
 	// Test read multiple packets
 	brc = newBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
-	bytes, err = pkt.readPacket()
+	readBytes, err = pkt.readPacket()
 	require.NoError(t, err)
 	require.Equal(t, uint8(2), pkt.sequence)
-	require.Equal(t, mysql.MaxPayloadLen+1, len(bytes))
-	require.Equal(t, byte(0x0a), bytes[mysql.MaxPayloadLen])
+	require.Equal(t, mysql.MaxPayloadLen+1, len(readBytes))
+	require.Equal(t, byte(0x0a), readBytes[mysql.MaxPayloadLen])
 }
 
 type bytesConn struct {

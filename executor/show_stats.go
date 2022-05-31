@@ -251,7 +251,7 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 		if err != nil {
 			return errors.Trace(err)
 		}
-		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
@@ -306,11 +306,11 @@ func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string
 	}
 	colNameToType := make(map[string]byte, len(statsTbl.Columns))
 	for _, col := range stableColsStats(statsTbl.Columns) {
-		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.Tp})
+		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.GetType()})
 		if err != nil {
 			return errors.Trace(err)
 		}
-		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
@@ -426,14 +426,9 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 }
 
 func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName string, statsTbl *statistics.Table) {
-	if statsTbl.Pseudo {
+	healthy, ok := statsTbl.GetStatsHealthy()
+	if !ok {
 		return
-	}
-	var healthy int64
-	if statsTbl.ModifyCount < statsTbl.Count {
-		healthy = int64((1.0 - float64(statsTbl.ModifyCount)/float64(statsTbl.Count)) * 100.0)
-	} else if statsTbl.ModifyCount == 0 {
-		healthy = 100
 	}
 	e.appendRow([]interface{}{
 		dbName,
@@ -447,19 +442,23 @@ func (e *ShowExec) fetchShowHistogramsInFlight() {
 	e.appendRow([]interface{}{statistics.HistogramNeededColumns.Length()})
 }
 
-func (e *ShowExec) fetchShowAnalyzeStatus() {
-	rows := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
+func (e *ShowExec) fetchShowAnalyzeStatus() error {
+	rows, err := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
+	if err != nil {
+		return err
+	}
 	for _, row := range rows {
 		for i := range row {
 			e.result.AppendDatum(i, &row[i])
 		}
 	}
+	return nil
 }
 
 func (e *ShowExec) fetchShowColumnStatsUsage() error {
 	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
-	colStatsMap, err := h.LoadColumnStatsUsage()
+	colStatsMap, err := h.LoadColumnStatsUsage(e.ctx.GetSessionVars().Location())
 	if err != nil {
 		return err
 	}
@@ -500,9 +499,10 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
-			}
+			// Though partition tables in static pruning mode don't have global stats, we dump predicate columns of partitions with table ID
+			// rather than partition ID. Hence appendTableForColumnStatsUsage needs to be called for both partition and global in both dynamic
+			// and static pruning mode.
+			appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
 			if pi != nil {
 				for i := range pi.Definitions {
 					appendTableForColumnStatsUsage(db.Name.O, tbl, false, &pi.Definitions[i])

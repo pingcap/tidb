@@ -41,7 +41,7 @@ run_sql 'DROP TABLE charsets.gb18030;'
 run_lightning_expecting_fail --config "tests/$TEST_NAME/utf8mb4.toml" -d "tests/$TEST_NAME/gb18030"
 
 run_lightning --config "tests/$TEST_NAME/binary.toml" -d "tests/$TEST_NAME/gb18030"
-run_sql 'SELECT sum(`Ö÷¼ü`) AS s FROM charsets.gb18030'
+run_sql 'SELECT sum(`????`) AS s FROM charsets.gb18030'
 check_contains 's: 267'
 
 # utf8mb4

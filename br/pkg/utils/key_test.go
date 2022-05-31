@@ -10,8 +10,6 @@ import (
 )
 
 func TestParseKey(t *testing.T) {
-	t.Parallel()
-
 	// test rawKey
 	testRawKey := []struct {
 		rawKey string
@@ -94,8 +92,6 @@ func TestParseKey(t *testing.T) {
 }
 
 func TestCompareEndKey(t *testing.T) {
-	t.Parallel()
-
 	// test endKey
 	testCase := []struct {
 		key1 []byte

@@ -18,8 +18,6 @@ import (
 )
 
 func TestConsistencyController(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -33,14 +31,14 @@ func TestConsistencyController(t *testing.T) {
 	conf := defaultConfigForTest(t)
 	resultOk := sqlmock.NewResult(0, 1)
 
-	conf.Consistency = consistencyTypeNone
+	conf.Consistency = ConsistencyTypeNone
 	ctrl, _ := NewConsistencyController(ctx, conf, db)
 	_, ok := ctrl.(*ConsistencyNone)
 	require.True(t, ok)
 	require.NoError(t, ctrl.Setup(tctx))
 	require.NoError(t, ctrl.TearDown(tctx))
 
-	conf.Consistency = consistencyTypeFlush
+	conf.Consistency = ConsistencyTypeFlush
 	mock.ExpectExec("FLUSH TABLES WITH READ LOCK").WillReturnResult(resultOk)
 	mock.ExpectExec("UNLOCK TABLES").WillReturnResult(resultOk)
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
@@ -50,7 +48,7 @@ func TestConsistencyController(t *testing.T) {
 	require.NoError(t, ctrl.TearDown(tctx))
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	conf.Consistency = consistencyTypeSnapshot
+	conf.Consistency = ConsistencyTypeSnapshot
 	conf.ServerInfo.ServerType = version.ServerTypeTiDB
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
 	_, ok = ctrl.(*ConsistencyNone)
@@ -59,7 +57,7 @@ func TestConsistencyController(t *testing.T) {
 	require.NoError(t, ctrl.TearDown(tctx))
 
 	conf.ServerInfo.ServerType = version.ServerTypeMySQL
-	conf.Consistency = consistencyTypeLock
+	conf.Consistency = ConsistencyTypeLock
 	conf.Tables = NewDatabaseTables().
 		AppendTables("db1", []string{"t1", "t2", "t3"}, []uint64{1, 2, 3}).
 		AppendViews("db2", "t4")
@@ -74,8 +72,6 @@ func TestConsistencyController(t *testing.T) {
 }
 
 func TestConsistencyLockControllerRetry(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -89,7 +85,7 @@ func TestConsistencyLockControllerRetry(t *testing.T) {
 	resultOk := sqlmock.NewResult(0, 1)
 
 	conf.ServerInfo.ServerType = version.ServerTypeMySQL
-	conf.Consistency = consistencyTypeLock
+	conf.Consistency = ConsistencyTypeLock
 	conf.Tables = NewDatabaseTables().
 		AppendTables("db1", []string{"t1", "t2", "t3"}, []uint64{1, 2, 3}).
 		AppendViews("db2", "t4")
@@ -112,21 +108,19 @@ func TestConsistencyLockControllerRetry(t *testing.T) {
 }
 
 func TestResolveAutoConsistency(t *testing.T) {
-	t.Parallel()
-
 	conf := defaultConfigForTest(t)
 	cases := []struct {
 		serverTp            version.ServerType
 		resolvedConsistency string
 	}{
-		{version.ServerTypeTiDB, consistencyTypeSnapshot},
-		{version.ServerTypeMySQL, consistencyTypeFlush},
-		{version.ServerTypeMariaDB, consistencyTypeFlush},
-		{version.ServerTypeUnknown, consistencyTypeNone},
+		{version.ServerTypeTiDB, ConsistencyTypeSnapshot},
+		{version.ServerTypeMySQL, ConsistencyTypeFlush},
+		{version.ServerTypeMariaDB, ConsistencyTypeFlush},
+		{version.ServerTypeUnknown, ConsistencyTypeNone},
 	}
 
 	for _, x := range cases {
-		conf.Consistency = consistencyTypeAuto
+		conf.Consistency = ConsistencyTypeAuto
 		conf.ServerInfo.ServerType = x.serverTp
 		d := &Dumper{conf: conf}
 		require.NoError(t, resolveAutoConsistency(d))
@@ -135,8 +129,6 @@ func TestResolveAutoConsistency(t *testing.T) {
 }
 
 func TestConsistencyControllerError(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -154,20 +146,20 @@ func TestConsistencyControllerError(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid consistency option")
 
 	// snapshot consistency is only available in TiDB
-	conf.Consistency = consistencyTypeSnapshot
+	conf.Consistency = ConsistencyTypeSnapshot
 	conf.ServerInfo.ServerType = version.ServerTypeUnknown
 	_, err = NewConsistencyController(ctx, conf, db)
 	require.Error(t, err)
 
 	// flush consistency is unavailable in TiDB
-	conf.Consistency = consistencyTypeFlush
+	conf.Consistency = ConsistencyTypeFlush
 	conf.ServerInfo.ServerType = version.ServerTypeTiDB
 	ctrl, _ := NewConsistencyController(ctx, conf, db)
 	err = ctrl.Setup(tctx)
 	require.Error(t, err)
 
 	// lock table fail
-	conf.Consistency = consistencyTypeLock
+	conf.Consistency = ConsistencyTypeLock
 	conf.Tables = NewDatabaseTables().AppendTables("db", []string{"t"}, []uint64{1})
 	mock.ExpectExec("LOCK TABLE").WillReturnError(errors.New(""))
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
@@ -176,8 +168,6 @@ func TestConsistencyControllerError(t *testing.T) {
 }
 
 func TestConsistencyLockTiDBCheck(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -191,7 +181,7 @@ func TestConsistencyLockTiDBCheck(t *testing.T) {
 	resultOk := sqlmock.NewResult(0, 1)
 
 	conf.ServerInfo.ServerType = version.ServerTypeTiDB
-	conf.Consistency = consistencyTypeLock
+	conf.Consistency = ConsistencyTypeLock
 	conf.Tables = NewDatabaseTables().
 		AppendTables("db1", []string{"t1"}, []uint64{1})
 	ctrl, err := NewConsistencyController(ctx, conf, db)

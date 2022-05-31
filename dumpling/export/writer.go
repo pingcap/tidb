@@ -26,22 +26,31 @@ type Writer struct {
 	conn       *sql.Conn
 	extStorage storage.ExternalStorage
 	fileFmt    FileFormat
+	metrics    *metrics
 
 	receivedTaskCount int
 
-	rebuildConnFn       func(*sql.Conn) (*sql.Conn, error)
+	rebuildConnFn       func(*sql.Conn, bool) (*sql.Conn, error)
 	finishTaskCallBack  func(Task)
 	finishTableCallBack func(Task)
 }
 
 // NewWriter returns a new Writer with given configurations
-func NewWriter(tctx *tcontext.Context, id int64, config *Config, conn *sql.Conn, externalStore storage.ExternalStorage) *Writer {
+func NewWriter(
+	tctx *tcontext.Context,
+	id int64,
+	config *Config,
+	conn *sql.Conn,
+	externalStore storage.ExternalStorage,
+	metrics *metrics,
+) *Writer {
 	sw := &Writer{
 		id:                  id,
 		tctx:                tctx,
 		conf:                config,
 		conn:                conn,
 		extStorage:          externalStore,
+		metrics:             metrics,
 		finishTaskCallBack:  func(Task) {},
 		finishTableCallBack: func(Task) {},
 	}
@@ -99,6 +108,8 @@ func (w *Writer) handleTask(task Task) error {
 		return w.WriteTableMeta(t.DatabaseName, t.TableName, t.CreateTableSQL)
 	case *TaskViewMeta:
 		return w.WriteViewMeta(t.DatabaseName, t.ViewName, t.CreateTableSQL, t.CreateViewSQL)
+	case *TaskSequenceMeta:
+		return w.WriteSequenceMeta(t.DatabaseName, t.SequenceName, t.CreateSequenceSQL)
 	case *TaskPolicyMeta:
 		return w.WritePolicyMeta(t.PolicyName, t.CreatePolicySQL)
 	case *TaskTableData:
@@ -164,6 +175,16 @@ func (w *Writer) WriteViewMeta(db, view, createTableSQL, createViewSQL string) e
 	return writeMetaToFile(tctx, db, createViewSQL, w.extStorage, fileNameView+".sql", conf.CompressType)
 }
 
+// WriteSequenceMeta writes sequence meta to a file
+func (w *Writer) WriteSequenceMeta(db, sequence, createSQL string) error {
+	tctx, conf := w.tctx, w.conf
+	fileName, err := (&outputFileNamer{DB: db, Table: sequence}).render(conf.OutputFileTemplate, outputFileTemplateSequence)
+	if err != nil {
+		return err
+	}
+	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
+}
+
 // WriteTableData writes table data to a file with retry
 func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int) error {
 	tctx, conf, conn := w.tctx, w.conf, w.conn
@@ -173,7 +194,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		defer func() {
 			lastErr = err
 			if err != nil {
-				IncCounter(errorCount, conf.Labels)
+				IncCounter(w.metrics.errorCount, conf.Labels)
 			}
 		}()
 		retryTime++
@@ -181,7 +202,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 			zap.String("table", meta.TableName()), zap.Int("chunkIndex", currentChunk), zap.NamedError("lastError", lastErr))
 		// don't rebuild connection when dump for the first time
 		if retryTime > 1 {
-			conn, err = w.rebuildConnFn(conn)
+			conn, err = w.rebuildConnFn(conn, true)
 			w.conn = conn
 			if err != nil {
 				return
@@ -199,7 +220,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		}
 		defer ir.Close()
 		return w.tryToWriteTableData(tctx, meta, ir, currentChunk)
-	}, newDumpChunkBackoffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
+	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
 func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
@@ -213,7 +234,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 	somethingIsWritten := false
 	for {
 		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
-		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter)
+		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics)
 		tearDown(tctx)
 		if err != nil {
 			return err
@@ -259,7 +280,6 @@ func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.E
 		metaSQL: metaSQL,
 		specCmts: []string{
 			"/*!40101 SET NAMES binary*/;",
-			"/*T![placement] SET PLACEMENT_CHECKS = 0*/;",
 		},
 	}, fileWriter)
 }

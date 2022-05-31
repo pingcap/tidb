@@ -15,10 +15,13 @@
 package helper_test
 
 import (
+	"bufio"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -34,8 +38,6 @@ import (
 )
 
 func TestHotRegion(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -71,8 +73,6 @@ func TestHotRegion(t *testing.T) {
 }
 
 func TestGetRegionsTableInfo(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -84,8 +84,6 @@ func TestGetRegionsTableInfo(t *testing.T) {
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -99,8 +97,6 @@ func TestTiKVRegionsInfo(t *testing.T) {
 }
 
 func TestTiKVStoresStat(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -437,4 +433,53 @@ func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 	if err != nil {
 		log.Panic("write http response failed", zap.Error(err))
 	}
+}
+
+func TestComputeTiFlashStatus(t *testing.T) {
+	regionReplica := make(map[int64]int)
+	// There are no region in this TiFlash store.
+	br1 := bufio.NewReader(strings.NewReader("0\n\n"))
+	// There are 2 regions 1009/1010 in this TiFlash store.
+	br2 := bufio.NewReader(strings.NewReader("2\n1009 1010 \n"))
+	err := helper.ComputeTiFlashStatus(br1, &regionReplica)
+	require.NoError(t, err)
+	err = helper.ComputeTiFlashStatus(br2, &regionReplica)
+	require.NoError(t, err)
+	require.Equal(t, len(regionReplica), 2)
+	v, ok := regionReplica[1009]
+	require.Equal(t, v, 1)
+	require.Equal(t, ok, true)
+	v, ok = regionReplica[1010]
+	require.Equal(t, v, 1)
+	require.Equal(t, ok, true)
+
+	regionReplica2 := make(map[int64]int)
+	var sb strings.Builder
+	for i := 1000; i < 3000; i++ {
+		sb.WriteString(fmt.Sprintf("%v ", i))
+	}
+	s := fmt.Sprintf("2000\n%v\n", sb.String())
+	require.NoError(t, helper.ComputeTiFlashStatus(bufio.NewReader(strings.NewReader(s)), &regionReplica2))
+	require.Equal(t, 2000, len(regionReplica2))
+	for i := 1000; i < 3000; i++ {
+		_, ok := regionReplica2[int64(i)]
+		require.True(t, ok)
+	}
+}
+
+// TestTableRange tests the first part of GetPDRegionStats.
+func TestTableRange(t *testing.T) {
+	startKey := tablecodec.GenTableRecordPrefix(1)
+	endKey := startKey.PrefixNext()
+	// t+id+_r
+	require.Equal(t, "7480000000000000015f72", startKey.String())
+	// t+id+_s
+	require.Equal(t, "7480000000000000015f73", endKey.String())
+
+	startKey = tablecodec.EncodeTablePrefix(1)
+	endKey = startKey.PrefixNext()
+	// t+id
+	require.Equal(t, "748000000000000001", startKey.String())
+	// t+(id+1)
+	require.Equal(t, "748000000000000002", endKey.String())
 }
