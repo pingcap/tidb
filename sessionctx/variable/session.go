@@ -1425,6 +1425,12 @@ func NewSessionVars() *SessionVars {
 		vars.TxnScope = kv.NewGlobalTxnScopeVar()
 	}
 	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
+	formatVersion := GetDDLReorgRowFormat()
+	if formatVersion == DefTiDBRowFormatV1 {
+		vars.RowEncoder.Enable = false
+	} else if formatVersion == DefTiDBRowFormatV2 {
+		vars.RowEncoder.Enable = true
+	}
 	return vars
 }
 

@@ -658,7 +658,7 @@ func TestSettersandGetters(t *testing.T) {
 			switch sv.Name {
 			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
 				TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
-				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
+				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit,
 				TiDBEnableTelemetry, TiDBEnablePointGetCache:
 				continue
 			}
