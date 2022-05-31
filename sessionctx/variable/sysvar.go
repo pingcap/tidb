@@ -797,6 +797,13 @@ var defaultSysVars = []*SysVar{
 			return err
 		},
 	},
+	// variable for concurrent DDL feature.
+	{Scope: ScopeGlobal, Name: TiDBEnableConcurrencyDDL, Value: BoolToOnOff(DefTiDBEnableConcurrencyDDL), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		AllowConcurrencyDDL.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(AllowConcurrencyDDL.Load()), nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
@@ -1577,13 +1584,6 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	/* The system variables below have INSTANCE scope  */
-	{Scope: ScopeInstance, Name: TiDBEnableConcurrencyDDL, Value: BoolToOnOff(DefTiDBEnableConcurrencyDDL), Hidden: true, Type: TypeBool, skipInit: true, SetGlobal: func(s *SessionVars, val string) error {
-		AllowConcurrencyDDL.Store(TiDBOptOn(val))
-		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(AllowConcurrencyDDL.Load()), nil
-	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
