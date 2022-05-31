@@ -1890,6 +1890,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
-	// TiDBEnableConcurrencyDDL indicates whether to enable the new DDL framework.
-	TiDBEnableConcurrencyDDL = "tidb_enable_concurrency_ddl"
+	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
+	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
 )
