@@ -162,6 +162,8 @@ type PhysicalOptimizeTracer struct {
 	Candidates map[int]*CandidatePlanTrace `json:"candidates"`
 }
 
+// AppendCandidate appends physical CandidatePlanTrace in tracer.
+// If the candidate already exists, the previous candidate would be covered depends on whether it has mapping logical plan
 func (tracer *PhysicalOptimizeTracer) AppendCandidate(c *CandidatePlanTrace) {
 	old, exists := tracer.Candidates[c.ID]
 	if exists && len(old.MappingLogicalPlan) > 0 && len(c.MappingLogicalPlan) < 1 {
