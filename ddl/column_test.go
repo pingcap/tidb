@@ -143,7 +143,7 @@ func TestColumnBasic(t *testing.T) {
 
 	require.Nil(t, table.FindCol(tbl.Cols(), "c4"))
 
-	jobID := testCreateColumn(tk, t, testNewContext(store), tableID, "c4", "after c3", 100, dom)
+	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c4", "after c3", 100, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -173,7 +173,7 @@ func TestColumnBasic(t *testing.T) {
 	require.Len(t, values, 4)
 	require.Equal(t, values[3].GetInt64(), int64(14))
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c4", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c4", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -183,7 +183,7 @@ func TestColumnBasic(t *testing.T) {
 	require.Len(t, values, 3)
 	require.Equal(t, values[2].GetInt64(), int64(13))
 
-	jobID = testCreateColumn(tk, t, testNewContext(store), tableID, "c4", "", 111, dom)
+	jobID = testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c4", "", 111, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -193,7 +193,7 @@ func TestColumnBasic(t *testing.T) {
 	require.Len(t, values, 4)
 	require.Equal(t, values[3].GetInt64(), int64(111))
 
-	jobID = testCreateColumn(tk, t, testNewContext(store), tableID, "c5", "", 101, dom)
+	jobID = testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c5", "", 101, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -203,7 +203,7 @@ func TestColumnBasic(t *testing.T) {
 	require.Len(t, values, 5)
 	require.Equal(t, values[4].GetInt64(), int64(101))
 
-	jobID = testCreateColumn(tk, t, testNewContext(store), tableID, "c6", "first", 202, dom)
+	jobID = testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c6", "first", 202, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -229,7 +229,7 @@ func TestColumnBasic(t *testing.T) {
 	require.Equal(t, values[0].GetInt64(), int64(202))
 	require.Equal(t, values[5].GetInt64(), int64(101))
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c2", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c2", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
 	tbl = testGetTable(t, dom, tableID)
@@ -240,22 +240,22 @@ func TestColumnBasic(t *testing.T) {
 	require.Equal(t, values[0].GetInt64(), int64(202))
 	require.Equal(t, values[4].GetInt64(), int64(101))
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c1", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c1", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c3", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c3", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c4", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c4", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
-	jobID = testCreateIndex(tk, t, testNewContext(store), tableID, false, "c5_idx", "c5", dom)
+	jobID = testCreateIndex(tk, t, testkit.NewTestKit(t, store).Session(), tableID, false, "c5_idx", "c5", dom)
 	testCheckJobDone(t, store, jobID, true)
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c5", false, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c5", false, dom)
 	testCheckJobDone(t, store, jobID, false)
 
-	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c6", true, dom)
+	jobID = testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c6", true, dom)
 	testCheckJobDone(t, store, jobID, false)
 
 	testDropTable(tk, t, "test", "t1", dom)

@@ -235,6 +235,12 @@ type Transaction interface {
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// clear allowed flag
 	ClearDiskFullOpt()
+
+	// GetMemDBCheckpoint gets the transaction's memDB checkpoint.
+	GetMemDBCheckpoint() *tikv.MemDBCheckpoint
+
+	// RollbackMemDBToCheckpoint rollbacks the transaction's memDB to the specified checkpoint.
+	RollbackMemDBToCheckpoint(*tikv.MemDBCheckpoint)
 }
 
 // AssertionProto is an interface defined for the assertion protocol.

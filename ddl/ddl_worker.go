@@ -95,7 +95,6 @@ type worker struct {
 	lockSeqNum      bool
 
 	*ddlCtx
-	*JobContext
 }
 
 // JobContext is the ddl job execution context.
@@ -123,7 +122,6 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		tp:              tp,
 		ddlJobCh:        make(chan struct{}, 1),
 		ctx:             ctx,
-		JobContext:      NewJobContext(),
 		ddlCtx:          dCtx,
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
@@ -270,7 +268,6 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 }
 
 func (d *ddl) limitDDLJobs() {
-	defer d.wg.Done()
 	defer tidbutil.Recover(metrics.LabelDDL, "limitDDLJobs", nil, true)
 
 	tasks := make([]*limitJobTask, 0, batchAddingJobs)
@@ -360,14 +357,12 @@ func setJobStateToQueueing(job *model.Job) {
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
 func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
-	var job *model.Job
-
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
-	})
+	se, err := d.sessPool.get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer d.sessPool.put(se)
+	job, err := GetHistoryJobByID(se, id)
 
 	return job, errors.Trace(err)
 }
@@ -471,7 +466,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}()
 
 	if jobNeedGC(job) {
-		err = w.deleteRange(w.ddlJobCtx, job)
+		err = w.deleteRange(w.ctx, job)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -505,7 +500,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		updateRawArgs = false
 	}
 	w.writeDDLSeqNum(job)
-	w.JobContext.resetWhenJobFinish()
+	w.removeJobCtx(job)
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
@@ -585,13 +580,6 @@ func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagg
 	return tagger
 }
 
-func (w *JobContext) resetWhenJobFinish() {
-	w.ddlJobCtx = context.Background()
-	w.cacheSQL = ""
-	w.cacheDigest = nil
-	w.cacheNormalizedSQL = ""
-}
-
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
 func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
@@ -627,7 +615,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
-			if tagger := w.getResourceGroupTaggerForTopSQL(); tagger != nil {
+			if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
