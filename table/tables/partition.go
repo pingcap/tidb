@@ -1280,7 +1280,12 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		// So this special order is chosen: add record first, errors such as
 		// 'Key Already Exists' will generally happen during step1, errors are
 		// unlikely to happen in step2.
-		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
+		deleteData := currData
+		if !t.Meta().IsCommonHandle && !t.Meta().PKIsHandle && len(deleteData) > len(t.Cols()) {
+			// The row already has the handle column added, remove it since it is not expected in RemoveRecord!
+			deleteData = deleteData[:len(deleteData)-1]
+		}
+		err = t.GetPartition(from).RemoveRecord(ctx, h, deleteData)
 		if err != nil {
 			logutil.BgLogger().Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
 			return errors.Trace(err)
