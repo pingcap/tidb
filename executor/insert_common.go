@@ -564,7 +564,7 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 		if e.lazyFillAutoID {
 			// Handle hasValue info in autoIncrement column previously for lazy handle.
 			if !hasValue {
-				datum.SetNull()
+				return table.GetColDefaultValue(e.ctx, column.ToInfo())
 			}
 			// Store the plain datum of autoIncrement column directly for lazy handle.
 			return datum, nil

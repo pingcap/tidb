@@ -577,19 +577,23 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 }
 
 func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	if !mysql.HasNotNullFlag(col.GetFlag()) {
+	if !mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
 		return types.Datum{}, nil
 	}
 	if col.GetType() == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
-		defEnum, err := types.ParseEnumValue(col.FieldType.GetElems(), 1)
-		if err != nil {
-			return types.Datum{}, err
+		if mysql.HasNotNullFlag(col.GetFlag()) {
+			defEnum, err := types.ParseEnumValue(col.FieldType.GetElems(), 1)
+			if err != nil {
+				return types.Datum{}, err
+			}
+			return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
+		} else {
+			return types.Datum{}, nil
 		}
-		return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
 	}
-	if mysql.HasAutoIncrementFlag(col.GetFlag()) {
+	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
 		// Auto increment column doesn't has default value and we should not return error.
 		return GetZeroValue(col), nil
 	}
