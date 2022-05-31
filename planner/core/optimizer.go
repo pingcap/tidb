@@ -16,9 +16,6 @@ package core
 
 import (
 	"context"
-	"math"
-	"sort"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -40,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"math"
+	"sort"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.

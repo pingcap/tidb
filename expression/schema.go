@@ -15,6 +15,7 @@
 package expression
 
 import (
+	fd "github.com/pingcap/tidb/planner/funcdep"
 	"strings"
 )
 
@@ -46,6 +47,15 @@ type Schema struct {
 	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
 	// since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
 	UniqueKeys []KeyInfo
+}
+
+// ColSet return the fast in set of schema column's unique ids.
+func (s *Schema) ColSet() *fd.FastIntSet {
+	var colSet fd.FastIntSet
+	for _, c := range s.Columns {
+		colSet.Insert(int(c.UniqueID))
+	}
+	return &colSet
 }
 
 // String implements fmt.Stringer interface.

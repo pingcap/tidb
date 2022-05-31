@@ -174,7 +174,209 @@ func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
+// findNearestScope is called when the builder finishes building an aggregate
+// function info.
+//
+// In addition, endAggFunc finds the correct scope level, given that the aggregate
+// references the columns in cols. The reference scope is the one closest to the
+// current scope which contains at least one of the variables referenced by the
+// aggregate (or the current scope if the aggregate references no variables).
+//
+// return args: int indicates the index of outer scope. bool indicates whether it's in the current scope.
+func (b *PlanBuilder) findNearestScope(corCols []*expression.CorrelatedColumn, cols []*expression.Column) (int, bool) {
+	var colSet fd.FastIntSet
+	for _, cc := range corCols {
+		colSet.Insert(int(cc.Column.UniqueID))
+	}
+	for _, c := range cols {
+		colSet.Insert(int(c.UniqueID))
+	}
+	// no specific columns or they are all covered by current scope.
+	if colSet.Len() == 0 || b.curScope.ColSet().Intersects(colSet) {
+		return -1, true
+	}
+	// find the nearest outer scope that has something overlapped.
+	for i, scope := range b.outerScopes {
+		if scope.ColSet().Intersects(colSet) {
+			return i, false
+		}
+	}
+	return -1, false
+}
+
+// findAggInScopeBackward search the agg place backward in the current scope and outer scope mainly used in building phase (
+// distinguished with analyzing phase). Because correlated agg des will be built and appended to the nearest correspondent scope
+// in analyzing phase.
+func (b *PlanBuilder) findAggInScopeBackward(agg *ast.AggregateFuncExpr) (*aggregation.AggFuncDesc, expression.Expression) {
+	// search the current scope.
+	if offset, ok := b.curScope.aggMapper[agg]; ok {
+		return b.curScope.aggFuncs[offset], b.curScope.aggColumn[offset]
+	}
+
+	// find the nearest outer scope if agg is built and appended in there.
+	for _, scope := range b.outerScopes {
+		if offset, ok := scope.aggMapper[agg]; ok {
+			referedCol := scope.aggColumn[offset]
+			// for clause like having and order by, we can not directly refer the correlated column from outer scope. In old runtime,
+			// it will project the correlated agg in projection, and refer the projected new column in having and order by clause.
+			if b.curClause == havingClause || b.curClause == orderByClause {
+				// refer the projected column instead.
+				return scope.aggFuncs[offset], b.curScope.projectionCol4CorrelatedAgg[referedCol.UniqueID]
+			}
+			return scope.aggFuncs[offset], &expression.CorrelatedColumn{Column: *referedCol, Data: new(types.Datum)}
+		}
+	}
+	return nil, nil
+}
+
+// detachCorrelationInScope will change correlated column in specific scope as normal columns.
+// for example: select (select count(a)) from t.
+// after the rewrite in the sub-query with sub-p here, the args in agg will be rewritten as correlated columns.
+// since we ganna append this agg des to outer scope, the args will have a new relative scope, so that's why
+// we need to change the correlated column here.
+
+// buildAggregationDesc will build aggInfo out and append it to current scope when encountering it as you go.
+// then all of this will be fetched and reused when building Aggregation in current scope.
+func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p LogicalPlan, aggFunc *ast.AggregateFuncExpr) error {
+	b := er.b
+	corCols := make([]*expression.CorrelatedColumn, 0, 1)
+	cols := make([]*expression.Column, 0, 1)
+	newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
+	// rewrite the agg function's args according current scope.
+	for _, arg := range aggFunc.Args {
+		newArg, _, err := b.rewrite(ctx, arg, p, nil, true)
+		if err != nil {
+			return err
+		}
+		corCols = append(corCols, expression.ExtractCorColumns(newArg)...)
+		cols = append(cols, expression.ExtractColumns(newArg)...)
+		newArgList = append(newArgList, newArg)
+	}
+	// once the agg referred only outer columns, we should move this aggFunc to corresponding outer scope.
+	scopeIndex, inCurrentScope := b.findNearestScope(corCols, cols)
+	if scopeIndex == -1 && !inCurrentScope {
+		panic("shouldn't be here")
+	}
+	// change the nearest correlated column as normal column since it currently is in the nearest scope.
+	for i, arg := range newArgList {
+		if inCurrentScope {
+			newArgList[i] = arg.Decorrelate(b.curScope.scopeSchema)
+		} else {
+			newArgList[i] = arg.Decorrelate(b.outerScopes[scopeIndex].scopeSchema)
+		}
+	}
+	// build agg desc.
+	newFunc, err := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(p.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select (select 1 from t order by count(n.a) limit 1) from t n") {
+		fmt.Println(1)
+	}
+
+	if aggFunc.Order != nil {
+		trueArgs := aggFunc.Args[:len(aggFunc.Args)-1] // the last argument is SEPARATOR, remote it.
+		resolver := &aggOrderByResolver{
+			ctx:  b.ctx,
+			args: trueArgs,
+		}
+		for _, byItem := range aggFunc.Order.Items {
+			resolver.exprDepth = 0
+			resolver.err = nil
+			retExpr, _ := byItem.Expr.Accept(resolver)
+			if resolver.err != nil {
+				return errors.Trace(resolver.err)
+			}
+			newByItem, _, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true)
+			if err != nil {
+				return err
+			}
+			newFunc.OrderByItems = append(newFunc.OrderByItems, &util.ByItems{Expr: newByItem, Desc: byItem.Desc})
+		}
+	}
+	// check whether there is already an equivalence agg there. Refer it if any. (acting like aggMapper before)
+	if inCurrentScope {
+		for i, oldFunc := range b.curScope.aggFuncs {
+			if oldFunc.Equal(b.ctx, newFunc) {
+				er.ctxStackAppend(b.curScope.aggColumn[i], types.EmptyName)
+				return nil
+			}
+		}
+	} else {
+		for i, oldFunc := range b.outerScopes[scopeIndex].aggFuncs {
+			if oldFunc.Equal(b.ctx, newFunc) {
+				er.ctxStackAppend(b.outerScopes[scopeIndex].aggColumn[i], types.EmptyName)
+				return nil
+			}
+		}
+	}
+
+	column := expression.Column{
+		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  newFunc.RetTp,
+	}
+
+	// As for adapt to old runtime, for those correlated agg from having and order by, we should keep a position in projection.
+	if b.curClause == havingClause || b.curClause == orderByClause {
+		if !inCurrentScope {
+			// occupy a position in projection of current scope.
+			b.curScope.AddReservedCorrelatedCols(&column)
+		}
+	}
+
+	if inCurrentScope {
+		b.curScope.aggFuncs = append(b.curScope.aggFuncs, newFunc)
+		b.curScope.aggColumn = append(b.curScope.aggColumn, &column)
+		b.curScope.aggMapper[aggFunc] = len(b.curScope.aggFuncs) - 1
+	} else {
+		b.outerScopes[scopeIndex].aggFuncs = append(b.outerScopes[scopeIndex].aggFuncs, newFunc)
+		b.outerScopes[scopeIndex].aggColumn = append(b.outerScopes[scopeIndex].aggColumn, &column)
+		b.outerScopes[scopeIndex].aggMapper[aggFunc] = len(b.outerScopes[scopeIndex].aggFuncs) - 1
+		b.outerScopes[scopeIndex].AddReservedCols(corCols)
+	}
+	er.ctxStackAppend(&column, types.EmptyName)
+	return nil
+
+	// combine identical aggregate functions
+	//combined := false
+	//for j := 0; j < i; j++ {
+	//	oldFunc := plan4Agg.AggFuncs[aggIndexMap[j]]
+	//	if oldFunc.Equal(b.ctx, newFunc) {
+	//		aggIndexMap[i] = aggIndexMap[j]
+	//		combined = true
+	//		if _, ok := correlatedAggMap[aggFunc]; ok {
+	//			if _, ok = b.correlatedAggMapper[aggFuncList[j]]; !ok {
+	//				b.correlatedAggMapper[aggFuncList[j]] = &expression.CorrelatedColumn{
+	//					Column: *schema4Agg.Columns[aggIndexMap[j]],
+	//				}
+	//			}
+	//			b.correlatedAggMapper[aggFunc] = b.correlatedAggMapper[aggFuncList[j]]
+	//		}
+	//		break
+	//	}
+	//}
+	// create new columns for aggregate functions which show up first
+	//if !combined {
+	//	position := len(plan4Agg.AggFuncs)
+	//	aggIndexMap[i] = position
+	//	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
+	// analyze 的时候，其实感觉不用分配 id，后面有个统一 build 的过程。所以这个地方的 rewrite 过程其实也是没有用到的，也不对，
+	// 后面 build 的过程，其实不用对这些参数进行重写了，因为 aggInfo 已经有了，所以如果 np 变了，最好是还是赋值给 p。
+	//	column := expression.Column{
+	//		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+	//		RetType:  newFunc.RetTp,
+	//	}
+	//	schema4Agg.Append(&column)
+	//	names = append(names, types.EmptyName)
+	//	if _, ok := correlatedAggMap[aggFunc]; ok {
+	//		b.correlatedAggMapper[aggFunc] = &expression.CorrelatedColumn{
+	//			Column: column,
+	//		}
+	//	}
+	//}
+}
+
+func (b *PlanBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
 	correlatedAggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[int]int, error) {
 	b.optFlag |= flagBuildKeyInfo
 	b.optFlag |= flagPushDownAgg
@@ -187,90 +389,100 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	b.optFlag |= flagEliminateAgg
 	b.optFlag |= flagEliminateProjection
 
-	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
+	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(b.curScope.aggFuncs))}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
 	}
-	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
-	names := make(types.NameSlice, 0, len(aggFuncList)+p.Schema().Len())
+	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(b.curScope.aggFuncs)+p.Schema().Len())...)
+	names := make(types.NameSlice, 0, len(b.curScope.aggFuncs)+p.Schema().Len())
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 
 	allAggsFirstRow := true
-	for i, aggFunc := range aggFuncList {
-		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
-		for _, arg := range aggFunc.Args {
-			newArg, np, err := b.rewrite(ctx, arg, p, nil, true)
-			if err != nil {
-				return nil, nil, err
-			}
-			p = np
-			newArgList = append(newArgList, newArg)
-		}
-		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
-		if err != nil {
-			return nil, nil, err
-		}
-		if newFunc.Name != ast.AggFuncFirstRow {
+	//for i, aggFunc := range aggFuncList {
+	//newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
+	//for _, arg := range aggFunc.Args {
+	//	newArg, np, err := b.rewrite(ctx, arg, p, nil, true)
+	//	if err != nil {
+	//		return nil, nil, err
+	//	}
+	//	p = np
+	//	newArgList = append(newArgList, newArg)
+	//}
+	//newFunc, err := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
+	//if err != nil {
+	//	return nil, nil, err
+	//}
+	//if newFunc.Name != ast.AggFuncFirstRow {
+	//	allAggsFirstRow = false
+	//}
+	//if aggFunc.Order != nil {
+	//	trueArgs := aggFunc.Args[:len(aggFunc.Args)-1] // the last argument is SEPARATOR, remote it.
+	//	resolver := &aggOrderByResolver{
+	//		ctx:  b.ctx,
+	//		args: trueArgs,
+	//	}
+	//	for _, byItem := range aggFunc.Order.Items {
+	//		resolver.exprDepth = 0
+	//		resolver.err = nil
+	//		retExpr, _ := byItem.Expr.Accept(resolver)
+	//		if resolver.err != nil {
+	//			return nil, nil, errors.Trace(resolver.err)
+	//		}
+	//		newByItem, np, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true)
+	//		if err != nil {
+	//			return nil, nil, err
+	//		}
+	//		p = np
+	//		newFunc.OrderByItems = append(newFunc.OrderByItems, &util.ByItems{Expr: newByItem, Desc: byItem.Desc})
+	//	}
+	//}
+	// combine identical aggregate functions
+	//combined := false
+	//for j := 0; j < i; j++ {
+	//	oldFunc := plan4Agg.AggFuncs[aggIndexMap[j]]
+	//	if oldFunc.Equal(b.ctx, newFunc) {
+	//		aggIndexMap[i] = aggIndexMap[j]
+	//		combined = true
+	//		if _, ok := correlatedAggMap[aggFunc]; ok {
+	//			if _, ok = b.correlatedAggMapper[aggFuncList[j]]; !ok {
+	//				b.correlatedAggMapper[aggFuncList[j]] = &expression.CorrelatedColumn{
+	//					Column: *schema4Agg.Columns[aggIndexMap[j]],
+	//				}
+	//			}
+	//			b.correlatedAggMapper[aggFunc] = b.correlatedAggMapper[aggFuncList[j]]
+	//		}
+	//		break
+	//	}
+	//}
+	// create new columns for aggregate functions which show up first
+	//if !combined {
+	//	position := len(plan4Agg.AggFuncs)
+	//	aggIndexMap[i] = position
+	//	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
+	//	column := expression.Column{
+	//		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+	//		RetType:  newFunc.RetTp,
+	//	}
+	//	schema4Agg.Append(&column)
+	//	names = append(names, types.EmptyName)
+	//	if _, ok := correlatedAggMap[aggFunc]; ok {
+	//		b.correlatedAggMapper[aggFunc] = &expression.CorrelatedColumn{
+	//			Column: column,
+	//		}
+	//	}
+	//}
+	//}
+	// collect those pre-built agg des and form agg schema.
+	for i, aggFuncDes := range b.curScope.aggFuncs {
+		if aggFuncDes.Name != ast.AggFuncFirstRow {
 			allAggsFirstRow = false
 		}
-		if aggFunc.Order != nil {
-			trueArgs := aggFunc.Args[:len(aggFunc.Args)-1] // the last argument is SEPARATOR, remote it.
-			resolver := &aggOrderByResolver{
-				ctx:  b.ctx,
-				args: trueArgs,
-			}
-			for _, byItem := range aggFunc.Order.Items {
-				resolver.exprDepth = 0
-				resolver.err = nil
-				retExpr, _ := byItem.Expr.Accept(resolver)
-				if resolver.err != nil {
-					return nil, nil, errors.Trace(resolver.err)
-				}
-				newByItem, np, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true)
-				if err != nil {
-					return nil, nil, err
-				}
-				p = np
-				newFunc.OrderByItems = append(newFunc.OrderByItems, &util.ByItems{Expr: newByItem, Desc: byItem.Desc})
-			}
-		}
-		// combine identical aggregate functions
-		combined := false
-		for j := 0; j < i; j++ {
-			oldFunc := plan4Agg.AggFuncs[aggIndexMap[j]]
-			if oldFunc.Equal(b.ctx, newFunc) {
-				aggIndexMap[i] = aggIndexMap[j]
-				combined = true
-				if _, ok := correlatedAggMap[aggFunc]; ok {
-					if _, ok = b.correlatedAggMapper[aggFuncList[j]]; !ok {
-						b.correlatedAggMapper[aggFuncList[j]] = &expression.CorrelatedColumn{
-							Column: *schema4Agg.Columns[aggIndexMap[j]],
-						}
-					}
-					b.correlatedAggMapper[aggFunc] = b.correlatedAggMapper[aggFuncList[j]]
-				}
-				break
-			}
-		}
-		// create new columns for aggregate functions which show up first
-		if !combined {
-			position := len(plan4Agg.AggFuncs)
-			aggIndexMap[i] = position
-			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
-			column := expression.Column{
-				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-				RetType:  newFunc.RetTp,
-			}
-			schema4Agg.Append(&column)
-			names = append(names, types.EmptyName)
-			if _, ok := correlatedAggMap[aggFunc]; ok {
-				b.correlatedAggMapper[aggFunc] = &expression.CorrelatedColumn{
-					Column: column,
-				}
-			}
-		}
+		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, aggFuncDes)
+		schema4Agg.Append(b.curScope.aggColumn[i])
+		names = append(names, types.EmptyName)
 	}
+	// build the remained column schema as first row.
 	for i, col := range p.Schema().Columns {
 		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		if err != nil {
@@ -282,20 +494,14 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
 	}
-	var (
-		join            *LogicalJoin
-		isJoin          bool
-		isSelectionJoin bool
-	)
-	join, isJoin = p.(*LogicalJoin)
-	selection, isSelection := p.(*LogicalSelection)
-	if isSelection {
-		join, isSelectionJoin = selection.children[0].(*LogicalJoin)
-	}
-	if (isJoin && join.fullSchema != nil) || (isSelectionJoin && join.fullSchema != nil) {
-		for i, col := range join.fullSchema.Columns {
-			if p.Schema().Contains(col) {
-				continue
+
+	// this is applied because some collapsed column in natural join should also be built here for latter usage.
+	diff := b.curScope.ColSet().Difference(*p.Schema().ColSet())
+	if !diff.IsEmpty() {
+		for uniqueID, ok := diff.Next(0); ok; uniqueID, ok = diff.Next(uniqueID + 1) {
+			col, offset := b.curScope.GetCol(int64(uniqueID))
+			if col == nil {
+				panic("should be here")
 			}
 			newFunc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 			if err != nil {
@@ -305,9 +511,36 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 			newCol, _ := col.Clone().(*expression.Column)
 			newCol.RetType = newFunc.RetTp
 			schema4Agg.Append(newCol)
-			names = append(names, join.fullNames[i])
+			names = append(names, b.curScope.scopeNames[offset])
 		}
 	}
+
+	//var (
+	//	join            *LogicalJoin
+	//	isJoin          bool
+	//	isSelectionJoin bool
+	//)
+	//join, isJoin = p.(*LogicalJoin)
+	//selection, isSelection := p.(*LogicalSelection)
+	//if isSelection {
+	//	join, isSelectionJoin = selection.children[0].(*LogicalJoin)
+	//}
+	//if (isJoin && join.fullSchema != nil) || (isSelectionJoin && join.fullSchema != nil) {
+	//	for i, col := range join.fullSchema.Columns {
+	//		if p.Schema().Contains(col) {
+	//			continue
+	//		}
+	//		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+	//		if err != nil {
+	//			return nil, nil, err
+	//		}
+	//		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
+	//		newCol, _ := col.Clone().(*expression.Column)
+	//		newCol.RetType = newFunc.RetTp
+	//		schema4Agg.Append(newCol)
+	//		names = append(names, join.fullNames[i])
+	//	}
+	//}
 	hasGroupBy := len(gbyItems) > 0
 	for i, aggFunc := range plan4Agg.AggFuncs {
 		err := aggFunc.UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow)
@@ -334,7 +567,18 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 			cte.recursiveRef = false
 		}
 	}()
-	return b.buildResultSetNode(ctx, from.TableRefs)
+	if p, err = b.buildResultSetNode(ctx, from.TableRefs); err == nil {
+		// build join will add additional scope col into curScope, fullSchema is merged from bottom join up.
+		// eg: select * from (select * from t t1 join t t2 using(a)) as t3; we don't need to keep the fullSchema
+		// from sub-query, fullSchema logic is only used and validated inside a single select query block.
+		join, isJoin := p.(*LogicalJoin)
+		if isJoin && join.fullSchema != nil {
+			b.curScope.Add(join.fullSchema, join.fullNames)
+		} else {
+			b.curScope.Add(p.Schema(), p.OutputNames())
+		}
+	}
+	return p, err
 }
 
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode) (p LogicalPlan, err error) {
@@ -1162,6 +1406,11 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	if expr == nil {
 		return nil, name, nil
 	}
+	newCol := b.allocateNewCol(expr)
+	return newCol, name, nil
+}
+
+func (b *PlanBuilder) allocateNewCol(expr expression.Expression) *expression.Column {
 	// invalid unique id
 	correlatedColUniqueID := int64(0)
 	if cc, ok := expr.(*expression.CorrelatedColumn); ok {
@@ -1180,7 +1429,8 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode(b.ctx.GetSessionVars().StmtCtx))] = int(newCol.UniqueID)
 	}
 	newCol.SetCoercibility(expr.Coercibility())
-	return newCol, name, nil
+	return newCol
+
 }
 
 type userVarTypeProcessor struct {
@@ -1244,6 +1494,53 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 		}
 	}
 	return nil
+}
+
+func (b *PlanBuilder) buildReservedCols(proj *LogicalProjection, schema *expression.Schema, newNames []*types.FieldName) (*LogicalProjection, *expression.Schema, []*types.FieldName) {
+	// build the reserved cols.
+	// case: select t.b from t order by (select t.a +1 from s limit 1);
+	// the sub-query in order by clause should notify outer projection it's ganna using correlated column t.a in advance.
+	// this is built in outer projection and used in sub-query's resolveIndices.
+	// Sort
+	//   +
+	//     Apply
+	//       |                                                           +-------------------------------+
+	//       + -> outer scope: base table: t,  projected column: t.b and | t.a (notified from sub-query) |
+	//       |                                                           +-------------------------------+
+	//       + -> inner scope: base table: s,  correlated column t.a + 1
+	//
+	for _, col := range b.curScope.reservedCols {
+		_, offset := b.curScope.GetCol(col.UniqueID)
+		if col == nil {
+			panic("should be here")
+		}
+		name := b.curScope.scopeNames[offset]
+		proj.Exprs = append(proj.Exprs, col)
+		schema.Append(col)
+		newNames = append(newNames, name)
+	}
+	// link the reserved correlated agg from outer.
+	// case: select (select 1 from t order by count(n.a) limit 1) from t n;
+	// outer scope: base table: n, correlated agg: count(t.a) ->  col: X
+	//                                                                 ^
+	// inner scope:                                              +-----+
+	//             projection: <constant 1>  <new col 4 correlated X>
+	//                                             ^
+	//               order by: refer --------------+
+	// clause behind projection such as having and order by should notify projection what you ganna use and
+	// let projection keep it for you. (for example: correlated column and correlated agg)
+	// this is built in sub-query's projection and used in sub-query's later clause.
+	//
+	b.curScope.projectionCol4CorrelatedAgg = make(map[int64]*expression.Column, len(b.curScope.reservedCorrelatedCols))
+	for _, cCol := range b.curScope.reservedCorrelatedCols {
+		newCol := b.allocateNewCol(cCol)
+		proj.Exprs = append(proj.Exprs, cCol)
+		schema.Append(newCol)
+		newNames = append(newNames, types.EmptyName)
+		// map the position after projection.
+		b.curScope.projectionCol4CorrelatedAgg[cCol.UniqueID] = newCol
+	}
+	return proj, schema, newNames
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
@@ -1310,6 +1607,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		schema.Append(col)
 		newNames = append(newNames, name)
 	}
+	proj, schema, newNames = b.buildReservedCols(proj, schema, newNames)
 	proj.SetSchema(schema)
 	proj.names = newNames
 	if expandGenerateColumn {
@@ -1552,6 +1850,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
+	b.allocateCurScope()
 	if setOpr.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
@@ -3731,7 +4030,98 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
 }
 
+func (b *PlanBuilder) analyzeProjectionList(ctx context.Context, p LogicalPlan, fields []*ast.SelectField) error {
+	originClause := b.curClause
+	b.curClause = fieldList
+	defer func() {
+		b.curClause = originClause
+	}()
+	for _, field := range fields {
+		// we won't change the plan tree here, and we won't allocate new col for every expr here either.
+		_, _, err := b.rewriteWithPreprocess(ctx, field.Expr, p, nil, nil, true, nil)
+		if err != nil {
+			return err
+		}
+
+		// 我们在 analyze having 和 order by，重写表达式的时候，如果不想 build 两边，那么 sub query 必要要能够 ref 的已经 built 好的 agg。
+		//col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
+		//if err != nil {
+		//	return err
+		//}
+		//b.curScope.Add(expression.NewSchema(col), []*types.FieldName{name})
+	}
+	return nil
+}
+
+// Essentially, there is no necessity for analyzing selection, DBs like Postgre won't allow correlated agg in
+// where clause, while MySQL does. eg: select (select 1 from t where count(n.a) > 1 limit 1) from t n; After
+// we adopt the new aggregation building approach, for this case, we still need to recognize correlated agg out
+// and append them to outer scope as well before we build selection officially.
+func (b *PlanBuilder) analyzeSelectionList(ctx context.Context, p LogicalPlan, where ast.ExprNode) error {
+	originClause := b.curClause
+	b.curClause = whereClause
+	defer func() {
+		b.curClause = originClause
+	}()
+	// we won't change the plan tree here, and we won't allocate new col for every expr here either.
+	if where == nil {
+		return nil
+	}
+	_, _, err := b.rewriteWithPreprocess(ctx, where, p, nil, nil, false, nil)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (b *PlanBuilder) analyzeHavingList(ctx context.Context, p LogicalPlan, having *ast.HavingClause) error {
+	originClause := b.curClause
+	b.curClause = havingClause
+	defer func() {
+		b.curClause = originClause
+	}()
+	// we won't change the plan tree here, and we won't allocate new col for every expr here either.
+	if having == nil {
+		return nil
+	}
+	_, _, err := b.rewriteWithPreprocess(ctx, having.Expr, p, nil, nil, false, nil)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (b *PlanBuilder) analyzeOrderByList(ctx context.Context, p LogicalPlan, orderBy *ast.OrderByClause) error {
+	originClause := b.curClause
+	b.curClause = orderByClause
+	defer func() {
+		b.curClause = originClause
+	}()
+	// we won't change the plan tree here, and we won't allocate new col for every expr here either.
+	if orderBy == nil {
+		return nil
+	}
+	transformer := &itemTransformer{}
+	for _, byItem := range orderBy.Items {
+		newExpr, _ := byItem.Expr.Accept(transformer)
+		byItem.Expr = newExpr.(ast.ExprNode)
+		_, _, err := b.rewriteWithPreprocess(ctx, byItem.Expr, p, nil, nil, true, nil)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *PlanBuilder) allocateCurScope() {
+	b.curScope = &ScopeSchema{
+		aggMapper:               make(map[*ast.AggregateFuncExpr]int, 1),
+		mapScalarSubQueryByAddr: make(map[*ast.SubqueryExpr]*preBuiltSubQueryCacheItem, 1),
+	}
+}
+
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
+	b.allocateCurScope()
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -3806,6 +4196,22 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		originalFields = sel.Fields.Fields
 	}
 
+	// analyzing phase.
+	b.analyzingPhase = true
+	if err = b.analyzeProjectionList(ctx, p, sel.Fields.Fields); err != nil {
+		return nil, err
+	}
+	if err = b.analyzeSelectionList(ctx, p, sel.Where); err != nil {
+		return nil, err
+	}
+	if err = b.analyzeHavingList(ctx, p, sel.Having); err != nil {
+		return nil, err
+	}
+	if err = b.analyzeOrderByList(ctx, p, sel.OrderBy); err != nil {
+		return nil, err
+	}
+	b.analyzingPhase = false
+
 	if sel.GroupBy != nil {
 		p, gbyCols, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
 		if err != nil {
@@ -3837,19 +4243,20 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	// We must resolve having and order by clause before build projection,
 	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
 	// which only can be done before building projection and extracting Agg functions.
-	havingMap, orderMap, err = b.resolveHavingAndOrderBy(ctx, sel, p)
-	if err != nil {
-		return nil, err
-	}
+	//havingMap, orderMap, err = b.resolveHavingAndOrderBy(ctx, sel, p)
+	//if err != nil {
+	//	return nil, err
+	//}
 
 	// We have to resolve correlated aggregate inside sub-queries before building aggregation and building projection,
 	// for instance, count(a) inside the sub-query of "select (select count(a)) from t" should be evaluated within
 	// the context of the outer query. So we have to extract such aggregates from sub-queries and put them into
 	// SELECT field list.
-	correlatedAggMap, err = b.resolveCorrelatedAggregates(ctx, sel, p)
-	if err != nil {
-		return nil, err
-	}
+
+	//correlatedAggMap, err = b.resolveCorrelatedAggregates(ctx, sel, p)
+	//if err != nil {
+	//	return nil, err
+	//}
 
 	// b.allNames will be used in evalDefaultExpr(). Default function is special because it needs to find the
 	// corresponding column name, but does not need the value in the column.
@@ -3887,7 +4294,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	b.handleHelper.popMap()
 	b.handleHelper.pushMap(nil)
 
-	hasAgg := b.detectSelectAgg(sel)
+	hasAgg := b.detectSelectAgg(sel) || len(b.curScope.aggFuncs) != 0
 	needBuildAgg := hasAgg
 	if hasAgg {
 		if b.buildingRecursivePartForCTE {
@@ -3898,13 +4305,17 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// len(aggFuncs) == 0 and sel.GroupBy == nil indicates that all the aggregate functions inside the SELECT fields
 		// are actually correlated aggregates from the outer query, which have already been built in the outer query.
 		// The only thing we need to do is to find them from b.correlatedAggMap in buildProjection.
-		if len(aggFuncs) == 0 && sel.GroupBy == nil {
-			needBuildAgg = false
-		}
+
+		//if len(aggFuncs) == 0 && sel.GroupBy == nil {
+		//	needBuildAgg = false
+		//}
+	}
+	if len(b.curScope.aggFuncs) == 0 && sel.GroupBy == nil {
+		needBuildAgg = false
 	}
 	if needBuildAgg {
 		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
+		p, aggIndexMap, err = b.buildAggregation(p, aggFuncs, gbyCols, correlatedAggMap)
 		if err != nil {
 			return nil, err
 		}

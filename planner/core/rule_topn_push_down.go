@@ -132,6 +132,8 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN, opt *logicalOptimize
 		// remove meaningless constant sort items.
 		for i := len(topN.ByItems) - 1; i >= 0; i-- {
 			switch topN.ByItems[i].Expr.(type) {
+			// since pushDownTopN is behind the de-correlated rule, the correlated column here means there is still an Apply.
+			// In the runtime of apply, the correlated column can be seen as a constant as well.
 			case *expression.Constant, *expression.CorrelatedColumn:
 				topN.ByItems = append(topN.ByItems[:i], topN.ByItems[i+1:]...)
 			}
