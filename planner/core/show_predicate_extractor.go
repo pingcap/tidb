@@ -27,9 +27,9 @@ import (
 )
 
 const (
-	FieldKey    = "field"
-	TableKey    = "table"
-	DatabaseKey = "database"
+	fieldKey    = "field"
+	tableKey    = "table"
+	databaseKey = "database"
 )
 
 var (
@@ -96,23 +96,23 @@ func (e *ShowBaseExtractor) Extract() bool {
 
 // explainInfo implements the ShowPredicateExtractor interface.
 func (e *ShowBaseExtractor) explainInfo() string {
-	fieldKey := ""
+	key := ""
 	switch e.ShowStmt.Tp {
 	case ast.ShowVariables, ast.ShowColumns:
-		fieldKey = FieldKey
+		key = fieldKey
 	case ast.ShowTables, ast.ShowTableStatus:
-		fieldKey = TableKey
+		key = tableKey
 	case ast.ShowDatabases:
-		fieldKey = DatabaseKey
+		key = databaseKey
 	}
 
 	r := new(bytes.Buffer)
 	if len(e.field) > 0 {
-		r.WriteString(fmt.Sprintf("%s:[%s], ", fieldKey, e.field))
+		r.WriteString(fmt.Sprintf("%s:[%s], ", key, e.field))
 	}
 
 	if len(e.fieldPattern) > 0 {
-		r.WriteString(fmt.Sprintf("%s_pattern:[%s], ", fieldKey, e.fieldPattern))
+		r.WriteString(fmt.Sprintf("%s_pattern:[%s], ", key, e.fieldPattern))
 	}
 
 	// remove the last ", " in the message info
@@ -123,10 +123,12 @@ func (e *ShowBaseExtractor) explainInfo() string {
 	return s
 }
 
+// Field will return the variable `field` in ShowBaseExtractor
 func (e *ShowBaseExtractor) Field() string {
 	return e.field
 }
 
+// FieldPatternLike will return compiled collate.WildcardPattern
 func (e *ShowBaseExtractor) FieldPatternLike() collate.WildcardPattern {
 	if e.fieldPattern == "" {
 		return nil
