@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// SliceToMap converts slice to map
+// SliceToMap converts slice to map.
 // nolint:unused
 func SliceToMap(slice []string) map[string]interface{} {
 	sMap := make(map[string]interface{})
@@ -32,7 +32,7 @@ func SliceToMap(slice []string) map[string]interface{} {
 	return sMap
 }
 
-// StringsToInterfaces converts string slice to interface slice
+// StringsToInterfaces converts string slice to interface slice.
 func StringsToInterfaces(strs []string) []interface{} {
 	is := make([]interface{}, 0, len(strs))
 	for _, str := range strs {
