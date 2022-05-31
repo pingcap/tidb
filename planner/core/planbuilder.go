@@ -2933,16 +2933,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	isSequence := false
 
 	switch show.Tp {
-	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns:
-		extractor := newShowBaseExtractor(show.Tp)
-		if extractor.Extract(show) {
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus:
+		extractor := newShowBaseExtractor(*show)
+		if extractor.Extract() {
 			p.Extractor = extractor
 			// Avoid building Selection.
 			show.Pattern = nil
-		}
-	case ast.ShowTableStatus:
-		if p.DBName == "" {
-			return nil, ErrNoDB
 		}
 	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error

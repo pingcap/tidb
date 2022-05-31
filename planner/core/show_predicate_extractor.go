@@ -46,7 +46,7 @@ var (
 // it is a way to fix https://github.com/pingcap/tidb/issues/29910.
 type ShowPredicateExtractor interface {
 	// Extract predicates which can be pushed down and returns whether the extractor can extract predicates.
-	Extract(show *ast.ShowStmt) bool
+	Extract() bool
 	explainInfo() string
 	Field() string
 	FieldPatternLike() collate.WildcardPattern
@@ -54,19 +54,20 @@ type ShowPredicateExtractor interface {
 
 // ShowBaseExtractor is the definition of base extractor for derived predicates.
 type ShowBaseExtractor struct {
-	ast.ShowStmtType
+	ast.ShowStmt
 
 	field string
 
 	fieldPattern string
 }
 
-func newShowBaseExtractor(showStatement ast.ShowStmtType) ShowPredicateExtractor {
-	return &ShowBaseExtractor{ShowStmtType: showStatement}
+func newShowBaseExtractor(showStatement ast.ShowStmt) ShowPredicateExtractor {
+	return &ShowBaseExtractor{ShowStmt: showStatement}
 }
 
 // Extract implements the ShowPredicateExtractor interface.
-func (e *ShowBaseExtractor) Extract(show *ast.ShowStmt) bool {
+func (e *ShowBaseExtractor) Extract() bool {
+	show := e.ShowStmt
 	if show.Pattern != nil && show.Pattern.Pattern != nil {
 		pattern := show.Pattern
 		switch pattern.Pattern.(type) {
@@ -96,12 +97,11 @@ func (e *ShowBaseExtractor) Extract(show *ast.ShowStmt) bool {
 // explainInfo implements the ShowPredicateExtractor interface.
 func (e *ShowBaseExtractor) explainInfo() string {
 	fieldKey := ""
-	switch e.ShowStmtType {
+	switch e.ShowStmt.Tp {
 	case ast.ShowVariables, ast.ShowColumns:
 		fieldKey = FieldKey
-	case ast.ShowTables:
+	case ast.ShowTables, ast.ShowTableStatus:
 		fieldKey = TableKey
-	case ast.ShowTableStatus:
 	case ast.ShowDatabases:
 		fieldKey = DatabaseKey
 	}
@@ -128,29 +128,10 @@ func (e *ShowBaseExtractor) Field() string {
 }
 
 func (e *ShowBaseExtractor) FieldPatternLike() collate.WildcardPattern {
+	if e.fieldPattern == "" {
+		return nil
+	}
 	fieldPatternsLike := collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
 	fieldPatternsLike.Compile(e.fieldPattern, byte('\\'))
 	return fieldPatternsLike
-}
-
-// ShowDatabaseExtractor is used to extract some predicates of databases.
-type ShowDatabaseExtractor struct {
-	ShowBaseExtractor
-}
-
-func (e *ShowDatabaseExtractor) explainInfo() string {
-	r := new(bytes.Buffer)
-	if len(e.Field) > 0 {
-		r.WriteString(fmt.Sprintf("database:[%s], ", e.Field))
-	}
-	if len(e.FieldPatterns) > 0 {
-		r.WriteString(fmt.Sprintf("database_pattern:[%s], ", e.FieldPatterns))
-	}
-
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
 }

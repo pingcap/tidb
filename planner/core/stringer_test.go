@@ -88,6 +88,14 @@ func TestPlanStringer(t *testing.T) {
 			sql:  "show databases like '%T%'",
 			plan: "Show(database_pattern:[%t%])",
 		},
+		{
+			sql:  "show table status like 'T%'",
+			plan: "Show(table_pattern:[t%])",
+		},
+		{
+			sql:  "show table status like '%T%'",
+			plan: "Show(table_pattern:[%t%])",
+		},
 	}
 	parser := parser.New()
 	for _, tt := range tests {

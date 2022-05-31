@@ -552,10 +552,23 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		fieldFilter       string
+	)
 
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	for _, row := range rows {
-		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, row.GetString(0), "", mysql.AllPrivMask) {
+		tableName := row.GetString(0)
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tableName, "", mysql.AllPrivMask) {
+			continue
+		} else if fieldFilter != "" && strings.ToLower(tableName) != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(strings.ToLower(tableName)) {
 			continue
 		}
 		e.result.AppendRow(row)
