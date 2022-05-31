@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"strconv"
 	"sync"
 	"testing"
@@ -23,6 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
@@ -99,18 +102,29 @@ func TestParallelDDL(t *testing.T) {
 	tk.MustExec("create table test_parallel_ddl_2.t3(c1 int, c2 int, c3 int, c4 int)")
 
 	// set hook to execute jobs after all jobs are in queue.
-	jobCnt := 11
+	jobCnt := int64(11)
 	tc := &ddl.TestDDLCallback{Do: dom}
 	once := sync.Once{}
 	var checkErr error
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		// TODO: extract a unified function for other tests.
 		once.Do(func() {
+			qLen1 := int64(0)
+			qLen2 := int64(0)
+			var err error
 			for {
-				qLen1, err := strconv.Atoi(tk.MustQuery("select count(*) from mysql.tidb_ddl_job where not reorg").Rows()[0][0].(string))
-				require.NoError(t, err)
-				qLen2, err := strconv.Atoi(tk.MustQuery("select count(*) from mysql.tidb_ddl_job where reorg").Rows()[0][0].(string))
-				require.NoError(t, err)
+				checkErr = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+					m := meta.NewMeta(txn)
+					qLen1, err = m.DDLJobQueueLen()
+					if err != nil {
+						return err
+					}
+					qLen2, err = m.DDLJobQueueLen(meta.AddIndexJobListKey)
+					if err != nil {
+						return err
+					}
+					return nil
+				})
 				if checkErr != nil {
 					break
 				}
