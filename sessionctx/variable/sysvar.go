@@ -798,11 +798,11 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	// variable for concurrent DDL feature.
-	{Scope: ScopeGlobal, Name: TiDBEnableConcurrencyDDL, Value: BoolToOnOff(DefTiDBEnableConcurrencyDDL), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
-		AllowConcurrencyDDL.Store(TiDBOptOn(val))
+	{Scope: ScopeGlobal, Name: TiDBEnableConcurrentDDL, Value: BoolToOnOff(DefTiDBEnableConcurrentDDL), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		AllowConcurrentDDL.Store(TiDBOptOn(val))
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(AllowConcurrencyDDL.Load()), nil
+		return BoolToOnOff(AllowConcurrentDDL.Load()), nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */

@@ -892,7 +892,7 @@ const (
 	DefTiDBEnablePrepPlanCache                   = true
 	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
-	DefTiDBEnableConcurrencyDDL                  = true
+	DefTiDBEnableConcurrentDDL                  = true
 )
 
 // Process global variables.
