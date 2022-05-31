@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -244,6 +245,23 @@ func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 
 // RefreshVars implements the sessionctx.Context interface.
 func (c *Context) RefreshVars(ctx context.Context) error {
+	return nil
+}
+
+// RollbackTxn indicates an expected call of RollbackTxn.
+func (c *Context) RollbackTxn(ctx context.Context) {
+	defer c.sessionVars.SetInTxn(false)
+	if c.txn.Valid() {
+		terror.Log(c.txn.Rollback())
+	}
+}
+
+// CommitTxn indicates an expected call of CommitTxn.
+func (c *Context) CommitTxn(ctx context.Context) error {
+	defer c.sessionVars.SetInTxn(false)
+	if c.txn.Valid() {
+		return c.txn.Commit(ctx)
+	}
 	return nil
 }
 

@@ -688,16 +688,15 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 11"))
 	})
 
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, do.InfoSchema())
 	path := append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
 	doWithCheckPath(t, se, path, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
-		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11 100"))
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
 	})
 
 	doWithCheckPath(t, se, normalPathRecords, func() {
-		tk.MustQuery("execute s").Check(testkit.Rows("1 11 100"))
+		tk.MustQuery("execute s").Check(testkit.Rows("1 11"))
 	})
 
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
