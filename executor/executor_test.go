@@ -4446,9 +4446,6 @@ func TestAdminShowDDLJobs(t *testing.T) {
 		err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 		require.NoError(t, err)
 	}
-	require.NoError(t, err)
-	err = ddl.AddHistoryDDLJob(meta.NewMeta(txn), job, true)
-	require.NoError(t, err)
 
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]

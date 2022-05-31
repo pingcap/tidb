@@ -962,7 +962,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err = AddHistoryDDLJob(m, jobs[i], true)
+		err = AddHistoryDDLJob(nil, m, jobs[i], true)
 		require.NoError(t, err)
 
 		historyJobs, err := GetHistoryDDLJobs(nil, txn, DefNumHistoryJobs)

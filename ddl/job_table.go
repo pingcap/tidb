@@ -520,10 +520,7 @@ func (d *ddl) BackOffDDLs(store kv.Storage) (err error) {
 		if err := t.ClearALLDDLJob(); err != nil {
 			return err
 		}
-		if err := t.ClearALLHistoryJob(); err != nil {
-			return err
-		}
-		return nil
+		return t.ClearALLHistoryJob()
 	})
 	if err != nil {
 		return err
@@ -566,8 +563,8 @@ func (d *ddl) BackOffDDLs(store kv.Storage) (err error) {
 		}
 	}
 	for _, row := range reorgHandle {
-		jobId := row.GetInt64(0)
-		if err := t.UpdateDDLReorgHandle(jobs[jobId], row.GetBytes(4), row.GetBytes(5), row.GetInt64(6), &meta.Element{ID: row.GetInt64(2), TypeKey: row.GetBytes(3)}); err != nil {
+		jobID := row.GetInt64(0)
+		if err := t.UpdateDDLReorgHandle(jobs[jobID], row.GetBytes(4), row.GetBytes(5), row.GetInt64(6), &meta.Element{ID: row.GetInt64(2), TypeKey: row.GetBytes(3)}); err != nil {
 			return err
 		}
 	}
