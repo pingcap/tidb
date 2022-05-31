@@ -70,10 +70,12 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, domain.GetDomain(p.sctx).InfoSchema())
 	sessVars := p.sctx.GetSessionVars()
 	txnCtx := &variable.TransactionContext{
-		CreateTime: time.Now(),
-		InfoSchema: p.infoSchema,
-		ShardStep:  int(sessVars.ShardAllocateStep),
-		TxnScope:   sessVars.CheckAndGetTxnScope(),
+		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+			CreateTime: time.Now(),
+			InfoSchema: p.infoSchema,
+			ShardStep:  int(sessVars.ShardAllocateStep),
+			TxnScope:   sessVars.CheckAndGetTxnScope(),
+		},
 	}
 	if p.onInitializeTxnCtx != nil {
 		p.onInitializeTxnCtx(txnCtx)
