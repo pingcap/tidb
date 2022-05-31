@@ -736,7 +736,10 @@ func TestPruneModeWarningInfo(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats",
 		"Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
+	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
 }
