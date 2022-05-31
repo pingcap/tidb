@@ -2477,7 +2477,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					if err == nil {
 						decodedKeyBytes, err := json.Marshal(decodedKey)
 						if err != nil {
-							logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+							logutil.Logger(ctx).Warn("marshal decoded key info to JSON failed", zap.Error(err))
 						} else {
 							decodedKeyStr = string(decodedKeyBytes)
 						}
