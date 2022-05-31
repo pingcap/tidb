@@ -60,6 +60,17 @@ func TestSysVar(t *testing.T) {
 	require.Equal(t, runtime.GOARCH, f.Value)
 }
 
+func TestDefaultPartitionPruneMode(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBPartitionPruneMode)
+	require.NoError(t, err)
+	require.Equal(t, "static", val)
+	require.Equal(t, "static", DefTiDBPartitionPruneMode)
+}
+
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedValueForVar,

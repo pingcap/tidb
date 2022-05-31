@@ -32,6 +32,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSetPartitionPruneMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tkInit := testkit.NewTestKit(t, store)
+	tkInit.MustExec(`set @@session.tidb_partition_prune_mode = DEFAULT`)
+	tkInit.MustQuery("show warnings").Check(testkit.Rows())
+	tkInit.MustExec(`set @@global.tidb_partition_prune_mode = DEFAULT`)
+	tkInit.MustQuery("show warnings").Check(testkit.Rows())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk.MustExec(`set @@session.tidb_partition_prune_mode = "dynamic"`)
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 Please analyze all partition tables again for consistency between partition and global stats",
+		"Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
+	tk.MustExec(`set @@global.tidb_partition_prune_mode = "dynamic"`)
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk2.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
+	tk2.MustExec(`set @@session.tidb_partition_prune_mode = "static"`)
+	tk2.MustQuery("show warnings").Check(testkit.Rows())
+	tk2.MustExec(`set @@global.tidb_partition_prune_mode = "static"`)
+	tk2.MustQuery("show warnings").Check(testkit.Rows())
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk3.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("static"))
+}
+
 func TestFourReader(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
