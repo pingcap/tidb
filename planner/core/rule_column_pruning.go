@@ -147,7 +147,21 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 			la.GroupByItems = []expression.Expression{expression.NewOne()}
 		}
 	}
-	return child.PruneColumns(selfUsedCols)
+	err := child.PruneColumns(selfUsedCols)
+	if err != nil {
+		return err
+	}
+	// Do an extra Projection Elimination here. This is specially for empty Projection below Aggregation.
+	// This kind of Projection would cause some bugs for MPP plan and is safe to be removed.
+	// This kind of Projection should be removed in Projection Elimination, but currently PrunColumnsAgain is
+	// the last rule. So we specially handle this case here.
+	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
+		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
+			childOfChild := childProjection.children[0]
+			la.SetChildren(childOfChild)
+		}
+	}
+	return nil
 }
 
 func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
@@ -223,6 +237,23 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
 				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			}
+		}
+		// It's possible that the child operator adds extra columns to the schema.
+		// Currently, (*LogicalAggregation).PruneColumns() might do this.
+		// But we don't need such columns, so we add an extra Projection to prune this column when this happened.
+		for i, child := range p.Children() {
+			if p.schema.Len() < child.Schema().Len() {
+				schema := p.schema.Clone()
+				exprs := make([]expression.Expression, len(p.schema.Columns))
+				for j, col := range schema.Columns {
+					exprs[j] = col
+				}
+				proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(p.ctx, p.blockOffset)
+				proj.SetSchema(schema)
+
+				proj.SetChildren(child)
+				p.children[i] = proj
 			}
 		}
 	}

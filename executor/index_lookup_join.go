@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
@@ -81,14 +82,17 @@ type IndexLookUpJoin struct {
 
 	memTracker *memory.Tracker // track memory usage.
 
-	stats *indexLookUpJoinRuntimeStats
+	stats           *indexLookUpJoinRuntimeStats
+	ctxCancelReason atomic.Value
+	finished        *atomic.Value
 }
 
 type outerCtx struct {
-	rowTypes []*types.FieldType
-	keyCols  []int
-	hashCols []int
-	filter   expression.CNFExprs
+	rowTypes  []*types.FieldType
+	keyCols   []int
+	hashTypes []*types.FieldType
+	hashCols  []int
+	filter    expression.CNFExprs
 }
 
 type innerCtx struct {
@@ -96,6 +100,7 @@ type innerCtx struct {
 	rowTypes      []*types.FieldType
 	keyCols       []int
 	keyColIDs     []int64 // the original ID in its table, used by dynamic partition pruning
+	hashTypes     []*types.FieldType
 	hashCols      []int
 	colLens       []int
 	hasPrefixCol  bool
@@ -142,11 +147,13 @@ type innerWorker struct {
 	outerCtx    outerCtx
 	ctx         sessionctx.Context
 	executorChk *chunk.Chunk
+	lookup      *IndexLookUpJoin
 
 	indexRanges           []*ranger.Range
 	nextColCompareFilters *plannercore.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
 	stats                 *innerWorkerRuntimeStats
+	memTracker            *memory.Tracker
 }
 
 // Open implements the Executor interface.
@@ -158,6 +165,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
+	e.finished.Store(false)
 	if e.runtimeStats != nil {
 		e.stats = &indexLookUpJoinRuntimeStats{}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
@@ -219,6 +227,16 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
 		stats:         innerStats,
+		lookup:        e,
+		memTracker:    memory.NewTracker(memory.LabelForIndexJoinInnerWorker, -1),
+	}
+	iw.memTracker.AttachTo(e.memTracker)
+	if len(copiedRanges) != 0 {
+		// We should not consume this memory usage in `iw.memTracker`. The
+		// memory usage of inner worker will be reset the end of iw.handleTask.
+		// While the life cycle of this memory consumption exists throughout the
+		// whole active period of inner worker.
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.Consume(2 * types.EstimatedMemUsage(copiedRanges[0].LowVal, len(copiedRanges)))
 	}
 	if e.lastColHelper != nil {
 		// nextCwf.TmpConstant needs to be reset for every individual
@@ -295,6 +313,9 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
+		if err := e.ctxCancelReason.Load(); err != nil {
+			return nil, err.(error)
+		}
 		return nil, ctx.Err()
 	}
 	if task == nil {
@@ -307,6 +328,9 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 			return nil, err
 		}
 	case <-ctx.Done():
+		if err := e.ctxCancelReason.Load(); err != nil {
+			return nil, err.(error)
+		}
 		return nil, ctx.Err()
 	}
 
@@ -330,19 +354,24 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer trace.StartRegion(ctx, "IndexLookupJoinOuterWorker").End()
 	defer func() {
 		if r := recover(); r != nil {
+			ow.lookup.finished.Store(true)
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("outerWorker panicked", zap.String("stack", string(buf)))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
-			task.doneCh <- errors.Errorf("%v", r)
+			err := errors.Errorf("%v", r)
+			task.doneCh <- err
 			ow.pushToChan(ctx, task, ow.resultCh)
+			ow.lookup.ctxCancelReason.Store(err)
+			ow.lookup.cancelFunc()
 		}
 		close(ow.resultCh)
 		close(ow.innerCh)
 		wg.Done()
 	}()
 	for {
+		failpoint.Inject("TestIssue30211", nil)
 		task, err := ow.buildTask(ctx)
 		if err != nil {
 			task.doneCh <- err
@@ -447,12 +476,16 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	var task *lookUpJoinTask
 	defer func() {
 		if r := recover(); r != nil {
+			iw.lookup.finished.Store(true)
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("innerWorker panicked", zap.String("stack", string(buf)))
+			err := errors.Errorf("%v", r)
 			// "task != nil" is guaranteed when panic happened.
-			task.doneCh <- errors.Errorf("%v", r)
+			task.doneCh <- err
+			iw.lookup.ctxCancelReason.Store(err)
+			iw.lookup.cancelFunc()
 		}
 		wg.Done()
 	}()
@@ -486,6 +519,9 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 			atomic.AddInt64(&iw.stats.totalTime, int64(time.Since(start)))
 		}()
 	}
+	defer func() {
+		iw.memTracker.Consume(-iw.memTracker.BytesConsumed())
+	}()
 	lookUpContents, err := iw.constructLookupContent(task)
 	if err != nil {
 		return err
@@ -518,6 +554,9 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			dLookUpKey, dHashKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
 			if err != nil {
 				return nil, err
+			}
+			if rowIdx == 0 {
+				iw.lookup.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, numRows))
 			}
 			if dHashKey == nil {
 				// Append null to make looUpKeys the same length as outer Result.
@@ -643,7 +682,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			atomic.AddInt64(&iw.stats.fetch, int64(time.Since(start)))
 		}()
 	}
-	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true)
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true, iw.memTracker, iw.lookup.finished)
 	if innerExec != nil {
 		defer terror.Call(innerExec.Close)
 	}
@@ -657,6 +696,9 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	for {
 		select {
 		case <-ctx.Done():
+			if err := iw.lookup.ctxCancelReason.Load(); err != nil {
+				return err.(error)
+			}
 			return ctx.Err()
 		default:
 		}
@@ -725,6 +767,7 @@ func (e *IndexLookUpJoin) Close() error {
 	e.workerWg.Wait()
 	e.memTracker = nil
 	e.task = nil
+	e.finished.Store(false)
 	return e.baseExecutor.Close()
 }
 

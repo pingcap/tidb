@@ -1494,6 +1494,9 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 		if len(oneColumnRan) == 0 {
 			return nil, true, nil
 		}
+		if sc.MemTracker != nil {
+			sc.MemTracker.Consume(2 * types.EstimatedMemUsage(oneColumnRan[0].LowVal, len(oneColumnRan)))
+		}
 		for _, ran := range ranges {
 			ran.LowVal[i] = oneColumnRan[0].LowVal[0]
 			ran.HighVal[i] = oneColumnRan[0].HighVal[0]
@@ -1506,6 +1509,9 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 				newRange.LowVal[i] = oneColumnRan[ranIdx].LowVal[0]
 				newRange.HighVal[i] = oneColumnRan[ranIdx].HighVal[0]
 				newRanges = append(newRanges, newRange)
+			}
+			if sc.MemTracker != nil && len(newRanges) != 0 {
+				sc.MemTracker.Consume(2 * types.EstimatedMemUsage(newRanges[0].LowVal, len(newRanges)))
 			}
 			ranges = append(ranges, newRanges...)
 		}

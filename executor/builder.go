@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -54,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -87,6 +89,9 @@ type executorBuilder struct {
 	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
 	explicitStaleness bool
 	txnScope          string
+	inUpdateStmt      bool
+	inDeleteStmt      bool
+	inInsertStmt      bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -779,6 +784,7 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
+	b.inInsertStmt = true
 	if v.SelectPlan != nil {
 		// Try to update the forUpdateTS for insert/replace into select statements.
 		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
@@ -1176,15 +1182,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 	}
 
-	// consider collations
-	leftTypes := make([]*types.FieldType, 0, len(retTypes(leftExec)))
-	for _, tp := range retTypes(leftExec) {
-		leftTypes = append(leftTypes, tp.Clone())
-	}
-	rightTypes := make([]*types.FieldType, 0, len(retTypes(rightExec)))
-	for _, tp := range retTypes(rightExec) {
-		rightTypes = append(rightTypes, tp.Clone())
-	}
 	leftIsBuildSide := true
 
 	e.isNullEQ = v.IsNullEQ
@@ -1227,23 +1224,31 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	executorCountHashJoinExec.Inc()
 
+	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
+	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
+	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
+	// and use ETString to hash the second column, although they may be the same column.
+	leftExecTypes, rightExecTypes := retTypes(leftExec), retTypes(rightExec)
+	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys))
+	for i, col := range v.LeftJoinKeys {
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes[i].Flag = col.RetType.Flag
+	}
+	for i, col := range v.RightJoinKeys {
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes[i].Flag = col.RetType.Flag
+	}
+
+	// consider collations
 	for i := range v.EqualConditions {
 		chs, coll := v.EqualConditions[i].CharsetAndCollation(e.ctx)
-		bt := leftTypes[v.LeftJoinKeys[i].Index]
-		bt.Charset, bt.Collate = chs, coll
-		pt := rightTypes[v.RightJoinKeys[i].Index]
-		pt.Charset, pt.Collate = chs, coll
+		leftTypes[i].Charset, leftTypes[i].Collate = chs, coll
+		rightTypes[i].Charset, rightTypes[i].Collate = chs, coll
 	}
 	if leftIsBuildSide {
 		e.buildTypes, e.probeTypes = leftTypes, rightTypes
 	} else {
 		e.buildTypes, e.probeTypes = rightTypes, leftTypes
-	}
-	for _, key := range e.buildKeys {
-		e.buildTypes[key.Index].Flag = key.RetType.Flag
-	}
-	for _, key := range e.probeKeys {
-		e.probeTypes[key.Index].Flag = key.RetType.Flag
 	}
 	return e
 }
@@ -1384,6 +1389,12 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
 	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+		e.numWorkers = 0
+	}
+
+	// Use un-parallel projection for query that write on memdb to avoid data race.
+	// See also https://github.com/pingcap/tidb/issues/26832
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -1859,6 +1870,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 }
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
+	b.inUpdateStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
@@ -1930,6 +1942,7 @@ func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int)
 }
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
+	b.inDeleteStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
@@ -2476,6 +2489,21 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		outerTypes[col.Index].Flag = col.RetType.Flag
 	}
 
+	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
+	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
+	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
+	// and use ETString to hash the second column, although they may be the same column.
+	innerHashTypes := make([]*types.FieldType, len(v.InnerHashKeys))
+	outerHashTypes := make([]*types.FieldType, len(v.OuterHashKeys))
+	for i, col := range v.InnerHashKeys {
+		innerHashTypes[i] = innerTypes[col.Index].Clone()
+		innerHashTypes[i].Flag = col.RetType.Flag
+	}
+	for i, col := range v.OuterHashKeys {
+		outerHashTypes[i] = outerTypes[col.Index].Clone()
+		outerHashTypes[i].Flag = col.RetType.Flag
+	}
+
 	var (
 		outerFilter           []expression.Expression
 		leftTypes, rightTypes []*types.FieldType
@@ -2510,12 +2538,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec),
 		outerCtx: outerCtx{
-			rowTypes: outerTypes,
-			filter:   outerFilter,
+			rowTypes:  outerTypes,
+			hashTypes: outerHashTypes,
+			filter:    outerFilter,
 		},
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 			rowTypes:      innerTypes,
+			hashTypes:     innerHashTypes,
 			colLens:       v.IdxColLens,
 			hasPrefixCol:  hasPrefixCol,
 		},
@@ -2524,6 +2554,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,
+		finished:      &atomic.Value{},
 	}
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
@@ -3353,21 +3384,21 @@ type mockPhysicalIndexReader struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,
-	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
-	return builder.buildExecutorForIndexJoinInternal(ctx, builder.Plan, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
+	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
+	return builder.buildExecutorForIndexJoinInternal(ctx, builder.Plan, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan plannercore.Plan, lookUpContents []*indexJoinLookUpContent,
-	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
+	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	switch v := plan.(type) {
 	case *plannercore.PhysicalTableReader:
-		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
+		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	case *plannercore.PhysicalIndexReader:
-		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	case *plannercore.PhysicalIndexLookUpReader:
-		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	case *plannercore.PhysicalUnionScan:
-		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
+		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	// The inner child of IndexJoin might be Projection when a combination of the following conditions is true:
 	// 	1. The inner child fetch data using indexLookupReader
 	// 	2. PK is not handle
@@ -3375,11 +3406,11 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	// In this case, an extra column tidb_rowid will be appended in the output result of IndexLookupReader(see copTask.doubleReadNeedProj).
 	// Then we need a Projection upon IndexLookupReader to prune the redundant column.
 	case *plannercore.PhysicalProjection:
-		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
 	case *plannercore.PhysicalSelection:
-		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
+		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
@@ -3397,9 +3428,9 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 
 func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
 	values []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
-	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
+	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	childBuilder := &dataReaderBuilder{Plan: v.Children()[0], executorBuilder: builder.executorBuilder}
-	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff, cwc, canReorderHandles)
+	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	if err != nil {
 		return nil, err
 	}
@@ -3413,7 +3444,7 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 
 func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
-	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
+	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, err
@@ -3421,7 +3452,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	tbInfo := e.table.Meta()
 	if v.IsCommonHandle {
 		if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 			if err != nil {
 				return nil, err
 			}
@@ -3450,7 +3481,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 					return nil, err
 				}
 				pid := p.GetPhysicalID()
-				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, []*indexJoinLookUpContent{content}, indexRanges, keyOff2IdxOff, cwc)
+				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, []*indexJoinLookUpContent{content}, indexRanges, keyOff2IdxOff, cwc, nil, interruptSignal)
 				if err != nil {
 					return nil, err
 				}
@@ -3465,7 +3496,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			kvRanges = make([]kv.KeyRange, 0, len(partitions)*len(lookUpContents))
 			for _, p := range partitions {
 				pid := p.GetPhysicalID()
-				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 				if err != nil {
 					return nil, err
 				}
@@ -3631,14 +3662,14 @@ func (builder *dataReaderBuilder) buildTableReaderFromKvRanges(ctx context.Conte
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexReader,
-	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
+	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memoryTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, err
 	}
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		kvRanges, err := buildKvRangesForIndexJoin(e.ctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		kvRanges, err := buildKvRangesForIndexJoin(e.ctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memoryTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
@@ -3677,7 +3708,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexLookUpReader,
-	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
+	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, err
@@ -3685,7 +3716,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 	tbInfo := e.table.Meta()
 	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
@@ -3725,12 +3756,12 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 }
 
 func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Context, v *plannercore.PhysicalProjection,
-	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
+	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	physicalIndexLookUp, isDoubleRead := v.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
 	if !isDoubleRead {
 		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader, but got %T", v)
 	}
-	childExec, err := builder.buildIndexLookUpReaderForIndexJoin(ctx, physicalIndexLookUp, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+	childExec, err := builder.buildIndexLookUpReaderForIndexJoin(ctx, physicalIndexLookUp, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	if err != nil {
 		return nil, err
 	}
@@ -3797,7 +3828,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, lookUpContents []*indexJoinLookUpContent,
-	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (_ []kv.KeyRange, err error) {
+	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (_ []kv.KeyRange, err error) {
 	kvRanges := make([]kv.KeyRange, 0, len(ranges)*len(lookUpContents))
 	lastPos := len(ranges[0].LowVal) - 1
 	sc := ctx.GetSessionVars().StmtCtx
@@ -3816,7 +3847,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 			if indexID == -1 {
 				tmpKvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{tableID}, ranges)
 			} else {
-				tmpKvRanges, err = distsql.IndexRangesToKVRanges(sc, tableID, indexID, ranges, nil)
+				tmpKvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(sc, tableID, indexID, ranges, nil, memTracker, interruptSignal)
 			}
 			if err != nil {
 				return nil, err
@@ -3838,7 +3869,12 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 			}
 		}
 	}
-
+	if len(kvRanges) != 0 && memTracker != nil {
+		memTracker.Consume(int64(2 * cap(kvRanges[0].StartKey) * len(kvRanges)))
+	}
+	if len(tmpDatumRanges) != 0 && memTracker != nil {
+		memTracker.Consume(2 * int64(len(tmpDatumRanges)) * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
+	}
 	if cwc == nil {
 		sort.Slice(kvRanges, func(i, j int) bool {
 			return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
@@ -3854,7 +3890,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 	if indexID == -1 {
 		return distsql.CommonHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tableID}, tmpDatumRanges)
 	}
-	return distsql.IndexRangesToKVRanges(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil)
+	return distsql.IndexRangesToKVRangesWithInterruptSignal(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil, memTracker, interruptSignal)
 }
 
 func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {

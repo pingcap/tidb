@@ -1821,13 +1821,13 @@ func findFieldNameFromNaturalUsingJoin(p LogicalPlan, v *ast.ColumnName) (col *e
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *LogicalJoin:
-		if x.redundantSchema != nil {
-			idx, err := expression.FindFieldName(x.redundantNames, v)
+		if x.fullSchema != nil {
+			idx, err := expression.FindFieldName(x.fullNames, v)
 			if err != nil {
 				return nil, nil, err
 			}
 			if idx >= 0 {
-				return x.redundantSchema.Columns[idx], x.redundantNames[idx], nil
+				return x.fullSchema.Columns[idx], x.fullNames[idx], nil
 			}
 		}
 	}

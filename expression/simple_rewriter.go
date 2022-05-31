@@ -128,6 +128,12 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 			if idx == -1 {
 				idx = i
 			} else {
+				if names[idx].Redundant || name.Redundant {
+					if !name.Redundant {
+						idx = i
+					}
+					continue
+				}
 				return -1, errNonUniq.GenWithStackByArgs(astCol.String(), "field list")
 			}
 		}
