@@ -3316,11 +3316,7 @@ PARTITION BY RANGE ( id ) (
 	tk.MustExec("analyze table t partition p0 index idxa")
 	tk.MustExec("analyze table t partition p1 index idxb")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("analyze table t partition p0")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 8244 Build table: `t` column: `id` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
-		"Warning 8244 Build table: `t` index: `idxa` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
-	))
+	tk.MustExec("analyze table t partition p0") // no panic
 }
 
 func TestIssue35056Related(t *testing.T) {
@@ -3356,11 +3352,7 @@ PARTITION BY RANGE ( id ) (
 	tk.MustExec("analyze table t partition p0 columns id,a")
 	tk.MustExec("analyze table t partition p1 columns id,b")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("analyze table t partition p0")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
-		"Warning 8244 Build table: `t` column: `a` global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions",
-	))
+	tk.MustExec("analyze table t partition p0") // no panic
 }
 
 func TestIssue35044(t *testing.T) {
