@@ -589,12 +589,11 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 				return types.Datum{}, err
 			}
 			return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
-		} else {
-			return types.Datum{}, nil
 		}
+		return types.Datum{}, nil
 	}
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
-		// Auto increment column doesn't has default value and we should not return error.
+		// Auto increment column doesn't have default value and we should not return error.
 		return GetZeroValue(col), nil
 	}
 	vars := ctx.GetSessionVars()

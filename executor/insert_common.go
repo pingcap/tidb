@@ -561,10 +561,20 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
 	error) {
 	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
+		if mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
+			vars := e.ctx.GetSessionVars()
+			sc := vars.StmtCtx
+			if !vars.StrictSQLMode {
+				sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
+			} else {
+				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
+			}
+		}
+
 		if e.lazyFillAutoID {
 			// Handle hasValue info in autoIncrement column previously for lazy handle.
 			if !hasValue {
-				return table.GetColDefaultValue(e.ctx, column.ToInfo())
+				datum.SetNull()
 			}
 			// Store the plain datum of autoIncrement column directly for lazy handle.
 			return datum, nil
