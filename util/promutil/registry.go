@@ -16,6 +16,7 @@ package promutil
 
 import "github.com/prometheus/client_golang/prometheus"
 
+// Registry is the interface to register or unregister metrics.
 type Registry = prometheus.Registerer
 
 var _ Registry = noopRegistry{}
