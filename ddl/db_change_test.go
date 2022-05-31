@@ -1365,7 +1365,6 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *doma
 		}
 		var qLen int
 		for {
-
 			sess := testkit.NewTestKit(t, store).Session()
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)

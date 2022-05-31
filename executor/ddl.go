@@ -561,9 +561,9 @@ func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) 
 // It is built from "recover table" statement,
 // is used to recover the table that deleted by mistake.
 func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
-	var err error
 	dom := domain.GetDomain(e.ctx)
 	var job *model.Job
+	var err error
 	var tblInfo *model.TableInfo
 	if s.JobID != 0 {
 		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)

@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -102,7 +101,6 @@ type worker struct {
 	concurrentDDL bool
 
 	*ddlCtx
-	*JobContext
 }
 
 // JobContext is the ddl job execution context.
@@ -139,7 +137,6 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		tp:              tp,
 		ddlJobCh:        make(chan struct{}, 1),
 		ctx:             ctx,
-		JobContext:      NewJobContext(),
 		ddlCtx:          dCtx,
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
@@ -166,7 +163,7 @@ func (w *worker) typeStr() string {
 
 func (w *worker) getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
 	//TODO: remove getReorgInfo code, after refactor the old ddl test.
-	return getReorgInfo(w.JobContext, d, t, job, tbl, elements, w)
+	return getReorgInfo(d.jobContext(job), d, t, job, tbl, elements, w)
 }
 
 func (w *worker) String() string {
@@ -423,35 +420,15 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 	}
 }
 
-// GetHistoryJobByID return history ddl by id.
-func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
-	if variable.AllowConcurrencyDDL.Load() {
-		jobs, err := getJobsBySQL(newSession(sess), "tidb_ddl_history", fmt.Sprintf("job_id = %d", id))
-		if err != nil || len(jobs) == 0 {
-			return nil, errors.Trace(err)
-		}
-		return jobs[0], nil
-	}
-	err := sessiontxn.NewTxn(context.Background(), sess)
+// getHistoryDDLJob gets a DDL job with job's ID from history queue.
+func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
+	se, err := d.sessPool.get()
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	txn, err := sess.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	t := meta.NewMeta(txn)
-	job, err := t.GetHistoryDDLJob(id)
+	defer d.sessPool.put(se)
+	job, err := GetHistoryJobByID(se, id)
 	return job, errors.Trace(err)
-}
-
-// GetAllHistoryDDLJobs get all the done ddl jobs.
-func GetAllHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta) ([]*model.Job, error) {
-	if variable.AllowConcurrencyDDL.Load() {
-		return getJobsBySQL(newSession(sess), "tidb_ddl_history", "1")
-	}
-
-	return m.GetAllHistoryDDLJobs()
 }
 
 func injectFailPointForGetJob(job *model.Job) {
@@ -552,7 +529,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}()
 
 	if jobNeedGC(job) {
-		err = w.deleteRange(w.ddlJobCtx, job)
+		err = w.deleteRange(w.ctx, job)
 		if err != nil {
 			return err
 		}
@@ -589,18 +566,9 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		updateRawArgs = false
 	}
 	w.writeDDLSeqNum(job)
-	w.JobContext.resetWhenJobFinish()
+	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
-}
-
-// AddHistoryDDLJob adds DDL job to history table.
-func AddHistoryDDLJob(sess *session, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
-	if variable.AllowConcurrencyDDL.Load() {
-		return addHistoryDDLJob(sess, job, updateRawArgs)
-	}
-
-	return t.AddHistoryDDLJob(job, updateRawArgs)
 }
 
 func addHistoryDDLJob(sess *session, job *model.Job, updateRawArgs bool) error {
@@ -759,7 +727,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job) error {
 		return err
 	}
 	w.setDDLLabelForTopSQL(job)
-	if tagger := w.getResourceGroupTaggerForTopSQL(); tagger != nil {
+	if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
 	t := meta.NewMeta(txn)
@@ -878,13 +846,6 @@ func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagg
 	return tagger
 }
 
-func (w *JobContext) resetWhenJobFinish() {
-	w.ddlJobCtx = context.Background()
-	w.cacheSQL = ""
-	w.cacheDigest = nil
-	w.cacheNormalizedSQL = ""
-}
-
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
 func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
@@ -920,7 +881,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
-			if tagger := w.getResourceGroupTaggerForTopSQL(); tagger != nil {
+			if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {

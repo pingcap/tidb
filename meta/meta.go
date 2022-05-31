@@ -1109,7 +1109,7 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	}, nil
 }
 
-// HLastJobIterator is the iterator for gets latest history.
+// HLastJobIterator is the iterator for gets the latest history.
 type HLastJobIterator struct {
 	iter *structure.ReverseHashIterator
 }

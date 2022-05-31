@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -388,30 +387,6 @@ func getConcurrencyDDLJobs(sess sessionctx.Context) ([]*model.Job, error) {
 		jobs = append(jobs, job)
 	}
 	return jobs, nil
-}
-
-// getDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func getDDLJobs(t *meta.Meta) ([]*model.Job, error) {
-	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	jobs := append(generalJobs, addIdxJobs...)
-	sort.Sort(jobArray(jobs))
-	return jobs, nil
-}
-
-// GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
-	if variable.AllowConcurrencyDDL.Load() {
-		return getConcurrencyDDLJobs(sess)
-	}
-
-	return getDDLJobs(t)
 }
 
 func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
