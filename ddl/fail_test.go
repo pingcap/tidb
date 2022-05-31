@@ -60,7 +60,7 @@ func TestFailBeforeDecodeArgs(t *testing.T) {
 	}
 	d.SetHook(tc)
 	defaultValue := int64(3)
-	jobID := testCreateColumn(tk, t, testNewContext(store), tableID, "c3", "", defaultValue, dom)
+	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c3", "", defaultValue, dom)
 	// Make sure the schema state only appears once.
 	require.Equal(t, 1, stateCnt)
 	testCheckJobDone(t, store, jobID, true)
