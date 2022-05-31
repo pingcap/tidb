@@ -873,9 +873,14 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(s))
 	}
 
+	db.Close()
 	newDB, err := sql.Open("mysql", dsn)
 	if err == nil {
-		db.Close()
+		// ping to make sure all session parameters are set correctly
+		err = newDB.PingContext(tctx)
+		if err != nil {
+			newDB.Close()
+		}
 	}
 	return newDB, errors.Trace(err)
 }
