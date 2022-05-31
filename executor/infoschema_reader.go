@@ -2412,24 +2412,10 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 		// Calculate rows.
 		res = make([][]types.Datum, 0, end-start)
-		var lockWaitsStart int
-		var lockWaitsEnd int
-		var resolvingStart int
-		var resolvingEnd int
-		if start < len(r.lockWaits) {
-			lockWaitsStart = start
-			resolvingStart = 0
-		} else {
-			lockWaitsStart = len(r.lockWaits)
-			resolvingStart = start - len(r.lockWaits)
-		}
-		if end < len(r.lockWaits) {
-			lockWaitsEnd = end
-			resolvingEnd = 0
-		} else {
-			lockWaitsEnd = len(r.lockWaits)
-			resolvingEnd = end - len(r.lockWaits)
-		}
+        lockWaitsStart := mathutil.Min(start, len(r.lockWaits))
+		resolvingStart := start - lockWaitsStart
+		lockWaitsEnd := mathutil.Min(end, len(r.lockWaits))
+		resolvingEnd := end - lockWaitsEnd
 		for rowIdx, lockWait := range r.lockWaits[lockWaitsStart:lockWaitsEnd] {
 			row := make([]types.Datum, 0, len(r.columns))
 
