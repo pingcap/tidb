@@ -730,7 +730,7 @@ func TestIssue31721(t *testing.T) {
 	tk.MustExec("select * from t_31721 partition(p0, p1) where col1 != 2;")
 }
 
-func TestPruneMode(t *testing.T) {
+func TestPruneModeWarningInfo(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
