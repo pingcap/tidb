@@ -561,7 +561,7 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
 	error) {
 	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
-		if mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
+		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
 			vars := e.ctx.GetSessionVars()
 			sc := vars.StmtCtx
 			if !vars.StrictSQLMode {

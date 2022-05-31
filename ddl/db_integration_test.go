@@ -1708,9 +1708,10 @@ func TestAlterColumn(t *testing.T) {
 
 	tk.MustExec("set sql_mode=default")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE `t` (`a` int auto_increment, key i(a))")
+	tk.MustExec("CREATE TABLE `t` (`a` int auto_increment, b int, key i(a))")
 	tk.MustExec("alter table t alter column a drop default")
 	tk.MustGetErrCode("insert into t values ()", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into t values (1, a + 1)")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` int)")
