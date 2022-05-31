@@ -1742,6 +1742,14 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("alter table t alter column a drop default")
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int not null)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` enum('a', 'b'))")

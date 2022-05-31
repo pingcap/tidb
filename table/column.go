@@ -601,7 +601,12 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	sc := vars.StmtCtx
 	if !vars.StrictSQLMode {
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
-		return GetZeroValue(col), nil
+		if mysql.HasNotNullFlag(col.GetFlag()) {
+			return GetZeroValue(col), nil
+		}
+		if mysql.HasNoDefaultValueFlag(col.GetFlag()) {
+			return types.Datum{}, nil
+		}
 	}
 	if sc.BadNullAsWarning {
 		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
