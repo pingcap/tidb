@@ -132,3 +132,25 @@ func (e *ShowBaseExtractor) FieldPatternLike() collate.WildcardPattern {
 	fieldPatternsLike.Compile(e.fieldPattern, byte('\\'))
 	return fieldPatternsLike
 }
+
+// ShowDatabaseExtractor is used to extract some predicates of databases.
+type ShowDatabaseExtractor struct {
+	ShowBaseExtractor
+}
+
+func (e *ShowDatabaseExtractor) explainInfo() string {
+	r := new(bytes.Buffer)
+	if len(e.Field) > 0 {
+		r.WriteString(fmt.Sprintf("database:[%s], ", e.Field))
+	}
+	if len(e.FieldPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("database_pattern:[%s], ", e.FieldPatterns))
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
