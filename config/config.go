@@ -641,6 +641,8 @@ type Performance struct {
 	// ForcePriority, MemoryUsageAlarmRatio are deprecated.
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
+
+	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -864,6 +866,7 @@ var defaultConf = Config{
 		StatsLoadQueueSize:       1000,
 		EnableStatsCacheMemQuota: false,
 		RunAutoAnalyze:           true,
+		EnableLoadFMSketch:       false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
