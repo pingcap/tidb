@@ -233,6 +233,18 @@ func (e *Engine) unlock() {
 	e.mutex.Unlock()
 }
 
+func (e *Engine) TotalMemorySize() int64 {
+	var memSize int64 = 0
+	e.localWriters.Range(func(k, v interface{}) bool {
+		w := k.(*Writer)
+		if w.kvBuffer != nil {
+			memSize += w.kvBuffer.TotalSize()
+		} 
+		return true
+	})
+	return memSize
+}
+
 type rangeOffsets struct {
 	Size uint64
 	Keys uint64
@@ -1075,6 +1087,35 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows kv.Rows) error {
 	kvs := kv.KvPairsFromRows(rows)
 	if len(kvs) == 0 {
+		return nil
+	}
+
+	if w.engine.closed.Load() {
+		return errorEngineClosed
+	}
+
+	w.Lock()
+	defer w.Unlock()
+
+	// if chunk has _tidb_rowid field, we can't ensure that the rows are sorted.
+	if w.isKVSorted && w.writer == nil {
+		for _, c := range columnNames {
+			if c == model.ExtraHandleName.L {
+				w.isKVSorted = false
+			}
+		}
+	}
+
+	if w.isKVSorted {
+		return w.appendRowsSorted(kvs)
+	}
+	return w.appendRowsUnsorted(ctx, kvs)
+}
+
+// Used to write one key:value pair into local writer.
+func (w *Writer) AppendRow(ctx context.Context, tableName string, columnNames []string, kvs []common.KvPair) error {
+	// Now, only one index pairs was writen into local write buffer. 
+	if len(kvs) != 1 {
 		return nil
 	}
 

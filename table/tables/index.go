@@ -214,6 +214,66 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	return handle, kv.ErrKeyExists
 }
 
+// Create creates a new entry in the kvIndex data.
+// If the index is unique and there is an existing entry with the same key,
+// Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
+func (c *index) Create4SST(sctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) ([]byte, []byte, bool, error) {
+	if c.Meta().Unique {
+		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
+	}
+	var opt table.CreateIdxOpt
+	for _, fn := range opts {
+		fn(&opt)
+	}
+	vars := sctx.GetSessionVars()
+	writeBufs := vars.GetWriteStmtBufs()
+	key, distinct, err := c.GenIndexKey(vars.StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
+	if err != nil {
+		return key, nil, distinct, err
+	}
+
+	ctx := opt.Ctx
+	if opt.Untouched {
+		txn, err1 := sctx.Txn(true)
+		if err1 != nil {
+			return key, nil, distinct, err
+		}
+		// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
+		// should not overwrite the key with un-commit flag.
+		// So if the key exists, just do nothing and return.
+		v, err := txn.GetMemBuffer().Get(ctx, key)
+		if err == nil {
+			if len(v) != 0 {
+				return key, nil, distinct, nil
+			}
+			// The key is marked as deleted in the memory buffer, as the existence check is done lazily
+			// for optimistic transactions by default. The "untouched" key could still exist in the store,
+			// it's needed to commit this key to do the existence check so unset the untouched flag.
+			if !txn.IsPessimistic() {
+				keyFlags, err := txn.GetMemBuffer().GetFlags(key)
+				if err != nil {
+					return key, nil, distinct, err
+				}
+				if keyFlags.HasPresumeKeyNotExists() {
+					opt.Untouched = false
+				}
+			}
+		}
+	}
+
+	// save the key buffer to reuse.
+	writeBufs.IndexKeyBuf = key
+	c.initNeedRestoreData.Do(func() {
+		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+	})
+	idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, opt.Untouched, indexedValues, h, c.phyTblID, handleRestoreData)
+	if err != nil {
+		return key, nil, distinct, err
+	}
+
+	return key, idxVal, distinct, err
+}
+
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)

@@ -1578,6 +1578,25 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBFastDDL, Value: BoolToOnOff(DefTiDBFastDDL), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
+		return BoolToOnOff(FastDDL.Load()), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		FastDDL.Store(TiDBOptOn(val))
+		return nil
+	}},
+	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.
+	{Scope: ScopeGlobal, Name: TiDBDiskQuota, Value: strconv.Itoa(DefTiDBDiskQuota), Type: TypeInt, MinValue: 100, MaxValue: 1048576, GetGlobal: func(sv *SessionVars) (string, error) {
+		return strconv.Itoa(int(DiskQuota.Load())), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		value, err := strconv.Atoi(val)
+		if err != nil {
+			DiskQuota.Store(int32(value))
+		} else {
+			// Set to default value.
+			DiskQuota.Store(DefTiDBDiskQuota)
+		}
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -533,6 +534,39 @@ func loadDDLReorgVars(w *worker) error {
 	return ddlutil.LoadDDLReorgVars(w.ctx, ctx)
 }
 
+func pruneDecodeColMap(colMap map[int64]decoder.Column, t table.Table, indexInfo *model.IndexInfo) map[int64]decoder.Column {
+	resultMap := make(map[int64]decoder.Column)
+	virtualGeneratedColumnStack := make([]*model.ColumnInfo, 0)
+	for _, idxCol := range indexInfo.Columns {
+		if isVirtualGeneratedColumn(t.Meta().Columns[idxCol.Offset]) {
+			virtualGeneratedColumnStack = append(virtualGeneratedColumnStack, t.Meta().Columns[idxCol.Offset])
+		}
+		resultMap[t.Meta().Columns[idxCol.Offset].ID] = colMap[t.Meta().Columns[idxCol.Offset].ID]
+	}
+	if t.Meta().IsCommonHandle {
+		for _, pkCol := range tables.TryGetCommonPkColumns(t) {
+			resultMap[pkCol.ID] = colMap[pkCol.ID]
+		}
+	} else if t.Meta().PKIsHandle {
+		pkCol := t.Meta().GetPkColInfo()
+		resultMap[pkCol.ID] = colMap[pkCol.ID]
+	}
+
+	for len(virtualGeneratedColumnStack) > 0 {
+		checkCol := virtualGeneratedColumnStack[0]
+		for dColName := range checkCol.Dependences {
+			col := model.FindColumnInfo(t.Meta().Columns, dColName)
+			if isVirtualGeneratedColumn(col) {
+				virtualGeneratedColumnStack = append(virtualGeneratedColumnStack, col)
+			}
+			resultMap[col.ID] = colMap[col.ID]
+		}
+		virtualGeneratedColumnStack = virtualGeneratedColumnStack[1:]
+	}
+
+	return resultMap
+}
+
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
 	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
 	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
@@ -588,6 +622,10 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		return errors.Trace(err)
 	}
 
+	if indexInfo != nil {
+		decodeColMap = pruneDecodeColMap(decodeColMap, t, indexInfo)
+	}
+
 	if err := w.isReorgRunnable(reorgInfo.Job); err != nil {
 		return errors.Trace(err)
 	}
@@ -603,6 +641,20 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
+	// Caculate worker count for lightnint.
+	// if litWorkerCnt is 0 or err exist, means not good for lightning execution, 
+	// then go back use kernel way to reorg index.
+	var litWorkerCnt int
+	if reorgInfo.Meta.IsLightningEnabled {
+		litWorkerCnt, err = prepareLightningEngine(job, indexInfo.ID, int(workerCnt))
+		if err != nil || litWorkerCnt == 0 {
+			reorgInfo.Meta.IsLightningEnabled = false
+		} else {
+			if workerCnt > int32(litWorkerCnt) {
+				workerCnt = int32(litWorkerCnt)
+			}
+	    }
+    }
 	backfillWorkers := make([]*backfillWorker, 0, workerCnt)
 	defer func() {
 		closeBackfillWorkers(backfillWorkers)
@@ -624,6 +676,16 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		if len(kvRanges) < int(workerCnt) {
 			workerCnt = int32(len(kvRanges))
 		}
+
+		if reorgInfo.Meta.IsLightningEnabled && workerCnt > int32(litWorkerCnt) {
+			count, err := prepareLightningEngine(job, indexInfo.ID, int(workerCnt - int32(litWorkerCnt)))
+		    if err != nil || count == 0 {
+				workerCnt = int32(litWorkerCnt)
+			} else {
+				workerCnt = int32(litWorkerCnt + count)
+			}
+		}
+
 		// Enlarge the worker size.
 		for i := len(backfillWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
@@ -647,10 +709,20 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:
-				idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo)
-				idxWorker.priority = job.Priority
-				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
-				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+				// Firstly, check and try lightning path
+				if reorgInfo.Meta.IsLightningEnabled {
+					idxWorker, err := newAddIndexWorkerLit(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo, job.ID)
+					if err == nil {
+						idxWorker.priority = job.Priority
+						backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
+						go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+					}
+				} else {
+					idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo)
+					idxWorker.priority = job.Priority
+					backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
+					go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
+				}
 			case typeUpdateColumnWorker:
 				// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 				sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
@@ -698,15 +770,25 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			zap.Int("regionCnt", len(kvRanges)),
 			zap.String("startHandle", tryDecodeToHandleString(startKey)),
 			zap.String("endHandle", tryDecodeToHandleString(endKey)))
+
+		// Disk quota checking and import data into TiKV if needed.
+		// Do lightning flush data to make checkpoint.
+		if reorgInfo.Meta.IsLightningEnabled {
+			if importPartialDataToTiKV(job.ID, indexInfo.ID) != nil {
+				return errors.Trace(err)
+			}
+	    }
 		remains, err := w.sendRangeTaskToWorkers(t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		if len(remains) == 0 {
 			break
 		}
 		startKey = remains[0].StartKey
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }

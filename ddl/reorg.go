@@ -231,6 +231,9 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		waitTimeout = ReorgWaitTimeout
 	}
 
+	// ToDo: Bear init Lightning openengine if there is need to open multi openengine for index backfill.
+	// Init lightning job meta.
+
 	// wait reorganization job done or timeout
 	select {
 	case err := <-rc.doneCh:
@@ -256,7 +259,12 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 		switch reorgInfo.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		// For lightning there is a part import should be counted.
+		if (reorgInfo.Meta.IsLightningEnabled) {
+			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(BackfillProgressPercent  * 100)
+		} else {
 			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
+		}
 		case model.ActionModifyColumn:
 			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
 		}
@@ -283,6 +291,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// Update a reorgInfo's handle.
 		// Since daemon-worker is triggered by timer to store the info half-way.
 		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
+		// Todo: Bear, need update and store lightning related runtime status into meta.
 		err := rh.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
 
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
@@ -324,7 +333,13 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	}
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(progress * 100)
+		// For lightning there is a part import should be counted.
+		if (reorgInfo.Meta.IsLightningEnabled) {
+			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(BackfillProgressPercent * progress * 100)
+		} else {
+			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(progress * 100)
+		}
+
 	case model.ActionModifyColumn:
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(progress * 100)
 	}
@@ -387,6 +402,14 @@ type reorgInfo struct {
 	PhysicalTableID int64
 	elements        []*meta.Element
 	currElement     *meta.Element
+    
+	// Extend meta information for reorg task.
+	Meta reorgMeta
+}
+
+type reorgMeta struct {
+	// Mark whether the lightning execution environment is built or not
+	IsLightningEnabled bool
 }
 
 func (r *reorgInfo) String() string {
@@ -395,7 +418,8 @@ func (r *reorgInfo) String() string {
 		"StartHandle:" + tryDecodeToHandleString(r.StartKey) + "," +
 		"EndHandle:" + tryDecodeToHandleString(r.EndKey) + "," +
 		"First:" + strconv.FormatBool(r.first) + "," +
-		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10)
+		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10) + "," +
+		"Lightning execution:" + strconv.FormatBool(r.Meta.IsLightningEnabled)
 }
 
 func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {
@@ -634,6 +658,8 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		// Update info should after data persistent.
 		job.SnapshotVer = ver.Ver
 		element = elements[0]
+		// Init reorgInfo meta.
+		info.Meta.IsLightningEnabled = false
 	} else {
 		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
 			// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.

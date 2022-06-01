@@ -22,7 +22,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
 )
@@ -82,6 +81,9 @@ type actionMu struct {
 
 // softScale means the scale of the soft limit to the hard limit.
 const softScale = 0.8
+
+// TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
+const TrackMemWhenExceeds = 104857600 // 100MB
 
 // bytesLimits holds limit config atomically.
 type bytesLimits struct {
@@ -388,7 +390,7 @@ func (t *Tracker) Consume(bytes int64) {
 // BufferedConsume is used to buffer memory usage and do late consume
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
-	if *bufferedMemSize > int64(config.TrackMemWhenExceeds) {
+	if *bufferedMemSize > int64(TrackMemWhenExceeds) {
 		t.Consume(*bufferedMemSize)
 		*bufferedMemSize = int64(0)
 	}
