@@ -199,7 +199,7 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 				return errors.Trace(err)
 			}
 			// Currently, only use one kVCache, later may use multi kvCache to parallel compute/io performance.
-			w.writerContex.WriteRow(key, idxVal, idxRecord.handle)
+			w.writerContex.WriteRow(key, idxVal)
 
 			taskCtx.addedCount++
 		}

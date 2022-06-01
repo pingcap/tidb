@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
@@ -250,11 +249,10 @@ func (wCtx *WorkerContext) InitWorkerContext(engineKey string, workerid int) (er
 	return nil
 }
 
-func (wCtx *WorkerContext) WriteRow(key, idxVal []byte, h tidbkv.Handle) {
+func (wCtx *WorkerContext) WriteRow(key, idxVal []byte) {
 	var kvs []common.KvPair = make([]common.KvPair, 1, 1)
 	kvs[0].Key = key
 	kvs[0].Val = idxVal
-	kvs[0].RowID = h.IntValue()
 	wCtx.lWrite.WriteRow(wCtx.eInfo.backCtx.Ctx, nil, kvs)
 }
 
