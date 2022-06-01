@@ -282,6 +282,8 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				return errors.Trace(err)
 			}
 		}
+
+		req.IsRetryRequest = true
 	}
 }
 
