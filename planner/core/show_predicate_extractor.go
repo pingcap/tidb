@@ -27,9 +27,10 @@ import (
 )
 
 const (
-	fieldKey    = "field"
-	tableKey    = "table"
-	databaseKey = "database"
+	fieldKey     = "field"
+	tableKey     = "table"
+	databaseKey  = "database"
+	collationKey = "collation"
 )
 
 var (
@@ -104,6 +105,8 @@ func (e *ShowBaseExtractor) explainInfo() string {
 		key = tableKey
 	case ast.ShowDatabases:
 		key = databaseKey
+	case ast.ShowCollation:
+		key = collationKey
 	}
 
 	r := new(bytes.Buffer)
@@ -136,26 +139,4 @@ func (e *ShowBaseExtractor) FieldPatternLike() collate.WildcardPattern {
 	fieldPatternsLike := collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
 	fieldPatternsLike.Compile(e.fieldPattern, byte('\\'))
 	return fieldPatternsLike
-}
-
-// ShowCollationExtractor is used to extract some predicates of collations.
-type ShowCollationExtractor struct {
-	ShowBaseExtractor
-}
-
-func (e *ShowCollationExtractor) explainInfo() string {
-	r := new(bytes.Buffer)
-	if len(e.Field) > 0 {
-		r.WriteString(fmt.Sprintf("collation:[%s], ", e.Field))
-	}
-	if len(e.FieldPatterns) > 0 {
-		r.WriteString(fmt.Sprintf("collation_pattern:[%s], ", e.FieldPatterns))
-	}
-
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
 }
