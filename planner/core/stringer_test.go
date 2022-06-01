@@ -88,6 +88,22 @@ func TestPlanStringer(t *testing.T) {
 			sql:  "show databases like '%T%'",
 			plan: "Show(database_pattern:[%t%])",
 		},
+		{
+			sql:  "show collation like 't'",
+			plan: "Show(collation:[t])",
+		},
+		{
+			sql:  "show collation like 'T'",
+			plan: "Show(collation:[t])",
+		},
+		{
+			sql:  "show collation like 't%'",
+			plan: "Show(collation_pattern:[t%])",
+		},
+		{
+			sql:  "show collation like '%T%'",
+			plan: "Show(collation_pattern:[%t%])",
+		},
 	}
 	parser := parser.New()
 	for _, tt := range tests {
