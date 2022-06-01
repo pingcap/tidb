@@ -137,3 +137,25 @@ func (e *ShowBaseExtractor) FieldPatternLike() collate.WildcardPattern {
 	fieldPatternsLike.Compile(e.fieldPattern, byte('\\'))
 	return fieldPatternsLike
 }
+
+// ShowCollationExtractor is used to extract some predicates of collations.
+type ShowCollationExtractor struct {
+	ShowBaseExtractor
+}
+
+func (e *ShowCollationExtractor) explainInfo() string {
+	r := new(bytes.Buffer)
+	if len(e.Field) > 0 {
+		r.WriteString(fmt.Sprintf("collation:[%s], ", e.Field))
+	}
+	if len(e.FieldPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("collation_pattern:[%s], ", e.FieldPatterns))
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}

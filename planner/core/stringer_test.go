@@ -96,6 +96,22 @@ func TestPlanStringer(t *testing.T) {
 			sql:  "show table status in test like '%T%'",
 			plan: "Show(table_pattern:[%t%])",
 		},
+		{
+			sql:  "show collation like 't'",
+			plan: "Show(collation:[t])",
+		},
+		{
+			sql:  "show collation like 'T'",
+			plan: "Show(collation:[t])",
+		},
+		{
+			sql:  "show collation like 't%'",
+			plan: "Show(collation_pattern:[t%])",
+		},
+		{
+			sql:  "show collation like '%T%'",
+			plan: "Show(collation_pattern:[%t%])",
+		},
 	}
 	parser := parser.New()
 	for _, tt := range tests {
