@@ -162,6 +162,7 @@ func (e *ExplainExec) runMemoryDebugGoroutine(exit chan bool) {
 				zap.String("heap profile", e.getHeapProfile(false)))
 			close(exit)
 		}()
+		times := 0
 		for {
 			select {
 			case <-exit:
@@ -173,6 +174,14 @@ func (e *ExplainExec) runMemoryDebugGoroutine(exit chan bool) {
 				runtime.ReadMemStats(instanceStats)
 				heapInUse = instanceStats.HeapInuse
 				trackedMem = uint64(tracker.BytesConsumed())
+
+				times++
+				if times%6 == 0 {
+					logutil.BgLogger().Warn("Memory Debug Mode",
+						zap.String("sql", "running"),
+						zap.Uint64("heap in use", heapInUse),
+						zap.Uint64("tracked memory", trackedMem))
+				}
 
 				if debugMode == 1 {
 					if heapInUse > 10*GB && trackedMem/10*15 < heapInUse {
