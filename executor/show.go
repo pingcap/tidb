@@ -1474,11 +1474,31 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 }
 
 func (e *ShowExec) fetchShowCollation() error {
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		FieldFilterEnable bool
+		fieldFilter       string
+	)
+	if e.Extractor != nil {
+		extractor := (e.Extractor).(*plannercore.ShowCollationExtractor)
+		if extractor.FieldPatterns != "" {
+			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
+		}
+		FieldFilterEnable = extractor.Field != ""
+		fieldFilter = extractor.Field
+	}
+
 	collations := collate.GetSupportedCollations()
 	for _, v := range collations {
 		isDefault := ""
 		if v.IsDefault {
 			isDefault = "Yes"
+		}
+		if FieldFilterEnable && strings.ToLower(v.Name) != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
+			continue
 		}
 		e.appendRow([]interface{}{
 			v.Name,

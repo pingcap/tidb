@@ -267,6 +267,10 @@ func TestValidator(t *testing.T) {
 		{"select CONVERT( 2, DECIMAL(30,65) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(66,99) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 
+		// issue 34713
+		{"SELECT CAST(1 AS DATETIME(7));", true, types.ErrTooBigPrecision.GenWithStackByArgs(7, "CAST", types.MaxFsp)},
+		{"SELECT CAST(1 AS DATETIME(31));", true, types.ErrTooBigPrecision.GenWithStackByArgs(31, "CAST", types.MaxFsp)},
+
 		// TABLESAMPLE
 		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},

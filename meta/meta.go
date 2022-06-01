@@ -1224,7 +1224,6 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, phy
 }
 
 // RemoveReorgElement removes the element of the reorganization information.
-// It's used for testing.
 func (m *Meta) RemoveReorgElement(job *model.Job) error {
 	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
 	if err != nil {

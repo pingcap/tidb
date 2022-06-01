@@ -1848,3 +1848,14 @@ func TestShowDatabasesLike(t *testing.T) {
 	tk.MustQuery("SHOW DATABASES LIKE 'TEST_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
 	tk.MustQuery("SHOW DATABASES LIKE 'test_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
 }
+
+func TestShowCollationsLike(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustQuery("SHOW COLLATION LIKE 'UTF8MB4_BI%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	tk.MustQuery("SHOW COLLATION LIKE 'utf8mb4_bi%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+}
