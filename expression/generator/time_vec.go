@@ -537,6 +537,34 @@ var testFileFuncs = template.FuncMap{
 			"YEAR_MONTH",
 		}
 	},
+	"getIntervalUnitListForDurationAsDuration": func() []string {
+		return []string{
+			"MICROSECOND",
+			"SECOND",
+			"MINUTE",
+			"HOUR",
+			"SECOND_MICROSECOND",
+			"MINUTE_MICROSECOND",
+			"MINUTE_SECOND",
+			"HOUR_MICROSECOND",
+			"HOUR_SECOND",
+			"HOUR_MINUTE",
+			"DAY_MICROSECOND",
+		}
+	},
+	"getIntervalUnitListForDurationAsDatetime": func() []string {
+		return []string{
+			"DAY",
+			"WEEK",
+			"MONTH",
+			"QUARTER",
+			"YEAR",
+			"DAY_SECOND",
+			"DAY_MINUTE",
+			"DAY_HOUR",
+			"YEAR_MONTH",
+		}
+	},
 }
 
 var testFile = template.Must(template.New("").Funcs(testFileFuncs).Parse(`
@@ -587,31 +615,64 @@ func (g gener) gen() interface{} {
 }
 
 {{ define "addOrSubDateCases" }}
-	{{- $unitList := getIntervalUnitList -}}
 	{{- range $sig := .Sigs }}
 		// {{ $sig.SigName }}
-		{{- range $unit := $unitList }}
-			{
-				retEvalType: types.ET{{ $sig.Output.ETName }},
-				childrenTypes: []types.EvalType{types.ET{{ $sig.TypeA.ETName }}, types.ET{{ $sig.TypeB.ETName }}, types.ETString},
-				geners: []dataGenerator{
-					{{- if eq $sig.TypeA.ETName "String"}}
-						&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
-					{{- else if eq $sig.TypeA.ETName "Int"}}
-						&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
-					{{- else }}
+    	{{- if and (eq $sig.TypeA.ETName "Duration") (eq $sig.Output.ETName "Duration") -}}
+			{{- $unitList := getIntervalUnitListForDurationAsDuration -}}
+			{{- range $unit := $unitList }}
+				{
+					retEvalType: types.ET{{ $sig.Output.ETName }},
+					childrenTypes: []types.EvalType{types.ET{{ $sig.TypeA.ETName }}, types.ET{{ $sig.TypeB.ETName }}, types.ETString},
+					geners: []dataGenerator{
 						newDefaultGener(0.2, types.ET{{$sig.TypeA.ETName}}),
-					{{- end }}
 
-					{{- if eq $sig.TypeB.ETName "String" }}
-						&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
-					{{- else }}
-						newDefaultGener(0.2, types.ET{{$sig.TypeB.ETName}}),
-					{{- end }}
+						{{- if eq $sig.TypeB.ETName "String" }}
+							&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
+						{{- else }}
+							newDefaultGener(0.2, types.ET{{$sig.TypeB.ETName}}),
+						{{- end }}
+					},
+					constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldType(mysql.TypeString)}},
+					chunkSize: 128,
 				},
-				constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldType(mysql.TypeString)}},
-				chunkSize: 128,
-			},
+			{{- end }}
+    	{{- else if and (eq $sig.TypeA.ETName "Duration") (eq $sig.Output.ETName "Datetime") -}}
+			{{- $unitList := getIntervalUnitListForDurationAsDatetime -}}
+			// TODO: Add case when duration padding current time is fixed.
+    	{{- else -}}
+			{{- $unitList := getIntervalUnitList -}}
+			{{- range $unit := $unitList }}
+				{
+					retEvalType: types.ET{{ $sig.Output.ETName }},
+					childrenTypes: []types.EvalType{types.ET{{ $sig.TypeA.ETName }}, types.ET{{ $sig.TypeB.ETName }}, types.ETString},
+					{{- if ne $sig.FieldTypeA "" }}
+						childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{$sig.FieldTypeA}}), types.NewFieldType(mysql.Type{{$sig.FieldTypeB}})},
+					{{- end }}
+					geners: []dataGenerator{
+						{{- if eq $sig.FieldTypeA "Date" }}
+							newNullWrappedGener(0.2, dateGener{randGen: newDefaultRandGen()}),
+						{{- else if eq $sig.TypeA.ETName "String"}}
+							newNullWrappedGener(0.2, dateOrDatetimeStrGener{dateRatio: 0.2, dateStrGener: dateStrGener{randGen: newDefaultRandGen()}, dateTimeStrGener: dateTimeStrGener{Fsp: -1, randGen: newDefaultRandGen()}}),
+						{{- else if eq $sig.TypeA.ETName "Int"}}
+							newNullWrappedGener(0.2, dateOrDatetimeIntGener{dateRatio: 0.2, dateIntGener: dateIntGener{dateGener: dateGener{randGen: newDefaultRandGen()}}, dateTimeIntGener: dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}}}),
+						{{- else if eq $sig.TypeA.ETName "Real"}}
+							newNullWrappedGener(0.2, dateOrDatetimeRealGener{dateRatio: 0.2, dateRealGener: dateRealGener{fspRatio: 0.5, dateGener: dateGener{randGen: newDefaultRandGen()}}, dateTimeRealGener: dateTimeRealGener{fspRatio: 0.5, dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}}}),
+						{{- else if eq $sig.TypeA.ETName "Decimal"}}
+							newNullWrappedGener(0.2, dateOrDatetimeDecimalGener{dateRatio: 0.2, dateDecimalGener: dateDecimalGener{fspRatio: 0.5, dateGener: dateGener{randGen: newDefaultRandGen()}}, dateTimeDecimalGener: dateTimeDecimalGener{fspRatio: 0.5, dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}}}),
+						{{- else }}
+							newDefaultGener(0.2, types.ET{{$sig.TypeA.ETName}}),
+						{{- end }}
+
+						{{- if eq $sig.TypeB.ETName "String" }}
+							&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
+						{{- else }}
+							newDefaultGener(0.2, types.ET{{$sig.TypeB.ETName}}),
+						{{- end }}
+					},
+					constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldType(mysql.TypeString)}},
+					chunkSize: 128,
+				},
+			{{- end }}
 		{{- end }}
 	{{- end }}
 {{ end }}
@@ -665,8 +726,8 @@ var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
 			// builtinDurationDurationTimeDiffSig
 			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration}},
 			// builtinDurationStringTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 11, randGen: newDefaultRandGen()}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 11, Fsp: 0, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10, Fsp: 0, randGen: newDefaultRandGen()}}},
 			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10, Fsp: 4, randGen: newDefaultRandGen()}}},
 			// builtinTimeTimeTimeDiffSig
 			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
@@ -674,15 +735,15 @@ var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
 			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETTimestamp}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
 			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETDatetime}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
 			// builtinTimeStringTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeStrGener{Year: 2019, Month: 10, Fsp: 0, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeStrGener{Year: 2019, Month: 10, Fsp: 0, randGen: newDefaultRandGen()}}},
 			// builtinStringDurationTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, nil}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, Fsp: 0, randGen: newDefaultRandGen()}, nil}},
 			// builtinStringTimeTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, Fsp: 0, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, Fsp: 0, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
 			// builtinStringStringTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, Fsp: 0, randGen: newDefaultRandGen()}, &dateTimeStrGener{Year: 2019, Month: 10, Fsp: 0, randGen: newDefaultRandGen()}}},
 		},
 	{{ end }}
 	{{- if eq .FuncName "AddDate" }}
@@ -756,15 +817,27 @@ var timeDiffSigsTmpl = []sig{
 	{SigName: "builtinTimeTimeTimeDiffSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDuration},
 }
 
-var addDataSigsTmpl = []sig{
+var addDateSigsTmpl = []sig{
 	{SigName: "builtinAddDateStringStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
 	{SigName: "builtinAddDateStringIntSig", TypeA: TypeString, TypeB: TypeInt, Output: TypeString},
 	{SigName: "builtinAddDateStringRealSig", TypeA: TypeString, TypeB: TypeReal, Output: TypeString},
 	{SigName: "builtinAddDateStringDecimalSig", TypeA: TypeString, TypeB: TypeDecimal, Output: TypeString},
-	{SigName: "builtinAddDateIntStringSig", TypeA: TypeInt, TypeB: TypeString, Output: TypeDatetime},
-	{SigName: "builtinAddDateIntIntSig", TypeA: TypeInt, TypeB: TypeInt, Output: TypeDatetime},
-	{SigName: "builtinAddDateIntRealSig", TypeA: TypeInt, TypeB: TypeReal, Output: TypeDatetime},
-	{SigName: "builtinAddDateIntDecimalSig", TypeA: TypeInt, TypeB: TypeDecimal, Output: TypeDatetime},
+	{SigName: "builtinAddDateIntStringSig", TypeA: TypeInt, TypeB: TypeString, Output: TypeString},
+	{SigName: "builtinAddDateIntIntSig", TypeA: TypeInt, TypeB: TypeInt, Output: TypeString},
+	{SigName: "builtinAddDateIntRealSig", TypeA: TypeInt, TypeB: TypeReal, Output: TypeString},
+	{SigName: "builtinAddDateIntDecimalSig", TypeA: TypeInt, TypeB: TypeDecimal, Output: TypeString},
+	{SigName: "builtinAddDateRealStringSig", TypeA: TypeReal, TypeB: TypeString, Output: TypeString},
+	{SigName: "builtinAddDateRealIntSig", TypeA: TypeReal, TypeB: TypeInt, Output: TypeString},
+	{SigName: "builtinAddDateRealRealSig", TypeA: TypeReal, TypeB: TypeReal, Output: TypeString},
+	{SigName: "builtinAddDateRealDecimalSig", TypeA: TypeReal, TypeB: TypeDecimal, Output: TypeString},
+	{SigName: "builtinAddDateDecimalStringSig", TypeA: TypeDecimal, TypeB: TypeString, Output: TypeString},
+	{SigName: "builtinAddDateDecimalIntSig", TypeA: TypeDecimal, TypeB: TypeInt, Output: TypeString},
+	{SigName: "builtinAddDateDecimalRealSig", TypeA: TypeDecimal, TypeB: TypeReal, Output: TypeString},
+	{SigName: "builtinAddDateDecimalDecimalSig", TypeA: TypeDecimal, TypeB: TypeDecimal, Output: TypeString},
+	{SigName: "builtinAddDateDatetimeStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeDatetime, FieldTypeA: "Date", FieldTypeB: "String"},
+	{SigName: "builtinAddDateDatetimeIntSig", TypeA: TypeDatetime, TypeB: TypeInt, Output: TypeDatetime, FieldTypeA: "Date", FieldTypeB: "Longlong"},
+	{SigName: "builtinAddDateDatetimeRealSig", TypeA: TypeDatetime, TypeB: TypeReal, Output: TypeDatetime, FieldTypeA: "Date", FieldTypeB: "Double"},
+	{SigName: "builtinAddDateDatetimeDecimalSig", TypeA: TypeDatetime, TypeB: TypeDecimal, Output: TypeDatetime, FieldTypeA: "Date", FieldTypeB: "NewDecimal"},
 	{SigName: "builtinAddDateDatetimeStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeDatetime},
 	{SigName: "builtinAddDateDatetimeIntSig", TypeA: TypeDatetime, TypeB: TypeInt, Output: TypeDatetime},
 	{SigName: "builtinAddDateDatetimeRealSig", TypeA: TypeDatetime, TypeB: TypeReal, Output: TypeDatetime},
@@ -773,17 +846,33 @@ var addDataSigsTmpl = []sig{
 	{SigName: "builtinAddDateDurationIntSig", TypeA: TypeDuration, TypeB: TypeInt, Output: TypeDuration},
 	{SigName: "builtinAddDateDurationRealSig", TypeA: TypeDuration, TypeB: TypeReal, Output: TypeDuration},
 	{SigName: "builtinAddDateDurationDecimalSig", TypeA: TypeDuration, TypeB: TypeDecimal, Output: TypeDuration},
+	{SigName: "builtinAddDateDurationStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDatetime},
+	{SigName: "builtinAddDateDurationIntSig", TypeA: TypeDuration, TypeB: TypeInt, Output: TypeDatetime},
+	{SigName: "builtinAddDateDurationRealSig", TypeA: TypeDuration, TypeB: TypeReal, Output: TypeDatetime},
+	{SigName: "builtinAddDateDurationDecimalSig", TypeA: TypeDuration, TypeB: TypeDecimal, Output: TypeDatetime},
 }
 
-var subDataSigsTmpl = []sig{
+var subDateSigsTmpl = []sig{
 	{SigName: "builtinSubDateStringStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
 	{SigName: "builtinSubDateStringIntSig", TypeA: TypeString, TypeB: TypeInt, Output: TypeString},
 	{SigName: "builtinSubDateStringRealSig", TypeA: TypeString, TypeB: TypeReal, Output: TypeString},
 	{SigName: "builtinSubDateStringDecimalSig", TypeA: TypeString, TypeB: TypeDecimal, Output: TypeString},
-	{SigName: "builtinSubDateIntStringSig", TypeA: TypeInt, TypeB: TypeString, Output: TypeDatetime},
-	{SigName: "builtinSubDateIntIntSig", TypeA: TypeInt, TypeB: TypeInt, Output: TypeDatetime},
-	{SigName: "builtinSubDateIntRealSig", TypeA: TypeInt, TypeB: TypeReal, Output: TypeDatetime},
-	{SigName: "builtinSubDateIntDecimalSig", TypeA: TypeInt, TypeB: TypeDecimal, Output: TypeDatetime},
+	{SigName: "builtinSubDateIntStringSig", TypeA: TypeInt, TypeB: TypeString, Output: TypeString},
+	{SigName: "builtinSubDateIntIntSig", TypeA: TypeInt, TypeB: TypeInt, Output: TypeString},
+	{SigName: "builtinSubDateIntRealSig", TypeA: TypeInt, TypeB: TypeReal, Output: TypeString},
+	{SigName: "builtinSubDateIntDecimalSig", TypeA: TypeInt, TypeB: TypeDecimal, Output: TypeString},
+	{SigName: "builtinSubDateRealStringSig", TypeA: TypeReal, TypeB: TypeString, Output: TypeString},
+	{SigName: "builtinSubDateRealIntSig", TypeA: TypeReal, TypeB: TypeInt, Output: TypeString},
+	{SigName: "builtinSubDateRealRealSig", TypeA: TypeReal, TypeB: TypeReal, Output: TypeString},
+	{SigName: "builtinSubDateRealDecimalSig", TypeA: TypeReal, TypeB: TypeDecimal, Output: TypeString},
+	{SigName: "builtinSubDateDecimalStringSig", TypeA: TypeDecimal, TypeB: TypeString, Output: TypeString},
+	{SigName: "builtinSubDateDecimalIntSig", TypeA: TypeDecimal, TypeB: TypeInt, Output: TypeString},
+	{SigName: "builtinSubDateDecimalRealSig", TypeA: TypeDecimal, TypeB: TypeReal, Output: TypeString},
+	{SigName: "builtinSubDateDecimalDecimalSig", TypeA: TypeDecimal, TypeB: TypeDecimal, Output: TypeString},
+	{SigName: "builtinSubDateDatetimeStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeDatetime, FieldTypeA: "Date", FieldTypeB: "String"},
+	{SigName: "builtinSubDateDatetimeIntSig", TypeA: TypeDatetime, TypeB: TypeInt, Output: TypeDatetime, FieldTypeA: "Date", FieldTypeB: "Longlong"},
+	{SigName: "builtinSubDateDatetimeRealSig", TypeA: TypeDatetime, TypeB: TypeReal, Output: TypeDatetime, FieldTypeA: "Date", FieldTypeB: "Double"},
+	{SigName: "builtinSubDateDatetimeDecimalSig", TypeA: TypeDatetime, TypeB: TypeDecimal, Output: TypeDatetime, FieldTypeA: "Date", FieldTypeB: "NewDecimal"},
 	{SigName: "builtinSubDateDatetimeStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeDatetime},
 	{SigName: "builtinSubDateDatetimeIntSig", TypeA: TypeDatetime, TypeB: TypeInt, Output: TypeDatetime},
 	{SigName: "builtinSubDateDatetimeRealSig", TypeA: TypeDatetime, TypeB: TypeReal, Output: TypeDatetime},
@@ -792,6 +881,10 @@ var subDataSigsTmpl = []sig{
 	{SigName: "builtinSubDateDurationIntSig", TypeA: TypeDuration, TypeB: TypeInt, Output: TypeDuration},
 	{SigName: "builtinSubDateDurationRealSig", TypeA: TypeDuration, TypeB: TypeReal, Output: TypeDuration},
 	{SigName: "builtinSubDateDurationDecimalSig", TypeA: TypeDuration, TypeB: TypeDecimal, Output: TypeDuration},
+	{SigName: "builtinSubDateDurationStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDatetime},
+	{SigName: "builtinSubDateDurationIntSig", TypeA: TypeDuration, TypeB: TypeInt, Output: TypeDatetime},
+	{SigName: "builtinSubDateDurationRealSig", TypeA: TypeDuration, TypeB: TypeReal, Output: TypeDatetime},
+	{SigName: "builtinSubDateDurationDecimalSig", TypeA: TypeDuration, TypeB: TypeDecimal, Output: TypeDatetime},
 }
 
 type sig struct {
@@ -816,8 +909,8 @@ var tmplVal = struct {
 		{FuncName: "AddTime", Sigs: addTimeSigsTmpl},
 		{FuncName: "SubTime", Sigs: subTimeSigsTmpl},
 		{FuncName: "TimeDiff", Sigs: timeDiffSigsTmpl},
-		{FuncName: "AddDate", Sigs: addDataSigsTmpl},
-		{FuncName: "SubDate", Sigs: subDataSigsTmpl},
+		{FuncName: "AddDate", Sigs: addDateSigsTmpl},
+		{FuncName: "SubDate", Sigs: subDateSigsTmpl},
 	},
 }
 
