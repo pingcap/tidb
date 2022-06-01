@@ -32,7 +32,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionPrewrite struct{}
+type actionPrewrite struct{ retry bool }
 
 var _ twoPhaseCommitAction = actionPrewrite{}
 
@@ -156,6 +156,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
+		if action.retry {
+			req.IsRetryRequest = true
+		}
 		sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
 		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutShort)
 
@@ -179,7 +182,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.prewriteMutations(bo, batch.mutations)
+			err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
