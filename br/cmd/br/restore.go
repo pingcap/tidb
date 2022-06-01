@@ -24,6 +24,12 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
+	if task.IsStreamRestore(cmdName) {
+		if err := cfg.ParseStreamRestoreFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
 		var store *appdash.MemoryStore
@@ -83,6 +89,7 @@ func NewRestoreCommand() *cobra.Command {
 		newDBRestoreCommand(),
 		newTableRestoreCommand(),
 		newRawRestoreCommand(),
+		newStreamRestoreCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
 
@@ -98,7 +105,7 @@ func newFullRestoreCommand() *cobra.Command {
 			return runRestoreCommand(cmd, task.FullRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables)
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
 	return command
 }
 
@@ -139,5 +146,20 @@ func newRawRestoreCommand() *cobra.Command {
 	}
 
 	task.DefineRawRestoreFlags(command)
+	return command
+}
+
+func newStreamRestoreCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "point",
+		Short: "restore data from log until specify commit timestamp",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runRestoreCommand(command, task.PointRestoreCmd)
+		},
+	}
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
+	task.DefineStreamRestoreFlags(command)
+	command.Hidden = true
 	return command
 }

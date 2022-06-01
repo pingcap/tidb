@@ -15,9 +15,16 @@
 package session
 
 import (
+	"context"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 )
 
 func init() {
@@ -52,11 +59,78 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 	return m.ctxProvider.GetTxnInfoSchema()
 }
 
+func (m *txnManager) GetStmtReadTS() (uint64, error) {
+	if m.ctxProvider == nil {
+		return 0, errors.New("context provider not set")
+	}
+	return m.ctxProvider.GetStmtReadTS()
+}
+
+func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
+	if m.ctxProvider == nil {
+		return 0, errors.New("context provider not set")
+	}
+	return m.ctxProvider.GetStmtForUpdateTS()
+}
+
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 	return m.ctxProvider
 }
 
-func (m *txnManager) SetContextProvider(provider sessiontxn.TxnContextProvider) error {
-	m.ctxProvider = provider
+func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnRequest) error {
+	m.ctxProvider = m.newProviderWithRequest(r)
+	if err := m.ctxProvider.OnInitialize(ctx, r.Type); err != nil {
+		return err
+	}
+
+	if r.Type == sessiontxn.EnterNewTxnWithBeginStmt {
+		m.sctx.GetSessionVars().SetInTxn(true)
+	}
 	return nil
+}
+
+// OnStmtStart is the hook that should be called when a new statement started
+func (m *txnManager) OnStmtStart(ctx context.Context) error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	return m.ctxProvider.OnStmtStart(ctx)
+}
+
+// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+	if m.ctxProvider == nil {
+		return sessiontxn.NoIdea()
+	}
+	return m.ctxProvider.OnStmtErrorForNextAction(point, err)
+}
+
+// OnStmtRetry is the hook that should be called when a statement retry
+func (m *txnManager) OnStmtRetry(ctx context.Context) error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	return m.ctxProvider.OnStmtRetry(ctx)
+}
+
+func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) sessiontxn.TxnContextProvider {
+	if r.Provider != nil {
+		return r.Provider
+	}
+
+	txnMode := r.TxnMode
+	if txnMode == "" {
+		txnMode = m.sctx.GetSessionVars().TxnMode
+	}
+
+	if r.StaleReadTS > 0 {
+		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil)
+	}
+
+	return &legacy.SimpleTxnContextProvider{
+		Sctx:                  m.sctx,
+		Pessimistic:           txnMode == ast.Pessimistic,
+		CausalConsistencyOnly: r.CausalConsistencyOnly,
+		UpdateForUpdateTS:     executor.UpdateForUpdateTS,
+	}
 }

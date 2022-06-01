@@ -189,7 +189,7 @@ const (
 	GlobalStatusTable = "GLOBAL_STATUS"
 	// TiDBTable is the table contains tidb info.
 	TiDBTable = "tidb"
-	//  RoleEdgesTable is the table contains role relation info
+	// RoleEdgeTable is the table contains role relation info
 	RoleEdgeTable = "role_edges"
 	// DefaultRoleTable is the table contain default active role info
 	DefaultRoleTable = "default_roles"
@@ -197,7 +197,7 @@ const (
 
 // MySQL type maximum length.
 const (
-	// For arguments that have no fixed number of decimals, the decimals value is set to 31,
+	// NotFixedDec For arguments that have no fixed number of decimals, the decimals value is set to 31,
 	// which is 1 more than the maximum number of decimals permitted for the DECIMAL, FLOAT, and DOUBLE data types.
 	NotFixedDec = 31
 

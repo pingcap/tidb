@@ -392,6 +392,9 @@ func initTestClient() *TestClient {
 			endKey = codec.EncodeBytes([]byte{}, endKey)
 		}
 		regions[i] = &restore.RegionInfo{
+			Leader: &metapb.Peer{
+				Id: i,
+			},
 			Region: &metapb.Region{
 				Id:       i,
 				Peers:    peers,
@@ -596,7 +599,7 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, re
 	return nil
 }
 
-func (f *fakeRestorer) RestoreFiles(ctx context.Context, files []*backuppb.File, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
+func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, files []*backuppb.File, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

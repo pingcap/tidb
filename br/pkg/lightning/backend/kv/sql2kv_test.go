@@ -271,7 +271,7 @@ func TestEncodeRowFormatV2(t *testing.T) {
 
 func TestEncodeTimestamp(t *testing.T) {
 	ty := *types.NewFieldType(mysql.TypeDatetime)
-	ty.Flag |= mysql.NotNullFlag
+	ty.AddFlag(mysql.NotNullFlag)
 	c1 := &model.ColumnInfo{
 		ID:           1,
 		Name:         model.NewCIStr("c1"),
@@ -322,11 +322,17 @@ func TestEncodeDoubleAutoIncrement(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	pairs, err := encoder.Encode(logger, []types.Datum{
-		types.NewStringDatum("1"),
+
+	strDatumForID := types.NewStringDatum("1")
+	actualDatum, err := encoder.(*tableKVEncoder).getActualDatum(70, 0, &strDatumForID)
+	require.NoError(t, err)
+	require.Equal(t, types.NewFloat64Datum(1.0), actualDatum)
+
+	pairsExpect, err := encoder.Encode(logger, []types.Datum{
+		types.NewFloat64Datum(1.0),
 	}, 70, []int{0, -1}, "1.csv", 1234)
 	require.NoError(t, err)
-	require.Equal(t, pairs, &KvPairs{pairs: []common.KvPair{
+	require.Equal(t, &KvPairs{pairs: []common.KvPair{
 		{
 			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
 			Val:   []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x8, 0x0, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
@@ -337,8 +343,86 @@ func TestEncodeDoubleAutoIncrement(t *testing.T) {
 			Val:   []uint8{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
 			RowID: 70,
 		},
-	}})
+	}}, pairsExpect)
+
+	pairs, err := encoder.Encode(logger, []types.Datum{
+		types.NewStringDatum("1"),
+	}, 70, []int{0, -1}, "1.csv", 1234)
+	require.NoError(t, err)
+
+	require.Equal(t, pairsExpect, pairs)
 	require.Equal(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoIncrementType).Base(), int64(70))
+}
+
+func TestEncodeMissingAutoValue(t *testing.T) {
+	logger := log.Logger{Logger: zap.NewNop()}
+
+	var rowID int64 = 70
+	type testTableInfo struct {
+		AllocType  autoid.AllocatorType
+		CreateStmt string
+	}
+
+	for _, testTblInfo := range []testTableInfo{
+		{
+			AllocType:  autoid.AutoIncrementType,
+			CreateStmt: "create table t (id integer primary key auto_increment);",
+		},
+		{
+			AllocType:  autoid.AutoRandomType,
+			CreateStmt: "create table t (id integer primary key auto_random(3));",
+		},
+	} {
+		tblInfo := mockTableInfo(t, testTblInfo.CreateStmt)
+		if testTblInfo.AllocType == autoid.AutoRandomType {
+			// seems parser can't parse auto_random properly.
+			tblInfo.AutoRandomBits = 3
+		}
+		tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+		require.NoError(t, err)
+
+		encoder, err := NewTableKVEncoder(tbl, &SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+			SysVars: map[string]string{
+				"tidb_row_format_version": "2",
+			},
+		})
+		require.NoError(t, err)
+
+		realRowID := encoder.(*tableKVEncoder).autoIDFn(rowID)
+
+		var nullDatum types.Datum
+		nullDatum.SetNull()
+
+		expectIDDatum := types.NewIntDatum(realRowID)
+		actualIDDatum, err := encoder.(*tableKVEncoder).getActualDatum(rowID, 0, nil)
+		require.NoError(t, err)
+		require.Equal(t, expectIDDatum, actualIDDatum)
+
+		actualIDDatum, err = encoder.(*tableKVEncoder).getActualDatum(rowID, 0, &nullDatum)
+		require.NoError(t, err)
+		require.Equal(t, expectIDDatum, actualIDDatum)
+
+		pairsExpect, err := encoder.Encode(logger, []types.Datum{
+			types.NewIntDatum(realRowID),
+		}, rowID, []int{0}, "1.csv", 1234)
+		require.NoError(t, err)
+
+		// test insert a NULL value on auto_xxxx column, and it is set to NOT NULL
+		pairs, err := encoder.Encode(logger, []types.Datum{
+			nullDatum,
+		}, rowID, []int{0}, "1.csv", 1234)
+		require.NoError(t, err)
+		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
+		require.Equalf(t, rowID, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
+
+		// test insert a row without specifying the auto_xxxx column
+		pairs, err = encoder.Encode(logger, []types.Datum{}, rowID, []int{0}, "1.csv", 1234)
+		require.NoError(t, err)
+		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
+		require.Equalf(t, rowID, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
+
+	}
 }
 
 func mockTableInfo(t *testing.T, createSQL string) *model.TableInfo {

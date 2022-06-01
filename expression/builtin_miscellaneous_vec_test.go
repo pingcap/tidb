@@ -50,12 +50,11 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	},
 	ast.InetAton: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4StrGener{newDefaultRandGen()}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
 			newSelectStringGener(
 				[]string{
-					"11.11.11.11.",    // last char is .
-					"266.266.266.266", // int in string exceed 255
+					"11.11.11.11",
+					"255.255.255.255",
 					"127",
 					".122",
 					".123.123",

@@ -3353,8 +3353,11 @@ func TestBuiltin(t *testing.T) {
 
 	// test case decimal precision less than the scale.
 	_, err = tk.Exec("select cast(12.1 as decimal(3, 4));")
-	require.Error(t, err)
 	require.Error(t, err, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1').")
+
+	// test case cast(EXPR as datetime(x)) precision more than the scale(6).
+	_, err = tk.Exec("SELECT CAST(1 AS DATETIME(7));")
+	require.Error(t, err, "[types:1427]Too big precision 7 specified for column 'CAST'. Maximum is 6.")
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
@@ -3751,9 +3754,6 @@ func TestPreparePlanCache(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-
-	// Plan cache should now be off by default
-	require.False(t, plannercore.PreparedPlanCacheEnabled())
 
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -4181,8 +4181,6 @@ func TestNoopFunctions(t *testing.T) {
 		"SELECT * FROM t1 LOCK IN SHARE MODE",
 		"SELECT * FROM t1 GROUP BY a DESC",
 		"SELECT * FROM t1 GROUP BY a ASC",
-		"SELECT GET_LOCK('acdc', 10)",
-		"SELECT RELEASE_LOCK('acdc')",
 	}
 
 	for _, stmt := range stmts {

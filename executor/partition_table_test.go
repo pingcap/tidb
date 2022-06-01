@@ -899,12 +899,12 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 		partition p2 values less than (600),
 		partition p3 values less than (800),
 		partition p4 values less than (1001))`)
-	tk.MustExec(`create table tlist(a int, b int, key(a)) partition by list (a) (
+	tk.MustExec(`create table tlist (a int, b int, key(a)) partition by list (a) (
 		partition p0 values in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
-		partition p0 values in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
-		partition p0 values in (20, 21, 22, 23, 24, 25, 26, 27, 28, 29),
-		partition p0 values in (30, 31, 32, 33, 34, 35, 36, 37, 38, 39),
-		partition p0 values in (40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50))`)
+		partition p1 values in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
+		partition p2 values in (20, 21, 22, 23, 24, 25, 26, 27, 28, 29),
+		partition p3 values in (30, 31, 32, 33, 34, 35, 36, 37, 38, 39),
+		partition p4 values in (40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50))`)
 
 	// construct some special data distribution
 	vals := make([]string, 0, 1000)
@@ -3019,6 +3019,8 @@ func TestIssue21731(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p, t")
+	tk.MustExec("set @@tidb_enable_list_partition = OFF")
+	// Notice that this does not really test the issue #21731
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
 }
 
@@ -3524,13 +3526,12 @@ func TestPartitionTableExplain(t *testing.T) {
 		"    └─IndexReader 1.00 root  index:IndexFullScan",
 		"      └─IndexFullScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t partition (p1),t2 where t2.a = 1 and t2.b = t.b`).Check(testkit.Rows(
-		"IndexJoin 1.00 root  inner join, inner:IndexReader, outer key:testpartitiontableexplain.t2.b, inner key:testpartitiontableexplain.t.b, equal cond:eq(testpartitiontableexplain.t2.b, testpartitiontableexplain.t.b)",
+		"HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)]",
 		"├─TableReader(Build) 1.00 root  data:Selection",
 		"│ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
 		"│   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
-		"└─IndexReader(Probe) 1.00 root  index:Selection",
-		"  └─Selection 1.00 cop[tikv]  not(isnull(testpartitiontableexplain.t.b))",
-		"    └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range: decided by [eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)], keep order:false"))
+		"└─IndexReader(Probe) 1.00 root  index:IndexFullScan",
+		"  └─IndexFullScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b and t.a = 1`).Check(testkit.Rows(
 		"HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)]",
 		"├─TableReader(Build) 1.00 root  data:Selection",

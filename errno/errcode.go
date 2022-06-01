@@ -826,6 +826,8 @@ const (
 	ErrInvalidFieldSize                                      = 3013
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029
+	ErrUserLockWrongName                                     = 3057
+	ErrUserLockDeadlock                                      = 3058
 	ErrIncorrectType                                         = 3064
 	ErrFieldInOrderNotSelect                                 = 3065
 	ErrAggregateInOrderNotSelect                             = 3066
@@ -1019,6 +1021,7 @@ const (
 	ErrInconsistentIndexedValue            = 8140
 	ErrAssertionFailed                     = 8141
 	ErrInstanceScope                       = 8142
+	ErrNonTransactionalJobFailure          = 8143
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1064,6 +1067,7 @@ const (
 	ErrPlacementPolicyInUse               = 8241
 	ErrOptOnCacheTable                    = 8242
 	ErrHTTPServiceError                   = 8243
+	ErrPartitionColumnStatsMissing        = 8244
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002
