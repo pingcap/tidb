@@ -159,13 +159,14 @@ type Handle interface {
 	// String implements the fmt.Stringer interface.
 	String() string
 	// MemUsage returns the memory usage of a handle.
-	MemUsage() int64
+	MemUsage() uint64
 	// ExtraMemSize returns the dynamic size of memory occupied by the handle, e.g. slices.
 	ExtraMemSize() uint64
 }
 
 var _ Handle = IntHandle(0)
 var _ Handle = &CommonHandle{}
+var _ Handle = PartitionHandle{}
 
 // IntHandle implement the Handle interface for int64 type handle.
 type IntHandle int64
@@ -237,7 +238,7 @@ func (ih IntHandle) String() string {
 }
 
 // MemUsage implements the Handle interface.
-func (ih IntHandle) MemUsage() int64 {
+func (ih IntHandle) MemUsage() uint64 {
 	return 8
 }
 
@@ -366,8 +367,8 @@ func (ch *CommonHandle) String() string {
 }
 
 // MemUsage implements the Handle interface.
-func (ch *CommonHandle) MemUsage() int64 {
-	return int64(cap(ch.encoded)) + int64(cap(ch.colEndOffsets))*2
+func (ch *CommonHandle) MemUsage() uint64 {
+	return 48 + ch.ExtraMemSize()
 }
 
 // ExtraMemSize implements the Handle interface.
@@ -545,6 +546,11 @@ func (ph PartitionHandle) Compare(h Handle) int {
 }
 
 // MemUsage implements the Handle interface.
-func (ph PartitionHandle) MemUsage() int64 {
+func (ph PartitionHandle) MemUsage() uint64 {
 	return ph.Handle.MemUsage() + 8
+}
+
+// ExtraMemUsage implements the Handle interface.
+func (ph PartitionHandle) ExtraMemUsage() uint64 {
+	return ph.Handle.ExtraMemSize() + 8
 }
