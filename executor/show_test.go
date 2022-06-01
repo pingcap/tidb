@@ -1831,3 +1831,34 @@ func TestShowBindingCacheStatus(t *testing.T) {
 	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
 		"1 1 198 Bytes 250 Bytes"))
 }
+<<<<<<< HEAD
+=======
+
+func TestShowDatabasesLike(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("DROP DATABASE IF EXISTS `TEST_$1`")
+	tk.MustExec("DROP DATABASE IF EXISTS `test_$2`")
+	tk.MustExec("CREATE DATABASE `TEST_$1`;")
+	tk.MustExec("CREATE DATABASE `test_$2`;")
+
+	tk.MustQuery("SHOW DATABASES LIKE 'TEST_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
+	tk.MustQuery("SHOW DATABASES LIKE 'test_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
+}
+
+func TestShowCollationsLike(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustQuery("SHOW COLLATION LIKE 'UTF8MB4_BI%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	tk.MustQuery("SHOW COLLATION LIKE 'utf8mb4_bi%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+}
+>>>>>>> 1304718bd... executor: fix show collation like case sensitive issue (#35089)

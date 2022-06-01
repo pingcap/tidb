@@ -72,6 +72,41 @@ func TestPlanStringer(t *testing.T) {
 			sql:  "show tables in test like '%T%'",
 			plan: "Show(table_pattern:[%t%])",
 		},
+<<<<<<< HEAD
+=======
+		{
+			sql:  "show databases like 't'",
+			plan: "Show(database:[t])",
+		},
+		{
+			sql:  "show databases like 'T'",
+			plan: "Show(database:[t])",
+		},
+		{
+			sql:  "show databases like 't%'",
+			plan: "Show(database_pattern:[t%])",
+		},
+		{
+			sql:  "show databases like '%T%'",
+			plan: "Show(database_pattern:[%t%])",
+		},
+		{
+			sql:  "show collation like 't'",
+			plan: "Show(collation:[t])",
+		},
+		{
+			sql:  "show collation like 'T'",
+			plan: "Show(collation:[t])",
+		},
+		{
+			sql:  "show collation like 't%'",
+			plan: "Show(collation_pattern:[t%])",
+		},
+		{
+			sql:  "show collation like '%T%'",
+			plan: "Show(collation_pattern:[%t%])",
+		},
+>>>>>>> 1304718bd... executor: fix show collation like case sensitive issue (#35089)
 	}
 	parser := parser.New()
 	for _, tt := range tests {

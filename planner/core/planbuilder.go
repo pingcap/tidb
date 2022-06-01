@@ -3011,6 +3011,22 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
 		}
+<<<<<<< HEAD
+=======
+	case ast.ShowDatabases:
+		var extractor ShowDatabaseExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			// Avoid building Selection.
+			show.Pattern = nil
+		}
+	case ast.ShowCollation:
+		var extractor ShowCollationExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			show.Pattern = nil
+		}
+>>>>>>> 1304718bd... executor: fix show collation like case sensitive issue (#35089)
 	}
 	if show.Tp == ast.ShowVariables {
 		var extractor ShowVariablesExtractor

@@ -28,6 +28,11 @@ var (
 	_ ShowPredicateExtractor = &ShowColumnsTableExtractor{}
 	_ ShowPredicateExtractor = &ShowTablesTableExtractor{}
 	_ ShowPredicateExtractor = &ShowVariablesExtractor{}
+<<<<<<< HEAD
+=======
+	_ ShowPredicateExtractor = &ShowDatabaseExtractor{}
+	_ ShowPredicateExtractor = &ShowCollationExtractor{}
+>>>>>>> 1304718bd... executor: fix show collation like case sensitive issue (#35089)
 )
 
 // ShowPredicateExtractor is used to extract some predicates from `PatternLikeExpr` clause
@@ -167,3 +172,50 @@ func (e *ShowVariablesExtractor) explainInfo() string {
 	}
 	return s
 }
+<<<<<<< HEAD
+=======
+
+// ShowDatabaseExtractor is used to extract some predicates of databases.
+type ShowDatabaseExtractor struct {
+	ShowBaseExtractor
+}
+
+func (e *ShowDatabaseExtractor) explainInfo() string {
+	r := new(bytes.Buffer)
+	if len(e.Field) > 0 {
+		r.WriteString(fmt.Sprintf("database:[%s], ", e.Field))
+	}
+	if len(e.FieldPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("database_pattern:[%s], ", e.FieldPatterns))
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// ShowCollationExtractor is used to extract some predicates of collations.
+type ShowCollationExtractor struct {
+	ShowBaseExtractor
+}
+
+func (e *ShowCollationExtractor) explainInfo() string {
+	r := new(bytes.Buffer)
+	if len(e.Field) > 0 {
+		r.WriteString(fmt.Sprintf("collation:[%s], ", e.Field))
+	}
+	if len(e.FieldPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("collation_pattern:[%s], ", e.FieldPatterns))
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+>>>>>>> 1304718bd... executor: fix show collation like case sensitive issue (#35089)
