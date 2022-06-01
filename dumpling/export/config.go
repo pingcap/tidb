@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/promutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 )
 
@@ -80,7 +81,6 @@ const (
 // Config is the dump config for dumpling
 type Config struct {
 	storage.BackendOptions
-	ExtStorage storage.ExternalStorage `json:"-"`
 
 	specifiedTables          bool
 	AllowCleartextPasswords  bool
@@ -124,21 +124,26 @@ type Config struct {
 	CsvDelimiter  string
 	Databases     []string
 
-	TableFilter         filter.Filter `json:"-"`
-	Where               string
-	FileType            string
-	ServerInfo          version.ServerInfo
-	Logger              *zap.Logger        `json:"-"`
-	OutputFileTemplate  *template.Template `json:"-"`
-	Rows                uint64
-	ReadTimeout         time.Duration
-	TiDBMemQuotaQuery   uint64
-	FileSize            uint64
-	StatementSize       uint64
-	SessionParams       map[string]interface{}
+	TableFilter        filter.Filter `json:"-"`
+	Where              string
+	FileType           string
+	ServerInfo         version.ServerInfo
+	Logger             *zap.Logger        `json:"-"`
+	OutputFileTemplate *template.Template `json:"-"`
+	Rows               uint64
+	ReadTimeout        time.Duration
+	TiDBMemQuotaQuery  uint64
+	FileSize           uint64
+	StatementSize      uint64
+	SessionParams      map[string]interface{}
+	// TODO: deprecate it
 	Labels              prometheus.Labels `json:"-"`
 	Tables              DatabaseTables
 	CollationCompatible string
+
+	// fields below are injected from DM or dataflow engine
+	ExtStorage  storage.ExternalStorage `json:"-"`
+	PromFactory promutil.Factory
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling

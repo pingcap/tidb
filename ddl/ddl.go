@@ -470,9 +470,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 
-	d.wg.Add(1)
-	go d.limitDDLJobs()
-
+	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
@@ -1165,6 +1163,10 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		// we can ignore the commit error because this txn is readonly.
+		_ = sess.CommitTxn(context.Background())
+	}()
 	txn, err := sess.Txn(true)
 	if err != nil {
 		return nil, err
