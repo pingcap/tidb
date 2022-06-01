@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
+	"math/rand"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -2737,7 +2738,14 @@ func (s *session) RefreshVars(ctx context.Context) error {
 
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (Session, error) {
-	return CreateSession4TestWithOpt(store, nil)
+	se, err := CreateSession4TestWithOpt(store, nil)
+	if err == nil {
+		if rand.Intn(2) == 0 {
+			// Cover both chunk rpc encoding and default encoding.
+			se.GetSessionVars().EnableChunkRPC = false
+		}
+	}
+	return se, err
 }
 
 // Opt describes the option for creating session
