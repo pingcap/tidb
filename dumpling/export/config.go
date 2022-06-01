@@ -124,26 +124,25 @@ type Config struct {
 	CsvDelimiter  string
 	Databases     []string
 
-	TableFilter        filter.Filter `json:"-"`
-	Where              string
-	FileType           string
-	ServerInfo         version.ServerInfo
-	Logger             *zap.Logger        `json:"-"`
-	OutputFileTemplate *template.Template `json:"-"`
-	Rows               uint64
-	ReadTimeout        time.Duration
-	TiDBMemQuotaQuery  uint64
-	FileSize           uint64
-	StatementSize      uint64
-	SessionParams      map[string]interface{}
-	// TODO: deprecate it
-	Labels              prometheus.Labels `json:"-"`
+	TableFilter         filter.Filter `json:"-"`
+	Where               string
+	FileType            string
+	ServerInfo          version.ServerInfo
+	Logger              *zap.Logger        `json:"-"`
+	OutputFileTemplate  *template.Template `json:"-"`
+	Rows                uint64
+	ReadTimeout         time.Duration
+	TiDBMemQuotaQuery   uint64
+	FileSize            uint64
+	StatementSize       uint64
+	SessionParams       map[string]interface{}
 	Tables              DatabaseTables
 	CollationCompatible string
 
-	// fields below are injected from DM or dataflow engine
-	ExtStorage  storage.ExternalStorage `json:"-"`
-	PromFactory promutil.Factory
+	Labels       prometheus.Labels       `json:"-"`
+	PromFactory  promutil.Factory        `json:"-"`
+	PromRegistry promutil.Registry       `json:"-"`
+	ExtStorage   storage.ExternalStorage `json:"-"`
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -189,6 +188,8 @@ func DefaultConfig() *Config {
 		PosAfterConnect:     false,
 		CollationCompatible: LooseCollationCompatible,
 		specifiedTables:     false,
+		PromFactory:         promutil.NewDefaultFactory(),
+		PromRegistry:        promutil.NewDefaultRegistry(),
 	}
 }
 

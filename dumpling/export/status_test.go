@@ -11,8 +11,7 @@ import (
 func TestGetParameters(t *testing.T) {
 	conf := defaultConfigForTest(t)
 	d := &Dumper{conf: conf}
-	InitMetricsVector(conf.Labels)
-	d.metrics = defaultMetrics
+	d.metrics = newMetrics(conf.PromFactory, nil)
 
 	mid := d.GetParameters()
 	require.EqualValues(t, float64(0), mid.CompletedTables)
@@ -20,10 +19,10 @@ func TestGetParameters(t *testing.T) {
 	require.EqualValues(t, float64(0), mid.FinishedRows)
 	require.EqualValues(t, float64(0), mid.EstimateTotalRows)
 
-	AddCounter(defaultMetrics.finishedTablesCounter, conf.Labels, 10)
-	AddGauge(defaultMetrics.finishedSizeGauge, conf.Labels, 20)
-	AddGauge(defaultMetrics.finishedRowsGauge, conf.Labels, 30)
-	AddCounter(defaultMetrics.estimateTotalRowsCounter, conf.Labels, 40)
+	AddCounter(d.metrics.finishedTablesCounter, 10)
+	AddGauge(d.metrics.finishedSizeGauge, 20)
+	AddGauge(d.metrics.finishedRowsGauge, 30)
+	AddCounter(d.metrics.estimateTotalRowsCounter, 40)
 
 	mid = d.GetParameters()
 	require.EqualValues(t, float64(10), mid.CompletedTables)
