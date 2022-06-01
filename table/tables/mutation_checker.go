@@ -90,14 +90,6 @@ func CheckDataConsistency(
 
 	columnMaps := getColumnMaps(txn, t)
 
-	if rowToInsert != nil {
-		if err := checkRowInsertionConsistency(
-			sessVars, rowToInsert, rowInsertion, columnMaps.ColumnIDToInfo, columnMaps.ColumnIDToFieldType, t.Meta().Name.O,
-		); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	if err != nil {
 		return err
 	}
