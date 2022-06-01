@@ -537,12 +537,19 @@ func (s *ScopeSchema) Add(schema *expression.Schema, names []*types.FieldName) {
 //
 // ps: the innermost sub-query only refer the projected column as sum(t.a+t1.a) from second
 // select block rather than do the aggregation by itself.
-func (s *ScopeSchema) AddReservedCols(corCols []*expression.CorrelatedColumn) {
+func (s *ScopeSchema) AddReservedCols(corCols []*expression.CorrelatedColumn, cols []*expression.Column) {
+	// reservation comes from sub-query's correlated column.
 	for _, cc := range corCols {
 		// background: in analyzing phase, the col set of scope contains all columns it can see.
 		// make sure the correlated column is from this scope, and hasn't been added before.
 		if s.ColSet().Has(int(cc.Column.UniqueID)) && !s.ReservedColSet().Has(int(cc.Column.UniqueID)) {
 			s.reservedCols = append(s.reservedCols, &cc.Column)
+		}
+	}
+	// reservation comes from current scope's having or order-by clause.
+	for _, c := range cols {
+		if s.ColSet().Has(int(c.UniqueID)) && !s.ReservedColSet().Has(int(c.UniqueID)) {
+			s.reservedCols = append(s.reservedCols, c)
 		}
 	}
 }
@@ -555,6 +562,7 @@ func (s *ScopeSchema) AddReservedCols(corCols []*expression.CorrelatedColumn) {
 func (s *ScopeSchema) AddReservedCorrelatedCols(col *expression.Column) {
 	for _, cCol := range s.reservedCorrelatedCols {
 		if cCol.UniqueID == col.UniqueID {
+			// already added.
 			return
 		}
 	}

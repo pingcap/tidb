@@ -348,7 +348,7 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 		corCols := ExtractCorrelatedCols4LogicalPlan(np)
 		if len(corCols) > 0 {
 			// add the correlated column to outer scope.
-			er.b.outerScopes[len(er.b.outerScopes)-1].AddReservedCols(corCols)
+			er.b.outerScopes[len(er.b.outerScopes)-1].AddReservedCols(corCols, nil)
 		}
 	}
 
@@ -2042,8 +2042,14 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		er.ctxStackAppend(column, er.names[idx])
+		// find column reference in current schema, we should add them to current scope as reserved one in
+		// case of current projection doesn't project them out.
+		if er.b.curClause == havingClause || er.b.curClause == orderByClause {
+			er.b.curScope.AddReservedCols(nil, []*expression.Column{column})
+		}
 		return
 	}
+	// find column reference in outer schema. (the correlated col will be added to correspondent scope in buildSubquery)
 	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
 		outerSchema, outerName := er.b.outerSchemas[i], er.b.outerNames[i]
 		idx, err = expression.FindFieldName(outerName, v)

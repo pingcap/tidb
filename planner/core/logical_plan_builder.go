@@ -298,6 +298,16 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 	if inCurrentScope {
 		for i, oldFunc := range b.curScope.aggFuncs {
 			if oldFunc.Equal(b.ctx, newFunc) {
+				// this below case's two agg have the different pointer address, while they are mapped to same col.
+				// case like: select a, b, avg(c) from t group by a, b, c having (avg(c) > 3);
+				//                          |                                        |
+				//                          V                                        V
+				//  b.curScope.aggMapper[address1]            b.curScope.aggMapper[address2]
+				//                          +-----------+----------------------------+
+				//                                      |
+				//  b.curScope.aggFunc[offset]     <----+  (same offset)
+				//  b.curScope.aggColumn[offset]
+				b.curScope.aggMapper[aggFunc] = i
 				er.ctxStackAppend(b.curScope.aggColumn[i], types.EmptyName)
 				return nil
 			}
@@ -305,6 +315,8 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 	} else {
 		for i, oldFunc := range b.outerScopes[scopeIndex].aggFuncs {
 			if oldFunc.Equal(b.ctx, newFunc) {
+				// same as comments above, while the scope is outer scope.
+				b.outerScopes[scopeIndex].aggMapper[aggFunc] = i
 				er.ctxStackAppend(b.outerScopes[scopeIndex].aggColumn[i], types.EmptyName)
 				return nil
 			}
@@ -332,7 +344,7 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 		b.outerScopes[scopeIndex].aggFuncs = append(b.outerScopes[scopeIndex].aggFuncs, newFunc)
 		b.outerScopes[scopeIndex].aggColumn = append(b.outerScopes[scopeIndex].aggColumn, &column)
 		b.outerScopes[scopeIndex].aggMapper[aggFunc] = len(b.outerScopes[scopeIndex].aggFuncs) - 1
-		b.outerScopes[scopeIndex].AddReservedCols(corCols)
+		b.outerScopes[scopeIndex].AddReservedCols(corCols, nil)
 	}
 	er.ctxStackAppend(&column, types.EmptyName)
 	return nil
@@ -1513,6 +1525,10 @@ func (b *PlanBuilder) buildReservedCols(proj *LogicalProjection, schema *express
 		_, offset := b.curScope.GetCol(col.UniqueID)
 		if col == nil {
 			panic("should be here")
+		}
+		// check whether projection has already built the column from select.fields directly.
+		if schema.Contains(col) {
+			continue
 		}
 		name := b.curScope.scopeNames[offset]
 		proj.Exprs = append(proj.Exprs, col)
