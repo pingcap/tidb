@@ -28,6 +28,15 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 )
 
+// baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
+// It provides some common functions below:
+//   - Provides a default `OnInitialize` method to initialize its inner state.
+//   - Provides some methods like `activeTxn` and `prepareTxn` to manage the inner transaction.
+//   - Provides default methods `GetTxnInfoSchema`, `GetStmtReadTS` and `GetStmtForUpdateTS` and return the snapshot information schema or ts when `tidb_snapshot` is set.
+//   - Provides other default methods like `Advise`, `OnStmtStart`, `OnStmtRetry` and `OnStmtErrorForNextAction`
+// The subclass can set some inner property of `baseTxnContextProvider` when it is constructed.
+// For example, `getStmtReadTSFunc` and `getStmtForUpdateTSFunc` should be set, and they will be called when `GetStmtReadTS`
+// or `GetStmtForUpdate` to get the timestamp that should be used by the corresponding isolation level.
 type baseTxnContextProvider struct {
 	// States that should be initialized when baseTxnContextProvider is created and should not be changed after that
 	sctx                   sessionctx.Context
@@ -156,6 +165,9 @@ func (p *baseTxnContextProvider) activeTxn() (kv.Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	sessVars := p.sctx.GetSessionVars()
+	sessVars.TxnCtx.StartTS = txn.StartTS()
 
 	if p.causalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)

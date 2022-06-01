@@ -31,7 +31,6 @@ import (
 type updateStmtState struct {
 	updateTS          uint64
 	updateForUpdateTS func() error
-	onNextRetryOrStmt func() error
 }
 
 type PessimisticRRTxnContextProvider struct {

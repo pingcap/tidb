@@ -53,19 +53,6 @@ func TestEnterNewTxn(t *testing.T) {
 		check   func(t *testing.T, sctx sessionctx.Context)
 	}{
 		{
-			name: "EnterNewNewTxnBegin pessimistic RC",
-			request: &sessiontxn.EnterNewTxnRequest{
-				Type: sessiontxn.EnterNewTxnWithBeginStmt,
-			},
-			prepare: func(t *testing.T) {
-				tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
-				tk.MustExec("set @@tidb_txn_mode='pessimistic'")
-			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
-				checkBasicActiveTxn(t, sctx)
-			},
-		},
-		{
 			name: "EnterNewTxnDefault",
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnDefault,

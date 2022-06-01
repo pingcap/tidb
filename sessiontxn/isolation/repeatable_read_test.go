@@ -2,6 +2,7 @@ package isolation_test
 
 import (
 	"context"
+	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/executor"
@@ -10,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"testing"
@@ -133,6 +135,36 @@ func TestRepeatableReadProvider(t *testing.T) {
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Greater(t, compareTS, ts)
+}
+
+func TestSomething(t *testing.T) {
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk1.MustExec("create table t (id int primary key, v int)")
+	tk1.MustExec("insert into t values(1,1),(2,2)")
+
+	stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t where id = 1")
+	require.NoError(t, err)
+
+	tk1.MustExec("set  @@tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("begin pessimistic")
+
+	tk2.MustExec("insert into t values(3,3)")
+
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk1.MustQuery("select * from t where id = 1")
+	tk1.MustQuery("select * from t where id in (1, 2, 3)")
+
 }
 
 func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit, txnMode string) *isolation.PessimisticRRTxnContextProvider {
