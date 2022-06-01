@@ -200,8 +200,9 @@ func TestSomething(t *testing.T) {
 	tk2.MustExec("insert into t values(3,3)")
 
 	tk1.MustQuery("select * from t where id = 1 for update")
-	tk1.MustQuery("select * from t where id in (1, 2, 3) for update")
+	tk1.MustQuery("select * from t")
 
+	tk1.MustQuery("select * from t where id = 3 for update").Check(testkit.Rows("3 3"))
 }
 
 func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit) *isolation.PessimisticRRTxnContextProvider {

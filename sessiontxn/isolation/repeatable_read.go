@@ -68,6 +68,29 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	return
 }
 
+func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
+	seCtx := p.sctx
+	var txn kv.Transaction
+
+	if txn, err = seCtx.Txn(false); err != nil {
+		return err
+	}
+
+	if !txn.Valid() {
+		return errors.Trace(kv.ErrInvalidTxn)
+	}
+
+	version, err := seCtx.GetStore().CurrentVersion(seCtx.GetSessionVars().TxnCtx.TxnScope)
+	if err != nil {
+		return err
+	}
+
+	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
+	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
+
+	return nil
+}
+
 func (p *PessimisticRRTxnContextProvider) updateMaxForUpdateTs() error {
 	txnCxt := p.sctx.GetSessionVars().TxnCtx
 	futureTS := sessiontxn.NewOracleFuture(p.ctx, p.sctx, txnCxt.TxnScope)
@@ -220,14 +243,14 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("forUpdateTS", forUpdateTS),
 			zap.String("err", errStr))
 	} else {
-		if err := p.updateMaxForUpdateTs(); err != nil {
+		if err := p.updateForUpdateTS(); err != nil {
 			logutil.Logger(p.ctx).Warn("UpdateForUpdateTS failed", zap.Error(err))
 		}
 
 		return sessiontxn.ErrorAction(lockErr)
 	}
 
-	if err := p.updateMaxForUpdateTs(); err != nil {
+	if err := p.updateForUpdateTS(); err != nil {
 		return sessiontxn.ErrorAction(lockErr)
 	}
 
