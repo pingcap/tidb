@@ -457,21 +457,6 @@ type preBuiltSubQueryCacheItem struct {
 	// down in corresponding scope which will be used in later, along with correlated column within them.
 	//
 	p LogicalPlan
-
-	// sub-query with scalar attribute will output one scalar column.
-	expr expression.Expression
-	name *types.FieldName
-
-	// In-sub-query need cache the check-condition & collFlag down, avoid doing it again.
-	inSubQueryElement struct {
-		checkCondition expression.Expression
-		collFlag       bool
-		scalarUniqueID int64
-	}
-
-	existSubQueryElement struct {
-		scalarUniqueID int64
-	}
 }
 
 type ScopeSchema struct {

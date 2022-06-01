@@ -4196,6 +4196,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		originalFields = sel.Fields.Fields
 	}
 
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "select (select cnt from (select count(a) as cnt) n) from t") {
+		fmt.Println(1)
+	}
+
 	// analyzing phase.
 	b.analyzingPhase = true
 	if err = b.analyzeProjectionList(ctx, p, sel.Fields.Fields); err != nil {
