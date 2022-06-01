@@ -37,7 +37,7 @@ type stmtState struct {
 	onNextRetryOrStmt func() error
 }
 
-func (s *stmtState) resetStmt(useStartTS bool) error {
+func (s *stmtState) prepareStmt(useStartTS bool) error {
 	onNextStmt := s.onNextRetryOrStmt
 	*s = stmtState{
 		stmtUseStartTS: useStartTS,
@@ -81,7 +81,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
 		return err
 	}
-	return p.resetStmt(!p.isTxnPrepared)
+	return p.prepareStmt(!p.isTxnPrepared)
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -104,7 +104,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
-	return p.resetStmt(false)
+	return p.prepareStmt(false)
 }
 
 // Advise is used to give advice to provider
