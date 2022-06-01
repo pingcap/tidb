@@ -4042,21 +4042,14 @@ func (b *PlanBuilder) analyzeProjectionList(ctx context.Context, p LogicalPlan, 
 		if err != nil {
 			return err
 		}
-
-		// 我们在 analyze having 和 order by，重写表达式的时候，如果不想 build 两边，那么 sub query 必要要能够 ref 的已经 built 好的 agg。
-		//col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
-		//if err != nil {
-		//	return err
-		//}
-		//b.curScope.Add(expression.NewSchema(col), []*types.FieldName{name})
 	}
 	return nil
 }
 
 // Essentially, there is no necessity for analyzing selection, DBs like Postgre won't allow correlated agg in
-// where clause, while MySQL does. eg: select (select 1 from t where count(n.a) > 1 limit 1) from t n; After
-// we adopt the new aggregation building approach, for this case, we still need to recognize correlated agg out
-// and append them to outer scope as well before we build selection officially.
+// where clause, while MySQL does. eg: select (select 1 from t where count(n.a) > 1 limit 1) from t n;
+// After we adopt the new aggregation building approach, for this case, we still need to recognize correlated
+// agg out and append them to outer scope as well before we build selection officially.
 func (b *PlanBuilder) analyzeSelectionList(ctx context.Context, p LogicalPlan, where ast.ExprNode) error {
 	originClause := b.curClause
 	b.curClause = whereClause

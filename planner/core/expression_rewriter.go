@@ -566,7 +566,9 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
 		if er.asScalar {
 			// append a zero expr here for the convenience of scalar check. (ignored outside)
-			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+			// The parent expression only use the last column in schema, which represents whether the condition is matched.
+			er.ctxStack[len(er.ctxStack)-1] = expression.NewZero()
+			er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 		}
 		return v, true
 	} else {
@@ -965,6 +967,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 			return v, true
 		}
 		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
+		er.ctxStackPop(1)
 		if asScalar {
 			// append a zero expr here for the convenience of scalar check. (ignored outside)
 			er.ctxStackAppend(expression.NewZero(), types.EmptyName)

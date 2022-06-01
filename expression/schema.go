@@ -15,8 +15,9 @@
 package expression
 
 import (
-	fd "github.com/pingcap/tidb/planner/funcdep"
 	"strings"
+
+	fd "github.com/pingcap/tidb/planner/funcdep"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
