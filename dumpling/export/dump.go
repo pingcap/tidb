@@ -1224,10 +1224,10 @@ func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
 // Close closes a Dumper and stop dumping immediately
 func (d *Dumper) Close() error {
 	d.cancelCtx()
+	d.metrics.unregisterFrom(d.conf.PromRegistry)
 	if d.dbHandle != nil {
 		return d.dbHandle.Close()
 	}
-	d.metrics.unregisterFrom(d.conf.PromRegistry)
 	return nil
 }
 
