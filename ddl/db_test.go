@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -50,6 +49,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1070,7 +1070,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 		for st := range endStatMap {
 			endStates = append(endStates, st)
 		}
-		sort.Slice(endStates, func(i, j int) bool { return endStates[i] < endStates[j] })
+		slices.Sort(endStates)
 		for _, endState := range endStates {
 			for _, curCase := range cases {
 				if endState < curCase.stateEnd {
