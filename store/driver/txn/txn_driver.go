@@ -42,7 +42,8 @@ type tikvTxn struct {
 	*tikv.KVTxn
 	idxNameCache        map[int64]*model.TableInfo
 	snapshotInterceptor kv.SnapshotInterceptor
-	columnMapsCache     interface{}
+	// columnMapsCache is a cache used for the mutation checker
+	columnMapsCache interface{}
 }
 
 // NewTiKVTxn returns a new Transaction.
