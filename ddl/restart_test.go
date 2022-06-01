@@ -47,8 +47,7 @@ func getDDLSchemaVer(t *testing.T, d *ddl) int64 {
 func (d *ddl) restartWorkers(ctx context.Context) {
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
-	d.wg.Add(1)
-	go d.limitDDLJobs()
+	d.wg.Run(d.limitDDLJobs)
 	if !RunWorker {
 		return
 	}
@@ -58,7 +57,6 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	for _, worker := range d.workers {
 		worker.wg.Add(1)
 		worker.ctx = d.ctx
-		worker.ddlJobCtx = context.Background()
 		w := worker
 		go w.start(d.ddlCtx)
 		asyncNotify(worker.ddlJobCh)

@@ -15,7 +15,6 @@
 package variable
 
 import (
-	"encoding/json"
 	"reflect"
 	"strconv"
 	"testing"
@@ -229,14 +228,19 @@ func TestVarsutil(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, ErrIncorrectScope))
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBConfig)
 	require.NoError(t, err)
-	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
+	jsonConfig, err := config.GetJSONConfig()
 	require.NoError(t, err)
-	require.Equal(t, config.HideConfig(string(bVal)), val)
+	require.Equal(t, jsonConfig, val)
 
 	require.Equal(t, DefTiDBOptimizerSelectivityLevel, v.OptimizerSelectivityLevel)
 	err = SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, "1")
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
+
+	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
+	err = SetSessionSystemVar(v, TiDBOptimizerEnableOuterJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.EnableOuterJoinReorder)
 
 	require.Equal(t, DefTiDBOptimizerEnableNewOFGB, v.OptimizerEnableNewOnlyFullGroupByCheck)
 	err = SetSessionSystemVar(v, TiDBOptimizerEnableNewOnlyFullGroupByCheck, "off")

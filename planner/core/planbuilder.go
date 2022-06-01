@@ -714,7 +714,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt, *ast.BRIEStmt,
-		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
+		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
 		*ast.RenameUserStmt, *ast.NonTransactionalDeleteStmt:
@@ -2913,19 +2913,20 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, error) {
 	p := LogicalShow{
 		ShowContents: ShowContents{
-			Tp:          show.Tp,
-			DBName:      show.DBName,
-			Table:       show.Table,
-			Partition:   show.Partition,
-			Column:      show.Column,
-			IndexName:   show.IndexName,
-			Flag:        show.Flag,
-			User:        show.User,
-			Roles:       show.Roles,
-			Full:        show.Full,
-			IfNotExists: show.IfNotExists,
-			GlobalScope: show.GlobalScope,
-			Extended:    show.Extended,
+			Tp:                    show.Tp,
+			CountWarningsOrErrors: show.CountWarningsOrErrors,
+			DBName:                show.DBName,
+			Table:                 show.Table,
+			Partition:             show.Partition,
+			Column:                show.Column,
+			IndexName:             show.IndexName,
+			Flag:                  show.Flag,
+			User:                  show.User,
+			Roles:                 show.Roles,
+			Full:                  show.Full,
+			IfNotExists:           show.IfNotExists,
+			GlobalScope:           show.GlobalScope,
+			Extended:              show.Extended,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -3010,6 +3011,13 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		}
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
+		}
+	case ast.ShowDatabases:
+		var extractor ShowDatabaseExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			// Avoid building Selection.
+			show.Pattern = nil
 		}
 	}
 	if show.Tp == ast.ShowVariables {
@@ -4624,6 +4632,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowEvents:
 		return buildShowEventsSchema()
 	case ast.ShowWarnings, ast.ShowErrors:
+		if s.CountWarningsOrErrors {
+			names = []string{"Count"}
+			ftypes = []byte{mysql.TypeLong}
+			break
+		}
 		return buildShowWarningsSchema()
 	case ast.ShowRegions:
 		return buildTableRegionsSchema()

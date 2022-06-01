@@ -108,11 +108,13 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 	case sessiontxn.EnterNewTxnBeforeStmt:
 		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.Sctx, domain.GetDomain(p.Sctx).InfoSchema())
 		sessVars.TxnCtx = &variable.TransactionContext{
-			InfoSchema:    p.InfoSchema,
-			CreateTime:    time.Now(),
-			ShardStep:     int(sessVars.ShardAllocateStep),
-			TxnScope:      sessVars.CheckAndGetTxnScope(),
-			IsPessimistic: p.Pessimistic,
+			TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+				InfoSchema:    p.InfoSchema,
+				CreateTime:    time.Now(),
+				ShardStep:     int(sessVars.ShardAllocateStep),
+				TxnScope:      sessVars.CheckAndGetTxnScope(),
+				IsPessimistic: p.Pessimistic,
+			},
 		}
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
