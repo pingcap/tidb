@@ -1849,6 +1849,29 @@ func TestShowDatabasesLike(t *testing.T) {
 	tk.MustQuery("SHOW DATABASES LIKE 'test_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
 }
 
+func TestShowTableStatusLike(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP table IF EXISTS `T1`")
+	tk.MustExec("CREATE table `T1` (a int);")
+	rows := tk.MustQuery("SHOW table status LIKE 't1'").Rows()
+	require.Equal(t, "T1", rows[0][0])
+
+	tk.MustExec("DROP table IF EXISTS `Li_1`")
+	tk.MustExec("DROP table IF EXISTS `li_2`")
+
+	tk.MustExec("CREATE table `Li_1` (a int);")
+	tk.MustExec("CREATE table `li_2` (a int);")
+
+	rows = tk.MustQuery("SHOW table status LIKE 'li%'").Rows()
+	require.Equal(t, "Li_1", rows[0][0])
+	require.Equal(t, "li_2", rows[1][0])
+
+}
+
 func TestShowCollationsLike(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
