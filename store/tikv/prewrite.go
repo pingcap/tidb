@@ -174,6 +174,10 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	}()
 	for {
 		attempts++
+		if attempts > 1 || action.retry {
+			req.IsRetryRequest = true
+		}
+
 		if time.Since(tBegin) > slowRequestThreshold {
 			logutil.BgLogger().Warn("slow prewrite request", zap.Uint64("startTS", c.startTS), zap.Stringer("region", &batch.region), zap.Int("attempts", attempts))
 			tBegin = time.Now()
