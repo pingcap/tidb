@@ -392,6 +392,18 @@ func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 	return false
 }
 
+// ReleaseSavepoint deletes the named savepoint and the later savepoints, return false indicate the named savepoint doesn't exists.
+func (tc *TransactionContext) ReleaseSavepoint(name string) bool {
+	name = strings.ToLower(name)
+	for i, sp := range tc.Savepoints {
+		if sp.Name == name {
+			tc.Savepoints = append(tc.Savepoints[:i])
+			return true
+		}
+	}
+	return false
+}
+
 // RollbackToSavepoint rollbacks to the specified savepoint by name.
 func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord {
 	name = strings.ToLower(name)
