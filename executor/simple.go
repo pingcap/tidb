@@ -626,7 +626,7 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 }
 
 func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error {
-	deleted := e.ctx.GetSessionVars().TxnCtx.DeleteSavepoint(s.Name)
+	deleted := e.ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(s.Name)
 	if !deleted {
 		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
 	}
