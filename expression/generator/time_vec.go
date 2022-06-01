@@ -637,8 +637,25 @@ func (g gener) gen() interface{} {
 				},
 			{{- end }}
     	{{- else if and (eq $sig.TypeA.ETName "Duration") (eq $sig.Output.ETName "Datetime") -}}
+            // TODO: Make the following cases stable, i.e., shouldn't be affected by crossing a day (date part is padded to current date).
 			{{- $unitList := getIntervalUnitListForDurationAsDatetime -}}
-			// TODO: Add case when duration padding current time is fixed.
+			{{- range $unit := $unitList }}
+				{
+					retEvalType: types.ET{{ $sig.Output.ETName }},
+					childrenTypes: []types.EvalType{types.ET{{ $sig.TypeA.ETName }}, types.ET{{ $sig.TypeB.ETName }}, types.ETString},
+					geners: []dataGenerator{
+						newDefaultGener(0.2, types.ET{{$sig.TypeA.ETName}}),
+
+						{{- if eq $sig.TypeB.ETName "String" }}
+							&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
+						{{- else }}
+							newDefaultGener(0.2, types.ET{{$sig.TypeB.ETName}}),
+						{{- end }}
+					},
+					constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldType(mysql.TypeString)}},
+					chunkSize: 128,
+				},
+			{{- end }}
     	{{- else -}}
 			{{- $unitList := getIntervalUnitList -}}
 			{{- range $unit := $unitList }}
