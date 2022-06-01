@@ -29,6 +29,7 @@ var (
 	_ ShowPredicateExtractor = &ShowTablesTableExtractor{}
 	_ ShowPredicateExtractor = &ShowVariablesExtractor{}
 	_ ShowPredicateExtractor = &ShowDatabaseExtractor{}
+	_ ShowPredicateExtractor = &ShowCollationExtractor{}
 )
 
 // ShowPredicateExtractor is used to extract some predicates from `PatternLikeExpr` clause
@@ -181,6 +182,28 @@ func (e *ShowDatabaseExtractor) explainInfo() string {
 	}
 	if len(e.FieldPatterns) > 0 {
 		r.WriteString(fmt.Sprintf("database_pattern:[%s], ", e.FieldPatterns))
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// ShowCollationExtractor is used to extract some predicates of collations.
+type ShowCollationExtractor struct {
+	ShowBaseExtractor
+}
+
+func (e *ShowCollationExtractor) explainInfo() string {
+	r := new(bytes.Buffer)
+	if len(e.Field) > 0 {
+		r.WriteString(fmt.Sprintf("collation:[%s], ", e.Field))
+	}
+	if len(e.FieldPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("collation_pattern:[%s], ", e.FieldPatterns))
 	}
 
 	// remove the last ", " in the message info
