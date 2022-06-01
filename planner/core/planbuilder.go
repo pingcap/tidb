@@ -3019,6 +3019,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			// Avoid building Selection.
 			show.Pattern = nil
 		}
+	case ast.ShowCollation:
+		var extractor ShowCollationExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			show.Pattern = nil
+		}
 	}
 	if show.Tp == ast.ShowVariables {
 		var extractor ShowVariablesExtractor
