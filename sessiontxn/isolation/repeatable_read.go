@@ -20,17 +20,21 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
 type updateStmtState struct {
-	updateTS          uint64
-	updateForUpdateTS func() error
+	updateTS       uint64
+	updateTSFuture oracle.Future
+
+	maxUpdateTS uint64
 }
 
 type PessimisticRRTxnContextProvider struct {
@@ -43,33 +47,39 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 		return p.updateTS, nil
 	}
 
-	if err := p.updateForUpdateTs(); err != nil {
-		return 0, err
-	}
-
-	return p.updateTS, nil
-}
-
-func (p *PessimisticRRTxnContextProvider) updateForUpdateTs() error {
 	var txn kv.Transaction
-	var err error
-
 	if txn, err = p.activeTxn(); err != nil {
-		return err
+		return 0, err
 	}
 
 	txnCxt := p.sctx.GetSessionVars().TxnCtx
 	futureTS := sessiontxn.NewOracleFuture(p.ctx, p.sctx, txnCxt.TxnScope)
 
-	var ts uint64
 	if ts, err = futureTS.Wait(); err != nil {
-		return err
+		return 0, err
 	}
 
 	txnCxt.SetForUpdateTS(ts)
 	txn.SetOption(kv.SnapshotTS, ts)
 
 	p.updateTS = ts
+	p.maxUpdateTS = ts
+
+	return
+}
+
+func (p *PessimisticRRTxnContextProvider) updateMaxForUpdateTs() error {
+	txnCxt := p.sctx.GetSessionVars().TxnCtx
+	futureTS := sessiontxn.NewOracleFuture(p.ctx, p.sctx, txnCxt.TxnScope)
+
+	var ts uint64
+	var err error
+
+	if ts, err = futureTS.Wait(); err != nil {
+		return err
+	}
+
+	p.maxUpdateTS = ts
 
 	return nil
 }
@@ -92,15 +102,31 @@ func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsisten
 
 	provider.getStmtReadTSFunc = provider.getTxnStartTS
 	provider.getStmtForUpdateTSFunc = provider.getForUpdateTs
-	provider.updateForUpdateTS = provider.updateForUpdateTs
 
 	return provider
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error {
-	p.ctx = ctx
+	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
+		return err
+	}
+
+	p.updateTS = 0
 	p.infoSchema = sessiontxn.GetTxnManager(p.sctx).GetTxnInfoSchema()
+
+	return nil
+}
+
+func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) error {
+	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
+		return err
+	}
+
+	// In OnStmtErrorForNextAction, for those error cases that need to retry, the maxUpdateTs will be updated
+	// to the latest ts. It can be used now to retry.
+	p.updateTS = p.maxUpdateTS
+
 	return nil
 }
 
@@ -115,13 +141,36 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point session
 }
 
 // Advise is used to give advice to provider
-func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
+func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType, val []any) error {
 	switch tp {
 	case sessiontxn.AdviceWarmUp:
 		return p.warmUp()
+	case sessiontxn.AdviceOptimizeWithPlan:
+		return p.optimizeWithPlan(val)
 	default:
-		return p.baseTxnContextProvider.Advise(tp)
+		return p.baseTxnContextProvider.Advise(tp, val)
 	}
+}
+
+func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error) {
+	if p.isTidbSnapshotEnabled() {
+		return nil
+	}
+
+	if len(val) == 0 {
+		return nil
+	}
+
+	plan, ok := val[0].(plannercore.Plan)
+	if !ok {
+		return nil
+	}
+
+	if execute, ok := plan.(*plannercore.Execute); ok {
+		plan = execute.Plan
+	}
+
+	return nil
 }
 
 func (p *PessimisticRRTxnContextProvider) warmUp() error {
@@ -171,14 +220,14 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("forUpdateTS", forUpdateTS),
 			zap.String("err", errStr))
 	} else {
-		if err := p.updateForUpdateTS(); err != nil {
+		if err := p.updateMaxForUpdateTs(); err != nil {
 			logutil.Logger(p.ctx).Warn("UpdateForUpdateTS failed", zap.Error(err))
 		}
 
 		return sessiontxn.ErrorAction(lockErr)
 	}
 
-	if err := p.updateForUpdateTS(); err != nil {
+	if err := p.updateMaxForUpdateTs(); err != nil {
 		return sessiontxn.ErrorAction(lockErr)
 	}
 

@@ -100,6 +100,9 @@ const (
 	// AdviceWarmUp indicates to warm up the provider's inner state.
 	// For example, the provider can prefetch tso when it is advised.
 	AdviceWarmUp AdviceType = iota
+
+	// AdviceOptimizeWithPlan indicates to do some optimizations with the given plan
+	AdviceOptimizeWithPlan
 )
 
 // TxnContextProvider provides txn context
@@ -120,7 +123,7 @@ type TxnContextProvider interface {
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
 	// Advise is used to give advice to provider
-	Advise(tp AdviceType) error
+	Advise(tp AdviceType, val []any) error
 }
 
 // TxnManager is an interface providing txn context management in session
@@ -147,7 +150,7 @@ type TxnManager interface {
 	OnStmtRetry(ctx context.Context) error
 	// Advise is used to give advice to provider.
 	// For example, `AdviceWarmUp` can tell the provider to warm up its inner state.
-	Advise(tp AdviceType) error
+	Advise(tp AdviceType, val ...any) error
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:
@@ -174,6 +177,11 @@ func NewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
 // WarmUpTxn gives the `AdviceWarmUp` advise to the provider
 func WarmUpTxn(sctx sessionctx.Context) error {
 	return GetTxnManager(sctx).Advise(AdviceWarmUp)
+}
+
+// OptimizeWithPlan gives the `AdviceOptimizeWithPlan` advise to the provider
+func OptimizeWithPlan(sctx sessionctx.Context, plan any) error {
+	return GetTxnManager(sctx).Advise(AdviceOptimizeWithPlan, plan)
 }
 
 // GetTxnManager returns the TxnManager object from session context

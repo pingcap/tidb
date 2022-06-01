@@ -2,7 +2,6 @@ package isolation_test
 
 import (
 	"context"
-	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/executor"
@@ -11,7 +10,6 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"testing"
@@ -24,20 +22,65 @@ func newDeadLockError(isRetryable bool) error {
 	}
 }
 
+func TestPessimisticRRStmtStartAndRetry(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	provider := initializeRepeatableReadProvider(t, tk)
+	se := tk.Session()
+
+	var lockErr error
+	var compareTS uint64
+	for _, firstActionOnError := range []func(ctx context.Context) error{
+		provider.OnStmtStart,
+		provider.OnStmtRetry,
+	} {
+		compareTS = getOracleTS(t, se)
+		lockErr = kv.ErrWriteConflict
+		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+		require.NoError(t, err)
+		require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
+		require.NoError(t, firstActionOnError(context.TODO()))
+		ts, err := provider.GetStmtForUpdateTS()
+		require.NoError(t, err)
+		// StmtActionRetryReady means we will update the forUpdateTS, so it should be larger than the compareTS
+		require.Greater(t, ts, compareTS)
+	}
+
+	for _, firstActionOnError := range []func(ctx context.Context) error{
+		provider.OnStmtStart,
+		provider.OnStmtRetry,
+	} {
+		compareTS = getOracleTS(t, se)
+		lockErr = newDeadLockError(true)
+		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+		require.NoError(t, err)
+		require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
+		require.NoError(t, firstActionOnError(context.TODO()))
+		ts, err := provider.GetStmtForUpdateTS()
+		require.NoError(t, err)
+		// StmtActionRetryReady means we will update the forUpdateTS, so it should be larger than the compareTS
+		require.Greater(t, ts, compareTS)
+	}
+}
+
 func TestPessimisticRRErrorHandle(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
+	provider := initializeRepeatableReadProvider(t, tk)
 
 	var lockErr error
 
 	compareTS := getOracleTS(t, se)
 	lockErr = kv.ErrWriteConflict
-	provider := initializeRepeatableReadProvider(t, tk, "PESSIMISTIC")
 	nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
+	err = provider.OnStmtRetry(context.TODO())
+	require.NoError(t, err)
 	ts, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	// StmtActionRetryReady means we will update the forUpdateTS, so it should be larger than the compareTS
@@ -90,7 +133,7 @@ func TestRepeatableReadProvider(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
-	provider := initializeRepeatableReadProvider(t, tk, "PESSIMISTIC")
+	provider := initializeRepeatableReadProvider(t, tk)
 
 	stmts, _, err := parser.New().Parse("select * from t", "", "")
 	require.NoError(t, err)
@@ -100,45 +143,46 @@ func TestRepeatableReadProvider(t *testing.T) {
 	require.NoError(t, err)
 	forUpdateStmt := stmts[0]
 
+	var prevTS, CurrentTS uint64
 	compareTS := getOracleTS(t, se)
 	// The read ts should be less than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	ts, err := provider.GetStmtReadTS()
+	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
-	require.Greater(t, compareTS, ts)
+	require.Greater(t, compareTS, CurrentTS)
+	prevTS = CurrentTS
 
 	// The read ts should also be less than the compareTS in a new statement
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	ts, err = provider.GetStmtReadTS()
+	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
-	require.Greater(t, compareTS, ts)
+	require.Equal(t, CurrentTS, prevTS)
 
 	// The read ts should still be less than the compareTS in a retry statement
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtRetry(context.TODO()))
-	ts, err = provider.GetStmtReadTS()
+	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
-	require.Greater(t, compareTS, ts)
+	require.Greater(t, CurrentTS, prevTS)
 
 	// The for update read ts should be larger than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, forUpdateStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	ts, err = provider.GetStmtForUpdateTS()
+	forUpdateTS, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	require.Greater(t, ts, compareTS)
+	require.Greater(t, forUpdateTS, compareTS)
 
 	// But the read ts is still less than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	ts, err = provider.GetStmtReadTS()
+	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
-	require.Greater(t, compareTS, ts)
+	require.Greater(t, CurrentTS, prevTS)
 }
 
 func TestSomething(t *testing.T) {
-	ctx := context.Background()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk1 := testkit.NewTestKit(t, store)
@@ -150,24 +194,17 @@ func TestSomething(t *testing.T) {
 	tk1.MustExec("create table t (id int primary key, v int)")
 	tk1.MustExec("insert into t values(1,1),(2,2)")
 
-	stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t where id = 1")
-	require.NoError(t, err)
-
-	tk1.MustExec("set  @@tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("set  @@tx_isolation='REPEATABLE-READ'")
 	tk1.MustExec("begin pessimistic")
 
 	tk2.MustExec("insert into t values(3,3)")
 
-	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
-	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
-	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	tk1.MustQuery("select * from t where id = 1")
-	tk1.MustQuery("select * from t where id in (1, 2, 3)")
+	tk1.MustQuery("select * from t where id = 1 for update")
+	tk1.MustQuery("select * from t where id in (1, 2, 3) for update")
 
 }
 
-func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit, txnMode string) *isolation.PessimisticRRTxnContextProvider {
+func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit) *isolation.PessimisticRRTxnContextProvider {
 	tk.MustExec("set @@tx_isolation = 'REPEATABLE-READ'")
 	tk.MustExec("begin pessimistic")
 	provider := sessiontxn.GetTxnManager(tk.Session()).GetContextProvider()

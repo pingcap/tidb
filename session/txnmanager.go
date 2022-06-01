@@ -114,9 +114,9 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
-func (m *txnManager) Advise(tp sessiontxn.AdviceType) error {
+func (m *txnManager) Advise(tp sessiontxn.AdviceType, val ...any) error {
 	if m.ctxProvider != nil {
-		return m.ctxProvider.Advise(tp)
+		return m.ctxProvider.Advise(tp, val)
 	}
 	return nil
 }

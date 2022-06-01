@@ -108,12 +108,12 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 }
 
 // Advise is used to give advice to provider
-func (p *PessimisticRCTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
+func (p *PessimisticRCTxnContextProvider) Advise(tp sessiontxn.AdviceType, val []any) error {
 	switch tp {
 	case sessiontxn.AdviceWarmUp:
 		return p.warmUp()
 	default:
-		return p.baseTxnContextProvider.Advise(tp)
+		return p.baseTxnContextProvider.Advise(tp, val)
 	}
 }
 
