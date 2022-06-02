@@ -1660,10 +1660,10 @@
       "CTE 2.00 root  Recursive CTE",
       "├─Projection(Seed Part) 1.00 root  1->Column#2",
       "│ └─TableDual 1.00 root  rows:1",
-      "└─Projection(Recursive Part) 0.80 root cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
+      "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
       "  └─Selection 0.80 root  lt(Column#3, 10)",
       "    └─CTETable 1.00 root  Scan on CTE"
-    ],
+            ],
         "Warning": null
   }
     ]
