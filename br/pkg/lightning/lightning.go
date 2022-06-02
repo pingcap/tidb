@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
@@ -68,6 +69,7 @@ type Lightning struct {
 	serverAddr net.Addr
 	serverLock sync.Mutex
 	status     restore.LightningStatus
+	metrics    *metric.Metrics
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -94,12 +96,15 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 
 	redact.InitRedact(globalCfg.Security.RedactInfoLog)
 
-	ctx, shutdown := context.WithCancel(context.Background())
+	metrics := metric.NewMetrics(globalCfg.PromFactory)
+	metrics.RegisterTo(globalCfg.PromRegistry)
+	ctx, shutdown := context.WithCancel(metric.NewContext(context.Background(), metrics))
 	return &Lightning{
 		globalCfg: globalCfg,
 		globalTLS: tls,
 		ctx:       ctx,
 		shutdown:  shutdown,
+		metrics:   metrics,
 	}
 }
 
@@ -475,6 +480,7 @@ func (l *Lightning) Stop() {
 		log.L().Warn("failed to shutdown HTTP server", log.ShortError(err))
 	}
 	l.shutdown()
+	l.metrics.UnregisterFrom(l.globalCfg.PromRegistry)
 }
 
 // Status return the sum size of file which has been imported to TiKV and the total size of source file.
