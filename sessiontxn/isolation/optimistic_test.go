@@ -89,7 +89,7 @@ func TestOptimisticRCTxnContextProviderTS(t *testing.T) {
 	require.Equal(t, uint64(math.MaxUint64), readTS)
 	require.Equal(t, uint64(math.MaxUint64), updateTS)
 
-	// when it is in explict txn, we should not use `math.MaxUint64`
+	// when it is in explicit txn, we should not use `math.MaxUint64`
 	compareTS = getOracleTS(t, se)
 	provider = initializeOptimisticRCProvider(t, tk, true)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
@@ -167,9 +167,9 @@ func TestOptimisticRCHandleError(t *testing.T) {
 	}
 }
 
-func initializeOptimisticRCProvider(t *testing.T, tk *testkit.TestKit, withExplictBegin bool) *isolation.OptimisticTxnContextProvider {
+func initializeOptimisticRCProvider(t *testing.T, tk *testkit.TestKit, withExplicitBegin bool) *isolation.OptimisticTxnContextProvider {
 	tk.MustExec("commit")
-	if withExplictBegin {
+	if withExplicitBegin {
 		tk.MustExec("begin optimistic")
 	} else {
 		err := sessiontxn.GetTxnManager(tk.Session()).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{

@@ -253,7 +253,7 @@ func TestRCProviderInitialize(t *testing.T) {
 	tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
 	assert.Check(t)
 
-	// EnterNewTxnDefault will create an active txn, but not explict
+	// EnterNewTxnDefault will create an active txn, but not explicit
 	assert = activeRCTxnAssert(t, se, false)
 	require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
 		Type:    sessiontxn.EnterNewTxnDefault,
