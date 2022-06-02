@@ -26,13 +26,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
@@ -196,6 +196,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	forUpdateTS, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Equal(t, readTS, forUpdateTS)
+	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTS())
 	require.Greater(t, readTS, compareTS)
 
 	// second read should use the newest ts
@@ -208,6 +209,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	forUpdateTS, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Equal(t, readTS, forUpdateTS)
+	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTS())
 	require.Greater(t, readTS, compareTS)
 
 	// if we should retry, the ts should be updated
@@ -222,6 +224,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	forUpdateTS, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Equal(t, readTS, forUpdateTS)
+	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTS())
 	require.Greater(t, readTS, compareTS)
 }
 
@@ -235,25 +238,40 @@ func TestRCProviderInitialize(t *testing.T) {
 	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
 
 	// begin outside a txn
-	minStartTime := time.Now()
+	assert := activeRCTxnAssert(t, se, true)
 	tk.MustExec("begin")
-	checkActiveRCTxn(t, se, minStartTime)
+	assert.Check(t)
 
 	// begin in a txn
-	minStartTime = time.Now()
+	assert = activeRCTxnAssert(t, se, true)
 	tk.MustExec("begin")
-	checkActiveRCTxn(t, se, minStartTime)
+	assert.Check(t)
+
+	// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
+	assert = activeRCTxnAssert(t, se, true)
+	assert.causalConsistencyOnly = true
+	tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
+	assert.Check(t)
+
+	// EnterNewTxnDefault will create an active txn, but not explict
+	assert = activeRCTxnAssert(t, se, false)
+	require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+		Type:    sessiontxn.EnterNewTxnDefault,
+		TxnMode: ast.Pessimistic,
+	}))
+	assert.Check(t)
 
 	// non-active txn and then active it
 	tk.MustExec("rollback")
 	tk.MustExec("set @@autocommit=0")
-	minStartTime = time.Now()
+	assert = inActiveRCTxnAssert(se)
+	assertAfterActive := activeRCTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider := checkNotActiveRCTxn(t, se, minStartTime)
+	provider := assert.CheckAndGetProvider(t)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	ts, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
-	checkActiveRCTxn(t, se, minStartTime)
+	assertAfterActive.Check(t)
 	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
 	tk.MustExec("rollback")
 }
@@ -274,15 +292,14 @@ func TestTidbSnapshotVar(t *testing.T) {
 	time.Sleep(time.Millisecond * 50)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int)")
-	//isVersion := do.InfoSchema().(infoschema.InfoSchema).SchemaMetaVersion()
 	tk.MustExec("create temporary table t2(id int)")
 	tk.MustExec("set @@tidb_snapshot=@a")
 	snapshotTS := tk.Session().GetSessionVars().SnapshotTS
 	isVersion := dom.InfoSchema().SchemaMetaVersion()
 
-	minStartTime := time.Now()
+	assert := activeRCTxnAssert(t, se, true)
 	tk.MustExec("begin pessimistic")
-	provider := checkActiveRCTxn(t, se, minStartTime)
+	provider := assert.CheckAndGetProvider(t)
 	txn, err := se.Txn(false)
 	require.NoError(t, err)
 	require.Greater(t, txn.StartTS(), snapshotTS)
@@ -329,9 +346,10 @@ func TestTidbSnapshotVar(t *testing.T) {
 	tk.MustExec("rollback")
 	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
 	tk.MustExec("set @@autocommit=0")
-	minStartTime = time.Now()
+	assert = inActiveRCTxnAssert(se)
+	assertAfterActive := activeRCTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider = checkNotActiveRCTxn(t, se, minStartTime)
+	provider = assert.CheckAndGetProvider(t)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	tk.MustExec("set @@tidb_snapshot=@a")
 	checkUseSnapshot()
@@ -340,69 +358,33 @@ func TestTidbSnapshotVar(t *testing.T) {
 	require.False(t, txn.Valid())
 	tk.MustExec("set @@tidb_snapshot=''")
 	checkUseTxn(true)
-	checkActiveRCTxn(t, se, minStartTime)
+	assertAfterActive.Check(t)
 	tk.MustExec("rollback")
 }
 
-func checkActiveRCTxn(t *testing.T, sctx sessionctx.Context, minStartTime time.Time) *isolation.PessimisticRCTxnContextProvider {
-	sessVars := sctx.GetSessionVars()
-	txnCtx := sessVars.TxnCtx
-	provider := checkBasicRCTxn(t, sctx, minStartTime)
-
-	txn, err := sctx.Txn(false)
-	require.NoError(t, err)
-	require.True(t, txn.Valid())
-	require.Equal(t, txn.StartTS(), txnCtx.StartTS)
-	require.True(t, txnCtx.IsExplicit)
-	require.True(t, sessVars.InTxn())
-	require.Same(t, sessVars.KVVars, txn.GetVars())
-	return provider
-}
-
-func checkNotActiveRCTxn(t *testing.T, sctx sessionctx.Context, minStartTime time.Time) *isolation.PessimisticRCTxnContextProvider {
-	sessVars := sctx.GetSessionVars()
-	txnCtx := sessVars.TxnCtx
-	provider := checkBasicRCTxn(t, sctx, minStartTime)
-
-	txn, err := sctx.Txn(false)
-	require.NoError(t, err)
-	require.False(t, txn.Valid())
-	require.Equal(t, uint64(0), txnCtx.StartTS)
-	require.False(t, txnCtx.IsExplicit)
-	require.False(t, sessVars.InTxn())
-	return provider
-}
-
-func checkBasicRCTxn(t *testing.T, sctx sessionctx.Context, minStartTime time.Time) *isolation.PessimisticRCTxnContextProvider {
-	provider := sessiontxn.GetTxnManager(sctx).GetContextProvider()
-	require.IsType(t, &isolation.PessimisticRCTxnContextProvider{}, provider)
-
-	sessVars := sctx.GetSessionVars()
-	txnCtx := sessVars.TxnCtx
-
-	if sessVars.SnapshotInfoschema == nil {
-		require.Same(t, provider.GetTxnInfoSchema(), txnCtx.InfoSchema)
-	} else {
-		require.Equal(t, sessVars.SnapshotInfoschema.(infoschema.InfoSchema).SchemaMetaVersion(), provider.GetTxnInfoSchema().SchemaMetaVersion())
+func activeRCTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
+	return &txnAssert[*isolation.PessimisticRCTxnContextProvider]{
+		sctx:         sctx,
+		isolation:    "READ-COMMITTED",
+		minStartTime: time.Now(),
+		active:       true,
+		inTxn:        inTxn,
+		minStartTS:   getOracleTS(t, sctx),
 	}
-	require.Equal(t, "READ-COMMITTED", txnCtx.Isolation)
-	require.True(t, txnCtx.IsPessimistic)
-	require.Equal(t, sctx.GetSessionVars().CheckAndGetTxnScope(), txnCtx.TxnScope)
-	require.Equal(t, sessVars.ShardAllocateStep, int64(txnCtx.ShardStep))
-	require.False(t, txnCtx.IsStaleness)
-	require.GreaterOrEqual(t, txnCtx.CreateTime.Nanosecond(), minStartTime.Nanosecond())
-	return provider.(*isolation.PessimisticRCTxnContextProvider)
+}
+
+func inActiveRCTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
+	return &txnAssert[*isolation.PessimisticRCTxnContextProvider]{
+		sctx:         sctx,
+		isolation:    "READ-COMMITTED",
+		minStartTime: time.Now(),
+		active:       false,
+	}
 }
 
 func initializePessimisticRCProvider(t *testing.T, tk *testkit.TestKit) *isolation.PessimisticRCTxnContextProvider {
 	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
-	minStartTime := time.Now()
+	assert := activeRCTxnAssert(t, tk.Session(), true)
 	tk.MustExec("begin pessimistic")
-	return checkActiveRCTxn(t, tk.Session(), minStartTime)
-}
-
-func getOracleTS(t *testing.T, sctx sessionctx.Context) uint64 {
-	ts, err := sctx.GetStore().GetOracle().GetTimestamp(context.TODO(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	require.NoError(t, err)
-	return ts
+	return assert.CheckAndGetProvider(t)
 }
