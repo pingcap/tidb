@@ -87,6 +87,8 @@ type ShowExec struct {
 
 	is infoschema.InfoSchema
 
+	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
+
 	result *chunk.Chunk
 	cursor int
 
@@ -400,10 +402,29 @@ func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	sort.Strings(dbs)
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		FieldFilterEnable bool
+		fieldFilter       string
+	)
+
+	if e.Extractor != nil {
+		extractor := (e.Extractor).(*plannercore.ShowDatabaseExtractor)
+		if extractor.FieldPatterns != "" {
+			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
+		}
+		FieldFilterEnable = extractor.Field != ""
+		fieldFilter = extractor.Field
+	}
 	// let information_schema be the first database
 	moveInfoSchemaToFront(dbs)
 	for _, d := range dbs {
 		if checker != nil && !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, d) {
+			continue
+		} else if FieldFilterEnable && strings.ToLower(d) != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(strings.ToLower(d)) {
 			continue
 		}
 		e.appendRow([]interface{}{
@@ -1640,8 +1661,17 @@ func (e *ShowExec) fetchShowPlugins() error {
 }
 
 func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
-	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	for _, w := range warns {
+	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	if e.CountWarningsOrErrors {
+		errCount, warnCount := stmtCtx.NumErrorWarnings()
+		if errOnly {
+			e.appendRow([]interface{}{int64(errCount)})
+		} else {
+			e.appendRow([]interface{}{int64(warnCount)})
+		}
+		return nil
+	}
+	for _, w := range stmtCtx.GetWarnings() {
 		if errOnly && w.Level != stmtctx.WarnLevelError {
 			continue
 		}

@@ -102,11 +102,13 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 	case sessiontxn.EnterNewTxnBeforeStmt:
 		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.Sctx, domain.GetDomain(p.Sctx).InfoSchema())
 		sessVars.TxnCtx = &variable.TransactionContext{
-			InfoSchema:    p.InfoSchema,
-			CreateTime:    time.Now(),
-			ShardStep:     int(sessVars.ShardAllocateStep),
-			TxnScope:      sessVars.CheckAndGetTxnScope(),
-			IsPessimistic: p.Pessimistic,
+			TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+				InfoSchema:    p.InfoSchema,
+				CreateTime:    time.Now(),
+				ShardStep:     int(sessVars.ShardAllocateStep),
+				TxnScope:      sessVars.CheckAndGetTxnScope(),
+				IsPessimistic: p.Pessimistic,
+			},
 		}
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
@@ -216,11 +218,6 @@ func (p *SimpleTxnContextProvider) prepareTSFuture() error {
 		return err
 	}
 	return nil
-}
-
-// ReplaceStmtInfoSchema replaces the current info schema
-func (p *SimpleTxnContextProvider) ReplaceStmtInfoSchema(is infoschema.InfoSchema) {
-	p.InfoSchema = is
 }
 
 // activeTxn actives the txn

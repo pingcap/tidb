@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -333,7 +334,7 @@ func (s *session) cleanRetryInfo() {
 			if ok {
 				preparedAst = preparedObj.PreparedAst
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
-				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion)
+				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion, 0)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -1942,7 +1943,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
-		return nil, err
+		return recordSet, err
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -2311,7 +2312,7 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 }
 
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
-// Be careful for the short path, current precondition is ths cached plan satisfying
+// Be careful with the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
 func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt, isStaleness bool) (bool, error) {
 	prepared := preparedStmt.PreparedAst
@@ -2390,9 +2391,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, err
 		}
-	} else if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
-		is = domain.GetDomain(s).InfoSchema()
-		is = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
@@ -2410,8 +2408,8 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 
-	if p, isOK := txnManager.GetContextProvider().(sessiontxn.StmtInfoSchemaReplaceProvider); isOK {
-		p.ReplaceStmtInfoSchema(is)
+	if p, isOK := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); isOK {
+		p.InfoSchema = is
 	}
 
 	if ok {
@@ -2545,12 +2543,14 @@ func (s *session) NewTxn(ctx context.Context) error {
 	s.txn.changeInvalidToValid(txn)
 	is := temptable.AttachLocalTemporaryTableInfoSchema(s, domain.GetDomain(s).InfoSchema())
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		InfoSchema:  is,
-		CreateTime:  time.Now(),
-		StartTS:     txn.StartTS(),
-		ShardStep:   int(s.sessionVars.ShardAllocateStep),
-		IsStaleness: false,
-		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
+		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+			InfoSchema:  is,
+			CreateTime:  time.Now(),
+			StartTS:     txn.StartTS(),
+			ShardStep:   int(s.sessionVars.ShardAllocateStep),
+			IsStaleness: false,
+			TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
+		},
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
@@ -2592,12 +2592,14 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		InfoSchema:  is,
-		CreateTime:  time.Now(),
-		StartTS:     txn.StartTS(),
-		ShardStep:   int(s.sessionVars.ShardAllocateStep),
-		IsStaleness: true,
-		TxnScope:    txnScope,
+		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+			InfoSchema:  is,
+			CreateTime:  time.Now(),
+			StartTS:     txn.StartTS(),
+			ShardStep:   int(s.sessionVars.ShardAllocateStep),
+			IsStaleness: true,
+			TxnScope:    txnScope,
+		},
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
@@ -2989,8 +2991,8 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		if opt != nil && opt.PreparedPlanCache != nil {
 			s.preparedPlanCache = opt.PreparedPlanCache
 		} else {
-			s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-				plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
+			s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
 		}
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
@@ -3022,8 +3024,8 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(variable.PreparedPlanCacheSize.Load()),
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
@@ -3279,7 +3281,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
-			zap.Stringer("user", vars.User),
+			zap.String("user", vars.User.LoginString()),
 			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),

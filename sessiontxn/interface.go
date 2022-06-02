@@ -125,18 +125,6 @@ type TxnContextProvider interface {
 	Advise(tp AdviceType, val []any) error
 }
 
-// StmtInfoSchemaReplaceProvider is a little hack, it is used to replace the provider's info schema in a statement
-// See https://github.com/pingcap/tidb/pull/22381 When we are using plan cache with a for update statement, the info schema
-// will be forced replaced with the lasted one to make the plan cache invalid forcing rebuild the plan. So the the provider with
-// pessimistic mode should provide a method to replace it's info schema.
-// Even though it is not a good solution and the best way to solve the above problem is to invalid the plan cache but keep the
-// info schema unchanged, we still need to support it before we fixed it one day.
-// TODO: remove it
-type StmtInfoSchemaReplaceProvider interface {
-	TxnContextProvider
-	ReplaceStmtInfoSchema(is infoschema.InfoSchema)
-}
-
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
 	// GetTxnInfoSchema returns the information schema used by txn

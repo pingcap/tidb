@@ -1494,20 +1494,23 @@ func TestFromDays(t *testing.T) {
 	tests := []struct {
 		day    int64
 		expect string
+		isNil  bool
 	}{
-		{-140, "0000-00-00"},   // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
-		{140, "0000-00-00"},    // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
-		{735000, "2012-05-12"}, // Leap year.
-		{735030, "2012-06-11"},
-		{735130, "2012-09-19"},
-		{734909, "2012-02-11"},
-		{734878, "2012-01-11"},
-		{734927, "2012-02-29"},
-		{734634, "2011-05-12"}, // Non Leap year.
-		{734664, "2011-06-11"},
-		{734764, "2011-09-19"},
-		{734544, "2011-02-11"},
-		{734513, "2011-01-11"},
+		{-140, "0000-00-00", false},   // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
+		{140, "0000-00-00", false},    // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
+		{735000, "2012-05-12", false}, // Leap year.
+		{735030, "2012-06-11", false},
+		{735130, "2012-09-19", false},
+		{734909, "2012-02-11", false},
+		{734878, "2012-01-11", false},
+		{734927, "2012-02-29", false},
+		{734634, "2011-05-12", false}, // Non Leap year.
+		{734664, "2011-06-11", false},
+		{734764, "2011-09-19", false},
+		{734544, "2011-02-11", false},
+		{734513, "2011-01-11", false},
+		{3652424, "9999-12-31", false},
+		{3652425, "", true},
 	}
 
 	fc := funcs[ast.FromDays]
@@ -1520,7 +1523,11 @@ func TestFromDays(t *testing.T) {
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 
 		require.NoError(t, err)
-		require.Equal(t, test.expect, result.GetMysqlTime().String())
+		if test.isNil {
+			require.True(t, result.IsNull())
+		} else {
+			require.Equal(t, test.expect, result.GetMysqlTime().String())
+		}
 	}
 
 	stringTests := []struct {

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
@@ -71,13 +72,6 @@ func InitTxnContextProvider(p *preprocessor) {
 func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	return func(p *preprocessor) {
 		p.PreprocessorReturn = ret
-	}
-}
-
-// WithExecuteInfoSchemaUpdate return a PreprocessOpt to update the `Execute` infoSchema under some conditions.
-func WithExecuteInfoSchemaUpdate(pe *PreprocessExecuteISUpdate) PreprocessOpt {
-	return func(p *preprocessor) {
-		p.PreprocessExecuteISUpdate = pe
 	}
 }
 
@@ -171,12 +165,6 @@ type PreprocessorReturn struct {
 	ReadReplicaScope string
 }
 
-// PreprocessExecuteISUpdate is used to update information schema for special Execute statement in the preprocessor.
-type PreprocessExecuteISUpdate struct {
-	ExecuteInfoSchemaUpdate func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema
-	Node                    ast.Node
-}
-
 // preprocessWith is used to record info from WITH statements like CTE name.
 type preprocessWith struct {
 	cteCanUsed      []string
@@ -200,7 +188,6 @@ type preprocessor struct {
 
 	// values that may be returned
 	*PreprocessorReturn
-	*PreprocessExecuteISUpdate
 	err error
 }
 
@@ -1639,6 +1626,12 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			return
 		}
 	}
+	if node.Tp.EvalType() == types.ETDatetime {
+		if node.Tp.GetDecimal() > types.MaxFsp {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.GetDecimal(), "CAST", types.MaxFsp)
+			return
+		}
+	}
 }
 
 func (p *preprocessor) updateStateFromStaleReadProcessor() error {
@@ -1695,13 +1688,7 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	if p.InfoSchema != nil {
 		return p.InfoSchema
 	}
-	// `Execute` under some conditions need to see the latest information schema.
-	if p.PreprocessExecuteISUpdate != nil {
-		if newInfoSchema := p.ExecuteInfoSchemaUpdate(p.Node, p.ctx); newInfoSchema != nil {
-			p.InfoSchema = newInfoSchema
-			return p.InfoSchema
-		}
-	}
+
 	p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	return p.InfoSchema
 }
@@ -1711,10 +1698,10 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 		return
 	}
 
-	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(sessiontxn.StmtInfoSchemaReplaceProvider); ok {
-		// When the current provider is `sessiontxn.StmtInfoSchemaReplaceProvider` it should use the `p.ensureInfoSchema()`
-		// because the desired info schema may have been changed
-		provider.ReplaceStmtInfoSchema(p.ensureInfoSchema())
+	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
+		// When the current provider is `legacy.SimpleTxnContextProvider` it should to keep the logic equals to the old implement.
+		// After refactoring, the `legacy.SimpleTxnContextProvider` will be removed, and this code will be removed too.
+		provider.InfoSchema = p.ensureInfoSchema()
 	}
 }
 

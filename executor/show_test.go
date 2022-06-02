@@ -1588,11 +1588,6 @@ func TestShowVar(t *testing.T) {
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), len(globalVars))
 
-	// Test a known hidden variable.
-	res = tk.MustQuery("show variables like '" + variable.TiDBPartitionPruneMode + "'")
-	require.Len(t, res.Rows(), 0)
-	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
-	require.Len(t, res.Rows(), 0)
 	// Test Hidden tx_read_ts
 	res = tk.MustQuery("show variables like '%tx_read_ts'")
 	require.Len(t, res.Rows(), 0)
@@ -1835,4 +1830,21 @@ func TestShowBindingCacheStatus(t *testing.T) {
 
 	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
 		"1 1 198 Bytes 250 Bytes"))
+}
+
+func TestShowDatabasesLike(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("DROP DATABASE IF EXISTS `TEST_$1`")
+	tk.MustExec("DROP DATABASE IF EXISTS `test_$2`")
+	tk.MustExec("CREATE DATABASE `TEST_$1`;")
+	tk.MustExec("CREATE DATABASE `test_$2`;")
+
+	tk.MustQuery("SHOW DATABASES LIKE 'TEST_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
+	tk.MustQuery("SHOW DATABASES LIKE 'test_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
 }

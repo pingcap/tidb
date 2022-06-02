@@ -540,6 +540,7 @@ import (
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
 	san                   "SAN"
+	savepoint             "SAVEPOINT"
 	second                "SECOND"
 	secondaryEngine       "SECONDARY_ENGINE"
 	secondaryLoad         "SECONDARY_LOAD"
@@ -919,6 +920,8 @@ import (
 	RevokeStmt                 "Revoke statement"
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
+	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
+	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
 	ChangeStmt                 "Change statement"
@@ -4729,6 +4732,18 @@ ExplainFormatType:
 |	"VERBOSE"
 |	"TRUE_CARD_COST"
 
+SavepointStmt:
+	"SAVEPOINT" Identifier
+	{
+		$$ = &ast.SavepointStmt{Name: $2}
+	}
+
+ReleaseSavepointStmt:
+	"RELEASE" "SAVEPOINT" Identifier
+	{
+		$$ = &ast.ReleaseSavepointStmt{Name: $3}
+	}
+
 /*******************************************************************
  * Backup / restore / import statements
  *
@@ -5987,6 +6002,7 @@ UnReservedKeyword:
 |	"PRECEDING"
 |	"QUERY"
 |	"QUERIES"
+|	"SAVEPOINT"
 |	"SECOND"
 |	"SEPARATOR"
 |	"SHARE"
@@ -8098,6 +8114,14 @@ RollbackStmt:
 	{
 		$$ = &ast.RollbackStmt{CompletionType: $2.(ast.CompletionType)}
 	}
+|	"ROLLBACK" "TO" Identifier
+	{
+		$$ = &ast.RollbackStmt{SavepointName: $3}
+	}
+|	"ROLLBACK" "TO" "SAVEPOINT" Identifier
+	{
+		$$ = &ast.RollbackStmt{SavepointName: $4}
+	}
 
 CompletionTypeWithinTransaction:
 	"AND" "CHAIN" "NO" "RELEASE"
@@ -8148,7 +8172,7 @@ HelpStmt:
 	}
 
 SelectStmtBasic:
-	"SELECT" SelectStmtOpts SelectStmtFieldList
+	"SELECT" SelectStmtOpts SelectStmtFieldList HavingClause
 	{
 		st := &ast.SelectStmt{
 			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
@@ -8158,6 +8182,9 @@ SelectStmtBasic:
 		}
 		if st.SelectStmtOpts.TableHints != nil {
 			st.TableHints = st.SelectStmtOpts.TableHints
+		}
+		if $4 != nil {
+			st.Having = $4.(*ast.HavingClause)
 		}
 		$$ = st
 	}
@@ -9989,11 +10016,11 @@ Username:
 	}
 |	StringName '@' StringName
 	{
-		$$ = &auth.UserIdentity{Username: $1, Hostname: $3}
+		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.ToLower($3)}
 	}
 |	StringName singleAtIdentifier
 	{
-		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.TrimPrefix($2, "@")}
+		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.ToLower(strings.TrimPrefix($2, "@"))}
 	}
 |	"CURRENT_USER" OptionalBraces
 	{
@@ -10027,11 +10054,11 @@ RoleNameString:
 RolenameComposed:
 	StringName '@' StringName
 	{
-		$$ = &auth.RoleIdentity{Username: $1, Hostname: $3}
+		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.ToLower($3)}
 	}
 |	StringName singleAtIdentifier
 	{
-		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.TrimPrefix($2, "@")}
+		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.ToLower(strings.TrimPrefix($2, "@"))}
 	}
 
 RolenameWithoutIdent:
@@ -10670,9 +10697,17 @@ ShowTargetFilterable:
 			Extended: true,
 		}
 	}
+|	builtinCount '(' '*' ')' "WARNINGS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings, CountWarningsOrErrors: true}
+	}
 |	"WARNINGS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings}
+	}
+|	builtinCount '(' '*' ')' "ERRORS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowErrors, CountWarningsOrErrors: true}
 	}
 |	"ERRORS"
 	{
@@ -11081,9 +11116,11 @@ Statement:
 |	RenameUserStmt
 |	ReplaceIntoStmt
 |	RecoverTableStmt
+|	ReleaseSavepointStmt
 |	ResumeImportStmt
 |	RevokeStmt
 |	RevokeRoleStmt
+|	SavepointStmt
 |	SetOprStmt
 |	SelectStmt
 |	SelectStmtWithClause
@@ -11143,6 +11180,8 @@ TraceableStmt:
 |	LoadDataStmt
 |	BeginTransactionStmt
 |	CommitStmt
+|	SavepointStmt
+|	ReleaseSavepointStmt
 |	RollbackStmt
 |	SetStmt
 

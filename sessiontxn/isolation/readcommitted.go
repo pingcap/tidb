@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
@@ -38,7 +37,7 @@ type stmtState struct {
 	onNextRetryOrStmt func() error
 }
 
-func (s *stmtState) resetStmt(useStartTS bool) error {
+func (s *stmtState) prepareStmt(useStartTS bool) error {
 	onNextStmt := s.onNextRetryOrStmt
 	*s = stmtState{
 		stmtUseStartTS: useStartTS,
@@ -82,7 +81,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
 		return err
 	}
-	return p.resetStmt(!p.isTxnPrepared)
+	return p.prepareStmt(!p.isTxnPrepared)
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -96,7 +95,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point session
 	case sessiontxn.StmtErrAfterPessimisticLock:
 		return p.handleAfterPessimisticLockError(err)
 	default:
-		return sessiontxn.NoIdea()
+		return p.baseTxnContextProvider.OnStmtErrorForNextAction(point, err)
 	}
 }
 
@@ -105,7 +104,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
-	return p.resetStmt(false)
+	return p.prepareStmt(false)
 }
 
 // Advise is used to give advice to provider
@@ -130,11 +129,6 @@ func (p *PessimisticRCTxnContextProvider) warmUp() error {
 	return nil
 }
 
-// ReplaceStmtInfoSchema replaces the current info schema
-func (p *PessimisticRCTxnContextProvider) ReplaceStmtInfoSchema(is infoschema.InfoSchema) {
-	p.stmtInfoSchema = is
-}
-
 func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	if p.stmtTSFuture != nil {
 		return
@@ -144,7 +138,7 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	var stmtTSFuture oracle.Future
 	switch {
 	case p.stmtUseStartTS:
-		stmtTSFuture = p.getTxnStartTSFuture()
+		stmtTSFuture = sessiontxn.FuncFuture(p.getTxnStartTS)
 	case p.availableRCCheckTS != 0 && sessVars.StmtCtx.RCCheckTS:
 		stmtTSFuture = sessiontxn.ConstantFuture(p.availableRCCheckTS)
 	default:
@@ -152,21 +146,6 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	}
 
 	p.stmtTSFuture = stmtTSFuture
-}
-
-func (p *PessimisticRCTxnContextProvider) getTxnStartTSFuture() sessiontxn.FuncFuture {
-	return func() (uint64, error) {
-		txn, err := p.sctx.Txn(false)
-		if err != nil {
-			return 0, err
-		}
-
-		if !txn.Valid() {
-			return 0, errors.New("invalid transaction")
-		}
-
-		return txn.StartTS(), nil
-	}
 }
 
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {

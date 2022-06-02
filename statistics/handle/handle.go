@@ -466,19 +466,24 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			if isIndex == 0 {
 				errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
 			} else {
-				indexName := ""
-				for _, idx := range tableInfo.Indices {
-					if idx.ID == histIDs[0] {
-						indexName = idx.Name.L
-					}
-				}
-				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, indexName)
+				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[0]))
 			}
 			err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
 			return
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			// partition is not empty but column stats(hist, topn) is missing
+			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
+				var errMsg string
+				if isIndex == 0 {
+					errMsg = fmt.Sprintf("`%s` column: `%s`", tableInfo.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
+				} else {
+					errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
+				}
+				err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(errMsg)
+				return
+			}
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
 				globalStats.Count += count
@@ -1193,7 +1198,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 
 // SaveStatsToStorage saves the stats to storage.
 // TODO: refactor to reduce the number of parameters
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool, updateAnalyzeTime bool) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
@@ -1231,10 +1236,6 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return err
 	}
-	fmSketch, err := statistics.EncodeFMSketch(fms)
-	if err != nil {
-		return err
-	}
 	// Delete outdated data
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
@@ -1248,11 +1249,6 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
-	}
-	if fmSketch != nil && needDumpFMS {
-		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, isIndex, hg.ID, fmSketch); err != nil {
-			return err
-		}
 	}
 	flag := 0
 	if isAnalyzed == 1 {

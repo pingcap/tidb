@@ -18,18 +18,26 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/table/temptable"
-
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+// baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
+// It provides some common functions below:
+//   - Provides a default `OnInitialize` method to initialize its inner state.
+//   - Provides some methods like `activeTxn` and `prepareTxn` to manage the inner transaction.
+//   - Provides default methods `GetTxnInfoSchema`, `GetStmtReadTS` and `GetStmtForUpdateTS` and return the snapshot information schema or ts when `tidb_snapshot` is set.
+//   - Provides other default methods like `Advise`, `OnStmtStart`, `OnStmtRetry` and `OnStmtErrorForNextAction`
+// The subclass can set some inner property of `baseTxnContextProvider` when it is constructed.
+// For example, `getStmtReadTSFunc` and `getStmtForUpdateTSFunc` should be set, and they will be called when `GetStmtReadTS`
+// or `GetStmtForUpdate` to get the timestamp that should be used by the corresponding isolation level.
 type baseTxnContextProvider struct {
 	// States that should be initialized when baseTxnContextProvider is created and should not be changed after that
 	sctx                   sessionctx.Context
@@ -40,11 +48,10 @@ type baseTxnContextProvider struct {
 	getStmtForUpdateTSFunc func() (uint64, error)
 
 	// Runtime states
-	ctx            context.Context
-	infoSchema     infoschema.InfoSchema
-	stmtInfoSchema infoschema.InfoSchema
-	txn            kv.Transaction
-	isTxnPrepared  bool
+	ctx           context.Context
+	infoSchema    infoschema.InfoSchema
+	txn           kv.Transaction
+	isTxnPrepared bool
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -73,10 +80,12 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, domain.GetDomain(p.sctx).InfoSchema())
 	sessVars := p.sctx.GetSessionVars()
 	txnCtx := &variable.TransactionContext{
-		CreateTime: time.Now(),
-		InfoSchema: p.infoSchema,
-		ShardStep:  int(sessVars.ShardAllocateStep),
-		TxnScope:   sessVars.CheckAndGetTxnScope(),
+		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+			CreateTime: time.Now(),
+			InfoSchema: p.infoSchema,
+			ShardStep:  int(sessVars.ShardAllocateStep),
+			TxnScope:   sessVars.CheckAndGetTxnScope(),
+		},
 	}
 	if p.onInitializeTxnCtx != nil {
 		p.onInitializeTxnCtx(txnCtx)
@@ -99,11 +108,6 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	if is := p.sctx.GetSessionVars().SnapshotInfoschema; is != nil {
 		return is.(infoschema.InfoSchema)
 	}
-
-	if p.stmtInfoSchema != nil {
-		return p.stmtInfoSchema
-	}
-
 	return p.infoSchema
 }
 
@@ -139,8 +143,14 @@ func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	return nil
 }
 
-func (p *baseTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.StmtErrorHandlePoint, _ error) (sessiontxn.StmtErrorAction, error) {
-	return sessiontxn.NoIdea()
+func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+	switch point {
+	case sessiontxn.StmtErrAfterPessimisticLock:
+		// for pessimistic lock error, return the error by default
+		return sessiontxn.ErrorAction(err)
+	default:
+		return sessiontxn.NoIdea()
+	}
 }
 
 func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
@@ -164,6 +174,9 @@ func (p *baseTxnContextProvider) activeTxn() (kv.Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	sessVars := p.sctx.GetSessionVars()
+	sessVars.TxnCtx.StartTS = txn.StartTS()
 
 	if p.causalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
