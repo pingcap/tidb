@@ -4618,8 +4618,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Type", "Instance", "Name", "Value"}
 	case ast.ShowDatabases:
 		fieldDB := "Database"
-		patternName := extractPatternLikeName(s.Pattern)
-		if patternName != "" {
+		if patternName := extractPatternLikeName(s.Pattern); patternName != "" {
 			fieldDB = fmt.Sprintf("%s (%s)", fieldDB, patternName)
 		}
 		names = []string{fieldDB}
@@ -4628,8 +4627,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeLong}
 	case ast.ShowTables:
 		fieldTable := fmt.Sprintf("Tables_in_%s", s.DBName)
-		patternName := extractPatternLikeName(s.Pattern)
-		if patternName != "" {
+		if patternName := extractPatternLikeName(s.Pattern); patternName != "" {
 			fieldTable = fmt.Sprintf("%s (%s)", fieldTable, patternName)
 		}
 		names = []string{fieldTable}
