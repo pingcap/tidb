@@ -153,13 +153,6 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 		return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
 	}
 
-	if txnMode == ast.Pessimistic {
-		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
-		case ast.ReadCommitted:
-			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
-		}
-	}
-
 	return &legacy.SimpleTxnContextProvider{
 		Sctx:                  m.sctx,
 		Pessimistic:           txnMode == ast.Pessimistic,
