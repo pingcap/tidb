@@ -269,7 +269,7 @@ func TestOptimisticProviderInitialize(t *testing.T) {
 			defer tk.MustExec("rollback")
 			tk.MustExec(fmt.Sprintf("set @@autocommit=%v", c.autocommit))
 			tk.MustExec(fmt.Sprintf("set @@tidb_disable_txn_auto_retry=%v", c.disableTxnAutoRetry))
-			assert = inActiveOptimisticTxnAssert(se)
+			assert = inactiveOptimisticTxnAssert(se)
 			assertAfterActive := activeOptimisticTxnAssert(t, se, !c.autocommit)
 			assertAfterActive.couldRetry = c.autocommit || !c.disableTxnAutoRetry
 			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
@@ -348,7 +348,7 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
 	tk.MustExec("rollback")
 	tk.MustExec("set @@autocommit=0")
-	assert = inActiveOptimisticTxnAssert(se)
+	assert = inactiveOptimisticTxnAssert(se)
 	assertAfterActive := activeOptimisticTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
@@ -374,7 +374,7 @@ func activeOptimisticTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool
 	}
 }
 
-func inActiveOptimisticTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.OptimisticTxnContextProvider] {
+func inactiveOptimisticTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.OptimisticTxnContextProvider] {
 	return &txnAssert[*isolation.OptimisticTxnContextProvider]{
 		sctx:         sctx,
 		minStartTime: time.Now(),
@@ -390,7 +390,7 @@ func initializeOptimisticProvider(t *testing.T, tk *testkit.TestKit, withExplici
 		return assert.CheckAndGetProvider(t)
 	}
 
-	assert := inActiveOptimisticTxnAssert(tk.Session())
+	assert := inactiveOptimisticTxnAssert(tk.Session())
 	err := sessiontxn.GetTxnManager(tk.Session()).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
 		Type:    sessiontxn.EnterNewTxnBeforeStmt,
 		TxnMode: ast.Optimistic,

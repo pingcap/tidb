@@ -264,7 +264,7 @@ func TestRCProviderInitialize(t *testing.T) {
 	// non-active txn and then active it
 	tk.MustExec("rollback")
 	tk.MustExec("set @@autocommit=0")
-	assert = inActiveRCTxnAssert(se)
+	assert = inactiveRCTxnAssert(se)
 	assertAfterActive := activeRCTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider := assert.CheckAndGetProvider(t)
@@ -276,7 +276,7 @@ func TestRCProviderInitialize(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-func TestTidbSnapshotVar(t *testing.T) {
+func TestTidbSnapshotVarInRC(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -346,7 +346,7 @@ func TestTidbSnapshotVar(t *testing.T) {
 	tk.MustExec("rollback")
 	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
 	tk.MustExec("set @@autocommit=0")
-	assert = inActiveRCTxnAssert(se)
+	assert = inactiveRCTxnAssert(se)
 	assertAfterActive := activeRCTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
@@ -373,7 +373,7 @@ func activeRCTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool) *txnAs
 	}
 }
 
-func inActiveRCTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
+func inactiveRCTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticRCTxnContextProvider]{
 		sctx:         sctx,
 		isolation:    "READ-COMMITTED",
