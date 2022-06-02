@@ -120,6 +120,7 @@ func TestKillFlagInBackoff(t *testing.T) {
 	_, err = session.ResultSetToStringSlice(context.TODO(), tk.Session(), rs)
 	// `interrupted` is returned when `Killed` is set.
 	require.Regexp(t, ".*Query execution was interrupted.*", err.Error())
+	rs.Close()
 }
 
 func TestClusterTableSendError(t *testing.T) {

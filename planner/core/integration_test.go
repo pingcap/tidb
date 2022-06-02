@@ -4790,11 +4790,13 @@ func TestPanicWhileQueryTableWithIsNull(t *testing.T) {
 
 	tk.MustExec("drop table if exists NT_HP27193")
 	tk.MustExec("CREATE TABLE `NT_HP27193` (  `COL1` int(20) DEFAULT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH ( `COL1`%`COL3` ) PARTITIONS 10;")
-	_, err := tk.Exec("select col1 from NT_HP27193 where col1 is null;")
+	rs, err := tk.Exec("select col1 from NT_HP27193 where col1 is null;")
 	require.NoError(t, err)
+	rs.Close()
 	tk.MustExec("INSERT INTO NT_HP27193 (COL2, COL4, COL3, COL5) VALUES ('m',  '2020-05-04 13:15:27', 8,  2602)")
-	_, err = tk.Exec("select col1 from NT_HP27193 where col1 is null;")
+	rs, err = tk.Exec("select col1 from NT_HP27193 where col1 is null;")
 	require.NoError(t, err)
+	rs.Close()
 	tk.MustExec("drop table if exists NT_HP27193")
 }
 

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/promutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 )
 
@@ -80,7 +81,6 @@ const (
 // Config is the dump config for dumpling
 type Config struct {
 	storage.BackendOptions
-	ExtStorage storage.ExternalStorage `json:"-"`
 
 	specifiedTables          bool
 	AllowCleartextPasswords  bool
@@ -136,9 +136,13 @@ type Config struct {
 	FileSize            uint64
 	StatementSize       uint64
 	SessionParams       map[string]interface{}
-	Labels              prometheus.Labels `json:"-"`
 	Tables              DatabaseTables
 	CollationCompatible string
+
+	Labels       prometheus.Labels       `json:"-"`
+	PromFactory  promutil.Factory        `json:"-"`
+	PromRegistry promutil.Registry       `json:"-"`
+	ExtStorage   storage.ExternalStorage `json:"-"`
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -184,6 +188,8 @@ func DefaultConfig() *Config {
 		PosAfterConnect:     false,
 		CollationCompatible: LooseCollationCompatible,
 		specifiedTables:     false,
+		PromFactory:         promutil.NewDefaultFactory(),
+		PromRegistry:        promutil.NewDefaultRegistry(),
 	}
 }
 
