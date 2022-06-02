@@ -80,7 +80,8 @@ func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs Re
 		return
 	}
 	rs = &tidbResultSet{
-		recordSet: tidbRecordset,
+		recordSet:    tidbRecordset,
+		preparedStmt: ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*core.CachedPrepareStmt),
 	}
 	return
 }
@@ -164,7 +165,8 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
-			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB, preparedObj.PreparedAst.SchemaVersion)
+			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
+				preparedObj.PreparedAst.SchemaVersion, 0)
 			if err != nil {
 				return err
 			}
@@ -307,10 +309,11 @@ func (tc *TiDBContext) GetStmtStats() *stmtstats.StatementStats {
 }
 
 type tidbResultSet struct {
-	recordSet sqlexec.RecordSet
-	columns   []*ColumnInfo
-	rows      []chunk.Row
-	closed    int32
+	recordSet    sqlexec.RecordSet
+	columns      []*ColumnInfo
+	rows         []chunk.Row
+	closed       int32
+	preparedStmt *core.CachedPrepareStmt
 }
 
 func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
@@ -352,11 +355,22 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	if trs.columns != nil {
 		return trs.columns
 	}
-
+	// for prepare statement, try to get cached columnInfo array
+	if trs.preparedStmt != nil {
+		ps := trs.preparedStmt
+		if colInfos, ok := ps.ColumnInfos.([]*ColumnInfo); ok {
+			trs.columns = colInfos
+		}
+	}
 	if trs.columns == nil {
 		fields := trs.recordSet.Fields()
 		for _, v := range fields {
 			trs.columns = append(trs.columns, convertColumnInfo(v))
+		}
+		if trs.preparedStmt != nil {
+			// if ColumnInfo struct has allocated object,
+			// here maybe we need deep copy ColumnInfo to do caching
+			trs.preparedStmt.ColumnInfos = trs.columns
 		}
 	}
 	return trs.columns
@@ -368,26 +382,26 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		OrgName: fld.Column.Name.O,
 		Table:   fld.TableAsName.O,
 		Schema:  fld.DBName.O,
-		Flag:    uint16(fld.Column.Flag),
-		Charset: uint16(mysql.CharsetNameToID(fld.Column.Charset)),
-		Type:    fld.Column.Tp,
+		Flag:    uint16(fld.Column.GetFlag()),
+		Charset: uint16(mysql.CharsetNameToID(fld.Column.GetCharset())),
+		Type:    fld.Column.GetType(),
 	}
 
 	if fld.Table != nil {
 		ci.OrgTable = fld.Table.Name.O
 	}
-	if fld.Column.Flen != types.UnspecifiedLength {
-		ci.ColumnLength = uint32(fld.Column.Flen)
+	if fld.Column.GetFlen() != types.UnspecifiedLength {
+		ci.ColumnLength = uint32(fld.Column.GetFlen())
 	}
-	if fld.Column.Tp == mysql.TypeNewDecimal {
+	if fld.Column.GetType() == mysql.TypeNewDecimal {
 		// Consider the negative sign.
 		ci.ColumnLength++
-		if fld.Column.Decimal > types.DefaultFsp {
+		if fld.Column.GetDecimal() > types.DefaultFsp {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}
-	} else if types.IsString(fld.Column.Tp) ||
-		fld.Column.Tp == mysql.TypeEnum || fld.Column.Tp == mysql.TypeSet { // issue #18870
+	} else if types.IsString(fld.Column.GetType()) ||
+		fld.Column.GetType() == mysql.TypeEnum || fld.Column.GetType() == mysql.TypeSet { // issue #18870
 		// Fix issue #4540.
 		// The flen is a hint, not a precise value, so most client will not use the value.
 		// But we found in rare MySQL client, like Navicat for MySQL(version before 12) will truncate
@@ -400,7 +414,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// * utf8mb4, the multiple is 4
 		// We used to check non-string types to avoid the truncation problem in some MySQL
 		// client such as Navicat. Now we only allow string type enter this branch.
-		charsetDesc, err := charset.GetCharsetInfo(fld.Column.Charset)
+		charsetDesc, err := charset.GetCharsetInfo(fld.Column.GetCharset())
 		if err != nil {
 			ci.ColumnLength *= 4
 		} else {
@@ -408,14 +422,14 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		}
 	}
 
-	if fld.Column.Decimal == types.UnspecifiedLength {
-		if fld.Column.Tp == mysql.TypeDuration {
+	if fld.Column.GetDecimal() == types.UnspecifiedLength {
+		if fld.Column.GetType() == mysql.TypeDuration {
 			ci.Decimal = uint8(types.DefaultFsp)
 		} else {
 			ci.Decimal = mysql.NotFixedDec
 		}
 	} else {
-		ci.Decimal = uint8(fld.Column.Decimal)
+		ci.Decimal = uint8(fld.Column.GetDecimal())
 	}
 
 	// Keep things compatible for old clients.

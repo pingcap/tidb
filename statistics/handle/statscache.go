@@ -15,12 +15,16 @@
 package handle
 
 import (
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 )
 
 // statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
 type statsCacheInner interface {
+	GetByQuery(int64) (*statistics.Table, bool)
 	Get(int64) (*statistics.Table, bool)
+	PutByQuery(int64, *statistics.Table)
 	Put(int64, *statistics.Table)
 	Del(int64)
 	Cost() int64
@@ -29,17 +33,21 @@ type statsCacheInner interface {
 	Map() map[int64]*statistics.Table
 	Len() int
 	FreshMemUsage()
-	FreshTableCost(int64)
 	Copy() statsCacheInner
-}
-
-type cacheItem struct {
-	key   int64
-	value *statistics.Table
-	cost  int64
+	SetCapacity(int64)
+	EnableQuota() bool
+	// Front returns the front element's owner tableID, only used for test
+	Front() int64
 }
 
 func newStatsCache() statsCache {
+	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
+	if enableQuota {
+		capacity := variable.StatsCacheMemQuota.Load()
+		return statsCache{
+			statsCacheInner: newStatsLruCache(capacity),
+		}
+	}
 	return statsCache{
 		statsCacheInner: &mapCache{
 			tables:   make(map[int64]cacheItem),
@@ -75,7 +83,11 @@ func (sc statsCache) copy() statsCache {
 }
 
 // update updates the statistics table cache using copy on write.
-func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) statsCache {
+func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, opts ...TableStatsOpt) statsCache {
+	option := &tableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
 	newCache := sc.copy()
 	if newVersion == newCache.version {
 		newCache.minorVersion += uint64(1)
@@ -85,7 +97,11 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	}
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		newCache.Put(id, tbl)
+		if option.byQuery {
+			newCache.PutByQuery(id, tbl)
+		} else {
+			newCache.Put(id, tbl)
+		}
 	}
 	for _, id := range deletedIDs {
 		newCache.Del(id)
@@ -93,15 +109,39 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	return newCache
 }
 
+type cacheItem struct {
+	key   int64
+	value *statistics.Table
+	cost  int64
+}
+
+func (c cacheItem) copy() cacheItem {
+	return cacheItem{
+		key:   c.key,
+		value: c.value,
+		cost:  c.cost,
+	}
+}
+
 type mapCache struct {
 	tables   map[int64]cacheItem
 	memUsage int64
+}
+
+// GetByQuery implements statsCacheInner
+func (m *mapCache) GetByQuery(k int64) (*statistics.Table, bool) {
+	return m.Get(k)
 }
 
 // Get implements statsCacheInner
 func (m *mapCache) Get(k int64) (*statistics.Table, bool) {
 	v, ok := m.tables[k]
 	return v.value, ok
+}
+
+// PutByQuery implements statsCacheInner
+func (m *mapCache) PutByQuery(k int64, v *statistics.Table) {
+	m.Put(k, v)
 }
 
 // Put implements statsCacheInner
@@ -143,7 +183,7 @@ func (m *mapCache) Cost() int64 {
 
 // Keys implements statsCacheInner
 func (m *mapCache) Keys() []int64 {
-	ks := make([]int64, 0, m.Len())
+	ks := make([]int64, 0, len(m.tables))
 	for k := range m.tables {
 		ks = append(ks, k)
 	}
@@ -152,7 +192,7 @@ func (m *mapCache) Keys() []int64 {
 
 // Values implements statsCacheInner
 func (m *mapCache) Values() []*statistics.Table {
-	vs := make([]*statistics.Table, 0, m.Len())
+	vs := make([]*statistics.Table, 0, len(m.tables))
 	for _, v := range m.tables {
 		vs = append(vs, v.value)
 	}
@@ -161,7 +201,7 @@ func (m *mapCache) Values() []*statistics.Table {
 
 // Map implements statsCacheInner
 func (m *mapCache) Map() map[int64]*statistics.Table {
-	t := make(map[int64]*statistics.Table, m.Len())
+	t := make(map[int64]*statistics.Table, len(m.tables))
 	for k, v := range m.tables {
 		t[k] = v.value
 	}
@@ -182,23 +222,27 @@ func (m *mapCache) FreshMemUsage() {
 	}
 }
 
-// FreshTableCost implements statsCacheInner
-func (m *mapCache) FreshTableCost(k int64) {
-	item, ok := m.tables[k]
-	if !ok {
-		return
-	}
-	m.Put(k, item.value)
-}
-
 // Copy implements statsCacheInner
 func (m *mapCache) Copy() statsCacheInner {
 	newM := &mapCache{
-		tables:   make(map[int64]cacheItem, m.Len()),
+		tables:   make(map[int64]cacheItem, len(m.tables)),
 		memUsage: m.memUsage,
 	}
 	for k, v := range m.tables {
-		newM.tables[k] = v
+		newM.tables[k] = v.copy()
 	}
 	return newM
+}
+
+// SetCapacity implements statsCacheInner
+func (m *mapCache) SetCapacity(int64) {}
+
+// EnableQuota implements statsCacheInner
+func (m *mapCache) EnableQuota() bool {
+	return false
+}
+
+// Front implements statsCacheInner
+func (m *mapCache) Front() int64 {
+	return 0
 }

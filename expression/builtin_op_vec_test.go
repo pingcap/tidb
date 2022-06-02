@@ -78,10 +78,12 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{
-			retEvalType:        types.ETInt,
-			childrenTypes:      []types.EvalType{types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
-			geners:             []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETInt},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
+			},
+			geners: []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
 		},
 	},
 	ast.IsNull: {
@@ -169,7 +171,7 @@ func TestBuiltinUnaryMinusIntSig(t *testing.T) {
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 
-	require.False(t, mysql.HasUnsignedFlag(col0.GetType().Flag))
+	require.False(t, mysql.HasUnsignedFlag(col0.GetType().GetFlag()))
 	input.AppendInt64(0, 233333)
 	require.Nil(t, f.vecEvalInt(input, result))
 	require.Equal(t, int64(-233333), result.GetInt64(0))
@@ -180,8 +182,8 @@ func TestBuiltinUnaryMinusIntSig(t *testing.T) {
 	require.NoError(t, f.vecEvalInt(input, result))
 	require.True(t, result.IsNull(0))
 
-	col0.GetType().Flag |= mysql.UnsignedFlag
-	require.True(t, mysql.HasUnsignedFlag(col0.GetType().Flag))
+	col0.GetType().AddFlag(mysql.UnsignedFlag)
+	require.True(t, mysql.HasUnsignedFlag(col0.GetType().GetFlag()))
 	input.Reset()
 	input.AppendUint64(0, 233333)
 	require.NoError(t, f.vecEvalInt(input, result))

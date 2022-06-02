@@ -46,15 +46,17 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-	utilMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"golang.org/x/exp/maps"
 )
 
 // PreparedStmtCount is exported for test.
@@ -132,6 +134,27 @@ func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
+	TxnCtxNoNeedToRestore
+	TxnCtxNeedToRestore
+}
+
+// TxnCtxNeedToRestore stores transaction variables which need to be restored when rolling back to a savepoint.
+type TxnCtxNeedToRestore struct {
+	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
+	// It's also used in the statistics updating.
+	// Note: for the partitioned table, it stores all the partition IDs.
+	TableDeltaMap map[int64]TableDelta
+
+	// pessimisticLockCache is the cache for pessimistic locked keys,
+	// The value never changes during the transaction.
+	pessimisticLockCache map[string][]byte
+
+	// CachedTables is not nil if the transaction write on cached table.
+	CachedTables map[int64]interface{}
+}
+
+// TxnCtxNoNeedToRestore stores transaction variables which do not need to restored when rolling back to a savepoint.
+type TxnCtxNoNeedToRestore struct {
 	forUpdateTS uint64
 	stmtFuture  oracle.Future
 	Binlog      interface{}
@@ -145,18 +168,10 @@ type TransactionContext struct {
 	currentShard int64
 	shardRand    *rand.Rand
 
-	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
-	// It's also used in the statistics updating.
-	// Note: for the partitioned table, it stores all the partition IDs.
-	TableDeltaMap map[int64]TableDelta
-
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
 
-	// pessimisticLockCache is the cache for pessimistic locked keys,
-	// The value never changes during the transaction.
-	pessimisticLockCache map[string][]byte
-	PessimisticCacheHit  int
+	PessimisticCacheHit int
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
@@ -174,6 +189,10 @@ type TransactionContext struct {
 	// TxnScope indicates the value of txn_scope
 	TxnScope string
 
+	// Savepoints contains all definitions of the savepoint of a transaction at runtime, the order of the SavepointRecord is the same with the SAVEPOINT statements.
+	// It is used for a lookup when running `ROLLBACK TO` statement.
+	Savepoints []SavepointRecord
+
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
 
@@ -181,11 +200,18 @@ type TransactionContext struct {
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
 
-	// CachedTables is not nil if the transaction write on cached table.
-	CachedTables map[int64]interface{}
-
 	// Last ts used by read-consistency read.
 	LastRcReadTs uint64
+}
+
+// SavepointRecord indicates a transaction's savepoint record.
+type SavepointRecord struct {
+	// name is the name of the savepoint
+	Name string
+	// MemDBCheckpoint is the transaction's memdb checkpoint.
+	MemDBCheckpoint *tikv.MemDBCheckpoint
+	// TxnCtxSavepoint is the savepoint of TransactionContext
+	TxnCtxSavepoint TxnCtxNeedToRestore
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -282,6 +308,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.IsStaleness = false
+	tc.Savepoints = nil
 }
 
 // ClearDelta clears the delta map.
@@ -314,6 +341,80 @@ func (tc *TransactionContext) SetStmtFutureForRC(future oracle.Future) {
 // GetStmtFutureForRC gets the stmtFuture.
 func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
 	return tc.stmtFuture
+}
+
+// GetCurrentSavepoint gets TransactionContext's savepoint.
+func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
+	tableDeltaMap := make(map[int64]TableDelta, len(tc.TableDeltaMap))
+	for k, v := range tc.TableDeltaMap {
+		tableDeltaMap[k] = v.Clone()
+	}
+	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
+	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
+	cachedTables := make(map[int64]interface{}, len(tc.CachedTables))
+	maps.Copy(cachedTables, tc.CachedTables)
+	return TxnCtxNeedToRestore{
+		TableDeltaMap:        tableDeltaMap,
+		pessimisticLockCache: pessimisticLockCache,
+		CachedTables:         cachedTables,
+	}
+}
+
+// RestoreBySavepoint restores TransactionContext to the specify savepoint.
+func (tc *TransactionContext) RestoreBySavepoint(savepoint TxnCtxNeedToRestore) {
+	tc.TableDeltaMap = savepoint.TableDeltaMap
+	tc.pessimisticLockCache = savepoint.pessimisticLockCache
+	tc.CachedTables = savepoint.CachedTables
+}
+
+// AddSavepoint adds a new savepoint.
+func (tc *TransactionContext) AddSavepoint(name string, memdbCheckpoint *tikv.MemDBCheckpoint) {
+	name = strings.ToLower(name)
+	tc.DeleteSavepoint(name)
+
+	record := SavepointRecord{
+		Name:            name,
+		MemDBCheckpoint: memdbCheckpoint,
+		TxnCtxSavepoint: tc.GetCurrentSavepoint(),
+	}
+	tc.Savepoints = append(tc.Savepoints, record)
+}
+
+// DeleteSavepoint deletes the savepoint, return false indicate the savepoint name doesn't exists.
+func (tc *TransactionContext) DeleteSavepoint(name string) bool {
+	name = strings.ToLower(name)
+	for i, sp := range tc.Savepoints {
+		if sp.Name == name {
+			tc.Savepoints = append(tc.Savepoints[:i], tc.Savepoints[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// ReleaseSavepoint deletes the named savepoint and the later savepoints, return false indicate the named savepoint doesn't exists.
+func (tc *TransactionContext) ReleaseSavepoint(name string) bool {
+	name = strings.ToLower(name)
+	for i, sp := range tc.Savepoints {
+		if sp.Name == name {
+			tc.Savepoints = append(tc.Savepoints[:i])
+			return true
+		}
+	}
+	return false
+}
+
+// RollbackToSavepoint rollbacks to the specified savepoint by name.
+func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord {
+	name = strings.ToLower(name)
+	for idx, sp := range tc.Savepoints {
+		if name == sp.Name {
+			tc.RestoreBySavepoint(sp.TxnCtxSavepoint)
+			tc.Savepoints = tc.Savepoints[:idx+1]
+			return &tc.Savepoints[idx]
+		}
+	}
+	return nil
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -626,6 +727,11 @@ type SessionVars struct {
 	// Note if you want to set `enforceMPPExecution` to `true`, you must set `allowMPPExecution` to `true` first.
 	enforceMPPExecution bool
 
+	// TiFlashMaxThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
+	// Default value is -1, means it will not be pushed down to tiflash.
+	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
+	TiFlashMaxThreads int64
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -715,6 +821,9 @@ type SessionVars struct {
 
 	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
 	OptimizerEnableNewOnlyFullGroupByCheck bool
+
+	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
+	EnableOuterJoinReorder bool
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
@@ -1000,7 +1109,7 @@ type SessionVars struct {
 	}
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
-	Rng *utilMath.MysqlRng
+	Rng *mathutil.MysqlRng
 
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
@@ -1031,6 +1140,9 @@ type SessionVars struct {
 	RcReadCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
+	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
+	// When set to false, returns immediately when it meets the first error.
+	NonTransactionalIgnoreError bool
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
@@ -1203,6 +1315,7 @@ func NewSessionVars() *SessionVars {
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
+		EnableOuterJoinReorder:      DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:            kv.PriorityLow,
@@ -1266,7 +1379,7 @@ func NewSessionVars() *SessionVars {
 		TMPTableSize:                DefTiDBTmpTableMaxSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
-		Rng:                         utilMath.NewWithTime(),
+		Rng:                         mathutil.NewWithTime(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
@@ -1288,7 +1401,7 @@ func NewSessionVars() *SessionVars {
 		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:      config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaQuery:      DefTiDBMemQuotaQuery,
 		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
 	}
 	vars.BatchSize = BatchSize{
@@ -1302,6 +1415,7 @@ func NewSessionVars() *SessionVars {
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
+	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
 	enableChunkRPC := "0"
@@ -1452,6 +1566,7 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 
 // SetUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
+	varName = strings.ToLower(varName)
 	if len(collation) > 0 {
 		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	} else {
@@ -1699,6 +1814,19 @@ type TableDelta struct {
 	ColSize  map[int64]int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
 	TableID  int64
+}
+
+// Clone returns a cloned TableDelta.
+func (td TableDelta) Clone() TableDelta {
+	colSize := make(map[int64]int64, len(td.ColSize))
+	maps.Copy(colSize, td.ColSize)
+	return TableDelta{
+		Delta:    td.Delta,
+		Count:    td.Count,
+		ColSize:  colSize,
+		InitTime: td.InitTime,
+		TableID:  td.TableID,
+	}
 }
 
 // ConcurrencyUnset means the value the of the concurrency related variable is unset.

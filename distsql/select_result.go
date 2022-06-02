@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -46,6 +45,8 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -486,10 +487,7 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 	} else {
 		s.procKeys = append(s.procKeys, 0)
 	}
-
-	for k, v := range copStats.BackoffSleep {
-		s.backoffSleep[k] += v
-	}
+	maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
@@ -512,9 +510,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	}
 	newRs.totalProcessTime += s.totalProcessTime
 	newRs.totalWaitTime += s.totalWaitTime
-	for k, v := range s.rpcStat.Stats {
-		newRs.rpcStat.Stats[k] = v
-	}
+	maps.Copy(newRs.rpcStat.Stats, s.rpcStat.Stats)
 	return &newRs
 }
 
@@ -543,9 +539,7 @@ func (s *selectResultRuntimeStats) String() string {
 		if size == 1 {
 			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0]))
 		} else {
-			sort.Slice(s.copRespTime, func(i, j int) bool {
-				return s.copRespTime[i] < s.copRespTime[j]
-			})
+			slices.Sort(s.copRespTime)
 			vMax, vMin := s.copRespTime[size-1], s.copRespTime[0]
 			vP95 := s.copRespTime[size*19/20]
 			sum := 0.0
@@ -554,9 +548,7 @@ func (s *selectResultRuntimeStats) String() string {
 			}
 			vAvg := time.Duration(sum / float64(size))
 
-			sort.Slice(s.procKeys, func(i, j int) bool {
-				return s.procKeys[i] < s.procKeys[j]
-			})
+			slices.Sort(s.procKeys)
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
 			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,

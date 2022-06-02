@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"strconv"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -89,7 +91,7 @@ func TestBasic(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Greater(t, tb.Meta().ID, int64(0))
@@ -265,7 +267,7 @@ func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 	require.Greater(t, autoid, int64(0))
 
 	sctx := tk.Session()
-	require.Nil(t, sctx.NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, sctx))
 	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(sctx, types.MakeDatums(2, nil))
@@ -328,7 +330,7 @@ func TestUnsignedPK(t *testing.T) {
 	require.NoError(t, err)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(1, "abc"))
 	require.NoError(t, err)
 	pt := tb.(table.PhysicalTable)
@@ -352,7 +354,7 @@ func TestIterRecords(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	require.NoError(t, err)
 	totalCount := 0
@@ -374,7 +376,7 @@ func TestTableFromMeta(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE meta (a int primary key auto_increment, b varchar(255) unique)")
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	_, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
@@ -622,7 +624,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	_, err = tk.Session().Txn(true)
 	require.NoError(t, err)
 	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()))
@@ -954,4 +956,18 @@ func TestTxnAssertion(t *testing.T) {
 	testUntouchedIndexImpl("STRICT", true)
 	testUntouchedIndexImpl("OFF", false)
 	testUntouchedIndexImpl("OFF", true)
+}
+
+func TestReuseColumnMapsInMutationChecker(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a))")
+	tk.MustExec("create table t_2 (a int, b int, c int, primary key(a))")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d, %d)", i, rand.Int()%10000, rand.Int()%10000))
+	}
+	tk.MustExec("set @@tidb_enable_mutation_checker=1")
+	tk.MustExec("insert into t_2 select * from t")
 }

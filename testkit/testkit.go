@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build !codes
-// +build !codes
 
 package testkit
 
@@ -219,7 +218,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 			}
 			if err != nil {
 				tk.session.GetSessionVars().StmtCtx.AppendError(err)
-				return nil, errors.Trace(err)
+				return rs, errors.Trace(err)
 			}
 		}
 		if len(parserWarns) > 0 {
@@ -238,11 +237,11 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	}
 	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return rs, errors.Trace(err)
 	}
 	err = tk.session.DropPreparedStmt(stmtID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return rs, errors.Trace(err)
 	}
 	return rs, nil
 }
@@ -273,12 +272,12 @@ func (tk *TestKit) RefreshConnectionID() {
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
-	tk.require.Error(err)
+	tk.require.Errorf(err, "sql: %s", sql)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	tk.require.Truef(ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	tk.require.Truef(ok, "sql: %s, expect type 'terror.Error', but obtain '%T': %v", sql, originErr, originErr)
 	sqlErr := terror.ToSQLError(tErr)
-	tk.require.Equalf(errCode, int(sqlErr.Code), "Assertion failed, origin err:\n  %v", sqlErr)
+	tk.require.Equalf(errCode, int(sqlErr.Code), "sql: %s, Assertion failed, origin err:\n  %v", sql, sqlErr)
 }
 
 // MustGetErrMsg executes a sql statement and assert its error message.

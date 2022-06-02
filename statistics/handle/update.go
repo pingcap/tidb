@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -339,15 +340,39 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 	return mapper
 }
 
+//batchInsertSize is the every insert values size limit.Used in such as DumpIndexUsageToKV,DumpColStatsUsageToKV
+const batchInsertSize = 10
+
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
 	ctx := context.Background()
 	mapper := h.sweepIdxUsageList()
+	type FullIndexUsageInformation struct {
+		id          GlobalIndexID
+		information IndexUsageInformation
+	}
+	indexInformationSlice := make([]FullIndexUsageInformation, 0, len(mapper))
 	for id, value := range mapper {
-		const sql = `insert into mysql.SCHEMA_INDEX_USAGE values (%?, %?, %?, %?, %?) on duplicate key update query_count=query_count+%?, rows_selected=rows_selected+%?, last_used_at=greatest(last_used_at, %?)`
-		_, _, err := h.execRestrictedSQL(ctx, sql, id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
-		if err != nil {
-			return err
+		indexInformationSlice = append(indexInformationSlice, FullIndexUsageInformation{id: id, information: value})
+	}
+	for i := 0; i < len(mapper); i += batchInsertSize {
+		end := i + batchInsertSize
+		if end > len(mapper) {
+			end = len(mapper)
+		}
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "insert into mysql.SCHEMA_INDEX_USAGE (table_id,index_id,query_count,rows_selected,last_used_at) values")
+		for j := i; j < end; j++ {
+			index := indexInformationSlice[j]
+			sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)", index.id.TableID, index.id.IndexID,
+				index.information.QueryCount, index.information.RowsSelected, index.information.LastUsedAt)
+			if j < end-1 {
+				sqlexec.MustFormatSQL(sql, ",")
+			}
+		}
+		sqlexec.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
+		if _, _, err := h.execRestrictedSQL(ctx, sql.String()); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -792,7 +817,6 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
 	var topN *statistics.TopN
-	var fms *statistics.FMSketch
 	var statsVer int64 = statistics.Version1
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
@@ -821,7 +845,6 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		if ok && col.Histogram.Len() > 0 {
 			colHist := col.Histogram
 			hist = &colHist
-			fms = col.FMSketch
 		}
 	}
 	// The column or index has been deleted.
@@ -835,7 +858,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err1))
 		}
 	}
-	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, fms, statsVer)
+	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, statsVer)
 	return errors.Trace(err)
 }
 
@@ -854,10 +877,10 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	return nil
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int64) error {
+func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
 	// feedback for partition is not ready.
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false, false)
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, int(statsVersion), 0, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -892,8 +915,8 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
 	})
 	// Use batch insert to reduce cost.
-	for i := 0; i < len(pairs); i += 10 {
-		end := i + 10
+	for i := 0; i < len(pairs); i += batchInsertSize {
+		end := i + batchInsertSize
 		if end > len(pairs) {
 			end = len(pairs)
 		}
@@ -1027,11 +1050,22 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		return false
 	}
 	pruneMode := h.CurrentPruneMode()
+	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
+	rd.Shuffle(len(dbs), func(i, j int) {
+		dbs[i], dbs[j] = dbs[j], dbs[i]
+	})
 	for _, db := range dbs {
 		if util.IsMemOrSysDB(strings.ToLower(db)) {
 			continue
 		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
+		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
+		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
+		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
+		// TODO: Design a priority queue to place the table which needs analyze most in the front.
+		rd.Shuffle(len(tbls), func(i, j int) {
+			tbls[i], tbls[j] = tbls[j], tbls[i]
+		})
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			if tblInfo.IsView() {
@@ -1338,7 +1372,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	if !tablePseudo {
 		return nil
 	}
-	isIndex := q.Hist.Tp.Tp == mysql.TypeBlob
+	isIndex := q.Hist.Tp.GetType() == mysql.TypeBlob
 	id := q.Hist.ID
 	if isIndex && (t.Indices[id] == nil || !t.Indices[id].NotAccurate()) {
 		return nil

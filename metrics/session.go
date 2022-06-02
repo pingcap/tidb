@@ -127,6 +127,14 @@ var (
 			Name:      "validate_read_ts_from_pd_count",
 			Help:      "Counter of validating read ts by getting a timestamp from PD",
 		})
+
+	NonTransactionalDeleteCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "non_transactional_delete_count",
+			Help:      "Counter of non-transactional delete",
+		})
 )
 
 // Label constants.

@@ -141,6 +141,11 @@ func TestShowErrors(t *testing.T) {
 	_, _ = tk.Exec(testSQL)
 
 	tk.MustQuery("show errors").Check(testkit.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
+
+	// eliminate previous errors
+	tk.MustExec("select 1")
+	_, _ = tk.Exec("create invalid")
+	tk.MustQuery("show errors").Check(testkit.RowsWithSep("|", "Error|1064|You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near \"invalid\" "))
 }
 
 func TestShowWarningsForExprPushdown(t *testing.T) {
@@ -521,12 +526,12 @@ func TestCollation(t *testing.T) {
 	rs, err := tk.Exec("show collation;")
 	require.NoError(t, err)
 	fields := rs.Fields()
-	require.Equal(t, mysql.TypeVarchar, fields[0].Column.Tp)
-	require.Equal(t, mysql.TypeVarchar, fields[1].Column.Tp)
-	require.Equal(t, mysql.TypeLonglong, fields[2].Column.Tp)
-	require.Equal(t, mysql.TypeVarchar, fields[3].Column.Tp)
-	require.Equal(t, mysql.TypeVarchar, fields[4].Column.Tp)
-	require.Equal(t, mysql.TypeLonglong, fields[5].Column.Tp)
+	require.Equal(t, mysql.TypeVarchar, fields[0].Column.GetType())
+	require.Equal(t, mysql.TypeVarchar, fields[1].Column.GetType())
+	require.Equal(t, mysql.TypeLonglong, fields[2].Column.GetType())
+	require.Equal(t, mysql.TypeVarchar, fields[3].Column.GetType())
+	require.Equal(t, mysql.TypeVarchar, fields[4].Column.GetType())
+	require.Equal(t, mysql.TypeLonglong, fields[5].Column.GetType())
 }
 
 func TestShowTableStatus(t *testing.T) {
@@ -1470,15 +1475,15 @@ func TestInvisibleCoprCacheConfig(t *testing.T) {
 	require.Equal(t, true, strings.Contains(configValue, coprCacheVal))
 }
 
-func TestInvisibleGlobalKillConfig(t *testing.T) {
+func TestEnableGlobalKillConfig(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show variables like '%config%'").Rows()
 	require.Equal(t, 1, len(rows))
 	configValue := rows[0][1].(string)
-	globalKillVal := "global-kill"
-	require.Equal(t, false, strings.Contains(configValue, globalKillVal))
+	globalKillVal := "\"enable-global-kill\": true"
+	require.True(t, strings.Contains(configValue, globalKillVal))
 }
 
 func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
@@ -1583,11 +1588,6 @@ func TestShowVar(t *testing.T) {
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), len(globalVars))
 
-	// Test a known hidden variable.
-	res = tk.MustQuery("show variables like '" + variable.TiDBPartitionPruneMode + "'")
-	require.Len(t, res.Rows(), 0)
-	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
-	require.Len(t, res.Rows(), 0)
 	// Test Hidden tx_read_ts
 	res = tk.MustQuery("show variables like '%tx_read_ts'")
 	require.Len(t, res.Rows(), 0)
@@ -1830,4 +1830,55 @@ func TestShowBindingCacheStatus(t *testing.T) {
 
 	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
 		"1 1 198 Bytes 250 Bytes"))
+}
+
+func TestShowDatabasesLike(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("DROP DATABASE IF EXISTS `TEST_$1`")
+	tk.MustExec("DROP DATABASE IF EXISTS `test_$2`")
+	tk.MustExec("CREATE DATABASE `TEST_$1`;")
+	tk.MustExec("CREATE DATABASE `test_$2`;")
+
+	tk.MustQuery("SHOW DATABASES LIKE 'TEST_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
+	tk.MustQuery("SHOW DATABASES LIKE 'test_%'").Check(testkit.Rows("TEST_$1", "test_$2"))
+}
+
+func TestShowTableStatusLike(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP table IF EXISTS `T1`")
+	tk.MustExec("CREATE table `T1` (a int);")
+	rows := tk.MustQuery("SHOW table status LIKE 't1'").Rows()
+	require.Equal(t, "T1", rows[0][0])
+
+	tk.MustExec("DROP table IF EXISTS `Li_1`")
+	tk.MustExec("DROP table IF EXISTS `li_2`")
+
+	tk.MustExec("CREATE table `Li_1` (a int);")
+	tk.MustExec("CREATE table `li_2` (a int);")
+
+	rows = tk.MustQuery("SHOW table status LIKE 'li%'").Rows()
+	require.Equal(t, "Li_1", rows[0][0])
+	require.Equal(t, "li_2", rows[1][0])
+
+}
+
+func TestShowCollationsLike(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustQuery("SHOW COLLATION LIKE 'UTF8MB4_BI%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	tk.MustQuery("SHOW COLLATION LIKE 'utf8mb4_bi%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
 }

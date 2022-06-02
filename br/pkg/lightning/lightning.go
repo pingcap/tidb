@@ -34,12 +34,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -908,40 +905,6 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 		return errors.Trace(err)
 	}
 	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, db, cfg.App.MetaSchemaName, tableMetaExist))
-}
-
-func UnsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
-	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
-		tableName := engine[:index]
-		engineID, err := strconv.Atoi(engine[index+1:])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ce, err := importer.UnsafeCloseEngine(ctx, nil, tableName, int32(engineID)) // #nosec G109
-		return ce, errors.Trace(err)
-	}
-
-	engineUUID, err := uuid.Parse(engine)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "<tidb-lightning-ctl>", engineUUID)
-	return ce, errors.Trace(err)
-}
-
-func CleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
-	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	ce, err := UnsafeCloseEngine(ctx, importer, engine)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return errors.Trace(ce.Cleanup(ctx))
 }
 
 func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
