@@ -19,11 +19,15 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
+
+	"github.com/pingcap/tidb/parser/ast"
+
+	"github.com/pingcap/tidb/sessionctx"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
@@ -167,18 +171,37 @@ func TestOptimisticRCHandleError(t *testing.T) {
 	}
 }
 
+func activeOptimisticTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.OptimisticTxnContextProvider] {
+	return &txnAssert[*isolation.OptimisticTxnContextProvider]{
+		sctx:         sctx,
+		minStartTime: time.Now(),
+		active:       true,
+		inTxn:        inTxn,
+		minStartTS:   getOracleTS(t, sctx),
+	}
+}
+
+func inActiveOptimisticTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.OptimisticTxnContextProvider] {
+	return &txnAssert[*isolation.OptimisticTxnContextProvider]{
+		sctx:         sctx,
+		minStartTime: time.Now(),
+		active:       false,
+	}
+}
+
 func initializeOptimisticRCProvider(t *testing.T, tk *testkit.TestKit, withExplicitBegin bool) *isolation.OptimisticTxnContextProvider {
 	tk.MustExec("commit")
 	if withExplicitBegin {
+		assert := activeOptimisticTxnAssert(t, tk.Session(), true)
 		tk.MustExec("begin optimistic")
+		return assert.CheckAndGetProvider(t)
 	} else {
+		assert := inActiveOptimisticTxnAssert(tk.Session())
 		err := sessiontxn.GetTxnManager(tk.Session()).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
 			Type:    sessiontxn.EnterNewTxnBeforeStmt,
 			TxnMode: ast.Optimistic,
 		})
 		require.NoError(t, err)
+		return assert.CheckAndGetProvider(t)
 	}
-	provider := sessiontxn.GetTxnManager(tk.Session()).GetContextProvider()
-	require.IsType(t, &isolation.OptimisticTxnContextProvider{}, provider)
-	return provider.(*isolation.OptimisticTxnContextProvider)
 }
