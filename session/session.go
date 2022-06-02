@@ -2293,8 +2293,10 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		stmtCtx.Priority = kv.PriorityHigh
-		resultSet, err = runStmt(ctx, s, stmt)
+		if err = sessiontxn.WarmUpTxn(s); err == nil {
+			stmtCtx.Priority = kv.PriorityHigh
+			resultSet, err = runStmt(ctx, s, stmt)
+		}
 	case nil:
 		// cache is invalid
 		if prepareStmt.ForUpdateRead {
