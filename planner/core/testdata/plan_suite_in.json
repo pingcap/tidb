@@ -579,7 +579,7 @@
       "with cte as (select * from tc where tc.a < 60) select * from cte where cte.a <18",
       "WITH cte1 AS (SELECT /*+ MERGE()*/ a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
       "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
-      "with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 /*+ merge() */ from cte1 where a < 10) select  * from cte1) select * from cte t1, cte t2;"
+      "with recursive cte1(c1) as (select 1 union select /*+ merge */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;"
     ]
   },
   {
