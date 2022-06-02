@@ -118,7 +118,7 @@ func (p *PessimisticRCTxnContextProvider) Advise(tp sessiontxn.AdviceType, val [
 }
 
 func (p *PessimisticRCTxnContextProvider) warmUp() error {
-	if p.isTidbSnapshotEnabled() {
+	if p.stmtMayNotUseProviderTS() {
 		return nil
 	}
 

@@ -56,7 +56,7 @@ func (p *OptimisticTxnContextProvider) Advise(tp sessiontxn.AdviceType, val []an
 }
 
 func (p *OptimisticTxnContextProvider) optimizeWithPlan(val []any) (err error) {
-	if p.isTidbSnapshotEnabled() {
+	if p.stmtMayNotUseProviderTS() {
 		return nil
 	}
 

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -222,12 +223,15 @@ func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error 
 	return nil
 }
 
-func (p *baseTxnContextProvider) isTidbSnapshotEnabled() bool {
-	return p.sctx.GetSessionVars().SnapshotTS != 0
+func (p *baseTxnContextProvider) stmtMayNotUseProviderTS() bool {
+	// When `SnapshotTS != 0`, the statement will use snapshot ts instead of the provider's ts
+	// When `staleread.IsStmtStaleness()` is true, it means the current statement is executing `START TRANSACTION READ ONLY AS OF ...`
+	//  to start a staleness transaction.
+	return p.sctx.GetSessionVars().SnapshotTS != 0 || staleread.IsStmtStaleness(p.sctx)
 }
 
 func (p *baseTxnContextProvider) warmUp() error {
-	if p.isTidbSnapshotEnabled() {
+	if p.stmtMayNotUseProviderTS() {
 		return nil
 	}
 	return p.prepareTxn()
