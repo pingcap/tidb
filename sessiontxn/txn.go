@@ -55,7 +55,7 @@ func NewOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string)
 	return oracleStore.GetTimestampAsync(ctx, option)
 }
 
-// CanReuseTxnWhenExplicitBegin returns whether we should reuse the txn when starting a transacting explicitly
+// CanReuseTxnWhenExplicitBegin returns whether we should reuse the txn when starting a transaction explicitly
 func CanReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 	sessVars := sctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
