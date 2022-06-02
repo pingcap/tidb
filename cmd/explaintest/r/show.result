@@ -1,0 +1,13 @@
+show tables;
+Tables_in_test
+show databases;
+Database
+INFORMATION_SCHEMA
+METRICS_SCHEMA
+PERFORMANCE_SCHEMA
+mysql
+test
+show tables like '%xx';
+Tables_in_test (%xx)
+show databases like '%xx';
+Database (%xx)

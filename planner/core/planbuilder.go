@@ -2937,12 +2937,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
 			return nil, ErrNoDB
 		}
-		extractor := newShowBaseExtractor(*show)
-		if extractor.Extract() {
-			p.Extractor = extractor
-			// Avoid building Selection.
-			show.Pattern = nil
-		}
+		p.Extractor = newShowBaseExtractor(*show)
+		p.Extractor.Extract()
 	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
 		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
@@ -3012,7 +3008,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	var err error
 	var np LogicalPlan
 	np = p
-	if show.Pattern != nil {
+	// If we have ShowPredicateExtractor, we do not buildSelection with Pattern
+	if show.Pattern != nil && p.Extractor == nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.OutputNames()[0].ColName},
 		}
@@ -4620,12 +4617,22 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowConfig:
 		names = []string{"Type", "Instance", "Name", "Value"}
 	case ast.ShowDatabases:
-		names = []string{"Database"}
+		fieldDB := "Database"
+		patternName := extractPatternLikeName(s.Pattern)
+		if patternName != "" {
+			fieldDB = fmt.Sprintf("%s (%s)", fieldDB, patternName)
+		}
+		names = []string{fieldDB}
 	case ast.ShowOpenTables:
 		names = []string{"Database", "Table", "In_use", "Name_locked"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeLong}
 	case ast.ShowTables:
-		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
+		fieldTable := fmt.Sprintf("Tables_in_%s", s.DBName)
+		patternName := extractPatternLikeName(s.Pattern)
+		if patternName != "" {
+			fieldTable = fmt.Sprintf("%s (%s)", fieldTable, patternName)
+		}
+		names = []string{fieldTable}
 		if s.Full {
 			names = append(names, "Table_type")
 		}
@@ -4841,4 +4848,15 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (Plan, error
 		TableInfo:   tblInfo,
 	}
 	return p, nil
+}
+
+func extractPatternLikeName(patternLike *ast.PatternLikeExpr) string {
+	if patternLike == nil {
+		return ""
+	}
+	switch patternLike.Pattern.(type) {
+	case *driver.ValueExpr:
+		return patternLike.Pattern.(*driver.ValueExpr).GetString()
+	}
+	return ""
 }

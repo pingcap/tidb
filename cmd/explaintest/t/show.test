@@ -1,0 +1,5 @@
+# test show output field name
+show tables;
+show databases;
+show tables like '%xx';
+show databases like '%xx';
