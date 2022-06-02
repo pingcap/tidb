@@ -368,6 +368,7 @@ func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	return nil
 }
 
+// GetPreparedTSFuture returns the prepared ts future
 func (c *Context) GetPreparedTSFuture() oracle.Future {
 	return nil
 }

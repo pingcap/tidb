@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -51,7 +52,7 @@ func TestColumnAdd(t *testing.T) {
 	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}
 
-	ct := testNewContext(store)
+	ct := testNewContext(dom, store)
 	// set up hook
 	var (
 		deleteOnlyTable table.Table
@@ -125,7 +126,7 @@ func TestColumnAdd(t *testing.T) {
 			} else {
 				return
 			}
-			sess := testNewContext(store)
+			sess := testNewContext(dom, store)
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
 			_, err = writeOnlyTable.AddRecord(sess, types.MakeDatums(10, 10))
@@ -421,8 +422,9 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	}
 }
 
-func testNewContext(store kv.Storage) sessionctx.Context {
+func testNewContext(do *domain.Domain, store kv.Storage) sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = store
+	domain.BindDomain(ctx, do)
 	return ctx
 }

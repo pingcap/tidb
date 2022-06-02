@@ -195,13 +195,13 @@ func initializeOptimisticRCProvider(t *testing.T, tk *testkit.TestKit, withExpli
 		assert := activeOptimisticTxnAssert(t, tk.Session(), true)
 		tk.MustExec("begin optimistic")
 		return assert.CheckAndGetProvider(t)
-	} else {
-		assert := inActiveOptimisticTxnAssert(tk.Session())
-		err := sessiontxn.GetTxnManager(tk.Session()).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-			Type:    sessiontxn.EnterNewTxnBeforeStmt,
-			TxnMode: ast.Optimistic,
-		})
-		require.NoError(t, err)
-		return assert.CheckAndGetProvider(t)
 	}
+
+	assert := inActiveOptimisticTxnAssert(tk.Session())
+	err := sessiontxn.GetTxnManager(tk.Session()).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+		Type:    sessiontxn.EnterNewTxnBeforeStmt,
+		TxnMode: ast.Optimistic,
+	})
+	require.NoError(t, err)
+	return assert.CheckAndGetProvider(t)
 }

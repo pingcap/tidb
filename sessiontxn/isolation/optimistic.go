@@ -46,6 +46,7 @@ func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyO
 	return provider
 }
 
+// Advise is used to give advice to provider
 func (p *OptimisticTxnContextProvider) Advise(tp sessiontxn.AdviceType, val []any) error {
 	switch tp {
 	case sessiontxn.AdviceOptimizeWithPlan:

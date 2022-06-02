@@ -214,10 +214,7 @@ func (p *SimpleTxnContextProvider) prepareTSFuture() error {
 
 	txnScope := p.Sctx.GetSessionVars().CheckAndGetTxnScope()
 	future := sessiontxn.NewOracleFuture(p.Ctx, p.Sctx, txnScope)
-	if err = p.Sctx.PrepareTSFuture(p.Ctx, future, txnScope); err != nil {
-		return err
-	}
-	return nil
+	return p.Sctx.PrepareTSFuture(p.Ctx, future, txnScope)
 }
 
 // activeTxn actives the txn

@@ -55,7 +55,7 @@ func TestInvalidDDLJob(t *testing.T) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}
-	ctx := testNewContext(store)
+	ctx := testNewContext(dom, store)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := dom.DDL().DoDDLJob(ctx, job)
 	require.Equal(t, err.Error(), "[ddl:8204]invalid ddl job type: none")
@@ -64,7 +64,7 @@ func TestInvalidDDLJob(t *testing.T) {
 func TestAddBatchJobError(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	defer clean()
-	ctx := testNewContext(store)
+	ctx := testNewContext(dom, store)
 
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr", `return(true)`))
 	// Test the job runner should not hang forever.
