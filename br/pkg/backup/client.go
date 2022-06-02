@@ -486,9 +486,6 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 		return errors.Trace(err)
 	}
 	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
-	if err != nil {
-		return errors.Trace(err)
-	}
 	historyJobs, err := ddl.GetAllHistoryDDLJobs(snapMeta)
 	if err != nil {
 		return errors.Trace(err)

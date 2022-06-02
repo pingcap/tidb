@@ -182,6 +182,7 @@ type IndexReaderExecutor struct {
 
 	feedback  *statistics.QueryFeedback
 	streaming bool
+	paging    bool
 
 	keepOrder bool
 	desc      bool

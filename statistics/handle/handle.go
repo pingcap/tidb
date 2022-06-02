@@ -247,10 +247,12 @@ var statsHealthyGauges = []prometheus.Gauge{
 	metrics.StatsHealthyGauge.WithLabelValues("[50,80)"),
 	metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),
 	metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
+	// [0,100] should always be the last
+	metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
 }
 
 type statsHealthyChange struct {
-	bucketDelta [4]int
+	bucketDelta [5]int
 }
 
 func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
@@ -264,10 +266,13 @@ func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
 	} else {
 		idx = 3
 	}
+	lastIDX := len(c.bucketDelta) - 1
 	if add {
 		c.bucketDelta[idx] += 1
+		c.bucketDelta[lastIDX] += 1
 	} else {
 		c.bucketDelta[idx] -= 1
+		c.bucketDelta[lastIDX] -= 1
 	}
 }
 
@@ -473,7 +478,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
-			// partition is not empty but column stats(hist, topn) is missing
+			// partition stats is not empty but column stats(hist, topn) is missing
 			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				var errMsg string
 				if isIndex == 0 {
