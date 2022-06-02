@@ -2947,6 +2947,9 @@ func (b *builtinAddSubDateDurationAnySig) vecEvalTime(input *chunk.Chunk, result
 		}
 		iterDuration.Duration = goDurations[i]
 		t, err := iterDuration.ConvertToTime(sc, mysql.TypeDatetime)
+		if err != nil {
+			result.SetNull(i, true)
+		}
 		resDate, isNull, err := b.timeOp(&b.baseDateArithmetical, b.ctx, t, intervalBuf.GetString(i), unit, b.tp.GetDecimal())
 		if err != nil {
 			return err

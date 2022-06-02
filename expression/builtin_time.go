@@ -3546,10 +3546,6 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		// First arg is datetime or timestamp, return datetime.
 		resultTp = mysql.TypeDatetime
 		resultEvalTp = types.ETDatetime
-	} else {
-		// Otherwise, return string.
-		resultTp = mysql.TypeVarString
-		resultEvalTp = types.ETString
 	}
 
 	argTps := []types.EvalType{dateEvalTp, intervalEvalTp, types.ETString}
