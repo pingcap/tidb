@@ -98,7 +98,8 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 
 	metrics := metric.NewMetrics(globalCfg.PromFactory)
 	metrics.RegisterTo(globalCfg.PromRegistry)
-	ctx, shutdown := context.WithCancel(metric.NewContext(context.Background(), metrics))
+	ctx := metric.NewContext(context.Background(), metrics)
+	ctx, shutdown := context.WithCancel(ctx)
 	return &Lightning{
 		globalCfg: globalCfg,
 		globalTLS: tls,
@@ -336,7 +337,8 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	utils.LogEnvVariables()
 
-	ctx, cancel := context.WithCancel(taskCtx)
+	ctx := metric.NewContext(taskCtx, l.metrics)
+	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
 	l.curTask = taskCfg
