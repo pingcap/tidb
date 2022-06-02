@@ -102,6 +102,10 @@ func (s *statsInnerCache) GetByQuery(tblID int64) (*statistics.Table, bool) {
 	for idxID := range element.tbl.Indices {
 		s.lru.get(tblID, idxID, true)
 	}
+	// move column element
+	for colID := range element.tbl.Columns {
+		s.lru.get(tblID, colID, false)
+	}
 	return element.tbl, true
 }
 
@@ -134,12 +138,14 @@ func (s *statsInnerCache) put(tblID int64, tbl *statistics.Table, tblMemUsage *s
 	element, exist := s.elements[tblID]
 	if exist {
 		s.updateIndices(tblID, tbl, tblMemUsage, needMove)
+		s.updateColumns(tblID, tbl, tblMemUsage, needMove)
 		// idx mem usage might be changed before, thus we recalculate the tblMem usage
 		element.tbl = tbl
 		element.tblMemUsage = tbl.MemoryUsage()
 		return
 	}
 	s.updateIndices(tblID, tbl, tblMemUsage, needMove)
+	s.updateColumns(tblID, tbl, tblMemUsage, needMove)
 	// mem usage might be changed due to evict, thus we recalculate the tblMem usage
 	s.elements[tblID] = &lruMapElement{
 		tbl:         tbl,
@@ -173,6 +179,32 @@ func (s *statsInnerCache) updateIndices(tblID int64, tbl *statistics.Table, tblM
 	}
 }
 
+func (s *statsInnerCache) updateColumns(tblID int64, tbl *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, needMove bool) {
+	element, exist := s.elements[tblID]
+	if exist {
+		oldtbl := element.tbl
+		deletedCol := make([]int64, 0)
+		for oldColID := range oldtbl.Columns {
+			_, exist := tbl.Columns[oldColID]
+			if !exist {
+				deletedCol = append(deletedCol, oldColID)
+			}
+		}
+		for colID, col := range tbl.Columns {
+			colMem := tblMemUsage.ColumnsMemUsage[colID]
+			s.lru.put(tblID, colID, false, col, colMem, true, needMove)
+		}
+		for _, colID := range deletedCol {
+			s.lru.del(tblID, colID, false)
+		}
+		return
+	}
+	for colID, col := range tbl.Columns {
+		colMem := tblMemUsage.ColumnsMemUsage[colID]
+		s.lru.put(tblID, colID, false, col, colMem, true, needMove)
+	}
+}
+
 // Del implements statsCacheInner
 func (s *statsInnerCache) Del(tblID int64) {
 	s.Lock()
@@ -184,6 +216,10 @@ func (s *statsInnerCache) Del(tblID int64) {
 	// remove indices
 	for idxID := range element.tbl.Indices {
 		s.lru.del(tblID, idxID, true)
+	}
+	// remove columns
+	for colID := range element.tbl.Columns {
+		s.lru.del(tblID, colID, false)
 	}
 	delete(s.elements, tblID)
 }
@@ -303,6 +339,9 @@ func (s *statsInnerCache) freshTableCost(tblID int64, element *lruMapElement) {
 	element.tblMemUsage = element.tbl.MemoryUsage()
 	for idxID, idx := range element.tbl.Indices {
 		s.lru.put(tblID, idxID, true, idx, element.tblMemUsage.IndicesMemUsage[idxID], true, false)
+	}
+	for colID, col := range element.tbl.Columns {
+		s.lru.put(tblID, colID, false, col, element.tblMemUsage.ColumnsMemUsage[colID], true, false)
 	}
 }
 

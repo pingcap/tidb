@@ -1312,6 +1312,18 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 	return rowCount, nil
 }
 
+// ItemID implements TableCacheItem
+func (c *Column) ItemID() int64 {
+	return c.Info.ID
+}
+
+// DropEvicted implements TableCacheItem
+// DropEvicted drops evicted structures
+func (c *Column) DropEvicted() {
+	c.CMSketch = nil
+	c.Loaded = false
+}
+
 // Index represents an index histogram.
 type Index struct {
 	Histogram
