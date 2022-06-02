@@ -17,18 +17,18 @@ package isolation_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/parser/ast"
-
-	"github.com/pingcap/tidb/sessionctx"
-
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
@@ -36,7 +36,7 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 )
 
-func TestOptimisticRCTxnContextProviderTS(t *testing.T) {
+func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -46,7 +46,7 @@ func TestOptimisticRCTxnContextProviderTS(t *testing.T) {
 
 	se := tk.Session()
 	compareTS := getOracleTS(t, se)
-	provider := initializeOptimisticRCProvider(t, tk, true)
+	provider := initializeOptimisticProvider(t, tk, true)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	readTS, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestOptimisticRCTxnContextProviderTS(t *testing.T) {
 	stmts, _, err := parser.New().Parse("select * from t where id=1", "", "")
 	require.NoError(t, err)
 	stmt := stmts[0]
-	provider = initializeOptimisticRCProvider(t, tk, false)
+	provider = initializeOptimisticProvider(t, tk, false)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
@@ -81,7 +81,7 @@ func TestOptimisticRCTxnContextProviderTS(t *testing.T) {
 	require.Equal(t, uint64(math.MaxUint64), updateTS)
 
 	// if the oracle future is prepared fist, `math.MaxUint64` should still be used after plan
-	provider = initializeOptimisticRCProvider(t, tk, false)
+	provider = initializeOptimisticProvider(t, tk, false)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	require.NoError(t, provider.Advise(sessiontxn.AdviceWarmUp, nil))
 	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
@@ -95,7 +95,7 @@ func TestOptimisticRCTxnContextProviderTS(t *testing.T) {
 
 	// when it is in explicit txn, we should not use `math.MaxUint64`
 	compareTS = getOracleTS(t, se)
-	provider = initializeOptimisticRCProvider(t, tk, true)
+	provider = initializeOptimisticProvider(t, tk, true)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestOptimisticRCTxnContextProviderTS(t *testing.T) {
 	// when it autocommit=0, we should not use `math.MaxUint64`
 	tk.MustExec("set @@autocommit=0")
 	compareTS = getOracleTS(t, se)
-	provider = initializeOptimisticRCProvider(t, tk, false)
+	provider = initializeOptimisticProvider(t, tk, false)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
@@ -121,12 +121,22 @@ func TestOptimisticRCTxnContextProviderTS(t *testing.T) {
 	require.Greater(t, readTS, compareTS)
 }
 
-func TestOptimisticRCHandleError(t *testing.T) {
+func TestOptimisticHandleError(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	provider := initializeOptimisticRCProvider(t, tk, true)
+	provider := initializeOptimisticProvider(t, tk, true)
+	startTS := tk.Session().GetSessionVars().TxnCtx.StartTS
+	checkTS := func() {
+		ts, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		require.Equal(t, startTS, ts)
+
+		ts, err = provider.GetStmtForUpdateTS()
+		require.NoError(t, err)
+		require.Equal(t, startTS, ts)
+	}
 
 	cases := []struct {
 		point sessiontxn.StmtErrorHandlePoint
@@ -159,16 +169,199 @@ func TestOptimisticRCHandleError(t *testing.T) {
 	}
 
 	for _, c := range cases {
+		require.NoError(t, provider.OnStmtStart(context.TODO()))
 		action, err := provider.OnStmtErrorForNextAction(c.point, c.err)
 		if c.point == sessiontxn.StmtErrAfterPessimisticLock {
 			require.Error(t, err)
 			require.Same(t, c.err, err)
 			require.Equal(t, sessiontxn.StmtActionError, action)
+
+			// next statement should not update ts
+			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			checkTS()
 		} else {
 			require.NoError(t, err)
 			require.Equal(t, sessiontxn.StmtActionNoIdea, action)
+
+			// retry should not update ts
+			require.NoError(t, provider.OnStmtRetry(context.TODO()))
+			checkTS()
+
+			// OnStmtErrorForNextAction again
+			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			action, err = provider.OnStmtErrorForNextAction(c.point, c.err)
+			require.NoError(t, err)
+			require.Equal(t, sessiontxn.StmtActionNoIdea, action)
+
+			// next statement should not update ts
+			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			checkTS()
 		}
 	}
+}
+
+func TestOptimisticProviderInitialize(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+
+	// begin outside a txn
+	assert := activeOptimisticTxnAssert(t, se, true)
+	tk.MustExec("begin")
+	assert.Check(t)
+
+	// begin in a txn
+	assert = activeOptimisticTxnAssert(t, se, true)
+	tk.MustExec("begin")
+	assert.Check(t)
+
+	// begin outside a txn when tidb_disable_txn_auto_retry=0
+	tk.MustExec("set @@tidb_disable_txn_auto_retry=0")
+	tk.MustExec("rollback")
+	assert = activeOptimisticTxnAssert(t, se, true)
+	assert.couldRetry = true
+	tk.MustExec("begin")
+	assert.Check(t)
+
+	// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
+	assert = activeOptimisticTxnAssert(t, se, true)
+	assert.causalConsistencyOnly = true
+	tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
+	assert.Check(t)
+
+	// EnterNewTxnDefault will create an active txn, but not explicit
+	assert = activeOptimisticTxnAssert(t, se, false)
+	require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+		Type:    sessiontxn.EnterNewTxnDefault,
+		TxnMode: ast.Optimistic,
+	}))
+	assert.Check(t)
+
+	tk.MustExec("rollback")
+	require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+		Type: sessiontxn.EnterNewTxnDefault,
+	}))
+	assert.Check(t)
+
+	// non-active txn and then active it
+	cases := []struct {
+		disableTxnAutoRetry bool
+		autocommit          bool
+	}{
+		{
+			true, true,
+		},
+		{
+			true, false,
+		},
+		{
+			false, true,
+		},
+		{
+			false, false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("disableAutRetry: %v, autoCommit: %v", c.disableTxnAutoRetry, c.autocommit), func(t *testing.T) {
+			tk.MustExec("rollback")
+			defer tk.MustExec("rollback")
+			tk.MustExec(fmt.Sprintf("set @@autocommit=%v", c.autocommit))
+			tk.MustExec(fmt.Sprintf("set @@tidb_disable_txn_auto_retry=%v", c.disableTxnAutoRetry))
+			assert = inActiveOptimisticTxnAssert(se)
+			assertAfterActive := activeOptimisticTxnAssert(t, se, !c.autocommit)
+			assertAfterActive.couldRetry = c.autocommit || !c.disableTxnAutoRetry
+			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+			provider := assert.CheckAndGetProvider(t)
+			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			ts, err := provider.GetStmtReadTS()
+			require.NoError(t, err)
+			assertAfterActive.Check(t)
+			require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+		})
+	}
+}
+
+func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
+	safePoint := "20160102-15:04:05 -0700"
+	tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%s', '') ON DUPLICATE KEY UPDATE variable_value = '%s', comment=''`, safePoint, safePoint))
+
+	time.Sleep(time.Millisecond * 50)
+	tk.MustExec("set @a=now(6)")
+	snapshotISVersion := dom.InfoSchema().SchemaMetaVersion()
+	time.Sleep(time.Millisecond * 50)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create temporary table t2(id int)")
+	tk.MustExec("set @@tidb_snapshot=@a")
+	snapshotTS := tk.Session().GetSessionVars().SnapshotTS
+	isVersion := dom.InfoSchema().SchemaMetaVersion()
+
+	assert := activeOptimisticTxnAssert(t, se, true)
+	tk.MustExec("begin")
+	provider := assert.CheckAndGetProvider(t)
+	txn, err := se.Txn(false)
+	require.NoError(t, err)
+	require.Greater(t, txn.StartTS(), snapshotTS)
+
+	checkUseSnapshot := func() {
+		is := provider.GetTxnInfoSchema()
+		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
+		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		readTS, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		require.Equal(t, snapshotTS, readTS)
+		forUpdateTS, err := provider.GetStmtForUpdateTS()
+		require.NoError(t, err)
+		require.Equal(t, readTS, forUpdateTS)
+	}
+
+	checkUseTxn := func() {
+		is := provider.GetTxnInfoSchema()
+		require.Equal(t, isVersion, is.SchemaMetaVersion())
+		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		readTS, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		require.NotEqual(t, snapshotTS, readTS)
+		require.Equal(t, se.GetSessionVars().TxnCtx.StartTS, readTS)
+		forUpdateTS, err := provider.GetStmtForUpdateTS()
+		require.NoError(t, err)
+		require.Equal(t, readTS, forUpdateTS)
+	}
+
+	// information schema and ts should equal to snapshot when tidb_snapshot is set
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	checkUseSnapshot()
+
+	// information schema and ts will restore when set tidb_snapshot to empty
+	tk.MustExec("set @@tidb_snapshot=''")
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	checkUseTxn()
+
+	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
+	tk.MustExec("rollback")
+	tk.MustExec("set @@autocommit=0")
+	assert = inActiveOptimisticTxnAssert(se)
+	assertAfterActive := activeOptimisticTxnAssert(t, se, true)
+	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+	provider = assert.CheckAndGetProvider(t)
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	tk.MustExec("set @@tidb_snapshot=@a")
+	checkUseSnapshot()
+	txn, err = se.Txn(false)
+	require.NoError(t, err)
+	require.False(t, txn.Valid())
+	tk.MustExec("set @@tidb_snapshot=''")
+	checkUseTxn()
+	assertAfterActive.Check(t)
+	tk.MustExec("rollback")
 }
 
 func activeOptimisticTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.OptimisticTxnContextProvider] {
@@ -189,7 +382,7 @@ func inActiveOptimisticTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.
 	}
 }
 
-func initializeOptimisticRCProvider(t *testing.T, tk *testkit.TestKit, withExplicitBegin bool) *isolation.OptimisticTxnContextProvider {
+func initializeOptimisticProvider(t *testing.T, tk *testkit.TestKit, withExplicitBegin bool) *isolation.OptimisticTxnContextProvider {
 	tk.MustExec("commit")
 	if withExplicitBegin {
 		assert := activeOptimisticTxnAssert(t, tk.Session(), true)

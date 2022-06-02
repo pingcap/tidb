@@ -53,6 +53,7 @@ type txnAssert[T sessiontxn.TxnContextProvider] struct {
 	inTxn                 bool
 	minStartTS            uint64
 	causalConsistencyOnly bool
+	couldRetry            bool
 }
 
 func (a *txnAssert[T]) Check(t *testing.T) {
@@ -73,6 +74,7 @@ func (a *txnAssert[T]) Check(t *testing.T) {
 	require.GreaterOrEqual(t, txnCtx.CreateTime.Nanosecond(), a.minStartTime.Nanosecond())
 	require.Equal(t, a.inTxn, sessVars.InTxn())
 	require.Equal(t, a.inTxn, txnCtx.IsExplicit)
+	require.Equal(t, a.couldRetry, txnCtx.CouldRetry)
 
 	txn, err := a.sctx.Txn(false)
 	require.NoError(t, err)
@@ -87,6 +89,7 @@ func (a *txnAssert[T]) Check(t *testing.T) {
 		require.Same(t, sessVars.KVVars, txn.GetVars())
 		require.Equal(t, txnCtx.TxnScope, txn.GetOption(kv.TxnScope))
 		require.Equal(t, a.causalConsistencyOnly, !txn.GetOption(kv.GuaranteeLinearizability).(bool))
+		require.Equal(t, txnCtx.IsPessimistic, txn.IsPessimistic())
 	}
 	// The next line is testing the provider has the type T, if not, the cast will panic
 	_ = provider.(T)

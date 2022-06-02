@@ -61,16 +61,18 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.New("ts functions should not be nil")
 	}
 
-	activeNow := false
+	sessVars := p.sctx.GetSessionVars()
+	activeNow := true
 	switch tp {
-	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
-		shouldReuseTxn := tp == sessiontxn.EnterNewTxnWithBeginStmt && sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx)
-		if !shouldReuseTxn {
+	case sessiontxn.EnterNewTxnDefault:
+		err = p.sctx.NewTxn(ctx)
+	case sessiontxn.EnterNewTxnWithBeginStmt:
+		if !sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx) {
 			if err = p.sctx.NewTxn(ctx); err != nil {
 				return err
 			}
 		}
-		activeNow = true
+		sessVars.SetInTxn(true)
 	case sessiontxn.EnterNewTxnBeforeStmt:
 		activeNow = false
 	default:
@@ -79,7 +81,6 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 
 	p.ctx = ctx
 	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, domain.GetDomain(p.sctx).InfoSchema())
-	sessVars := p.sctx.GetSessionVars()
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
