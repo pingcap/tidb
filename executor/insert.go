@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
@@ -182,14 +181,6 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	values, err := prefetchUniqueIndices(ctx, txn, rows)
-	// string: 16, []byte: 24
-	// TODO: is it worth?
-	memConsumed := int(set.EstimateMapSize(len(values), set.EstimateBucketMemoryUsage(16+24)))
-	for k, v := range values {
-		memConsumed += len(k) + len(v)
-	}
-	e.memTracker.Consume(int64(memConsumed))
-	defer e.memTracker.Consume(int64(-memConsumed))
 	if err != nil {
 		return err
 	}
