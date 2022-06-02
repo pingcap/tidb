@@ -1647,6 +1647,24 @@
       "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
         ],
     "Warning": null
+  },
+  {
+    "SQL": "with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 /*+ merge() */ from cte1 where a < 10) select  * from cte1) select * from cte t1, cte t2;",
+    "Plan": [
+      "HashJoin 2.56 root  CARTESIAN inner join",
+      "├─CTEFullScan(Build) 1.60 root CTE:t2 data:CTE",
+      "└─CTEFullScan(Probe) 1.60 root CTE:t1 data:CTE",
+      "CTE 1.60 root  Non-Recursive CTE",
+      "└─Selection(Seed Part) 1.60 root  1",
+      "  └─CTEFullScan 2.00 root CTE:cte1 data:CTE",
+      "CTE 2.00 root  Recursive CTE",
+      "├─Projection(Seed Part) 1.00 root  1->Column#2",
+      "│ └─TableDual 1.00 root  rows:1",
+      "└─Projection(Recursive Part) 0.80 root cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
+      "  └─Selection 0.80 root  lt(Column#3, 10)",
+      "    └─CTETable 1.00 root  Scan on CTE"
+    ],
+        "Warning": null
   }
     ]
   },
