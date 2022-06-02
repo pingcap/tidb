@@ -131,22 +131,24 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 		return r.Provider, nil
 	}
 
-	txnMode := r.TxnMode
-	if txnMode == "" {
-		txnMode = m.sctx.GetSessionVars().TxnMode
-	}
-
 	if r.StaleReadTS > 0 {
 		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil), nil
 	}
 
+	sessVars := m.sctx.GetSessionVars()
+
+	txnMode := r.TxnMode
+	if txnMode == "" {
+		txnMode = sessVars.TxnMode
+	}
+
 	switch txnMode {
 	case "", ast.Optimistic:
-		// Should be optimistic txn when the txnMode is 'OPTIMISTIC' or empty
+		// When txnMode is 'OPTIMISTIC' or empty, the transaction should be optimistic
 		return isolation.NewOptimisticTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
 	case ast.Pessimistic:
 		// When txnMode is 'PESSIMISTIC', the provider should be determined by the isolation level
-		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
+		switch sessVars.IsolationLevelForNewTxn() {
 		case ast.ReadCommitted:
 			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
 		default:
