@@ -264,6 +264,9 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = replicaReadType
 	builder.SetResourceGroupTagger(sv.StmtCtx.GetResourceGroupTagger())
+	if sv.EnablePaging {
+		builder.SetPaging(true)
+	}
 	return builder
 }
 
