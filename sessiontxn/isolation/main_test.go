@@ -66,7 +66,7 @@ func (a *txnAssert[T]) Check(t *testing.T) {
 		require.Equal(t, sessVars.SnapshotInfoschema.(infoschema.InfoSchema).SchemaMetaVersion(), provider.GetTxnInfoSchema().SchemaMetaVersion())
 	}
 	require.Equal(t, a.isolation, txnCtx.Isolation)
-	require.True(t, txnCtx.IsPessimistic)
+	require.Equal(t, a.isolation != "", txnCtx.IsPessimistic)
 	require.Equal(t, sessVars.CheckAndGetTxnScope(), txnCtx.TxnScope)
 	require.Equal(t, sessVars.ShardAllocateStep, int64(txnCtx.ShardStep))
 	require.False(t, txnCtx.IsStaleness)
