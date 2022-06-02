@@ -139,6 +139,13 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
 		case ast.ReadCommitted:
 			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+		case ast.Serializable:
+			// The Oracle serializable isolation is actually SI in pessimistic mode.
+			// Do not update ForUpdateTS when the user is using the Serializable isolation level.
+			// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
+			// Support for this does not mean that TiDB supports serializable isolation of MySQL.
+			// tidb_skip_isolation_level_check should still be disabled by default.
+			return isolation.NewPessimisticSerializableTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
 		}
 	}
 
