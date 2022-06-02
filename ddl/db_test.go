@@ -1484,7 +1484,7 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 	tk.MustExec("use test")
 
 	r := tk.MustQuery("select @@sql_mode")
-	defaultSqlMode := r.Rows()[0][0].(string)
+	defaultSQLMode := r.Rows()[0][0].(string)
 
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 
@@ -1522,7 +1522,7 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 		for _, cs := range charset.CharacterSetInfos {
 			tableName := fmt.Sprintf("t_%s", cs.Name)
 			tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
-			tk.MustExec(fmt.Sprintf("set @@sql_mode='%s'", defaultSqlMode))
+			tk.MustExec(fmt.Sprintf("set @@sql_mode='%s'", defaultSQLMode))
 
 			// test in strict sql mode
 			maxLen := cs.Maxlen
@@ -1533,10 +1533,13 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 			length := 2 * expectKeyLength
 
 			indexLen := ""
+			// specify index length for text type
 			if tc.SpecifiedIndexLen {
 				indexLen = fmt.Sprintf("(%d)", length)
 			}
+
 			col := tc.ColType
+			// specify column length for varchar type
 			if tc.SpecifiedColLen {
 				col += fmt.Sprintf("(%d)", length)
 			}
