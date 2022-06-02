@@ -41,7 +41,7 @@ func (f FuncFuture) Wait() (uint64, error) {
 // NewOracleFuture creates new future according to the scope and the session context
 func NewOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string) oracle.Future {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("sessiontxn.NewOracleFuture", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -55,7 +55,7 @@ func NewOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string)
 	return oracleStore.GetTimestampAsync(ctx, option)
 }
 
-// CanReuseTxnWhenExplicitBegin returns whether we should reuse the txn when starting a transacting explicitly
+// CanReuseTxnWhenExplicitBegin returns whether we should reuse the txn when starting a transaction explicitly
 func CanReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 	sessVars := sctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
