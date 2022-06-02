@@ -79,8 +79,13 @@ func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 }
 
 func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnRequest) error {
-	m.ctxProvider = m.newProviderWithRequest(r)
-	if err := m.ctxProvider.OnInitialize(ctx, r.Type); err != nil {
+	ctxProvider, err := m.newProviderWithRequest(r)
+	if err != nil {
+		return err
+	}
+
+	m.ctxProvider = ctxProvider
+	if err = m.ctxProvider.OnInitialize(ctx, r.Type); err != nil {
 		return err
 	}
 
@@ -121,9 +126,9 @@ func (m *txnManager) Advise(tp sessiontxn.AdviceType, val ...any) error {
 	return nil
 }
 
-func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) sessiontxn.TxnContextProvider {
+func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (sessiontxn.TxnContextProvider, error) {
 	if r.Provider != nil {
-		return r.Provider
+		return r.Provider, nil
 	}
 
 	txnMode := r.TxnMode
@@ -132,16 +137,20 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 	}
 
 	if r.StaleReadTS > 0 {
-		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil)
+		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil), nil
 	}
 
-	if txnMode == ast.Optimistic {
-		return isolation.NewOptimisticTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+	if txnMode == "" || txnMode == ast.Optimistic {
+		return isolation.NewOptimisticTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
+	}
+
+	if txnMode != ast.Pessimistic {
+		return nil, errors.Errorf("Invalid txn mode '%s'", txnMode)
 	}
 
 	switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
 	case ast.ReadCommitted:
-		return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+		return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
 	}
 
 	return &legacy.SimpleTxnContextProvider{
@@ -149,5 +158,5 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		Pessimistic:           txnMode == ast.Pessimistic,
 		CausalConsistencyOnly: r.CausalConsistencyOnly,
 		UpdateForUpdateTS:     executor.UpdateForUpdateTS,
-	}
+	}, nil
 }

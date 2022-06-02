@@ -156,8 +156,14 @@ func TestOptimisticRCHandleError(t *testing.T) {
 
 	for _, c := range cases {
 		action, err := provider.OnStmtErrorForNextAction(c.point, c.err)
-		require.NoError(t, err)
-		require.Equal(t, sessiontxn.StmtActionNoIdea, action)
+		if c.point == sessiontxn.StmtErrAfterPessimisticLock {
+			require.Error(t, err)
+			require.Same(t, c.err, err)
+			require.Equal(t, sessiontxn.StmtActionError, action)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, sessiontxn.StmtActionNoIdea, action)
+		}
 	}
 }
 
