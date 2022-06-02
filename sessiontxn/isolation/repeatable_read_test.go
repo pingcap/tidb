@@ -22,49 +22,6 @@ func newDeadLockError(isRetryable bool) error {
 	}
 }
 
-func TestPessimisticRRStmtStartAndRetry(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	provider := initializeRepeatableReadProvider(t, tk)
-	se := tk.Session()
-
-	var lockErr error
-	var compareTS uint64
-	for _, firstActionOnError := range []func(ctx context.Context) error{
-		provider.OnStmtStart,
-		provider.OnStmtRetry,
-	} {
-		compareTS = getOracleTS(t, se)
-		lockErr = kv.ErrWriteConflict
-		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
-		require.NoError(t, err)
-		require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
-		require.NoError(t, firstActionOnError(context.TODO()))
-		ts, err := provider.GetStmtForUpdateTS()
-		require.NoError(t, err)
-		// StmtActionRetryReady means we will update the forUpdateTS, so it should be larger than the compareTS
-		require.Greater(t, ts, compareTS)
-	}
-
-	for _, firstActionOnError := range []func(ctx context.Context) error{
-		provider.OnStmtStart,
-		provider.OnStmtRetry,
-	} {
-		compareTS = getOracleTS(t, se)
-		lockErr = newDeadLockError(true)
-		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
-		require.NoError(t, err)
-		require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
-		require.NoError(t, firstActionOnError(context.TODO()))
-		ts, err := provider.GetStmtForUpdateTS()
-		require.NoError(t, err)
-		// StmtActionRetryReady means we will update the forUpdateTS, so it should be larger than the compareTS
-		require.Greater(t, ts, compareTS)
-	}
-}
-
 func TestPessimisticRRErrorHandle(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -80,52 +37,77 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtRetry(context.TODO())
+	// In OnStmtErrorForNextAction, we set the txnCtx.forUpdateTS to be the latest ts, which is used to
+	// update the provider's in OnStmtRetry. So, if we acquire new ts now, it will be less than the current ts.
+	compareTS2 := getOracleTS(t, se)
 	require.NoError(t, err)
 	ts, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	// StmtActionRetryReady means we will update the forUpdateTS, so it should be larger than the compareTS
 	require.Greater(t, ts, compareTS)
+	require.Greater(t, compareTS2, ts)
 
 	// Update compareTS for the next comparison
 	compareTS = getOracleTS(t, se)
+	lockErr = kv.ErrWriteConflict
+	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	require.NoError(t, err)
+	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
+	err = provider.OnStmtStart(context.TODO())
+	// Unlike StmtRetry which uses forUpdateTS got in OnStmtErrorForNextAction, OnStmtStart will reset provider's forUpdateTS,
+	// which leads GetStmtForUpdateTS to acquire the latest ts.
+	compareTS2 = getOracleTS(t, se)
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, ts, compareTS)
+	require.Greater(t, ts, compareTS2)
+
 	lockErr = newDeadLockError(false)
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.Equal(t, lockErr, err)
 	require.Equal(t, sessiontxn.StmtActionError, nextAction)
-	ts, err = provider.GetStmtForUpdateTS()
-	require.NoError(t, err)
-	// StmtActionError means we will not update the forUpdateTS, so it should be less than the compareTS
-	require.Greater(t, compareTS, ts)
 
+	// Update compareTS for the next comparison
+	compareTS = getOracleTS(t, se)
 	lockErr = newDeadLockError(true)
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
+	err = provider.OnStmtRetry(context.TODO())
+	// In OnStmtErrorForNextAction, we set the txnCtx.forUpdateTS to be the latest ts, which is used to
+	// update the provider's in OnStmtRetry. So, if we acquire new ts now, it will be less than the current ts.
+	compareTS2 = getOracleTS(t, se)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	// StmtActionRetryReady means we will update the forUpdateTS, so it should be larger than the compareTS
 	require.Greater(t, ts, compareTS)
+	require.Greater(t, compareTS2, ts)
 
+	// Update compareTS for the next comparison
 	compareTS = getOracleTS(t, se)
+	lockErr = newDeadLockError(true)
+	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	require.NoError(t, err)
+	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
+	err = provider.OnStmtStart(context.TODO())
+	// Unlike StmtRetry which uses forUpdateTS got in OnStmtErrorForNextAction, OnStmtStart will reset provider's forUpdateTS,
+	// which leads GetStmtForUpdateTS to acquire the latest ts.
+	compareTS2 = getOracleTS(t, se)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, ts, compareTS)
+	require.Greater(t, ts, compareTS2)
+
 	// StmtErrAfterLock: other errors should only update forUpdateTS but not retry
 	lockErr = errors.New("other error")
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.Equal(t, lockErr, err)
 	require.Equal(t, sessiontxn.StmtActionError, nextAction)
-	ts, err = provider.GetStmtForUpdateTS()
-	require.NoError(t, err)
-	require.Greater(t, ts, compareTS)
 
-	compareTS = getOracleTS(t, se)
 	// StmtErrAfterQuery: always not retry and not update forUpdateTS
 	lockErr = kv.ErrWriteConflict
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, lockErr)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 	require.Nil(t, err)
-	ts, err = provider.GetStmtForUpdateTS()
-	require.NoError(t, err)
-	require.Greater(t, compareTS, ts)
-
 }
 
 func TestRepeatableReadProvider(t *testing.T) {
@@ -160,12 +142,12 @@ func TestRepeatableReadProvider(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, CurrentTS, prevTS)
 
-	// The read ts should still be less than the compareTS in a retry statement
+	// The read ts should not be changed
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtRetry(context.TODO()))
 	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
-	require.Greater(t, CurrentTS, prevTS)
+	require.Equal(t, CurrentTS, prevTS)
 
 	// The for update read ts should be larger than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, forUpdateStmt))
@@ -179,7 +161,7 @@ func TestRepeatableReadProvider(t *testing.T) {
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
-	require.Greater(t, CurrentTS, prevTS)
+	require.Equal(t, CurrentTS, prevTS)
 }
 
 func TestSomething(t *testing.T) {
@@ -200,7 +182,6 @@ func TestSomething(t *testing.T) {
 	tk2.MustExec("insert into t values(3,3)")
 
 	tk1.MustQuery("select * from t where id = 1 for update")
-	tk1.MustQuery("select * from t")
 
 	tk1.MustQuery("select * from t where id = 3 for update").Check(testkit.Rows("3 3"))
 }

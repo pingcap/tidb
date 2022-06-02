@@ -20,31 +20,24 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
-type updateStmtState struct {
-	updateTS       uint64
-	updateTSFuture oracle.Future
-
-	maxUpdateTS uint64
-}
-
 type PessimisticRRTxnContextProvider struct {
 	baseTxnContextProvider
-	updateStmtState
+
+	// Used for ForUpdateRead statement
+	forUpdateTS uint64
 }
 
 func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error) {
-	if p.updateTS != 0 {
-		return p.updateTS, nil
+	if p.forUpdateTS != 0 {
+		return p.forUpdateTS, nil
 	}
 
 	var txn kv.Transaction
@@ -62,8 +55,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	txnCxt.SetForUpdateTS(ts)
 	txn.SetOption(kv.SnapshotTS, ts)
 
-	p.updateTS = ts
-	p.maxUpdateTS = ts
+	p.forUpdateTS = ts
 
 	return
 }
@@ -80,6 +72,8 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
 
+	// Because the ForUpdateTS is used for the snapshot for reading data in DML.
+	// We can avoid allocating a global TSO here to speed it up by using the local TSO.
 	version, err := seCtx.GetStore().CurrentVersion(seCtx.GetSessionVars().TxnCtx.TxnScope)
 	if err != nil {
 		return err
@@ -87,22 +81,6 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
 	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
-
-	return nil
-}
-
-func (p *PessimisticRRTxnContextProvider) updateMaxForUpdateTs() error {
-	txnCxt := p.sctx.GetSessionVars().TxnCtx
-	futureTS := sessiontxn.NewOracleFuture(p.ctx, p.sctx, txnCxt.TxnScope)
-
-	var ts uint64
-	var err error
-
-	if ts, err = futureTS.Wait(); err != nil {
-		return err
-	}
-
-	p.maxUpdateTS = ts
 
 	return nil
 }
@@ -135,20 +113,24 @@ func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error
 		return err
 	}
 
-	p.updateTS = 0
+	p.forUpdateTS = 0
 	p.infoSchema = sessiontxn.GetTxnManager(p.sctx).GetTxnInfoSchema()
 
 	return nil
 }
 
-func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
+func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err error) {
+	if err = p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
 
-	// In OnStmtErrorForNextAction, for those error cases that need to retry, the maxUpdateTs will be updated
-	// to the latest ts. It can be used now to retry.
-	p.updateTS = p.maxUpdateTS
+	txnCtxForUpdateTS := p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	// If TxnCtx.forUpdateTS is updated in OnStmtErrorForNextAction, we assign the value to the provider
+	if txnCtxForUpdateTS > p.forUpdateTS {
+		p.forUpdateTS = txnCtxForUpdateTS
+	} else {
+		p.forUpdateTS = 0
+	}
 
 	return nil
 }
@@ -176,23 +158,6 @@ func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType, val [
 }
 
 func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error) {
-	if p.isTidbSnapshotEnabled() {
-		return nil
-	}
-
-	if len(val) == 0 {
-		return nil
-	}
-
-	plan, ok := val[0].(plannercore.Plan)
-	if !ok {
-		return nil
-	}
-
-	if execute, ok := plan.(*plannercore.Execute); ok {
-		plan = execute.Plan
-	}
-
 	return nil
 }
 
@@ -234,6 +199,7 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("lockTS", deadlock.LockTs),
 			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
+
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
 		errStr := lockErr.Error()
 		forUpdateTS := txnCtx.GetForUpdateTS()
@@ -242,7 +208,20 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("forUpdateTS", forUpdateTS),
 			zap.String("err", errStr))
+		// Always update forUpdateTS by getting a new timestamp from PD.
+		// If we use the conflict commitTS as the new forUpdateTS and async commit
+		// is used, the commitTS of this transaction may exceed the max timestamp
+		// that PD allocates. Then, the change may be invisible to a new transaction,
+		// which means linearizability is broken.
 	} else {
+		// This branch: if err is not nil, always update forUpdateTS to avoid problem described below.
+		// For nowait, when ErrLock happened, ErrLockAcquireFailAndNoWaitSet will be returned, and in the same txn
+		// the select for updateTs must be updated, otherwise there maybe rollback problem.
+		// 		   begin
+		// 		   select for update key1 (here encounters ErrLocked or other errors (or max_execution_time like util),
+		//         					     key1 lock has not gotten and async rollback key1 is raised)
+		//         select for update key1 again (this time lock is acquired successfully (maybe lock was released by others))
+		//         the async rollback operation rollbacks the lock just acquired
 		if err := p.updateForUpdateTS(); err != nil {
 			logutil.Logger(p.ctx).Warn("UpdateForUpdateTS failed", zap.Error(err))
 		}

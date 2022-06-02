@@ -139,8 +139,8 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
 		case ast.ReadCommitted:
 			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
-			//case ast.RepeatableRead:
-			//	return isolation.NewPessimisticRRTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+		case ast.RepeatableRead:
+			return isolation.NewPessimisticRRTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
 		}
 	}
 
