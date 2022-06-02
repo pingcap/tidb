@@ -134,15 +134,17 @@ func TestSetTransactionIsolationOneSho(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		require.Equal(t, kv.SI, req.IsolationLevel)
 	})
-	_, err := tk.Session().Execute(ctx, "select * from t where k = 1")
+	rs, err := tk.Session().Execute(ctx, "select * from t where k = 1")
 	require.NoError(t, err)
+	rs[0].Close()
 
 	// Check it just take effect for one time.
 	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		require.Equal(t, kv.SI, req.IsolationLevel)
 	})
-	_, err = tk.Session().Execute(ctx, "select * from t where k = 1")
+	rs, err = tk.Session().Execute(ctx, "select * from t where k = 1")
 	require.NoError(t, err)
+	rs[0].Close()
 
 	// Can't change isolation level when it's inside a transaction.
 	tk.MustExec("begin")
