@@ -890,9 +890,9 @@ type dateOrDatetimeIntGener struct {
 func (g dateOrDatetimeIntGener) gen() interface{} {
 	if g.dateRatio > 1e-6 && g.dateGener.randGen.Float64() < g.dateRatio {
 		return g.dateIntGener.gen()
-	} else {
-		return g.dateTimeIntGener.gen()
 	}
+
+	return g.dateTimeIntGener.gen()
 }
 
 type dateRealGener struct {
@@ -946,9 +946,9 @@ type dateOrDatetimeRealGener struct {
 func (g dateOrDatetimeRealGener) gen() interface{} {
 	if g.dateRatio > 1e-6 && g.dateGener.randGen.Float64() < g.dateRatio {
 		return g.dateRealGener.gen()
-	} else {
-		return g.dateTimeRealGener.gen()
 	}
+
+	return g.dateTimeRealGener.gen()
 }
 
 type dateDecimalGener struct {
@@ -1016,9 +1016,9 @@ type dateOrDatetimeDecimalGener struct {
 func (g dateOrDatetimeDecimalGener) gen() interface{} {
 	if g.dateRatio > 1e-6 && g.dateGener.randGen.Float64() < g.dateRatio {
 		return g.dateDecimalGener.gen()
-	} else {
-		return g.dateTimeDecimalGener.gen()
 	}
+
+	return g.dateTimeDecimalGener.gen()
 }
 
 // constStrGener always returns the given string

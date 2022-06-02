@@ -2646,9 +2646,9 @@ func ParseTimeFromDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (t Time,
 	if err != nil {
 		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
 	}
-	_1000000 := new(MyDecimal).FromInt(1000000)
+	million := new(MyDecimal).FromInt(1000000)
 	msPartDec := new(MyDecimal)
-	err = DecimalMul(fracPartDec, _1000000, msPartDec)
+	err = DecimalMul(fracPartDec, million, msPartDec)
 	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
 		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
 	}
