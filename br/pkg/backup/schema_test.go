@@ -100,19 +100,11 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
 
 	// Table t1 is not exist.
 	testFilter, err := filter.Parse([]string{"test.t1"})
-<<<<<<< HEAD
 	c.Assert(err, IsNil)
 	_, backupSchemas, err := backup.BuildBackupRangeAndSchema(
 		s.mock.Storage, testFilter, math.MaxUint64)
 	c.Assert(err, IsNil)
-	c.Assert(backupSchemas, IsNil)
-=======
-	require.NoError(t, err)
-	_, backupSchemas, _, err := backup.BuildBackupRangeAndSchema(
-		m.Storage, testFilter, math.MaxUint64, false)
-	require.NoError(t, err)
-	require.NotNil(t, backupSchemas)
->>>>>>> 9339955f0... backup: backup empty databases (#34385)
+	c.Assert(backupSchemas, NotNil)
 
 	// Database is not exist.
 	fooFilter, err := filter.Parse([]string{"foo.t1"})
@@ -125,19 +117,11 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
 	// Empty database.
 	// Filter out system tables manually.
 	noFilter, err := filter.Parse([]string{"*.*", "!mysql.*"})
-<<<<<<< HEAD
 	c.Assert(err, IsNil)
 	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(
 		s.mock.Storage, noFilter, math.MaxUint64)
 	c.Assert(err, IsNil)
-	c.Assert(backupSchemas, IsNil)
-=======
-	require.NoError(t, err)
-	_, backupSchemas, _, err = backup.BuildBackupRangeAndSchema(
-		m.Storage, noFilter, math.MaxUint64, false)
-	require.NoError(t, err)
-	require.NotNil(t, backupSchemas)
->>>>>>> 9339955f0... backup: backup empty databases (#34385)
+	c.Assert(backupSchemas, NotNil)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
