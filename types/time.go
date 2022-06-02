@@ -17,8 +17,6 @@ package types
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/util/dbterror"
 	"math"
 	"regexp"
 	"strconv"
@@ -27,9 +25,11 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"

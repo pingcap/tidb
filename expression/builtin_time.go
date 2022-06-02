@@ -3553,7 +3553,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resultEvalTp, argTps...)
 	bf.tp.SetType(resultTp)
 
-	resultFsp := types.MinFsp
+	var resultFsp int
 	if types.IsMicrosecondUnit(unit) {
 		resultFsp = types.MaxFsp
 	} else {
