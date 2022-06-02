@@ -7324,11 +7324,11 @@ func TestIssue31799(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	result := tk.MustQuery("select date_add(cast('2001-02-03' as date), interval '1000000' day_microsecond)").Rows()
-	require.Equal(t, [][]interface{}{{"2001-02-03 00:00:01.000000"}}, result)
+	// result := tk.MustQuery("select date_add(cast('2001-02-03' as date), interval '1000000' day_microsecond)").Rows()
+	// require.Equal(t, [][]interface{}{{"2001-02-03 00:00:01.000000"}}, result)
 
-	result = tk.MustQuery("select date_add(20010203, interval '1000000' day_microsecond)").Rows()
-	require.Equal(t, [][]interface{}{{"2001-02-03 00:00:01.000000"}}, result)
+	// result = tk.MustQuery("select date_add(20010203, interval '1000000' day_microsecond)").Rows()
+	// require.Equal(t, [][]interface{}{{"2001-02-03 00:00:01.000000"}}, result)
 
 	//// TODO: Wrong.
 	//result := tk.MustQuery("select date_add(cast('2001-01-01 00:00:00' as datetime), interval 1 second)").Rows()
@@ -7343,11 +7343,15 @@ func TestIssue31799(t *testing.T) {
 	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.100000"}}, result)
 	//
 	tk.MustExec("use test")
-	tk.MustExec("create table t(c varchar(32))")
-	tk.MustExec("insert into t values(date_add(cast('00:00:00' as time), interval 1.1 second))")
-	result = tk.MustQuery("select * from t").Rows()
-	//result := tk.MustQuery("select date_add(cast('00:00:00' as time), interval 1.1 second)").Rows()
-	require.Equal(t, [][]interface{}{{"00:00:01.1"}}, result)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(i int, c varchar(32))")
+	tk.MustExec("insert into t values(1, date_add(cast('2001-01-01 00:00:00' as datetime), interval 1 second))")
+	tk.MustExec("insert into t values(2, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1 second))")
+	tk.MustExec("insert into t values(3, date_add(cast('2001-01-01 00:00:00' as datetime), interval 1.1 second))")
+	tk.MustExec("insert into t values(4, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1.1 second))")
+	tk.MustExec("insert into t values(5, date_add(cast('00:00:00' as time), interval 1.1 second))")
+	result := tk.MustQuery("select c from t order by i").Rows()
+	require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01"}, {"2001-01-01 00:00:01.000000"}, {"2001-01-01 00:00:01.1"}, {"2001-01-01 00:00:01.100000"}, {"00:00:01.1"}}, result)
 	tk.MustExec("drop table t")
 	//
 	//// Legacy issue 7334.

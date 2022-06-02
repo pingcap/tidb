@@ -2829,7 +2829,7 @@ func (du *baseDateArithmetical) getDateFromDatetime(ctx sessionctx.Context, args
 		return types.ZeroTime, true, err
 	}
 
-	if types.IsClockUnit(unit) {
+	if types.IsClockUnit(unit) || date.Type() == mysql.TypeTimestamp {
 		date.SetType(mysql.TypeDatetime)
 	}
 	return date, false, nil
@@ -3188,7 +3188,7 @@ func (du *baseDateArithmetical) vecGetDateFromDatetime(b *baseBuiltinFunc, input
 			continue
 		}
 
-		if isClockUnit {
+		if isClockUnit || dates[i].Type() == mysql.TypeTimestamp {
 			dates[i].SetType(mysql.TypeDatetime)
 		}
 	}
