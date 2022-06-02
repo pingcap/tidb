@@ -80,11 +80,11 @@ func (b *writerPipe) Run(tctx *tcontext.Context) {
 			if errOccurs {
 				continue
 			}
-			ObserveHistogram(b.metrics.receiveWriteChunkTimeHistogram, b.labels, time.Since(receiveChunkTime).Seconds())
+			ObserveHistogram(b.metrics.receiveWriteChunkTimeHistogram, time.Since(receiveChunkTime).Seconds())
 			receiveChunkTime = time.Now()
 			err := writeBytes(tctx, b.w, s.Bytes())
-			ObserveHistogram(b.metrics.writeTimeHistogram, b.labels, time.Since(receiveChunkTime).Seconds())
-			AddGauge(b.metrics.finishedSizeGauge, b.labels, float64(s.Len()))
+			ObserveHistogram(b.metrics.writeTimeHistogram, time.Since(receiveChunkTime).Seconds())
+			AddGauge(b.metrics.finishedSizeGauge, float64(s.Len()))
 			b.finishedFileSize += uint64(s.Len())
 			s.Reset()
 			pool.Put(s)
@@ -198,8 +198,8 @@ func WriteInsert(
 				zap.Uint64("finished rows", lastCounter),
 				zap.Uint64("finished size", wp.finishedFileSize),
 				log.ShortError(err))
-			SubGauge(metrics.finishedRowsGauge, cfg.Labels, float64(lastCounter))
-			SubGauge(metrics.finishedSizeGauge, cfg.Labels, float64(wp.finishedFileSize))
+			SubGauge(metrics.finishedRowsGauge, float64(lastCounter))
+			SubGauge(metrics.finishedSizeGauge, float64(wp.finishedFileSize))
 		} else {
 			pCtx.L().Debug("finish dumping table(chunk)",
 				zap.String("database", meta.DatabaseName()),
@@ -262,7 +262,7 @@ func WriteInsert(
 					if bfCap := bf.Cap(); bfCap < lengthLimit {
 						bf.Grow(lengthLimit - bfCap)
 					}
-					AddGauge(metrics.finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
+					AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 					lastCounter = counter
 				}
 			}
@@ -280,7 +280,7 @@ func WriteInsert(
 	}
 	close(wp.input)
 	<-wp.closed
-	AddGauge(metrics.finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
+	AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 	lastCounter = counter
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
@@ -343,8 +343,8 @@ func WriteInsertInCsv(
 				zap.Uint64("finished rows", lastCounter),
 				zap.Uint64("finished size", wp.finishedFileSize),
 				log.ShortError(err))
-			SubGauge(metrics.finishedRowsGauge, cfg.Labels, float64(lastCounter))
-			SubGauge(metrics.finishedSizeGauge, cfg.Labels, float64(wp.finishedFileSize))
+			SubGauge(metrics.finishedRowsGauge, float64(lastCounter))
+			SubGauge(metrics.finishedSizeGauge, float64(wp.finishedFileSize))
 		} else {
 			pCtx.L().Debug("finish dumping table(chunk)",
 				zap.String("database", meta.DatabaseName()),
@@ -394,7 +394,7 @@ func WriteInsertInCsv(
 				if bfCap := bf.Cap(); bfCap < lengthLimit {
 					bf.Grow(lengthLimit - bfCap)
 				}
-				AddGauge(metrics.finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
+				AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 				lastCounter = counter
 			}
 		}
@@ -410,7 +410,7 @@ func WriteInsertInCsv(
 	}
 	close(wp.input)
 	<-wp.closed
-	AddGauge(metrics.finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
+	AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 	lastCounter = counter
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
