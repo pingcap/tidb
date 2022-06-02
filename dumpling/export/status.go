@@ -51,13 +51,12 @@ type Midparams struct {
 }
 
 func (d *Dumper) GetParameters() (midparams *Midparams) {
-	conf := d.conf
 	mid := &Midparams{}
 	mid.TotalTables = atomic.LoadInt64(&d.totalTables)
-	mid.CompletedTables = ReadCounter(d.metrics.finishedTablesCounter, conf.Labels)
-	mid.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge, conf.Labels)
-	mid.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge, conf.Labels)
-	mid.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter, conf.Labels)
+	mid.CompletedTables = ReadCounter(d.metrics.finishedTablesCounter)
+	mid.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge)
+	mid.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge)
+	mid.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
 	return mid
 }
 
