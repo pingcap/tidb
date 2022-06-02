@@ -46,11 +46,11 @@ func TestPlanStringer(t *testing.T) {
 		},
 		{
 			sql:  "show columns from t where field = 'a'",
-			plan: "Show()->Sel([eq(Column#13, a)])->Projection",
+			plan: "Show->Sel([eq(Column#13, a)])->Projection",
 		},
 		{
 			sql:  "desc t",
-			plan: "Show()",
+			plan: "Show",
 		},
 		{
 			sql:  "desc t a",

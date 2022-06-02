@@ -2937,8 +2937,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
 			return nil, ErrNoDB
 		}
-		p.Extractor = newShowBaseExtractor(*show)
-		p.Extractor.Extract()
+		if extractor := newShowBaseExtractor(*show); extractor.Extract() {
+			p.Extractor = extractor
+		}
 	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
 		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
