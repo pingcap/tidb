@@ -18,6 +18,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/tidb/sessiontxn/staleread"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -199,7 +201,7 @@ func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) err
 }
 
 func (p *SimpleTxnContextProvider) prepareTSFuture() error {
-	if p.Sctx.GetSessionVars().SnapshotTS != 0 || p.Sctx.GetPreparedTSFuture() != nil {
+	if p.Sctx.GetSessionVars().SnapshotTS != 0 || staleread.IsStmtStaleness(p.Sctx) || p.Sctx.GetPreparedTSFuture() != nil {
 		return nil
 	}
 
