@@ -140,23 +140,24 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil), nil
 	}
 
-	if txnMode == "" || txnMode == ast.Optimistic {
+	switch txnMode {
+	case "", ast.Optimistic:
+		// Should be optimistic txn when the txnMode is 'OPTIMISTIC' or empty
 		return isolation.NewOptimisticTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
-	}
-
-	if txnMode != ast.Pessimistic {
+	case ast.Pessimistic:
+		// When txnMode is 'PESSIMISTIC', the provider should be determined by the isolation level
+		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
+		case ast.ReadCommitted:
+			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
+		default:
+			return &legacy.SimpleTxnContextProvider{
+				Sctx:                  m.sctx,
+				Pessimistic:           txnMode == ast.Pessimistic,
+				CausalConsistencyOnly: r.CausalConsistencyOnly,
+				UpdateForUpdateTS:     executor.UpdateForUpdateTS,
+			}, nil
+		}
+	default:
 		return nil, errors.Errorf("Invalid txn mode '%s'", txnMode)
 	}
-
-	switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
-	case ast.ReadCommitted:
-		return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
-	}
-
-	return &legacy.SimpleTxnContextProvider{
-		Sctx:                  m.sctx,
-		Pessimistic:           txnMode == ast.Pessimistic,
-		CausalConsistencyOnly: r.CausalConsistencyOnly,
-		UpdateForUpdateTS:     executor.UpdateForUpdateTS,
-	}, nil
 }
