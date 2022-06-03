@@ -154,7 +154,7 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 
 	switch txnMode {
 	case "", ast.Optimistic:
-		// When txnMode is 'OPTIMISTIC' or empty, the transaction should be optimistic
+		// When txnMode is 'OPTIMISTIC' or '', the transaction should be optimistic
 		return isolation.NewOptimisticTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
 	case ast.Pessimistic:
 		// When txnMode is 'PESSIMISTIC', the provider should be determined by the isolation level
