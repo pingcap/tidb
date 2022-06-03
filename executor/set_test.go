@@ -232,6 +232,15 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec(`set @@global.tidb_force_priority = "abc"`)
 	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
 
+	tk.MustExec(`set @@session.tidb_ddl_reorg_priority = "priority_low"`)
+	tk.MustQuery(`select @@session.tidb_ddl_reorg_priority;`).Check(testkit.Rows("PRIORITY_LOW"))
+	tk.MustExec(`set @@session.tidb_ddl_reorg_priority = "priority_normal"`)
+	tk.MustQuery(`select @@session.tidb_ddl_reorg_priority;`).Check(testkit.Rows("PRIORITY_NORMAL"))
+	tk.MustExec(`set @@session.tidb_ddl_reorg_priority = "priority_high"`)
+	tk.MustQuery(`select @@session.tidb_ddl_reorg_priority;`).Check(testkit.Rows("PRIORITY_HIGH"))
+	require.Error(t, tk.ExecToErr("set session tidb_ddl_reorg_priority = 'abc'"))
+	tk.MustQuery(`select @@session.tidb_ddl_reorg_priority;`).Check(testkit.Rows("PRIORITY_HIGH"))
+
 	tk.MustExec("set tidb_constraint_check_in_place = 1")
 	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_constraint_check_in_place = 0")
