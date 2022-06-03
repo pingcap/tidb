@@ -138,6 +138,8 @@ type TxnManager interface {
 
 	// EnterNewTxn enters a new transaction.
 	EnterNewTxn(ctx context.Context, req *EnterNewTxnRequest) error
+	// OnTxnEnd is the hook that should be called after transaction commit or rollback
+	OnTxnEnd()
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error

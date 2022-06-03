@@ -5090,9 +5090,6 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 	}
 	s := parser.New()
 	for sqlStr, result := range tests {
-		require.NoError(t, sessiontxn.GetTxnManager(ctx).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-			Type: sessiontxn.EnterNewTxnBeforeStmt,
-		}))
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}

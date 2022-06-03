@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
@@ -261,9 +260,6 @@ func TestTableRange(t *testing.T) {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session().(sessionctx.Context)
-			require.NoError(t, sessiontxn.GetTxnManager(sctx).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-				Type: sessiontxn.EnterNewTxnBeforeStmt,
-			}))
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -454,9 +450,6 @@ create table t(
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session().(sessionctx.Context)
-			require.NoError(t, sessiontxn.GetTxnManager(sctx).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-				Type: sessiontxn.EnterNewTxnBeforeStmt,
-			}))
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -819,9 +812,6 @@ func TestColumnRange(t *testing.T) {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session().(sessionctx.Context)
-			require.NoError(t, sessiontxn.GetTxnManager(sctx).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-				Type: sessiontxn.EnterNewTxnBeforeStmt,
-			}))
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1694,9 +1684,6 @@ create table t(
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session().(sessionctx.Context)
-			require.NoError(t, sessiontxn.GetTxnManager(sctx).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-				Type: sessiontxn.EnterNewTxnBeforeStmt,
-			}))
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1939,9 +1926,6 @@ func TestTableShardIndex(t *testing.T) {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from " + tt.tableName + " where " + tt.exprStr
 			sctx := testKit.Session().(sessionctx.Context)
-			require.NoError(t, sessiontxn.GetTxnManager(sctx).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-				Type: sessiontxn.EnterNewTxnBeforeStmt,
-			}))
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1970,9 +1954,6 @@ func TestTableShardIndex(t *testing.T) {
 	t.Run("", func(t *testing.T) {
 		sql := "update test6 set c = 1000 where a=50 and b = 50"
 		sctx := testKit.Session().(sessionctx.Context)
-		require.NoError(t, sessiontxn.GetTxnManager(sctx).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-			Type: sessiontxn.EnterNewTxnBeforeStmt,
-		}))
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)

@@ -54,10 +54,15 @@ func newTxnManager(sctx sessionctx.Context) *txnManager {
 }
 
 func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
-	if m.ctxProvider == nil {
-		return nil
+	if m.ctxProvider != nil {
+		return m.ctxProvider.GetTxnInfoSchema()
 	}
-	return m.ctxProvider.GetTxnInfoSchema()
+
+	if is := m.sctx.GetDomainInfoSchema(); is != nil {
+		return is.(infoschema.InfoSchema)
+	}
+
+	return nil
 }
 
 func (m *txnManager) GetStmtReadTS() (uint64, error) {
@@ -93,6 +98,10 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 		m.sctx.GetSessionVars().SetInTxn(true)
 	}
 	return nil
+}
+
+func (m *txnManager) OnTxnEnd() {
+	m.ctxProvider = nil
 }
 
 // OnStmtStart is the hook that should be called when a new statement started

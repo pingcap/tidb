@@ -15,7 +15,6 @@
 package core_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -418,9 +416,6 @@ func TestPreprocessCTE(t *testing.T) {
 		},
 	}
 	for _, tc := range testCases {
-		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-			Type: sessiontxn.EnterNewTxnBeforeStmt,
-		}))
 		stmts, warnings, err := parser.New().ParseSQL(tc.before)
 		require.Len(t, warnings, 0)
 		require.NoError(t, err)

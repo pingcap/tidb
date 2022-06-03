@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
@@ -532,9 +531,6 @@ func TestSelectivity(t *testing.T) {
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprs
 		sctx := testKit.Session().(sessionctx.Context)
-		require.NoError(t, sessiontxn.GetTxnManager(sctx).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-			Type: sessiontxn.EnterNewTxnBeforeStmt,
-		}))
 		stmts, err := session.Parse(sctx, sql)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Len(t, stmts, 1)
