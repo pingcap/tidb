@@ -346,20 +346,14 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	tk.MustExec("rollback")
 	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
 	tk.MustExec("set @@autocommit=0")
+	tk.MustExec("set @@tidb_snapshot=@a")
 	assert = inactiveRCTxnAssert(se)
-	assertAfterActive := activeRCTxnAssert(t, se, true)
+	assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "READ-COMMITTED")
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	tk.MustExec("set @@tidb_snapshot=@a")
 	checkUseSnapshot()
-	txn, err = se.Txn(false)
-	require.NoError(t, err)
-	require.False(t, txn.Valid())
-	tk.MustExec("set @@tidb_snapshot=''")
-	checkUseTxn(true)
-	assertAfterActive.Check(t)
-	tk.MustExec("rollback")
+	assertAfterUseSnapshot.Check(t)
 }
 
 func activeRCTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {

@@ -348,20 +348,14 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
 	tk.MustExec("rollback")
 	tk.MustExec("set @@autocommit=0")
+	tk.MustExec("set @@tidb_snapshot=@a")
 	assert = inactiveOptimisticTxnAssert(se)
-	assertAfterActive := activeOptimisticTxnAssert(t, se, true)
+	assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "")
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	tk.MustExec("set @@tidb_snapshot=@a")
 	checkUseSnapshot()
-	txn, err = se.Txn(false)
-	require.NoError(t, err)
-	require.False(t, txn.Valid())
-	tk.MustExec("set @@tidb_snapshot=''")
-	checkUseTxn()
-	assertAfterActive.Check(t)
-	tk.MustExec("rollback")
+	assertAfterUseSnapshot.Check(t)
 }
 
 func activeOptimisticTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.OptimisticTxnContextProvider] {

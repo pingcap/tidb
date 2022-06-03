@@ -114,15 +114,15 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
-	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return snapshotTS, nil
+	if snapshotTS, err := p.getTidbSnapshotVarTS(); snapshotTS != 0 || err != nil {
+		return snapshotTS, err
 	}
 	return p.getStmtReadTSFunc()
 }
 
 func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
-	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return snapshotTS, nil
+	if snapshotTS, err := p.getTidbSnapshotVarTS(); snapshotTS != 0 || err != nil {
+		return snapshotTS, err
 	}
 	return p.getStmtForUpdateTSFunc()
 }
@@ -222,6 +222,34 @@ func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error 
 
 	p.isTxnPrepared = true
 	return nil
+}
+
+func (p *baseTxnContextProvider) getTidbSnapshotVarTS() (uint64, error) {
+	snapshotTS := p.sctx.GetSessionVars().SnapshotTS
+	if snapshotTS == 0 || p.txn != nil {
+		return snapshotTS, nil
+	}
+
+	// The below code will return when:
+	// 1. set @@tidb_snapshot=xxx
+	// 2. EnterNewTxnBeforeStmt
+	// `EnterNewTxnBeforeStmt` also means the statement is not in an explicit transaction.
+	// Why we should make the txn active when `tidb_snapshot` is set is because some features like cached table
+	// need the txn's memBuf to do UnionScan even if the memBuf will always be empty at this time.
+	if err := p.prepareTxnWithTS(snapshotTS); err != nil {
+		return 0, err
+	}
+
+	txn, err := p.activeTxn()
+	if err != nil {
+		return 0, err
+	}
+
+	// We should still keep the `TxnCtx.IsExplicit` false here when 'autocommit=0'.
+	p.sctx.GetSessionVars().SetInTxn(false)
+	p.sctx.GetSessionVars().TxnCtx.IsExplicit = false
+	p.txn = txn
+	return snapshotTS, nil
 }
 
 func (p *baseTxnContextProvider) stmtMayNotUseProviderTS() bool {

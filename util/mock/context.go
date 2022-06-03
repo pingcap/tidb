@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (
@@ -262,21 +261,6 @@ func (c *Context) CommitTxn(ctx context.Context) error {
 	defer c.sessionVars.SetInTxn(false)
 	if c.txn.Valid() {
 		return c.txn.Commit(ctx)
-	}
-	return nil
-}
-
-// InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
-func (c *Context) InitTxnWithStartTS(startTS uint64) error {
-	if c.txn.Valid() {
-		return nil
-	}
-	if c.Store != nil {
-		txn, err := c.Store.Begin(tikv.WithTxnScope(kv.GlobalTxnScope), tikv.WithStartTS(startTS))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		c.txn.Transaction = txn
 	}
 	return nil
 }
