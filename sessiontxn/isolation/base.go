@@ -244,7 +244,8 @@ func (p *baseTxnContextProvider) isTidbSnapshotEnabled() bool {
 }
 
 // isBeginStmtWithStaleRead indicate whether the current statement is `BeginStmt` with stale read
-// Although stale read will use `staleread.StalenessTxnContextProvider`, the `BeginStmt` occur in other providers.
+// Because stale read will use `staleread.StalenessTxnContextProvider` for query, so if `staleread.IsStmtStaleness()`
+// returns true in other providers, it means the current statement is `BeginStmt` with stale read
 func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
 	return staleread.IsStmtStaleness(p.sctx)
 }
