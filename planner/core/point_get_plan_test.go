@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -340,6 +341,9 @@ func TestPointGetId(t *testing.T) {
 	pointGetQuery := "select c2 from t where c1 = 1"
 	for i := 0; i < 2; i++ {
 		ctx := tk.Session().(sessionctx.Context)
+		require.NoError(t, sessiontxn.GetTxnManager(ctx).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+			Type: sessiontxn.EnterNewTxnBeforeStmt,
+		}))
 		stmts, err := session.Parse(ctx, pointGetQuery)
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
