@@ -124,9 +124,6 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
-
-	v.initTxnContextProviderIfNecessary(node)
-
 	return errors.Trace(v.err)
 }
 
@@ -1689,20 +1686,21 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 		return p.InfoSchema
 	}
 
-	p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
-	return p.InfoSchema
-}
-
-func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
-	if p.err != nil || p.flag&initTxnContextProvider == 0 {
-		return
-	}
-
-	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
+	txnManager := sessiontxn.GetTxnManager(p.ctx)
+	if provider, ok := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
 		// When the current provider is `legacy.SimpleTxnContextProvider` it should to keep the logic equals to the old implement.
+		// In old implement we should reset the information schema here because `legacy.SimpleTxnContextProvider` cannot handle the `tidb_snapshot` in itself.
 		// After refactoring, the `legacy.SimpleTxnContextProvider` will be removed, and this code will be removed too.
-		provider.InfoSchema = p.ensureInfoSchema()
+		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+		if p.flag&initTxnContextProvider != 0 {
+			provider.InfoSchema = p.ensureInfoSchema()
+		}
+	} else {
+		// When the current provider is not `legacy.SimpleTxnContextProvider`. It means the current provider is the refactored one.
+		// It can handle the `tidb_snapshot` in itself. So just use `txnManager.GetTxnInfoSchema()` as the information schema.
+		p.InfoSchema = txnManager.GetTxnInfoSchema()
 	}
+	return p.InfoSchema
 }
 
 func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
