@@ -231,7 +231,7 @@ func (p *baseTxnContextProvider) getTidbSnapshotVarTS() (uint64, error) {
 		return snapshotTS, nil
 	}
 
-	// The below code will return when:
+	// The below code will run when:
 	// 1. set @@tidb_snapshot=xxx
 	// 2. EnterNewTxnBeforeStmt
 	// `EnterNewTxnBeforeStmt` also means the statement is not in an explicit transaction.
