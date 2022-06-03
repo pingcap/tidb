@@ -3415,6 +3415,11 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 }
 
+func (s *session) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+	is := domain.GetDomain(s).InfoSchema()
+	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
+}
+
 func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
 	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {

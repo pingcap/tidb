@@ -19,14 +19,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
-	"github.com/pingcap/tidb/table/temptable"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -80,7 +78,12 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 
 	p.ctx = ctx
-	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, domain.GetDomain(p.sctx).InfoSchema())
+	if is, ok := p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema); ok {
+		// For normal `sessionctx.Context` the `GetDomainInfoSchema` should always return a non-nil value with type `infoschema.InfoSchema`
+		// However for some test cases we are using `mock.Context` which will return nil for this method,
+		// So this code is only for compatible with test cases
+		p.infoSchema = is
+	}
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
