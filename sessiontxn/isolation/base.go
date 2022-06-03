@@ -63,7 +63,9 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	activeNow := true
 	switch tp {
 	case sessiontxn.EnterNewTxnDefault:
-		err = p.sctx.NewTxn(ctx)
+		if err = p.sctx.NewTxn(ctx); err != nil {
+			return err
+		}
 	case sessiontxn.EnterNewTxnWithBeginStmt:
 		if !sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx) {
 			if err = p.sctx.NewTxn(ctx); err != nil {
@@ -115,15 +117,23 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
-	if snapshotTS, err := p.getTidbSnapshotVarTS(); snapshotTS != 0 || err != nil {
-		return snapshotTS, err
+	if _, err := p.activeTxn(); err != nil {
+		return 0, err
+	}
+
+	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		return snapshotTS, nil
 	}
 	return p.getStmtReadTSFunc()
 }
 
 func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
-	if snapshotTS, err := p.getTidbSnapshotVarTS(); snapshotTS != 0 || err != nil {
-		return snapshotTS, err
+	if _, err := p.activeTxn(); err != nil {
+		return 0, err
+	}
+
+	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		return snapshotTS, nil
 	}
 	return p.getStmtForUpdateTSFunc()
 }
@@ -198,6 +208,10 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 		return nil
 	}
 
+	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		return p.prepareTxnWithTS(snapshotTS)
+	}
+
 	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
 	return p.replaceTxnTsFuture(future)
 }
@@ -225,43 +239,19 @@ func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error 
 	return nil
 }
 
-func (p *baseTxnContextProvider) getTidbSnapshotVarTS() (uint64, error) {
-	snapshotTS := p.sctx.GetSessionVars().SnapshotTS
-	if snapshotTS == 0 || p.txn != nil {
-		return snapshotTS, nil
-	}
-
-	// The below code will run when:
-	// 1. set @@tidb_snapshot=xxx
-	// 2. EnterNewTxnBeforeStmt
-	// `EnterNewTxnBeforeStmt` also means the statement is not in an explicit transaction.
-	// Why we should make the txn active when `tidb_snapshot` is set is because some features like cached table
-	// need the txn's memBuf to do UnionScan even if the memBuf will always be empty at this time.
-	if err := p.prepareTxnWithTS(snapshotTS); err != nil {
-		return 0, err
-	}
-
-	txn, err := p.activeTxn()
-	if err != nil {
-		return 0, err
-	}
-
-	// We should still keep the `TxnCtx.IsExplicit` false here when 'autocommit=0'.
-	p.sctx.GetSessionVars().SetInTxn(false)
-	p.sctx.GetSessionVars().TxnCtx.IsExplicit = false
-	p.txn = txn
-	return snapshotTS, nil
+func (p *baseTxnContextProvider) isTidbSnapshotEnabled() bool {
+	return p.sctx.GetSessionVars().SnapshotTS != 0
 }
 
-func (p *baseTxnContextProvider) stmtMayNotUseProviderTS() bool {
-	// When `SnapshotTS != 0`, the statement will use snapshot ts instead of the provider's ts
-	// When `staleread.IsStmtStaleness()` is true, it means the current statement is executing `START TRANSACTION READ ONLY AS OF ...`
-	//  to start a staleness transaction.
-	return p.sctx.GetSessionVars().SnapshotTS != 0 || staleread.IsStmtStaleness(p.sctx)
+// isBeginStmtWithStaleRead indicate whether the current statement is `BeginStmt` with stale read
+// Although stale read will use `staleread.StalenessTxnContextProvider`, the `BeginStmt` occur in other providers.
+func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
+	return staleread.IsStmtStaleness(p.sctx)
 }
 
 func (p *baseTxnContextProvider) warmUp() error {
-	if p.stmtMayNotUseProviderTS() {
+	if p.isBeginStmtWithStaleRead() {
+		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
 	return p.prepareTxn()

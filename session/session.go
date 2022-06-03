@@ -2473,7 +2473,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.sessionVars.TxnCtx.IsPessimistic {
 			s.txn.SetOption(kv.Pessimistic, true)
 		}
-		if !s.sessionVars.IsAutocommit() {
+		if !s.sessionVars.IsAutocommit() && s.sessionVars.SnapshotTS == 0 {
 			s.sessionVars.SetInTxn(true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
@@ -2510,9 +2510,9 @@ func (s *session) isTxnRetryable() bool {
 	}
 
 	// If the session is not InTxn, it is an auto-committed transaction.
-	// The auto-committed transaction could always retry.
+	// The auto-committed transaction could always retry when @@tidb_snapshot is not set.
 	if !sessVars.InTxn() {
-		return true
+		return sessVars.SnapshotTS == 0
 	}
 
 	// The internal transaction could always retry.

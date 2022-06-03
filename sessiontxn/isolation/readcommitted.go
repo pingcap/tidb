@@ -118,13 +118,16 @@ func (p *PessimisticRCTxnContextProvider) Advise(tp sessiontxn.AdviceType, val [
 }
 
 func (p *PessimisticRCTxnContextProvider) warmUp() error {
-	if p.stmtMayNotUseProviderTS() {
+	if err := p.baseTxnContextProvider.warmUp(); err != nil {
+		return err
+	}
+
+	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+		// When @@tidb_snapshot_ts is set or the current stmt is `BeginStmt` with stale read
+		// stmtTS will never be used so no need to continue to prepare it
 		return nil
 	}
 
-	if err := p.prepareTxn(); err != nil {
-		return err
-	}
 	p.prepareStmtTS()
 	return nil
 }
