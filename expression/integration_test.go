@@ -7342,6 +7342,8 @@ func TestIssue31799(t *testing.T) {
 	//result = tk.MustQuery("select date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1.1 second)").Rows()
 	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.100000"}}, result)
 	//
+
+	// Cases from the issue.
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(i int, c varchar(32))")
@@ -7350,21 +7352,8 @@ func TestIssue31799(t *testing.T) {
 	tk.MustExec("insert into t values(3, date_add(cast('2001-01-01 00:00:00' as datetime), interval 1.1 second))")
 	tk.MustExec("insert into t values(4, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1.1 second))")
 	tk.MustExec("insert into t values(5, date_add(cast('00:00:00' as time), interval 1.1 second))")
-	result := tk.MustQuery("select c from t order by i").Rows()
-	require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01"}, {"2001-01-01 00:00:01.000000"}, {"2001-01-01 00:00:01.1"}, {"2001-01-01 00:00:01.100000"}, {"00:00:01.1"}}, result)
+	tk.MustQuery("select c from t order by i").Check([][]interface{}{{"2001-01-01 00:00:01"}, {"2001-01-01 00:00:01.000000"}, {"2001-01-01 00:00:01.1"}, {"2001-01-01 00:00:01.100000"}, {"00:00:01.1"}})
 	tk.MustExec("drop table t")
-	//
-	//// Legacy issue 7334.
-	//result = tk.MustQuery("select now() - interval 1 microsecond").Rows()
-	//require.Len(t, result[0][0], 26)
-
-	//// Temp for regression.
-	//result := tk.MustQuery("select adddate('2011-11-11 10:10:10', interval 1000 MICROSECOND)").Rows()
-	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.100000"}}, result)
-	//
-	//// Temp for regression.
-	//result = tk.MustQuery("SELECT 19000101000000 + INTERVAL '100000000:214748364700' MINUTE_SECOND").Rows()
-	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.100000"}}, result)
 }
 
 func TestImcompleteDateFunc(t *testing.T) {
