@@ -1359,7 +1359,7 @@ func TestParallelAlterAndDropSchema(t *testing.T) {
 func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain) (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if times != 0 {
 			return
 		}
