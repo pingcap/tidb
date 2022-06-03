@@ -1693,7 +1693,7 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 		// After refactoring, the `legacy.SimpleTxnContextProvider` will be removed, and this code will be removed too.
 		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 		if p.flag&initTxnContextProvider != 0 {
-			provider.InfoSchema = p.ensureInfoSchema()
+			provider.InfoSchema = p.InfoSchema
 		}
 	} else {
 		// When the current provider is not `legacy.SimpleTxnContextProvider`. It means the current provider is the refactored one.
