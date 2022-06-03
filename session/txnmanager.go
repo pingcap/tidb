@@ -89,11 +89,12 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 		return err
 	}
 
-	m.ctxProvider = ctxProvider
-	if err = m.ctxProvider.OnInitialize(ctx, r.Type); err != nil {
+	if err = ctxProvider.OnInitialize(ctx, r.Type); err != nil {
+		m.sctx.RollbackTxn(ctx)
 		return err
 	}
 
+	m.ctxProvider = ctxProvider
 	if r.Type == sessiontxn.EnterNewTxnWithBeginStmt {
 		m.sctx.GetSessionVars().SetInTxn(true)
 	}

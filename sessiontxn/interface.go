@@ -128,6 +128,8 @@ type TxnContextProvider interface {
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
 	// GetTxnInfoSchema returns the information schema used by txn
+	// If the session is not in any transaction, for example: between two autocommit statements,
+	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 	GetStmtReadTS() (uint64, error)
