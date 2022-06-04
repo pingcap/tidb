@@ -289,6 +289,20 @@ func TestSetVar(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set tidb_opt_write_row_id = 'abc'"))
 	tk.MustQuery(`select @@session.tidb_opt_write_row_id;`).Check(testkit.Rows("0"))
 
+	tk.MustExec("set tidb_checksum_table_concurrency = 42")
+	tk.MustQuery(`select @@tidb_checksum_table_concurrency;`).Check(testkit.Rows("42"))
+	require.Error(t, tk.ExecToErr("set tidb_checksum_table_concurrency = 'abc'"))
+	tk.MustQuery(`select @@tidb_checksum_table_concurrency;`).Check(testkit.Rows("42"))
+	tk.MustExec("set tidb_checksum_table_concurrency = 257")
+	tk.MustQuery(`select @@tidb_checksum_table_concurrency;`).Check(testkit.Rows(strconv.Itoa(variable.MaxConfigurableConcurrency)))
+
+	tk.MustExec("set tidb_build_stats_concurrency = 42")
+	tk.MustQuery(`select @@tidb_build_stats_concurrency;`).Check(testkit.Rows("42"))
+	require.Error(t, tk.ExecToErr("set tidb_build_stats_concurrency = 'abc'"))
+	tk.MustQuery(`select @@tidb_build_stats_concurrency;`).Check(testkit.Rows("42"))
+	tk.MustExec("set tidb_build_stats_concurrency = 257")
+	tk.MustQuery(`select @@tidb_build_stats_concurrency;`).Check(testkit.Rows(strconv.Itoa(variable.MaxConfigurableConcurrency)))
+
 	tk.MustExec("set tidb_constraint_check_in_place = 1")
 	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_constraint_check_in_place = 0")
