@@ -303,6 +303,17 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set tidb_build_stats_concurrency = 257")
 	tk.MustQuery(`select @@tidb_build_stats_concurrency;`).Check(testkit.Rows(strconv.Itoa(variable.MaxConfigurableConcurrency)))
 
+	tk.MustExec(`set tidb_partition_prune_mode = "static"`)
+	tk.MustQuery(`select @@tidb_partition_prune_mode;`).Check(testkit.Rows("static"))
+	tk.MustExec(`set tidb_partition_prune_mode = "dynamic"`)
+	tk.MustQuery(`select @@tidb_partition_prune_mode;`).Check(testkit.Rows("dynamic"))
+	tk.MustExec(`set tidb_partition_prune_mode = "static-only"`)
+	tk.MustQuery(`select @@tidb_partition_prune_mode;`).Check(testkit.Rows("static"))
+	tk.MustExec(`set tidb_partition_prune_mode = "dynamic-only"`)
+	tk.MustQuery(`select @@tidb_partition_prune_mode;`).Check(testkit.Rows("dynamic"))
+	require.Error(t, tk.ExecToErr("set tidb_partition_prune_mode = 'abc'"))
+	tk.MustQuery(`select @@tidb_partition_prune_mode;`).Check(testkit.Rows("dynamic"))
+
 	tk.MustExec("set tidb_constraint_check_in_place = 1")
 	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_constraint_check_in_place = 0")

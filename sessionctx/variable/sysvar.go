@@ -1394,7 +1394,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableClusteredIndex = TiDBOptEnableClustered(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode, Value: DefTiDBPartitionPruneMode, Type: TypeStr, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode, Value: DefTiDBPartitionPruneMode, Type: TypeEnum, PossibleValues: []string{"static", "dynamic", "static-only", "dynamic-only"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		mode := PartitionPruneMode(normalizedValue).Update()
 		if !mode.Valid() {
 			return normalizedValue, ErrWrongTypeForVar.GenWithStackByArgs(TiDBPartitionPruneMode)
