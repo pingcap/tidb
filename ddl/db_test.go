@@ -1483,9 +1483,6 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	r := tk.MustQuery("select @@sql_mode")
-	defaultSQLMode := r.Rows()[0][0].(string)
-
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 
 	tt := []struct {
@@ -1522,7 +1519,7 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 		for _, cs := range charset.CharacterSetInfos {
 			tableName := fmt.Sprintf("t_%s", cs.Name)
 			tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
-			tk.MustExec(fmt.Sprintf("set @@sql_mode='%s'", defaultSQLMode))
+			tk.MustExec("set @@sql_mode=default")
 
 			// test in strict sql mode
 			maxLen := cs.Maxlen
@@ -1587,7 +1584,7 @@ func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
 			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 
 			// The multiple column index in which the length sum exceeds the maximum size
-			// will return an error instead produce a warning.
+			// will return an error instead produce a warning in strict sql mode.
 			indexLen = fmt.Sprintf("(%d)", expectKeyLength)
 			sql = fmt.Sprintf(sqlTemplate, mkTable, col, "", indexLen, ", age", cs.Name)
 			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
