@@ -2726,6 +2726,65 @@ func TestTimeBuiltin(t *testing.T) {
 		result = tk.MustQuery(subDate)
 		result.Check(testkit.Rows(tc.SubResult))
 	}
+
+	// Customized check for the cases of adddate(time, ...) - it returns datetime with current date padded.
+	// 1. Check if the result contains space, that is, it must contain YMD part.
+	// 2. Check if the result's suffix matches expected, that is, the HMS part is an exact match.
+	custCheck := func(actual []string, expected []interface{}) bool {
+		return strings.Contains(actual[0], " ") && strings.HasSuffix(actual[0], expected[0].(string))
+	}
+
+	// for date_add/sub(duration, ...)
+	dateAddSubDurationAnyTests := []struct {
+		Date         string
+		Interval     string
+		Unit         string
+		AddResult    string
+		SubResult    string
+		checkHmsOnly bool // Duration + day returns datetime with current date padded, only check HMS part for them.
+	}{
+		{"cast('01:02:03' as time)", "'1000'", "MICROSECOND", "01:02:03.001000", "01:02:02.999000", false},
+		{"cast('01:02:03' as time)", "1000", "MICROSECOND", "01:02:03.001000", "01:02:02.999000", false},
+		{"cast('01:02:03' as time)", "'1'", "SECOND", "01:02:04.000000", "01:02:02.000000", false},
+		{"cast('01:02:03' as time)", "1", "SECOND", "01:02:04", "01:02:02", false},
+		{"cast('01:02:03' as time)", "'1.1'", "SECOND", "01:02:04.100000", "01:02:01.900000", false},
+		{"cast('01:02:03' as time)", "1.1", "SECOND", "01:02:04.1", "01:02:01.9", false},
+		{"cast('01:02:03' as time(3))", "1.1", "SECOND", "01:02:04.100", "01:02:01.900", false},
+		{"cast('01:02:03' as time)", "cast(1.1 as decimal(10, 3))", "SECOND", "01:02:04.100", "01:02:01.900", false},
+		{"cast('01:02:03' as time)", "cast('1.5' as double)", "SECOND", "01:02:04.500000", "01:02:01.500000", false},
+		{"cast('01:02:03' as time)", "1", "DAY_MICROSECOND", "01:02:03.100000", "01:02:02.900000", false},
+		{"cast('01:02:03' as time)", "1.1", "DAY_MICROSECOND", "01:02:04.100000", "01:02:01.900000", false},
+		{"cast('01:02:03' as time)", "100", "DAY_MICROSECOND", "01:02:03.100000", "01:02:02.900000", false},
+		{"cast('01:02:03' as time)", "1000000", "DAY_MICROSECOND", "01:02:04.000000", "01:02:02.000000", false},
+		{"cast('01:02:03' as time)", "1", "DAY_SECOND", "01:02:04", "01:02:02", true},
+		{"cast('01:02:03' as time)", "1.1", "DAY_SECOND", "01:03:04", "01:01:02", true},
+		{"cast('01:02:03' as time)", "1", "DAY_MINUTE", "01:03:03", "01:01:03", true},
+		{"cast('01:02:03' as time)", "1.1", "DAY_MINUTE", "02:03:03", "00:01:03", true},
+		{"cast('01:02:03' as time)", "1", "DAY_HOUR", "02:02:03", "00:02:03", true},
+		{"cast('01:02:03' as time)", "1.1", "DAY_HOUR", "02:02:03", "00:02:03", true},
+		{"cast('01:02:03' as time)", "1", "DAY", "01:02:03", "01:02:03", true},
+		{"cast('01:02:03' as time)", "1", "WEEK", "01:02:03", "01:02:03", true},
+		{"cast('01:02:03' as time)", "1", "MONTH", "01:02:03", "01:02:03", true},
+		{"cast('01:02:03' as time)", "1", "QUARTER", "01:02:03", "01:02:03", true},
+		{"cast('01:02:03' as time)", "1", "YEAR", "01:02:03", "01:02:03", true},
+		{"cast('01:02:03' as time)", "1", "YEAR_MONTH", "01:02:03", "01:02:03", true},
+	}
+	for _, tc := range dateAddSubDurationAnyTests {
+		addDate := fmt.Sprintf("select date_add(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
+		subDate := fmt.Sprintf("select date_sub(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
+		if tc.checkHmsOnly {
+			result = tk.MustQuery(addDate)
+			result.CustCheck(testkit.Rows(tc.AddResult), custCheck)
+			result = tk.MustQuery(subDate)
+			result.CustCheck(testkit.Rows(tc.SubResult), custCheck)
+		} else {
+			result = tk.MustQuery(addDate)
+			result.Check(testkit.Rows(tc.AddResult))
+			result = tk.MustQuery(subDate)
+			result.Check(testkit.Rows(tc.SubResult))
+		}
+	}
+
 	tk.MustQuery(`select subdate(cast("2000-02-01" as datetime), cast(1 as decimal))`).Check(testkit.Rows("2000-01-31 00:00:00"))
 	tk.MustQuery(`select subdate(cast("2000-02-01" as datetime), cast(null as decimal))`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select subdate(cast(null as datetime), cast(1 as decimal))`).Check(testkit.Rows("<nil>"))
@@ -2747,13 +2806,8 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQuery(`select adddate(cast("2000-02-01" as datetime), cast("xxx" as SIGNED))`).Check(testkit.Rows("2000-02-01 00:00:00"))
 	tk.MustQuery(`select adddate(cast("xxx" as datetime), cast(1 as SIGNED))`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select adddate(20100101, cast(1 as decimal))`).Check(testkit.Rows("2010-01-02"))
-	// Customized check for the following cases: adddate(time, ...) returns datetime with current date padded.
-	// Only check the HMS part of the result.
-	cust := func(actual []string, expected []interface{}) bool {
-		return strings.HasSuffix(actual[0], expected[0].(string))
-	}
-	tk.MustQuery(`select adddate(cast('10:10:10' as time), 1)`).CustCheck(testkit.Rows("10:10:10"), cust)
-	tk.MustQuery(`select adddate(cast('10:10:10' as time), cast(1 as decimal))`).CustCheck(testkit.Rows("10:10:10"), cust)
+	tk.MustQuery(`select adddate(cast('10:10:10' as time), 1)`).CustCheck(testkit.Rows("10:10:10"), custCheck)
+	tk.MustQuery(`select adddate(cast('10:10:10' as time), cast(1 as decimal))`).CustCheck(testkit.Rows("10:10:10"), custCheck)
 
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
