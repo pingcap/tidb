@@ -262,8 +262,8 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("HIGH_PRIORITY"))
 	tk.MustExec(`set @@global.tidb_force_priority = "delayed"`)
 	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
-	tk.MustExec(`set @@global.tidb_force_priority = "abc"`)
-	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
+	require.Error(t, tk.ExecToErr("set global tidb_force_priority = 'abc'"))
+	tk.MustQuery(`select @@global.tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
 
 	tk.MustExec(`set @@session.tidb_ddl_reorg_priority = "priority_low"`)
 	tk.MustQuery(`select @@session.tidb_ddl_reorg_priority;`).Check(testkit.Rows("PRIORITY_LOW"))
