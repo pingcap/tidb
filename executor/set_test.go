@@ -142,6 +142,12 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set session ddl_slow_threshold=\"54321\"")
 	tk.MustQuery("show variables like 'ddl_slow_threshold'").Check(testkit.Rows("ddl_slow_threshold 54321"))
 	require.Equal(t, uint32(54321), variable.DDLSlowOprThreshold)
+	tk.MustExec("set @@global.ddl_slow_threshold=-1")
+	tk.MustQuery("select @@global.ddl_slow_threshold").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBDDLSlowOprThreshold)))
+	require.Equal(t, uint32(variable.DefTiDBDDLSlowOprThreshold), variable.DDLSlowOprThreshold)
+	require.Error(t, tk.ExecToErr("set @@global.ddl_slow_threshold=abc"))
+	tk.MustQuery("select @@global.ddl_slow_threshold").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBDDLSlowOprThreshold)))
+	require.Equal(t, uint32(variable.DefTiDBDDLSlowOprThreshold), variable.DDLSlowOprThreshold)
 
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
