@@ -7323,27 +7323,6 @@ func TestIssue31799(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-
-	// result := tk.MustQuery("select date_add(cast('2001-02-03' as date), interval '1000000' day_microsecond)").Rows()
-	// require.Equal(t, [][]interface{}{{"2001-02-03 00:00:01.000000"}}, result)
-
-	// result = tk.MustQuery("select date_add(20010203, interval '1000000' day_microsecond)").Rows()
-	// require.Equal(t, [][]interface{}{{"2001-02-03 00:00:01.000000"}}, result)
-
-	//// TODO: Wrong.
-	//result := tk.MustQuery("select date_add(cast('2001-01-01 00:00:00' as datetime), interval 1 second)").Rows()
-	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.000000"}}, result)
-	//result = tk.MustQuery("select date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1 second)").Rows()
-	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.000000"}}, result)
-	//
-	//// TODO: Wrong.
-	//result = tk.MustQuery("select date_add(cast('2001-01-01 00:00:00' as datetime), interval 1.1 second)").Rows()
-	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.100000"}}, result)
-	//result = tk.MustQuery("select date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1.1 second)").Rows()
-	//require.Equal(t, [][]interface{}{{"2001-01-01 00:00:01.100000"}}, result)
-	//
-
-	// Cases from the issue.
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(i int, c varchar(32))")
@@ -7353,6 +7332,46 @@ func TestIssue31799(t *testing.T) {
 	tk.MustExec("insert into t values(4, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1.1 second))")
 	tk.MustExec("insert into t values(5, date_add(cast('00:00:00' as time), interval 1.1 second))")
 	tk.MustQuery("select c from t order by i").Check([][]interface{}{{"2001-01-01 00:00:01"}, {"2001-01-01 00:00:01.000000"}, {"2001-01-01 00:00:01.1"}, {"2001-01-01 00:00:01.100000"}, {"00:00:01.1"}})
+	tk.MustExec("drop table t")
+}
+
+func TestIssue31876(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(ts timestamp(6) not null default current_timestamp(6) on update current_timestamp(6))")
+	tk.MustExec("insert into t values('1970-01-01 01:00:01.000000')")
+	tk.MustExec("insert into t values('1970-01-01 01:00:01.000001')")
+	tk.MustExec("insert into t values('1971-01-01 01:00:00.000000')")
+	tk.MustExec("insert into t values('1971-01-01 01:00:00.000001')")
+	tk.MustExec("insert into t values('2001-01-01 00:00:00.000000')")
+	tk.MustExec("insert into t values('2001-01-01 00:00:00.000001')")
+	tk.MustExec("insert into t values('2001-01-01 01:00:00.000000')")
+	tk.MustExec("insert into t values('2001-01-01 01:00:00.000001')")
+	tk.MustQuery("select date_add(ts, interval 1 minute) from t order by ts").Check([][]interface{}{
+		{"1970-01-01 01:01:01.000000"},
+		{"1970-01-01 01:01:01.000001"},
+		{"1971-01-01 01:01:00.000000"},
+		{"1971-01-01 01:01:00.000001"},
+		{"2001-01-01 00:01:00.000000"},
+		{"2001-01-01 00:01:00.000001"},
+		{"2001-01-01 01:01:00.000000"},
+		{"2001-01-01 01:01:00.000001"},
+	})
+	tk.MustQuery("select date_sub(ts, interval 1 minute) from t order by ts").Check([][]interface{}{
+		{"1970-01-01 00:59:01.000000"},
+		{"1970-01-01 00:59:01.000001"},
+		{"1971-01-01 00:59:00.000000"},
+		{"1971-01-01 00:59:00.000001"},
+		{"2000-12-31 23:59:00.000000"},
+		{"2000-12-31 23:59:00.000001"},
+		{"2001-01-01 00:59:00.000000"},
+		{"2001-01-01 00:59:00.000001"},
+	})
 	tk.MustExec("drop table t")
 }
 
