@@ -41,6 +41,8 @@ type RowDecoder struct {
 	tbl         table.Table
 	mutRow      chunk.MutRow
 	colMap      map[int64]Column
+	nonGCColMap map[int64]Column
+	gcColMap    map[int64]Column
 	colTypes    map[int64]*types.FieldType
 	defaultVals []types.Datum
 	cols        []*table.Column
@@ -69,10 +71,21 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 	default: // support decoding _tidb_rowid.
 		pkCols = []int64{model.ExtraHandleID}
 	}
+	nonGCColMap := make(map[int64]Column)
+	gcColMap := make(map[int64]Column)
+	for id, col := range decodeColMap {
+		if col.GenExpr != nil {
+			gcColMap[id] = col
+		} else {
+			nonGCColMap[id] = col
+		}
+	}
 	return &RowDecoder{
 		tbl:         tbl,
 		mutRow:      chunk.MutRowFromTypes(tps),
 		colMap:      decodeColMap,
+		nonGCColMap: nonGCColMap,
+		gcColMap:    gcColMap,
 		colTypes:    colFieldMap,
 		defaultVals: make([]types.Datum, len(cols)),
 		cols:        cols,
@@ -95,10 +108,10 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	if err != nil {
 		return nil, err
 	}
-	for _, dCol := range rd.colMap {
+	for _, dCol := range rd.nonGCColMap {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
-		if ok || dCol.GenExpr != nil {
+		if ok {
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
 		}
