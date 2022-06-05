@@ -16,9 +16,11 @@ package isolation_test
 
 import (
 	"context"
+	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -148,6 +150,89 @@ func TestSerializableInitialize(t *testing.T) {
 	require.NoError(t, err)
 	assertAfterActive.Check(t)
 	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+	tk.MustExec("rollback")
+}
+
+func TestTidbSnapshotVarInSerialize(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk.MustExec("set tidb_skip_isolation_level_check = 1")
+	tk.MustExec("set @@tx_isolation = 'SERIALIZABLE'")
+	safePoint := "20160102-15:04:05 -0700"
+	tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%s', '') ON DUPLICATE KEY UPDATE variable_value = '%s', comment=''`, safePoint, safePoint))
+
+	time.Sleep(time.Millisecond * 50)
+	tk.MustExec("set @a=now(6)")
+	snapshotISVersion := dom.InfoSchema().SchemaMetaVersion()
+	time.Sleep(time.Millisecond * 50)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create temporary table t2(id int)")
+	tk.MustExec("set @@tidb_snapshot=@a")
+	snapshotTS := tk.Session().GetSessionVars().SnapshotTS
+	isVersion := dom.InfoSchema().SchemaMetaVersion()
+
+	assert := activeSerializableAssert(t, se, true)
+	tk.MustExec("begin pessimistic")
+	provider := assert.CheckAndGetProvider(t)
+	txn, err := se.Txn(false)
+	require.NoError(t, err)
+	require.Greater(t, txn.StartTS(), snapshotTS)
+
+	checkUseSnapshot := func() {
+		is := provider.GetTxnInfoSchema()
+		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
+		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		readTS, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		require.Equal(t, snapshotTS, readTS)
+		forUpdateTS, err := provider.GetStmtForUpdateTS()
+		require.NoError(t, err)
+		require.Equal(t, readTS, forUpdateTS)
+	}
+
+	checkUseTxn := func() {
+		is := provider.GetTxnInfoSchema()
+		require.Equal(t, isVersion, is.SchemaMetaVersion())
+		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		readTS, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		require.NotEqual(t, snapshotTS, readTS)
+		require.Equal(t, se.GetSessionVars().TxnCtx.StartTS, readTS)
+		forUpdateTS, err := provider.GetStmtForUpdateTS()
+		require.NoError(t, err)
+		require.Equal(t, readTS, forUpdateTS)
+	}
+
+	// information schema and ts should equal to snapshot when tidb_snapshot is set
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	checkUseSnapshot()
+
+	// information schema and ts will restore when set tidb_snapshot to empty
+	tk.MustExec("set @@tidb_snapshot=''")
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	checkUseTxn()
+
+	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
+	tk.MustExec("rollback")
+	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
+	tk.MustExec("set @@autocommit=0")
+	assert = inActiveSerializableAssert(se)
+	assertAfterActive := activeSerializableAssert(t, se, true)
+	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+	provider = assert.CheckAndGetProvider(t)
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	tk.MustExec("set @@tidb_snapshot=@a")
+	checkUseSnapshot()
+	txn, err = se.Txn(false)
+	require.NoError(t, err)
+	require.False(t, txn.Valid())
+	tk.MustExec("set @@tidb_snapshot=''")
+	checkUseTxn()
+	assertAfterActive.Check(t)
 	tk.MustExec("rollback")
 }
 

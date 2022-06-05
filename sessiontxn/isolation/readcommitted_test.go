@@ -277,11 +277,6 @@ func TestRCProviderInitialize(t *testing.T) {
 }
 
 func TestTidbSnapshotVarInRC(t *testing.T) {
-	TidbSnapshotVar(t, activeRCTxnAssert)
-}
-
-func TidbSnapshotVar(t *testing.T,
-	activeAssert func[T sessiontxn.TxnContextProvider](*testing.T, sessionctx.Context, bool) *txnAssert[T]) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -302,7 +297,7 @@ func TidbSnapshotVar(t *testing.T,
 	snapshotTS := tk.Session().GetSessionVars().SnapshotTS
 	isVersion := dom.InfoSchema().SchemaMetaVersion()
 
-	assert := activeAssert(t, se, true)
+	assert := activeRCTxnAssert(t, se, true)
 	tk.MustExec("begin pessimistic")
 	provider := assert.CheckAndGetProvider(t)
 	txn, err := se.Txn(false)
