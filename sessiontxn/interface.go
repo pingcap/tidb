@@ -178,5 +178,10 @@ func WarmUpTxn(sctx sessionctx.Context) error {
 	return GetTxnManager(sctx).Advise(AdviceWarmUp)
 }
 
+// OptimizeWithPlan gives the `AdviceOptimizeWithPlan` advise to the provider
+func OptimizeWithPlan(sctx sessionctx.Context, plan any) error {
+	return GetTxnManager(sctx).Advise(AdviceOptimizeWithPlan, plan)
+}
+
 // GetTxnManager returns the TxnManager object from session context
 var GetTxnManager func(sctx sessionctx.Context) TxnManager

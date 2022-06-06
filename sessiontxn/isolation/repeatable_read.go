@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	plannercore "github.com/pingcap/tidb/planner/core"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -34,7 +35,8 @@ type PessimisticRRTxnContextProvider struct {
 	baseTxnContextProvider
 
 	// Used for ForUpdateRead statement
-	forUpdateTS uint64
+	forUpdateTS             uint64
+	followingStmtIsPointGet bool
 }
 
 // NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
@@ -54,7 +56,7 @@ func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsisten
 	}
 
 	provider.getStmtReadTSFunc = provider.getTxnStartTS
-	provider.getStmtForUpdateTSFunc = provider.getForUpdateTs
+	provider.GetStmtForUpdateTSFunc = provider.getForUpdateTs
 
 	return provider
 }
@@ -62,6 +64,10 @@ func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsisten
 func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error) {
 	if p.forUpdateTS != 0 {
 		return p.forUpdateTS, nil
+	}
+
+	if p.followingStmtIsPointGet {
+		return p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS(), nil
 	}
 
 	var txn kv.Transaction
@@ -116,6 +122,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error
 	}
 
 	p.forUpdateTS = 0
+	p.followingStmtIsPointGet = false
 
 	return nil
 }
@@ -134,14 +141,14 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 		p.forUpdateTS = 0
 	}
 
+	p.followingStmtIsPointGet = false
+
 	return nil
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
-	case sessiontxn.StmtErrAfterQuery:
-		return p.handleAfterQueryError(err)
 	case sessiontxn.StmtErrAfterPessimisticLock:
 		return p.handleAfterPessimisticLockError(err)
 	default:
@@ -163,20 +170,37 @@ func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType, val [
 
 // optimizeWithPlan todo: optimize the forUpdateTS acquisition
 func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error) {
-	return nil
-}
-
-// handleAfterQueryError will be called when the handle point is `StmtErrAfterQuery`.
-// At this point the query will be retried from the beginning.
-func (p *PessimisticRRTxnContextProvider) handleAfterQueryError(queryErr error) (sessiontxn.StmtErrorAction, error) {
-	sessVars := p.sctx.GetSessionVars()
-	if errors.ErrorEqual(queryErr, kv.ErrWriteConflict) {
-		logutil.Logger(p.ctx).Info("Pessimistic repeatable read failed, retry it",
-			zap.String("sql", sessVars.StmtCtx.OriginalSQL))
-		return sessiontxn.RetryReady()
+	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+		return nil
 	}
 
-	return sessiontxn.NoIdea()
+	if len(val) == 0 {
+		return nil
+	}
+
+	plan, ok := val[0].(plannercore.Plan)
+	if !ok {
+		return nil
+	}
+
+	if execute, ok := plan.(*plannercore.Execute); ok {
+		plan = execute.Plan
+	}
+
+	optimizeForPointGet := false
+	if _, ok := plan.(*plannercore.PhysicalLock); ok {
+		optimizeForPointGet = true
+	} else if _, ok := plan.(*plannercore.Update); ok {
+		optimizeForPointGet = true
+	} else if _, ok := plan.(*plannercore.Delete); ok {
+		optimizeForPointGet = true
+	}
+
+	if p.forUpdateTS == 0 {
+		p.followingStmtIsPointGet = optimizeForPointGet
+	}
+
+	return nil
 }
 
 func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {

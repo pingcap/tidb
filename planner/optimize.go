@@ -78,7 +78,16 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
+func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plan plannercore.Plan, _ types.NameSlice, err error) {
+	defer func() {
+		if err != nil {
+			return
+		}
+		if err = sessiontxn.OptimizeWithPlan(sctx, plan); err != nil {
+			return
+		}
+		err = sessiontxn.WarmUpTxn(sctx)
+	}()
 	sessVars := sctx.GetSessionVars()
 
 	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
@@ -154,7 +163,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		names                      types.NameSlice
 		bestPlan, bestPlanFromBind plannercore.Plan
 		chosenBinding              bindinfo.Binding
-		err                        error
 	)
 	if useBinding {
 		minCost := math.MaxFloat64

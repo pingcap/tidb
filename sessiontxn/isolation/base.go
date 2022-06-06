@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -44,7 +45,7 @@ type baseTxnContextProvider struct {
 	onInitializeTxnCtx     func(*variable.TransactionContext)
 	onTxnActive            func(kv.Transaction)
 	getStmtReadTSFunc      func() (uint64, error)
-	getStmtForUpdateTSFunc func() (uint64, error)
+	GetStmtForUpdateTSFunc func() (uint64, error)
 
 	// Runtime states
 	ctx           context.Context
@@ -55,7 +56,7 @@ type baseTxnContextProvider struct {
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
 func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) (err error) {
-	if p.getStmtReadTSFunc == nil || p.getStmtForUpdateTSFunc == nil {
+	if p.getStmtReadTSFunc == nil || p.GetStmtForUpdateTSFunc == nil {
 		return errors.New("ts functions should not be nil")
 	}
 
@@ -115,7 +116,7 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return snapshotTS, nil
 	}
-	return p.getStmtForUpdateTSFunc()
+	return p.GetStmtForUpdateTSFunc()
 }
 
 func (p *baseTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
@@ -197,8 +198,16 @@ func (p *baseTxnContextProvider) isTidbSnapshotEnabled() bool {
 	return p.sctx.GetSessionVars().SnapshotTS != 0
 }
 
+// isBeginStmtWithStaleRead indicate whether the current statement is `BeginStmt` with stale read
+// Because stale read will use `staleread.StalenessTxnContextProvider` for query, so if `staleread.IsStmtStaleness()`
+// returns true in other providers, it means the current statement is `BeginStmt` with stale read
+func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
+	return staleread.IsStmtStaleness(p.sctx)
+}
+
 func (p *baseTxnContextProvider) warmUp() error {
-	if p.isTidbSnapshotEnabled() {
+	if p.isBeginStmtWithStaleRead() {
+		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
 	return p.prepareTxn()
