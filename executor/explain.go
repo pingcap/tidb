@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"os"
 	"path/filepath"
@@ -158,8 +159,8 @@ func (e *ExplainExec) runMemoryDebugGoroutine(exit chan bool) {
 			trackedMem = uint64(tracker.BytesConsumed())
 			logutil.BgLogger().Warn("Memory Debug Mode",
 				zap.String("sql", "finished"),
-				zap.Uint64("heap in use", heapInUse),
-				zap.Uint64("tracked memory", trackedMem),
+				zap.String("heap in use", memory.FormatBytes(int64(heapInUse))),
+				zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))),
 				zap.String("heap profile", e.getHeapProfile(false)))
 			close(exit)
 		}()
@@ -180,29 +181,29 @@ func (e *ExplainExec) runMemoryDebugGoroutine(exit chan bool) {
 				if times%6 == 0 {
 					logutil.BgLogger().Warn("Memory Debug Mode",
 						zap.String("sql", "running"),
-						zap.Uint64("heap in use", heapInUse),
-						zap.Uint64("tracked memory", trackedMem))
+						zap.String("heap in use", memory.FormatBytes(int64(heapInUse))),
+						zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))))
 				}
 
 				if debugMode == 1 {
 					if heapInUse > 10*GB && trackedMem/10*15 < heapInUse {
 						logutil.BgLogger().Warn("Memory Debug Mode",
 							zap.String("debug mode 1 alarm", "trackedMem * 150% < heapInUse, maybe some allocation and free frequently"),
-							zap.Uint64("heap in use", heapInUse),
-							zap.Uint64("tracked memory", trackedMem),
+							zap.String("heap in use", memory.FormatBytes(int64(heapInUse))),
+							zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))),
 							zap.String("heap profile", e.getHeapProfile(true)))
 					}
 				} else {
 					if heapInUse > 10*GB && trackedMem/10*11 < heapInUse {
 						logutil.BgLogger().Warn("Memory Debug Mode",
 							zap.String("debug mode 2 alarm", "trackedMem * 110% < heapInUse after GC, maybe some memory not be tracked"),
-							zap.Uint64("heap in use", heapInUse),
-							zap.Uint64("tracked memory", trackedMem),
+							zap.String("heap in use", memory.FormatBytes(int64(heapInUse))),
+							zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))),
 							zap.String("heap profile", e.getHeapProfile(false)))
 						ts := tracker.SearchTrackerConsumedMoreThanNBytes(GB)
 						logs := make([]zap.Field, 0, len(ts))
 						for _, t := range ts {
-							logs = append(logs, zap.Int64(strconv.Itoa(t.Label()), t.BytesConsumed()))
+							logs = append(logs, zap.String("Executor_"+strconv.Itoa(t.Label()), memory.FormatBytes(t.BytesConsumed())))
 						}
 						logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than 1GB", logs...)
 					}
