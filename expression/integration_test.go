@@ -20,7 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
-	"crypto/rand"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"

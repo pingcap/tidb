@@ -1315,7 +1315,6 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
 
-
 		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
 
 		// TODO(tiancaiamao): admin check doesn't support the chunk protocol.
