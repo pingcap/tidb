@@ -48,7 +48,7 @@ func (c *Codec) Encode(chk *Chunk) []byte {
 	return buffer
 }
 
-func (_ *Codec) encodeColumn(buffer []byte, col *Column) []byte {
+func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	var lenBuffer [4]byte
 	// encode length.
 	binary.LittleEndian.PutUint32(lenBuffer[:], uint32(col.length))
