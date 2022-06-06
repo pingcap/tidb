@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	rpprof "runtime/pprof"
+	"strconv"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -198,6 +199,12 @@ func (e *ExplainExec) runMemoryDebugGoroutine(exit chan bool) {
 							zap.Uint64("heap in use", heapInUse),
 							zap.Uint64("tracked memory", trackedMem),
 							zap.String("heap profile", e.getHeapProfile(false)))
+						ts := tracker.SearchTrackerConsumedMoreThanNBytes(GB)
+						logs := make([]zap.Field, 0, len(ts))
+						for _, t := range ts {
+							logs = append(logs, zap.Int64(strconv.Itoa(t.Label()), t.BytesConsumed()))
+						}
+						logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than 1GB", logs...)
 					}
 				}
 			}
