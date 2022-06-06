@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
@@ -156,7 +155,6 @@ type TxnCtxNeedToRestore struct {
 // TxnCtxNoNeedToRestore stores transaction variables which do not need to restored when rolling back to a savepoint.
 type TxnCtxNoNeedToRestore struct {
 	forUpdateTS uint64
-	stmtFuture  oracle.Future
 	Binlog      interface{}
 	InfoSchema  interface{}
 	History     interface{}
@@ -199,9 +197,6 @@ type TxnCtxNoNeedToRestore struct {
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
-
-	// Last ts used by read-consistency read.
-	LastRcReadTs uint64
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -333,16 +328,6 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 	}
 }
 
-// SetStmtFutureForRC sets the stmtFuture .
-func (tc *TransactionContext) SetStmtFutureForRC(future oracle.Future) {
-	tc.stmtFuture = future
-}
-
-// GetStmtFutureForRC gets the stmtFuture.
-func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
-	return tc.stmtFuture
-}
-
 // GetCurrentSavepoint gets TransactionContext's savepoint.
 func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	tableDeltaMap := make(map[int64]TableDelta, len(tc.TableDeltaMap))
@@ -386,6 +371,18 @@ func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 	for i, sp := range tc.Savepoints {
 		if sp.Name == name {
 			tc.Savepoints = append(tc.Savepoints[:i], tc.Savepoints[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// ReleaseSavepoint deletes the named savepoint and the later savepoints, return false indicate the named savepoint doesn't exists.
+func (tc *TransactionContext) ReleaseSavepoint(name string) bool {
+	name = strings.ToLower(name)
+	for i, sp := range tc.Savepoints {
+		if sp.Name == name {
+			tc.Savepoints = append(tc.Savepoints[:i])
 			return true
 		}
 	}
@@ -839,9 +836,6 @@ type SessionVars struct {
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
-
-	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
-	EnableChangeMultiSchema bool
 
 	// EnableAutoIncrementInGenerated is used to control whether to allow auto incremented columns in generated columns.
 	EnableAutoIncrementInGenerated bool
@@ -1351,7 +1345,6 @@ func NewSessionVars() *SessionVars {
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnableChangeMultiSchema:     DefTiDBChangeMultiSchema,
 		EnablePointGetCache:         DefTiDBPointGetCache,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
@@ -1616,6 +1609,25 @@ func (s *SessionVars) IsIsolation(isolation string) bool {
 		s.TxnCtx.Isolation, _ = s.GetSystemVar(TxnIsolation)
 	}
 	return s.TxnCtx.Isolation == isolation
+}
+
+// IsolationLevelForNewTxn returns the isolation level if we want to enter a new transaction
+func (s *SessionVars) IsolationLevelForNewTxn() (isolation string) {
+	if s.InTxn() {
+		if s.txnIsolationLevelOneShot.state == oneShotSet {
+			isolation = s.txnIsolationLevelOneShot.value
+		}
+	} else {
+		if s.txnIsolationLevelOneShot.state == oneShotUse {
+			isolation = s.txnIsolationLevelOneShot.value
+		}
+	}
+
+	if isolation == "" {
+		isolation, _ = s.GetSystemVar(TxnIsolation)
+	}
+
+	return
 }
 
 // SetTxnIsolationLevelOneShotStateForNextTxn sets the txnIsolationLevelOneShot.state for next transaction.
@@ -2491,13 +2503,4 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.seekFactor
-}
-
-// IsRcCheckTsRetryable checks if the current error is retryable for `RcReadCheckTS` path.
-func (s *SessionVars) IsRcCheckTsRetryable(err error) bool {
-	if err == nil {
-		return false
-	}
-	// The `RCCheckTS` flag of `stmtCtx` is set.
-	return s.RcReadCheckTS && s.StmtCtx.RCCheckTS && errors.ErrorEqual(err, kv.ErrWriteConflict)
 }

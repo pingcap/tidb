@@ -101,6 +101,7 @@ type IndexMergeReaderExecutor struct {
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
+	paging     bool
 
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue // nolint:unused
@@ -310,6 +311,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
+					SetPaging(e.paging).
 					SetFromInfoSchema(e.ctx.GetInfoSchema())
 
 				for parTblIdx, keyRange := range keyRanges {

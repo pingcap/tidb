@@ -653,15 +653,6 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 func TestSettersandGetters(t *testing.T) {
 	for _, sv := range GetSysVars() {
 		if !sv.HasSessionScope() {
-			// There are some historial exceptions where global variables are loaded into the session.
-			// Please don't add to this list, the behavior is not MySQL compatible.
-			switch sv.Name {
-			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
-				TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
-				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit,
-				TiDBEnableTelemetry, TiDBEnablePointGetCache:
-				continue
-			}
 			require.Nil(t, sv.SetSession)
 			require.Nil(t, sv.GetSession)
 		}
