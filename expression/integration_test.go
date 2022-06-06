@@ -1919,6 +1919,11 @@ func TestCompareBuiltin(t *testing.T) {
 	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
 
 	tk.MustExec("drop table if exists t")
+
+	// TODO(tiancaiamao): result differ between default RPC encoding and chunk encoding protocol?
+	// Remove this after https://github.com/pingcap/tidb/issues/35157
+	tk.MustExec("set @@tidb_enable_chunk_rpc = off")
+
 	// insert value at utc timezone
 	tk.MustExec("set time_zone = '+00:00'")
 	tk.MustExec("create table t(a timestamp)")

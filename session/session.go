@@ -2746,9 +2746,11 @@ func (s *session) RefreshVars(ctx context.Context) error {
 func CreateSession4Test(store kv.Storage) (Session, error) {
 	se, err := CreateSession4TestWithOpt(store, nil)
 	if err == nil {
+		// Cover both chunk rpc encoding and default encoding.
 		if rand.Intn(2) == 0 {
-			// Cover both chunk rpc encoding and default encoding.
 			se.GetSessionVars().EnableChunkRPC = false
+		} else {
+			se.GetSessionVars().EnableChunkRPC = true
 		}
 	}
 	return se, err
