@@ -4853,9 +4853,9 @@ func extractPatternLikeName(patternLike *ast.PatternLikeExpr) string {
 	if patternLike == nil {
 		return ""
 	}
-	switch patternLike.Pattern.(type) {
+	switch v := patternLike.Pattern.(type) {
 	case *driver.ValueExpr:
-		return patternLike.Pattern.(*driver.ValueExpr).GetString()
+		return v.GetString()
 	}
 	return ""
 }
