@@ -54,13 +54,9 @@ func (p *PessimisticSerializableTxnContextProvider) OnStmtErrorForNextAction(
 	point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
 	case sessiontxn.StmtErrAfterPessimisticLock:
-		return p.handleAfterPessimisticLockError(err)
+		// In oracle-like serializable isolation, we do not retry encountering pessimistic lock error.
+		return sessiontxn.ErrorAction(err)
 	default:
 		return sessiontxn.NoIdea()
 	}
-}
-
-func (p *PessimisticSerializableTxnContextProvider) handleAfterPessimisticLockError(
-	lockErr error) (sessiontxn.StmtErrorAction, error) {
-	return sessiontxn.ErrorAction(lockErr)
 }
