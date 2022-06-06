@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -39,6 +40,19 @@ func TestInsertOnDuplicateKey(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	testInsertOnDuplicateKey(t, tk)
+}
+
+func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	failpoint.Enable("github.com/pingcap/tidb/table/tables/forceWriteBinlog", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/table/tables/forceWriteBinlog")
+	testInsertOnDuplicateKey(t, tk)
+}
+
+func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 
 	tk.MustExec(`drop table if exists t1, t2;`)
