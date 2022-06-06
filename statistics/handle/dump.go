@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/atomic"
 )
 
 // JSONTable is used for dumping statistics.
@@ -330,7 +331,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				Info:       colInfo,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				StatsVer:   statsVer,
-				Loaded:     true,
+				Loaded:     atomic.NewBool(true),
 			}
 			col.Count = int64(col.TotalRowCount())
 			tbl.Columns[col.ID] = col

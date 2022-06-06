@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -277,7 +278,7 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 		FMSketch:   fms,
 		IsHandle:   c.IsHandle,
 		StatsVer:   rows[0].GetInt64(0),
-		Loaded:     true,
+		Loaded:     atomic.NewBool(true),
 	}
 	// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
 	colHist.Count = int64(colHist.TotalRowCount())
