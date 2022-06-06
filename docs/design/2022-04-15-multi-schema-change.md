@@ -68,7 +68,7 @@ To ensure atomic execution of a Multi-Schema Change execution, we need to carefu
 
 This requirement means that we cannot simply publish the schema object when a sub-job is finished. Instead, it should remain in a state invisible to users, waiting for the other sub-jobs to complete, eventually publishing all at once when it is confirmed that all sub-jobs have succeeded. This method is similar to 2PC: the "commit" cannot be started until the "prewrites" are completed.
 
-Here is the table of schema states that can occur in different DDLs. Note that the "Revertible States" means that the changes are unnoticeable to the users.
+Here is the table of schema states that can occur in different DDLs. Note that the "Revertible States" means that the changes are invisible to the users.
 
 | DDL (Schema Change)     | Revertible States                          | Non-revertible States                       |
 |-------------------------|--------------------------------------------|---------------------------------------------|
