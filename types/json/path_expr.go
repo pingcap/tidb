@@ -98,6 +98,7 @@ func (key pathExpressionKey) Hash() []byte {
 	return hack.Slice(string(key))
 }
 
+// PathExpressionCache is a cache for PathExpression.
 type PathExpressionCache struct {
 	mu    sync.Mutex
 	cache *kvcache.SimpleLRUCache

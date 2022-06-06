@@ -38,11 +38,14 @@ type Column struct {
 
 // RowDecoder decodes a byte slice into datums and eval the generated column value.
 type RowDecoder struct {
-	tbl         table.Table
+	tbl table.Table
+	// mutRow is used to evaluate the virtual generated column.
 	mutRow      chunk.MutRow
+	needMutRow  bool
 	colMap      map[int64]Column
 	nonGCColMap map[int64]Column
 	gcColMap    map[int64]Column
+	datumSlice  []*types.Datum
 	colTypes    map[int64]*types.FieldType
 	defaultVals []types.Datum
 	cols        []*table.Column
@@ -83,6 +86,7 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 	return &RowDecoder{
 		tbl:         tbl,
 		mutRow:      chunk.MutRowFromTypes(tps),
+		needMutRow:  len(gcColMap) > 0,
 		colMap:      decodeColMap,
 		nonGCColMap: nonGCColMap,
 		gcColMap:    gcColMap,
@@ -112,7 +116,9 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
 		if ok {
-			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+			if rd.needMutRow {
+				rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+			}
 			continue
 		}
 		if dCol.Col.ChangeStateInfo != nil {
@@ -124,7 +130,10 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		if err != nil {
 			return nil, err
 		}
-		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+		row[colInfo.ID] = val
+		if rd.needMutRow {
+			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+		}
 	}
 	return rd.EvalRemainedExprColumnMap(ctx, row)
 }
@@ -139,12 +148,6 @@ func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[
 		}
 	}
 	return decodeColMap
-}
-
-// CurrentRowWithDefaultVal returns current decoding row with default column values set properly.
-// Please make sure calling DecodeAndEvalRowWithMap first.
-func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
-	return rd.mutRow.ToRow()
 }
 
 // DecodeTheExistedColumnMap is used by ddl column-type-change first column reorg stage.
@@ -169,7 +172,9 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
 		if ok || dCol.GenExpr != nil || dCol.Col.ChangeStateInfo != nil {
-			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+			if rd.needMutRow {
+				rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+			}
 			continue
 		}
 		// Get the default value of the column in the generated column expression.
@@ -179,7 +184,9 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 		}
 		// Fill the default value into map.
 		row[colInfo.ID] = val
-		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+		if rd.needMutRow {
+			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+		}
 	}
 	// return the existed column map here.
 	return row, nil
