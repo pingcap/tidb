@@ -529,7 +529,21 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 // fillColValue fills the column value if it is not set in the insert statement.
 func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
 	error) {
+<<<<<<< HEAD
 	if mysql.HasAutoIncrementFlag(column.Flag) {
+=======
+	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
+		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
+			vars := e.ctx.GetSessionVars()
+			sc := vars.StmtCtx
+			if !vars.StrictSQLMode {
+				sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
+			} else {
+				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
+			}
+		}
+
+>>>>>>> cc46266e4... ddl: fix `alter column drop default` (#35072)
 		if e.lazyFillAutoID {
 			// Handle hasValue info in autoIncrement column previously for lazy handle.
 			if !hasValue {

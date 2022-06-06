@@ -1401,10 +1401,17 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	hasNoDefault = mysql.HasNoDefaultValueFlag(colC.Flag)
 	c.Assert(hasNoDefault, IsFalse)
 	// TODO: After fix issue 2606.
+<<<<<<< HEAD
 	// s.tk.MustExec( "alter table test_alter_column alter column d set default null")
 	s.tk.MustExec("alter table test_alter_column alter column a drop default")
 	s.tk.MustExec("insert into test_alter_column set b = 'd', c = 'dd'")
 	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
+=======
+	// tk.MustExec( "alter table test_alter_column alter column d set default null")
+	tk.MustExec("alter table test_alter_column alter column a drop default")
+	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
+	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))
+>>>>>>> cc46266e4... ddl: fix `alter column drop default` (#35072)
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
@@ -1467,6 +1474,7 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	s.tk.MustGetErrCode("alter table t1 change column a x varchar(3000);", errno.ErrTooLongKey)
 	s.tk.MustGetErrCode("alter table t1 modify column c bigint;", errno.ErrTooLongKey)
 
+<<<<<<< HEAD
 	s.tk.MustExec("drop table if exists multi_unique")
 	s.tk.MustExec("create table multi_unique (a int unique unique)")
 	s.tk.MustExec("drop table multi_unique")
@@ -1495,6 +1503,99 @@ func (s *testIntegrationSuite) assertAlterWarnExec(c *C, sql string) {
 func (s *testIntegrationSuite) assertAlterErrorExec(c *C, sql string) {
 	s.tk.MustGetErrCode(sql, errno.ErrAlterOperationNotSupportedReason)
 }
+=======
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("insert into t1(id) values (1);")
+	tk.MustExec("alter table t1 add column update_time3 datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3);")
+	tk.MustExec("alter table t1 add column update_time6 datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6);")
+	rows := tk.MustQuery("select * from t1").Rows()
+	require.Equal(t, "1", rows[0][0])
+	updateTime3 := rows[0][1].(string)
+	require.NotEqual(t, "000", updateTime3[len(updateTime3)-3:])
+	updateTime6 := rows[0][2].(string)
+	require.NotEqual(t, "000000", updateTime6[len(updateTime6)-6:])
+
+	tk.MustExec("set sql_mode=default")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int auto_increment, b int, key i(a))")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustGetErrCode("insert into t values ()", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into t values (1, a + 1)")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustGetErrCode("insert into t values ()", errno.ErrNoDefaultForField)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` enum('a', 'b'))")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` enum('a', 'b') not null)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a"))
+
+	tk.MustExec("set sql_mode=''")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int auto_increment, key i(a))")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int not null)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` enum('a', 'b'))")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` enum('a', 'b') not null)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a"))
+}
+
+func assertWarningExec(tk *testkit.TestKit, t *testing.T, sql string, expectedWarn *terror.Error) {
+	_, err := tk.Exec(sql)
+	require.NoError(t, err)
+	st := tk.Session().GetSessionVars().StmtCtx
+	require.Equal(t, uint16(1), st.WarningCount())
+	require.Truef(t, expectedWarn.Equal(st.GetWarnings()[0].Err), "error:%v", err)
+}
+
+func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
+	assertWarningExec(tk, t, sql, dbterror.ErrAlterOperationNotSupported)
+}
+
+func TestAlterAlgorithm(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	defer tk.MustExec("drop table if exists t")
+>>>>>>> cc46266e4... ddl: fix `alter column drop default` (#35072)
 
 func (s *testIntegrationSuite3) TestAlterAlgorithm(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
