@@ -166,7 +166,6 @@ func TestTestDataLockWaits(t *testing.T) {
 		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
 		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
-
 	tk := s.newTestKitWithRoot(t)
 
 	// Execute one of the query once, so it's stored into statements_summary.
@@ -673,14 +672,15 @@ select * from t1;
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.Log.SlowQueryFile = f.Name()
-	newCfg.OOMAction = config.OOMActionCancel
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		executor.ParseSlowLogBatchSize = 64
 		config.StoreGlobalConfig(originCfg)
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
-
+	// The server default is CANCEL, but the testsuite defaults to LOG
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	defer tk.MustExec("set global tidb_mem_oom_action='LOG'")
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	checkFn := func(quota int) {
 		tk.MustExec("set tidb_mem_quota_query=" + strconv.Itoa(quota)) // session

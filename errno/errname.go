@@ -1059,9 +1059,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
-	ErrJSONObjectKeyTooLong:  mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
-	ErrPartitionStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
-	ErrNotSupportedWithSem:   mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
+	ErrJSONObjectKeyTooLong:        mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+	ErrPartitionStatsMissing:       mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
+	ErrPartitionColumnStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions", nil),
+	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 	ErrMultiStatementDisabled:          mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),

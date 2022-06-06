@@ -175,7 +175,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 			}
 		}
-		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable() && needGlobalStats); err1 != nil {
+		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable()); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(e.ctx, results.Job, err)
@@ -209,7 +209,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
 			if err != nil {
-				if types.ErrPartitionStatsMissing.Equal(err) {
+				if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 					continue
@@ -217,9 +217,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 			for i := 0; i < globalStats.Num; i++ {
-				hg, cms, topN, fms := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i], globalStats.Fms[i]
+				hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
 				// fms for global stats doesn't need to dump to kv.
-				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1, false, true)
+				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, info.statsVersion, 1, true)
 				if err != nil {
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
 				}
@@ -230,7 +230,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}
-	err = e.saveAnalyzeOptsV2()
+	err = e.saveV2AnalyzeOpts()
 	if err != nil {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
@@ -258,14 +258,22 @@ func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 	}
 }
 
-func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
+func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
+	}
+	// only to save table options if dynamic prune mode
+	dynamicPrune := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	toSaveMap := make(map[int64]core.V2AnalyzeOptions)
+	for id, opts := range e.OptionsMap {
+		if !opts.IsPartition || !dynamicPrune {
+			toSaveMap[id] = opts
+		}
 	}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
 	idx := 0
-	for _, opts := range e.OptionsMap {
+	for _, opts := range toSaveMap {
 		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
 		sampleRate := float64(0)
 		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
@@ -283,7 +291,7 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 		}
 		colIDStrs := strings.Join(colIDs, ",")
 		sqlexec.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
-		if idx < len(e.OptionsMap)-1 {
+		if idx < len(toSaveMap)-1 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
 		idx += 1
@@ -1466,6 +1474,10 @@ workLoop:
 						continue
 					}
 					val := row.Columns[task.slicePos]
+					// If this value is very big, we think that it is not a value that can occur many times. So we don't record it.
+					if len(val.GetBytes()) > statistics.MaxSampleValueLength {
+						continue
+					}
 					if collator != nil {
 						val.SetBytes(collator.Key(val.GetString()))
 						deltaSize := int64(cap(val.GetBytes()))
@@ -1496,12 +1508,17 @@ workLoop:
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
+			indexSampleCollectLoop:
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
 						continue
 					}
 					b := make([]byte, 0, 8)
 					for _, col := range idx.Columns {
+						// If the index value contains one value which is too long, we think that it's a value that doesn't occur many times.
+						if len(row.Columns[col.Offset].GetBytes()) > statistics.MaxSampleValueLength {
+							continue indexSampleCollectLoop
+						}
 						if col.Length != types.UnspecifiedLength {
 							row.Columns[col.Offset].Copy(&tmpDatum)
 							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)

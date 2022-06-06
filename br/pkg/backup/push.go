@@ -127,6 +127,13 @@ func (push *pushDown) pushBackup(
 				// Finished.
 				return res, nil
 			}
+			failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
+				msg := val.(string)
+				logutil.CL(ctx).Debug("failpoint backup-timeout-error injected.", zap.String("msg", msg))
+				resp.Error = &backuppb.Error{
+					Msg: msg,
+				}
+			})
 			failpoint.Inject("backup-storage-error", func(val failpoint.Value) {
 				msg := val.(string)
 				logutil.CL(ctx).Debug("failpoint backup-storage-error injected.", zap.String("msg", msg))

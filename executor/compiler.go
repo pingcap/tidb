@@ -57,11 +57,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	ret := &plannercore.PreprocessorReturn{}
-	pe := &plannercore.PreprocessExecuteISUpdate{ExecuteInfoSchemaUpdate: planner.GetExecuteForUpdateReadIS, Node: stmtNode}
 	err := plannercore.Preprocess(c.Ctx,
 		stmtNode,
 		plannercore.WithPreprocessorReturn(ret),
-		plannercore.WithExecuteInfoSchemaUpdate(pe),
 		plannercore.InitTxnContextProvider,
 	)
 	if err != nil {
@@ -341,6 +339,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Change"
 	case *ast.CommitStmt:
 		return "Commit"
+	case *ast.CompactTableStmt:
+		return "CompactTable"
 	case *ast.CreateDatabaseStmt:
 		return "CreateDatabase"
 	case *ast.CreateIndexStmt:

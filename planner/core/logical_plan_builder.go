@@ -3630,12 +3630,14 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			// ignore hints that not implemented
 		}
 	}
-	if leadingHintCnt > 1 {
-		// If there are more leading hints, all leading hints will be invalid.
+	if leadingHintCnt > 1 || (leadingHintCnt > 0 && b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder) {
+		// If there are more leading hints or the straight_join hint existes, all leading hints will be invalid.
 		leadingJoinOrder = leadingJoinOrder[:0]
-		// Append warning if there are invalid index names.
-		errMsg := "We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+		if leadingHintCnt > 1 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
+		} else if b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
+		}
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 		sortMergeJoinTables:       sortMergeTables,

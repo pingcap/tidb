@@ -50,6 +50,7 @@ func TestMiscVisitorCover(t *testing.T) {
 		&ast.BeginStmt{},
 		&ast.BinlogStmt{},
 		&ast.CommitStmt{},
+		&ast.CompactTableStmt{Table: &ast.TableName{}},
 		&ast.CreateUserStmt{},
 		&ast.DeallocateStmt{},
 		&ast.DoStmt{},
@@ -337,4 +338,14 @@ func TestBRIESecureText(t *testing.T) {
 		require.Regexp(t, tc.secured, n.SecureText(), comment)
 
 	}
+}
+
+func TestCompactTableStmtRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"alter table abc compact tiflash replica", "ALTER TABLE `abc` COMPACT TIFLASH REPLICA"},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.CompactTableStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }

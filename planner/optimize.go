@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -61,30 +61,6 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt)
 	}
 	return ast.IsReadOnly(node)
-}
-
-// GetExecuteForUpdateReadIS is used to check whether the statement is `execute` and target statement has a forUpdateRead flag.
-// If so, we will return the latest information schema.
-func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema {
-	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-		vars := sctx.GetSessionVars()
-		execID := execStmt.ExecID
-		if execStmt.Name != "" {
-			execID = vars.PreparedStmtNameToID[execStmt.Name]
-		}
-		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-			checkSchema := vars.IsIsolation(ast.ReadCommitted)
-			if !checkSchema {
-				preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
-				checkSchema = ok && preparedObj.ForUpdateRead
-			}
-			if checkSchema {
-				is := domain.GetDomain(sctx).InfoSchema()
-				return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
-			}
-		}
-	}
-	return nil
 }
 
 func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
@@ -148,12 +124,16 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 		if fp != nil {
 			if !useMaxTS(sctx, fp) {
-				sctx.PrepareTSFuture(ctx)
+				if err := sessiontxn.WarmUpTxn(sctx); err != nil {
+					return nil, nil, err
+				}
 			}
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	sctx.PrepareTSFuture(ctx)
+	if err := sessiontxn.WarmUpTxn(sctx); err != nil {
+		return nil, nil, err
+	}
 
 	useBinding := sessVars.UsePlanBaselines
 	stmtNode, ok := node.(ast.StmtNode)
