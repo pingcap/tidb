@@ -463,10 +463,26 @@ type ScopeSchema struct {
 	scopeSchema *expression.Schema
 	scopeNames  []*types.FieldName
 
+	// agg group utility elements, aggFuncs are mapped to aggColumn and aggFuncExpr, and aggMapper is used to fast locate the offset in
+	// aggFuncs/aggColumn when an address of *AggregateFuncExpr is given.
 	aggFuncs     []*aggregation.AggFuncDesc
 	aggColumn    []*expression.Column
+	astAggFunc   []*ast.AggregateFuncExpr
 	aggMapper    map[*ast.AggregateFuncExpr]int
 	groupByItems []expression.Expression
+
+	// win group utility elements, windowFuncs are mapped to windowColumn, and windowMapper is used to fast locate the
+	// offset in windowFuncs/windowColumn when an address of *WindowFuncExpr is given.
+	windowFuncs  []*windowFuncs
+	windowColumn []*expression.Column
+	windowMapper map[*ast.WindowFuncExpr]int
+
+	// we should build the projection expr out and map them to a specific column in analyzing phase.
+	// otherwise, cases like: select (select 1) as a from dual order by a & select 1 as a, (select t.a) from t
+	// they can't resolve themselves (mainly a) from the base from scope columns here.
+	projExpr   []expression.Expression
+	projColumn []*expression.Column
+	projNames  []*types.FieldName
 
 	mapScalarSubQueryByAddr map[*ast.SubqueryExpr]*preBuiltSubQueryCacheItem
 
@@ -480,6 +496,9 @@ type ScopeSchema struct {
 	reservedCols                []*expression.Column
 	reservedCorrelatedCols      []*expression.CorrelatedColumn
 	projectionCol4CorrelatedAgg map[int64]*expression.Column
+
+	// inAgg is flag that used to judge whether current context is in agg.
+	inAgg bool
 }
 
 func (s *ScopeSchema) GetCol(id int64) (*expression.Column, int) {
@@ -538,17 +557,27 @@ func (s *ScopeSchema) Add(schema *expression.Schema, names []*types.FieldName) {
 // ps: the innermost sub-query only refer the projected column as sum(t.a+t1.a) from second
 // select block rather than do the aggregation by itself.
 func (s *ScopeSchema) AddReservedCols(corCols []*expression.CorrelatedColumn, cols []*expression.Column) {
+	aggColumnCovered := func(id int64) bool {
+		for _, aggCol := range s.aggColumn {
+			if aggCol.UniqueID == id {
+				return true
+			}
+		}
+		return false
+	}
 	// reservation comes from sub-query's correlated column.
 	for _, cc := range corCols {
 		// background: in analyzing phase, the col set of scope contains all columns it can see.
 		// make sure the correlated column is from this scope, and hasn't been added before.
-		if s.ColSet().Has(int(cc.Column.UniqueID)) && !s.ReservedColSet().Has(int(cc.Column.UniqueID)) {
+		// reserved col may be the origin base col or be the currently seen appended agg col.
+		if (s.ColSet().Has(int(cc.Column.UniqueID)) || aggColumnCovered(cc.Column.UniqueID)) && !s.ReservedColSet().Has(int(cc.Column.UniqueID)) {
 			s.reservedCols = append(s.reservedCols, &cc.Column)
 		}
 	}
 	// reservation comes from current scope's having or order-by clause.
 	for _, c := range cols {
-		if s.ColSet().Has(int(c.UniqueID)) && !s.ReservedColSet().Has(int(c.UniqueID)) {
+		// reserved col may be the origin base col or be the currently seen appended agg col.
+		if (s.ColSet().Has(int(c.UniqueID)) || aggColumnCovered(c.UniqueID)) && !s.ReservedColSet().Has(int(c.UniqueID)) {
 			s.reservedCols = append(s.reservedCols, c)
 		}
 	}
@@ -594,7 +623,6 @@ type PlanBuilder struct {
 	// capFlag indicates the capability flags.
 	capFlag capFlagType
 
-	inAgg     bool
 	curClause clauseCode
 
 	// rewriterPool stores the expressionRewriter we have created to reuse it if it has been released.
@@ -947,7 +975,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 	}
 	if needBuildAgg {
 		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(p, aggFuncs, nil, nil)
+		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, nil, nil)
 		if err != nil {
 			return nil, err
 		}

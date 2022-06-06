@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -320,13 +321,11 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 		outerSchema := er.schema.Clone()
 		er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
 		er.b.outerNames = append(er.b.outerNames, er.names)
-		er.b.outerScopes = append(er.b.outerScopes, er.b.curScope)
 		defer func() {
 			er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1]
 			er.b.outerNames = er.b.outerNames[0 : len(er.b.outerNames)-1]
-			er.b.curScope = er.b.outerScopes[len(er.b.outerScopes)-1]
-			er.b.outerScopes = er.b.outerScopes[0 : len(er.b.outerScopes)-1]
 		}()
+		// scope stack allocation and cleaning is done in buildSelect and buildSetOpr.
 	}
 	outerWindowSpecs := er.b.windowSpecs
 	defer func() {
@@ -348,7 +347,7 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 		corCols := ExtractCorrelatedCols4LogicalPlan(np)
 		if len(corCols) > 0 {
 			// add the correlated column to outer scope.
-			er.b.outerScopes[len(er.b.outerScopes)-1].AddReservedCols(corCols, nil)
+			er.b.curScope.AddReservedCols(corCols, nil)
 		}
 	}
 
@@ -391,15 +390,17 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			}
 			er.ctxStackAppend(col, types.EmptyName)
 		} else {
-			if !er.b.inAgg {
-				er.b.inAgg = true
+			if !er.b.curScope.inAgg {
+				er.b.curScope.inAgg = true
 				defer func() {
-					er.b.inAgg = false
+					er.b.curScope.inAgg = false
 				}()
-				er.err = er.buildAggregationDesc(er.ctx, er.p, v)
+				er.err = er.buildAggregationDesc(er.ctx, er.p, v, false)
 			} else {
-				// refuse agg nested.
-				er.err = ErrInvalidGroupFuncUse
+				// when to refuse agg nested?
+				// In agg(agg(arg1) OP arg2), if one of the arg1 is in current scope, it's a ErrInvalidGroupFuncUse
+				// Otherwise, agg(arg1) can be seen as correlated column from outer scope, equal to: agg(corCol OP arg2)
+				er.err = er.buildAggregationDesc(er.ctx, er.p, v, true)
 			}
 		}
 		return inNode, true
@@ -1088,6 +1089,14 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	return v, true
 }
 
+// handleScalarSubquery handle scalar sub-query.
+//
+// scalar sub-query has some special handling logic here. Once scalar occurs in select list, we should build them
+// out and return the real scalar expr immediately even in analyzing phase, eg: select (select 1) as a, (select(t.a)) from t.
+// in analyzing phase, if we wanna analyzing second sub-query's t.a, we should build this projection scope column out in
+// analyzing first select item: (select 1) as a  --> expr:1 column:x name:a, with this projection scope column, then we can
+// successfully do the analyzing of second select list item.  Ref projection scope correlated column t.a and cache the entire
+// sub-query and output the scalar expr itself in case of other select item or other analyzing clause will ref them.
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
 	ci := er.b.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
@@ -1096,6 +1105,9 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		np  LogicalPlan
 		err error
 	)
+	if strings.HasPrefix(er.b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select (select sum((select count(a)))) from t") {
+		fmt.Println(1)
+	}
 	if er.b.analyzingPhase {
 		np, err = er.buildSubquery(ctx, subq)
 		if err != nil {
@@ -1103,9 +1115,12 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 			return v, true
 		}
 		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
-		// append a zero expr here for the convenience of scalar check. (ignored outside)
-		er.ctxStackAppend(expression.NewZero(), types.EmptyName)
-		return v, true
+		if er.b.curClause != fieldList {
+			// append a zero expr here for the convenience of scalar check. (ignored outside)
+			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+			return v, true
+		}
+		// if scalar sub-query occurs in the select list even in analyzing phase, built the scalar expr out.
 	} else {
 		if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
 			np = item.p
@@ -2049,6 +2064,18 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		}
 		return
 	}
+	// we don't find it in current base columns, try find it in current projection scope built/seen by now.
+	idx, err = expression.FindFieldName(er.b.curScope.projNames, v)
+	if err != nil {
+		er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
+		return
+	}
+	if idx >= 0 {
+		column := er.b.curScope.projColumn[idx]
+		er.ctxStackAppend(column, er.b.curScope.projNames[idx])
+		return
+	}
+
 	// find column reference in outer schema. (the correlated col will be added to correspondent scope in buildSubquery)
 	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
 		outerSchema, outerName := er.b.outerSchemas[i], er.b.outerNames[i]
@@ -2060,6 +2087,17 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		}
 		if err != nil {
 			er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
+			return
+		}
+		// we don't find it in ith scope base columns, try find it in ith projection scope built/seen by now.
+		idx, err = expression.FindFieldName(er.b.outerScopes[i].projNames, v)
+		if err != nil {
+			er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
+			return
+		}
+		if idx >= 0 {
+			column := er.b.outerScopes[i].projColumn[idx]
+			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, er.b.outerScopes[i].projNames[idx])
 			return
 		}
 	}
