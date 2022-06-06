@@ -704,6 +704,8 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
+	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
+	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
 )
 
 // TiDB intentional limits
@@ -892,6 +894,7 @@ const (
 	DefTiDBEnablePrepPlanCache                   = true
 	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
+	DefTiDBEnableConcurrentDDL                   = true
 )
 
 // Process global variables.
@@ -939,6 +942,7 @@ var (
 	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
 	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
+	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 )
 
 var (
