@@ -448,7 +448,11 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/lightning/log:log_test -//br/pkg/task:task_test
 
 bazel_build: bazel_ci_prepare
+	mkdir -p bin
 	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //tidb-server/... //br/cmd/... //cmd/...
+	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
+	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
+	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
 
 bazel_fail_build:  failpoint-enable bazel_ci_prepare
 	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //...

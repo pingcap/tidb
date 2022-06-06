@@ -64,6 +64,13 @@ go_binary(
     visibility = ["//visibility:public"],
 )
 
+go_binary(
+    name = "tidb-server-check",
+    embed = [":tidb-server_lib"],
+    gc_linkopts = ["-X", "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"],
+    visibility = ["//visibility:public"],
+)
+
 go_test(
     name = "tidb-server_test",
     srcs = ["main_test.go"],
