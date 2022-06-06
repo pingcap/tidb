@@ -118,7 +118,7 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return p.getStmtForUpdateTSFunc()
 }
 
-func (p *baseTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
+func (p *baseTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
 	switch tp {
 	case sessiontxn.AdviceWarmUp:
 		return p.warmUp()
