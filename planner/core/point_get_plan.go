@@ -802,7 +802,7 @@ func newBatchPointGetPlan(
 		if !ok {
 			return nil
 		}
-		for i, _ := range values {
+		for i := 0; i < len(values); i++ {
 			pairs = append(pairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: item.GetType(), value: values[i], con: valuesParams[i]})
 		}
 		indexValues[i] = values
