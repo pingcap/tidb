@@ -78,9 +78,10 @@ func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexId int64
 		if err != nil {
 			err = errors.Trace(err)
 		}
+		
+		// After import local data into TiKV, then the progress set to 100.
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
 	}
-	// After import local data into TiKV, then the progress set to 100.
-	metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
 	return nil
 }
 

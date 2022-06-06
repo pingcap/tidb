@@ -616,6 +616,8 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		// Once Env is created well, set IsLightningOk to true.
 		if err == nil {
 			reorgInfo.Meta.IsLightningEnabled = true
+		} else {
+			
 		}
 	}
 

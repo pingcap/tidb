@@ -33,6 +33,7 @@ const (
 	LERR_LOCAL_DUP_EXIST_ERR   string = "Lightning: Locale duplicate index key exist"
 	LERR_REMOTE_DUP_CHECK_ERR  string = "Lightning: Remote duplicate check error"
 	LERR_REMOTE_DUP_EXIST_ERR  string = "Lightning: Remote duplicate index key exist"
+	LERR_DISK_QUOTA_SMALL      string = "Lightning: Specified disk quota is less than 100 GB disable the Lightning"
 	// Warning messages
 	LWAR_ENV_INIT_FAILD        string = "Lightning: Initialize environment failed"
 	LWAR_BACKEND_NOT_EXIST     string = "Lightning: Backend not exist"
