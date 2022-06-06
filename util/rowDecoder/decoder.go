@@ -52,10 +52,11 @@ type RowDecoder struct {
 	defaultVals     []types.Datum
 	cols            []*table.Column
 	pkCols          []int64
+	datumMapDecoder *rowcodec.DatumMapDecoder
 }
 
 // NewRowDecoder returns a new RowDecoder.
-func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64]Column) *RowDecoder {
+func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64]Column, sctx sessionctx.Context) *RowDecoder {
 	tblInfo := tbl.Meta()
 	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
 	for id, col := range decodeColMap {
@@ -94,6 +95,17 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 	}
 	sort.Ints(orderedGCOffset)
 
+	reqCols := make([]rowcodec.ColInfo, len(cols))
+	var idx int
+	for id, tp := range colFieldMap {
+		reqCols[idx] = rowcodec.ColInfo{
+			ID: id,
+			Ft: tp,
+		}
+		idx++
+	}
+	rd := rowcodec.NewDatumMapDecoder(reqCols, sctx.GetSessionVars().StmtCtx.TimeZone)
+
 	return &RowDecoder{
 		tbl:             tbl,
 		mutRow:          chunk.MutRowFromTypes(tps),
@@ -107,6 +119,7 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 		defaultVals:     make([]types.Datum, len(cols)),
 		cols:            cols,
 		pkCols:          pkCols,
+		datumMapDecoder: rd,
 	}
 }
 
@@ -114,7 +127,7 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
-		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
+		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row, rd.datumMapDecoder)
 	} else {
 		row, err = tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	}
@@ -170,7 +183,7 @@ func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[
 func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
-		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
+		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row, nil)
 	} else {
 		row, err = tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	}

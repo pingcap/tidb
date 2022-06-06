@@ -66,8 +66,8 @@ func TestRowDecoder(t *testing.T) {
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
-	deWithNoGenCols := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap2)
+	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap, ctx)
+	deWithNoGenCols := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap2, ctx)
 
 	time1 := types.NewTime(types.FromDate(2019, 01, 01, 8, 01, 01, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	t1 := types.NewTimeDatum(time1)
@@ -174,7 +174,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
+	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap, ctx)
 
 	testRows := []struct {
 		cols   []int64

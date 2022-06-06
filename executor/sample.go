@@ -156,7 +156,7 @@ func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chu
 	if err != nil {
 		return err
 	}
-	rowDecoder := decoder.NewRowDecoder(s.table, cols, decColMap)
+	rowDecoder := decoder.NewRowDecoder(s.table, cols, decColMap, s.ctx)
 	err = s.scanFirstKVForEachRange(ranges, func(handle kv.Handle, value []byte) error {
 		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx, handle, value, decLoc, s.rowMap)
 		if err != nil {

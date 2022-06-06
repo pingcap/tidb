@@ -405,8 +405,7 @@ func DecodeColumnValueWithDatum(data []byte, ft *types.FieldType, loc *time.Loca
 }
 
 // DecodeRowWithMapNew decode a row to datum map.
-func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
-	loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum, rd *rowcodec.DatumMapDecoder) (map[int64]types.Datum, error) {
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
 	}
@@ -417,16 +416,18 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 		return row, nil
 	}
 
-	reqCols := make([]rowcodec.ColInfo, len(cols))
-	var idx int
-	for id, tp := range cols {
-		reqCols[idx] = rowcodec.ColInfo{
-			ID: id,
-			Ft: tp,
+	if rd == nil {
+		reqCols := make([]rowcodec.ColInfo, len(cols))
+		var idx int
+		for id, tp := range cols {
+			reqCols[idx] = rowcodec.ColInfo{
+				ID: id,
+				Ft: tp,
+			}
+			idx++
 		}
-		idx++
+		rd = rowcodec.NewDatumMapDecoder(reqCols, loc)
 	}
-	rd := rowcodec.NewDatumMapDecoder(reqCols, loc)
 	return rd.DecodeToDatumMap(b, row)
 }
 
@@ -491,7 +492,7 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 	if !rowcodec.IsNewFormat(b) {
 		return DecodeRowWithMap(b, cols, loc, nil)
 	}
-	return DecodeRowWithMapNew(b, cols, loc, nil)
+	return DecodeRowWithMapNew(b, cols, loc, nil, nil)
 }
 
 // DecodeHandleToDatumMap decodes a handle into datum map.
