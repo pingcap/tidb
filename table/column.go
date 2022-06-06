@@ -574,12 +574,17 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 }
 
 func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
+<<<<<<< HEAD
 	if !mysql.HasNotNullFlag(col.Flag) {
+=======
+	if !mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
+>>>>>>> cc46266e4... ddl: fix `alter column drop default` (#35072)
 		return types.Datum{}, nil
 	}
 	if col.Tp == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
+<<<<<<< HEAD
 		defEnum, err := types.ParseEnumValue(col.FieldType.Elems, 1)
 		if err != nil {
 			return types.Datum{}, err
@@ -588,13 +593,31 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	}
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		// Auto increment column doesn't has default value and we should not return error.
+=======
+		if mysql.HasNotNullFlag(col.GetFlag()) {
+			defEnum, err := types.ParseEnumValue(col.FieldType.GetElems(), 1)
+			if err != nil {
+				return types.Datum{}, err
+			}
+			return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
+		}
+		return types.Datum{}, nil
+	}
+	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
+		// Auto increment column doesn't have default value and we should not return error.
+>>>>>>> cc46266e4... ddl: fix `alter column drop default` (#35072)
 		return GetZeroValue(col), nil
 	}
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	if !vars.StrictSQLMode {
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
-		return GetZeroValue(col), nil
+		if mysql.HasNotNullFlag(col.GetFlag()) {
+			return GetZeroValue(col), nil
+		}
+		if mysql.HasNoDefaultValueFlag(col.GetFlag()) {
+			return types.Datum{}, nil
+		}
 	}
 	if sc.BadNullAsWarning {
 		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
