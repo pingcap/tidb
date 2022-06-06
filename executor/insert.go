@@ -193,13 +193,13 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 	if err != nil {
 		return err
 	}
-	// get the extra columns from the SELECT clause and get the final `oldRow`.
+	// get the extra columns from the SELECT clause.
+	var extraCols []types.Datum
 	if len(e.ctx.GetSessionVars().CurrInsertBatchExtraCols) > 0 {
-		extraCols := e.ctx.GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
-		oldRow = append(oldRow, extraCols...)
+		extraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
 	}
 
-	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, e.OnDuplicate)
+	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate)
 	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
@@ -374,16 +374,18 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 
 // doDupRowUpdate updates the duplicate row.
 func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRow []types.Datum, newRow []types.Datum,
-	cols []*expression.Assignment) error {
+	extraCols []types.Datum, cols []*expression.Assignment) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
 	e.ctx.GetSessionVars().CurrInsertValues = e.curInsertVals.ToRow()
 	// NOTE: In order to execute the expression inside the column assignment,
-	// we have to put the value of "oldRow" before "newRow" in "row4Update" to
-	// be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
+	// we have to put the value of "oldRow" and "extraCols" before "newRow" in
+	// "row4Update" to be consistent with "Schema4OnDuplicate" in the "Insert"
+	// PhysicalPlan.
 	e.row4Update = e.row4Update[:0]
 	e.row4Update = append(e.row4Update, oldRow...)
+	e.row4Update = append(e.row4Update, extraCols...)
 	e.row4Update = append(e.row4Update, newRow...)
 
 	// Update old row when the key is duplicated.
