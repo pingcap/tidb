@@ -507,7 +507,10 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 		if _, exists := row[hid]; exists {
 			continue
 		}
-		ft := cols[hid]
+		ft, ok := cols[hid]
+		if !ok {
+			continue
+		}
 		d, err := decodeHandleToDatum(handle, ft, idx)
 		if err != nil {
 			return row, err
