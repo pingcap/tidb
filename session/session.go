@@ -26,7 +26,7 @@ import (
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
-	"math/rand"
+	"crypto/rand"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
