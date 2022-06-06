@@ -351,7 +351,7 @@ func createTestWriter(conf *Config, t *testing.T) (w *Writer, clean func()) {
 	conn, err := db.Conn(context.Background())
 	require.NoError(t, err)
 
-	metrics := newMetrics(&promutil.PlainNoAutoRegisterFactory{}, []string{})
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 	w = NewWriter(tcontext.Background(), 0, conf, conn, extStore, metrics)
 	clean = func() {
 		require.NoError(t, db.Close())
