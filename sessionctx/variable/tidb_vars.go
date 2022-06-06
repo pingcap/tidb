@@ -137,6 +137,8 @@ const (
 	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
 	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
 
+	TiDBOptimizerEnableOuterJoinReorder = "tidb_enable_outer_join_reorder"
+
 	// TiDBTxnMode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
 
@@ -688,6 +690,22 @@ const (
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
+	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
+	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
+	//TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
+	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
+	TiDBMemOOMAction = "tidb_mem_oom_action"
+	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
+	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
+	// TiDBPrepPlanCacheSize indicates the number of cached statements.
+	TiDBPrepPlanCacheSize = "tidb_prepared_plan_cache_size"
+	// TiDBPrepPlanCacheMemoryGuardRatio is used to prevent [performance.max-memory] from being exceeded
+	TiDBPrepPlanCacheMemoryGuardRatio = "tidb_prepared_plan_cache_memory_guard_ratio"
+	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
+	// will be killed. 0 indicates that there is no time limit.
+	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
+	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
+	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
 )
 
 // TiDB intentional limits
@@ -759,6 +777,7 @@ const (
 	DefBroadcastJoinThresholdCount               = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel             = 0
 	DefTiDBOptimizerEnableNewOFGB                = false
+	DefTiDBEnableOuterJoinReorder                = true
 	DefTiDBAllowBatchCop                         = 1
 	DefTiDBAllowMPPExecution                     = true
 	DefTiDBHashExchangeWithNewCollation          = true
@@ -869,11 +888,19 @@ const (
 	DefTiDBCommitterConcurrency                  = 128
 	DefTiDBBatchDMLIgnoreError                   = false
 	DefTiDBMemQuotaAnalyze                       = -1
+	DefTiDBEnableAutoAnalyze                     = true
+	DefTiDBMemOOMAction                          = "CANCEL"
+	DefTiDBMaxAutoAnalyzeTime                    = 12 * 60 * 60
+	DefTiDBEnablePrepPlanCache                   = true
+	DefTiDBPrepPlanCacheSize                     = 100
+	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
+	DefTiDBEnableConcurrentDDL                   = true
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog           = atomic.NewBool(false)
+	RunAutoAnalyze              = atomic.NewBool(DefTiDBEnableAutoAnalyze)
 	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
 	QueryLogMaxLen              = atomic.NewInt32(DefTiDBQueryLogMaxLen)
 	EnablePProfSQLCPU           = atomic.NewBool(false)
@@ -895,6 +922,8 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
+	EnablePointGetCache                   = atomic.NewBool(DefTiDBPointGetCache)
+	EnableChangeMultiSchema               = atomic.NewBool(DefTiDBChangeMultiSchema)
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
@@ -907,6 +936,13 @@ var (
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	StatsCacheMemQuota                    = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
+	OOMAction                             = atomic.NewString(DefTiDBMemOOMAction)
+	MaxAutoAnalyzeTime                    = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
+	// variables for plan cache
+	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
+	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
+	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
+	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 )
 
 var (
@@ -914,4 +950,6 @@ var (
 	SetMemQuotaAnalyze func(quota int64) = nil
 	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
 	GetMemQuotaAnalyze func() int64 = nil
+	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
+	SetStatsCacheCapacity atomic.Value
 )

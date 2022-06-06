@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -480,20 +481,12 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allJobs := make([]*model.Job, 0)
-	defaultJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+	allJobs, err := ddl.GetAllDDLJobs(snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("get default jobs", zap.Int("jobs", len(defaultJobs)))
-	allJobs = append(allJobs, defaultJobs...)
-	addIndexJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Debug("get add index jobs", zap.Int("jobs", len(addIndexJobs)))
-	allJobs = append(allJobs, addIndexJobs...)
-	historyJobs, err := snapMeta.GetAllHistoryDDLJobs()
+	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
+	historyJobs, err := ddl.GetAllHistoryDDLJobs(snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}

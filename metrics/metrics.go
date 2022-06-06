@@ -16,6 +16,7 @@ package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 )
 
@@ -75,6 +76,10 @@ func RetLabel(err error) string {
 
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.
 func RegisterMetrics() {
+	// use new go collector
+	prometheus.DefaultRegisterer.Unregister(prometheus.NewGoCollector())
+	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollections(collectors.GoRuntimeMetricsCollection | collectors.GoRuntimeMemStatsCollection)))
+
 	prometheus.MustRegister(AutoAnalyzeCounter)
 	prometheus.MustRegister(AutoAnalyzeHistogram)
 	prometheus.MustRegister(AutoIDHistogram)
@@ -120,6 +125,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
 	prometheus.MustRegister(PanicCounter)
 	prometheus.MustRegister(PlanCacheCounter)
+	prometheus.MustRegister(PlanCacheMissCounter)
 	prometheus.MustRegister(PseudoEstimation)
 	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)

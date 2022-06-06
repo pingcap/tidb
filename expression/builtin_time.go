@@ -883,14 +883,18 @@ func (b *builtinFromDaysSig) Clone() builtinFunc {
 }
 
 // evalTime evals FROM_DAYS(N).
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-days
+// See https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_from-days
 func (b *builtinFromDaysSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	n, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
 	}
-
-	return types.TimeFromDays(n), false, nil
+	ret := types.TimeFromDays(n)
+	// the maximum date value is 9999-12-31 in mysql 5.8.
+	if ret.Year() > 9999 {
+		return types.ZeroTime, true, nil
+	}
+	return ret, false, nil
 }
 
 type hourFunctionClass struct {
@@ -1385,7 +1389,7 @@ func (b *builtinWeekWithModeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if date.IsZero() {
+	if date.IsZero() || date.InvalidZero() {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
@@ -1417,7 +1421,7 @@ func (b *builtinWeekWithoutModeSig) evalInt(row chunk.Row) (int64, bool, error) 
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if date.IsZero() {
+	if date.IsZero() || date.InvalidZero() {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
@@ -1471,7 +1475,7 @@ func (b *builtinWeekDaySig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if date.IsZero() {
+	if date.IsZero() || date.InvalidZero() {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
@@ -1516,7 +1520,7 @@ func (b *builtinWeekOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if date.IsZero() {
+	if date.IsZero() || date.InvalidZero() {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
@@ -1613,7 +1617,7 @@ func (b *builtinYearWeekWithModeSig) evalInt(row chunk.Row) (int64, bool, error)
 	if isNull || err != nil {
 		return 0, isNull, handleInvalidTimeError(b.ctx, err)
 	}
-	if date.IsZero() {
+	if date.IsZero() || date.InvalidZero() {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
@@ -3480,7 +3484,9 @@ func (b *builtinAddDateStringStringSig) evalTime(row chunk.Row) (types.Time, boo
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
 	}
-
+	if date.InvalidZero() {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+	}
 	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
@@ -4269,7 +4275,9 @@ func (b *builtinSubDateStringStringSig) evalTime(row chunk.Row) (types.Time, boo
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
 	}
-
+	if date.InvalidZero() {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+	}
 	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
@@ -5917,7 +5925,9 @@ func (b *builtinConvertTzSig) evalTime(row chunk.Row) (types.Time, bool, error) 
 	if isNull || err != nil {
 		return types.ZeroTime, true, nil
 	}
-
+	if dt.InvalidZero() {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dt.String()))
+	}
 	fromTzStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, true, nil
@@ -7048,6 +7058,9 @@ func (b *builtinToDaysSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
+	if arg.InvalidZero() {
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+	}
 	ret := types.TimestampDiff("DAY", types.ZeroDate, arg)
 	if ret == 0 {
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
@@ -7088,6 +7101,9 @@ func (b *builtinToSecondsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
+	}
+	if arg.InvalidZero() {
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
 	}
 	ret := types.TimestampDiff("SECOND", types.ZeroDate, arg)
 	if ret == 0 {

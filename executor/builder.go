@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -70,7 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (
@@ -312,6 +311,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCTE(v)
 	case *plannercore.PhysicalCTETable:
 		return b.buildCTETableReader(v)
+	case *plannercore.CompactTable:
+		return b.buildCompactTable(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -797,22 +798,23 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 
 func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		Tp:           v.Tp,
-		DBName:       model.NewCIStr(v.DBName),
-		Table:        v.Table,
-		Partition:    v.Partition,
-		Column:       v.Column,
-		IndexName:    v.IndexName,
-		Flag:         v.Flag,
-		Roles:        v.Roles,
-		User:         v.User,
-		is:           b.is,
-		Full:         v.Full,
-		IfNotExists:  v.IfNotExists,
-		GlobalScope:  v.GlobalScope,
-		Extended:     v.Extended,
-		Extractor:    v.Extractor,
+		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		Tp:                    v.Tp,
+		CountWarningsOrErrors: v.CountWarningsOrErrors,
+		DBName:                model.NewCIStr(v.DBName),
+		Table:                 v.Table,
+		Partition:             v.Partition,
+		Column:                v.Column,
+		IndexName:             v.IndexName,
+		Flag:                  v.Flag,
+		Roles:                 v.Roles,
+		User:                  v.User,
+		is:                    b.is,
+		Full:                  v.Full,
+		IfNotExists:           v.IfNotExists,
+		GlobalScope:           v.GlobalScope,
+		Extended:              v.Extended,
+		Extractor:             v.Extractor,
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -1580,11 +1582,6 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 // and some stale/historical read contexts. For example, it will return txn.StartTS in RR and return
 // the current timestamp in RC isolation
 func (b *executorBuilder) getReadTS() (uint64, error) {
-	// `refreshForUpdateTSForRC` should always be invoked before returning the cached value to
-	// ensure the correct value is returned even the `snapshotTS` field is already set by other
-	// logics. However for `IndexLookUpMergeJoin` and `IndexLookUpHashJoin`, it requires caching the
-	// snapshotTS and and may even use it after the txn being destroyed. In this case, mark
-	// `snapshotTSCached` to skip `refreshForUpdateTSForRC`.
 	failpoint.Inject("assertNotStaleReadForExecutorGetReadTS", func() {
 		// after refactoring stale read will use its own context provider
 		staleread.AssertStmtStaleness(b.ctx, false)
@@ -1598,12 +1595,6 @@ func (b *executorBuilder) getReadTS() (uint64, error) {
 		b.snapshotTS = snapshotTS
 		b.snapshotTSCached = true
 		return snapshotTS, nil
-	}
-
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			return 0, err
-		}
 	}
 
 	if b.snapshotTS != 0 {
@@ -2225,39 +2216,10 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 	// The Repeatable Read transaction use Read Committed level to read data for writing (insert, update, delete, select for update),
 	// We should always update/refresh the for-update-ts no matter the isolation level is RR or RC.
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		return b.refreshForUpdateTSForRC()
+		_, err = sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS()
+		return err
 	}
 	return UpdateForUpdateTS(b.ctx, 0)
-}
-
-// refreshForUpdateTSForRC is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
-// It could use the cached tso from the statement future to avoid get tso many times.
-func (b *executorBuilder) refreshForUpdateTSForRC() error {
-	defer func() {
-		b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-	}()
-	// The first time read-consistency read is executed and `RcReadCheckTS` is enabled, try to use
-	// the last valid ts as the for update read ts.
-	if b.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		rcReadTS := b.ctx.GetSessionVars().TxnCtx.LastRcReadTs
-		if rcReadTS == 0 {
-			rcReadTS = b.ctx.GetSessionVars().TxnCtx.StartTS
-		}
-		return UpdateForUpdateTS(b.ctx, rcReadTS)
-	}
-	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
-	if future == nil {
-		return nil
-	}
-	newForUpdateTS, waitErr := future.Wait()
-	if waitErr != nil {
-		logutil.BgLogger().Warn("wait tso failed",
-			zap.Uint64("startTS", b.ctx.GetSessionVars().TxnCtx.StartTS),
-			zap.Error(waitErr))
-	}
-	b.ctx.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
-	// If newForUpdateTS is 0, it will force to get a new for-update-ts from PD.
-	return UpdateForUpdateTS(b.ctx, newForUpdateTS)
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
@@ -2272,6 +2234,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2432,6 +2395,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		TableName:     task.TableName,
 		PartitionName: task.PartitionName,
 	}
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2584,6 +2548,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -3209,6 +3174,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if err != nil {
 		return nil, err
 	}
+	paging := b.ctx.GetSessionVars().EnablePaging
 	e := &TableReaderExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:            dagReq,
@@ -3220,6 +3186,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		desc:             ts.Desc,
 		columns:          ts.Columns,
 		streaming:        streaming,
+		paging:           paging,
 		corColInFilter:   b.corColInDistPlan(v.TablePlans),
 		corColInAccess:   b.corColInAccess(v.TablePlans[0]),
 		plans:            v.TablePlans,
@@ -3482,6 +3449,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	if err != nil {
 		return nil, err
 	}
+	paging := b.ctx.GetSessionVars().EnablePaging
 	e := &IndexReaderExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:            dagReq,
@@ -3495,6 +3463,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		desc:             is.Desc,
 		columns:          is.Columns,
 		streaming:        streaming,
+		paging:           paging,
 		corColInFilter:   b.corColInDistPlan(v.IndexPlans),
 		corColInAccess:   b.corColInAccess(v.IndexPlans[0]),
 		idxCols:          is.IdxCols,
@@ -3808,6 +3777,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		return nil, err
 	}
 
+	paging := b.ctx.GetSessionVars().EnablePaging
 	e := &IndexMergeReaderExecutor{
 		baseExecutor:             newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPBs:                   partialReqs,
@@ -3823,6 +3793,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		tblPlans:                 v.TablePlans,
 		dataReaderBuilder:        readerBuilder,
 		feedbacks:                feedbacks,
+		paging:                   paging,
 		handleCols:               ts.HandleCols,
 		isCorColInPartialFilters: isCorColInPartialFilters,
 		isCorColInTableFilter:    isCorColInTableFilter,
@@ -5005,4 +4976,24 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		}
 	}
 	return nil
+}
+
+func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executor {
+	if v.ReplicaKind != ast.CompactReplicaKindTiFlash {
+		b.err = errors.Errorf("compact %v replica is not supported", strings.ToLower(string(v.ReplicaKind)))
+		return nil
+	}
+
+	store := b.ctx.GetStore()
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		b.err = errors.New("compact tiflash replica can only run with tikv compatible storage")
+		return nil
+	}
+
+	return &CompactTableTiFlashExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		tableInfo:    v.TableInfo,
+		tikvStore:    tikvStore,
+	}
 }

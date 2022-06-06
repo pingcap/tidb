@@ -52,6 +52,7 @@ import (
 	split "github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
@@ -1846,6 +1847,9 @@ func (local *local) EngineFileSizes() (res []backend.EngineFileSize) {
 	return
 }
 
+var getSplitConfFromStoreFunc = getSplitConfFromStore
+
+// return region split size, region split keys, error
 func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
 	var (
 		nested struct {
@@ -1866,6 +1870,7 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (i
 	return splitSize, nested.Coprocessor.RegionSplitKeys, nil
 }
 
+// return region split size, region split keys, error
 func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (int64, int64, error) {
 	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
@@ -1875,11 +1880,16 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		if store.StatusAddress == "" || version.IsTiFlash(store) {
 			continue
 		}
-		regionSplitSize, regionSplitKeys, err := getSplitConfFromStore(ctx, store.StatusAddress, tls)
+		serverInfo := infoschema.ServerInfo{
+			Address:    store.Address,
+			StatusAddr: store.StatusAddress,
+		}
+		serverInfo.ResolveLoopBackAddr()
+		regionSplitSize, regionSplitKeys, err := getSplitConfFromStoreFunc(ctx, serverInfo.StatusAddr, tls)
 		if err == nil {
 			return regionSplitSize, regionSplitKeys, nil
 		}
-		log.L().Warn("get region split size and keys failed", zap.Error(err), zap.String("store", store.StatusAddress))
+		log.L().Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
 	return 0, 0, errors.New("get region split size and keys failed")
 }
