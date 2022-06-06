@@ -129,7 +129,7 @@ type addIndexWorkerLit struct {
 
 func newAddIndexWorkerLit(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jobId int64) (*addIndexWorkerLit, error) {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
+	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap, sessCtx)
 	// ToDo: Bear Currently, all the lightning worker share one openengine.
 	engineInfoKey := lit.GenEngineInfoKey(jobId, indexInfo.ID)
 

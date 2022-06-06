@@ -156,18 +156,16 @@ func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chu
 	if err != nil {
 		return err
 	}
-	rowDecoder := decoder.NewRowDecoder(s.table, cols, decColMap)
+	rowDecoder := decoder.NewRowDecoder(s.table, cols, decColMap, s.ctx)
 	err = s.scanFirstKVForEachRange(ranges, func(handle kv.Handle, value []byte) error {
 		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx, handle, value, decLoc, s.rowMap)
 		if err != nil {
 			return err
 		}
-		currentRow := rowDecoder.CurrentRowWithDefaultVal()
+
 		mutRow := chunk.MutRowFromTypes(s.retTypes)
 		for i, col := range s.schema.Columns {
-			offset := decColMap[col.ID].Col.Offset
-			target := currentRow.GetDatum(offset, s.retTypes[i])
-			mutRow.SetDatum(i, target)
+			mutRow.SetDatum(i, s.rowMap[col.ID])
 		}
 		req.AppendRow(mutRow.ToRow())
 		s.resetRowMap()

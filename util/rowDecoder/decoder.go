@@ -38,17 +38,25 @@ type Column struct {
 
 // RowDecoder decodes a byte slice into datums and eval the generated column value.
 type RowDecoder struct {
-	tbl         table.Table
-	mutRow      chunk.MutRow
-	colMap      map[int64]Column
-	colTypes    map[int64]*types.FieldType
-	defaultVals []types.Datum
-	cols        []*table.Column
-	pkCols      []int64
+	tbl table.Table
+	// mutRow is used to evaluate the virtual generated column.
+	mutRow          chunk.MutRow
+	needMutRow      bool
+	colMap          map[int64]Column
+	nonGCColMap     map[int64]Column
+	gcColMap        map[int64]Column
+	orderedGCOffset []int
+	offset2Id       map[int]int
+	datumSlice      []*types.Datum
+	colTypes        map[int64]*types.FieldType
+	defaultVals     []types.Datum
+	cols            []*table.Column
+	pkCols          []int64
+	datumMapDecoder *rowcodec.DatumMapDecoder
 }
 
 // NewRowDecoder returns a new RowDecoder.
-func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64]Column) *RowDecoder {
+func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64]Column, sctx sessionctx.Context) *RowDecoder {
 	tblInfo := tbl.Meta()
 	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
 	for id, col := range decodeColMap {
@@ -69,14 +77,50 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 	default: // support decoding _tidb_rowid.
 		pkCols = []int64{model.ExtraHandleID}
 	}
+	nonGCColMap := make(map[int64]Column)
+	gcColMap := make(map[int64]Column)
+	for id, col := range decodeColMap {
+		if col.GenExpr != nil {
+			gcColMap[id] = col
+		} else {
+			nonGCColMap[id] = col
+		}
+	}
+
+	orderedGCOffset := make([]int, 0, len(gcColMap))
+	offset2Id := make(map[int]int, len(gcColMap))
+	for id, col := range gcColMap {
+		orderedGCOffset = append(orderedGCOffset, col.Col.Offset)
+		offset2Id[col.Col.Offset] = int(id)
+	}
+	sort.Ints(orderedGCOffset)
+
+	reqCols := make([]rowcodec.ColInfo, len(cols))
+	var idx int
+	for id, tp := range colFieldMap {
+		reqCols[idx] = rowcodec.ColInfo{
+			ID: id,
+			Ft: tp,
+		}
+		idx++
+	}
+	rd := rowcodec.NewDatumMapDecoder(reqCols, sctx.GetSessionVars().StmtCtx.TimeZone)
+
+
 	return &RowDecoder{
-		tbl:         tbl,
-		mutRow:      chunk.MutRowFromTypes(tps),
-		colMap:      decodeColMap,
-		colTypes:    colFieldMap,
-		defaultVals: make([]types.Datum, len(cols)),
-		cols:        cols,
-		pkCols:      pkCols,
+		tbl:             tbl,
+		mutRow:          chunk.MutRowFromTypes(tps),
+		needMutRow:      len(gcColMap) > 0,
+		colMap:          decodeColMap,
+		nonGCColMap:     nonGCColMap,
+		gcColMap:        gcColMap,
+		orderedGCOffset: orderedGCOffset,
+		offset2Id:       offset2Id,
+		colTypes:        colFieldMap,
+		defaultVals:     make([]types.Datum, len(cols)),
+		cols:            cols,
+		pkCols:          pkCols,
+		datumMapDecoder: rd,
 	}
 }
 
@@ -84,7 +128,7 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
-		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
+		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row, rd.datumMapDecoder)
 	} else {
 		row, err = tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	}
@@ -95,11 +139,13 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	if err != nil {
 		return nil, err
 	}
-	for _, dCol := range rd.colMap {
+	for _, dCol := range rd.nonGCColMap {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
-		if ok || dCol.GenExpr != nil {
-			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+		if ok {
+			if rd.needMutRow {
+				rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+			}
 			continue
 		}
 		if dCol.Col.ChangeStateInfo != nil {
@@ -111,7 +157,10 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		if err != nil {
 			return nil, err
 		}
-		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+		row[colInfo.ID] = val
+		if rd.needMutRow {
+			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+		}
 	}
 	return rd.EvalRemainedExprColumnMap(ctx, row)
 }
@@ -128,12 +177,6 @@ func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[
 	return decodeColMap
 }
 
-// CurrentRowWithDefaultVal returns current decoding row with default column values set properly.
-// Please make sure calling DecodeAndEvalRowWithMap first.
-func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
-	return rd.mutRow.ToRow()
-}
-
 // DecodeTheExistedColumnMap is used by ddl column-type-change first column reorg stage.
 // In the function, we only decode the existed column in the row and fill the default value.
 // For changing column, we shouldn't cast it here, because we will do a unified cast operation latter.
@@ -141,7 +184,7 @@ func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
 func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
-		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
+		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row, nil)
 	} else {
 		row, err = tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	}
@@ -156,7 +199,9 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
 		if ok || dCol.GenExpr != nil || dCol.Col.ChangeStateInfo != nil {
-			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+			if rd.needMutRow {
+				rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+			}
 			continue
 		}
 		// Get the default value of the column in the generated column expression.
@@ -166,7 +211,9 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 		}
 		// Fill the default value into map.
 		row[colInfo.ID] = val
-		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+		if rd.needMutRow {
+			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+		}
 	}
 	// return the existed column map here.
 	return row, nil
@@ -175,18 +222,9 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 // EvalRemainedExprColumnMap is used by ddl column-type-change first column reorg stage.
 // It is always called after DecodeTheExistedColumnMap to finish the generated column evaluation.
 func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, row map[int64]types.Datum) (map[int64]types.Datum, error) {
-	keys := make([]int, 0, len(rd.colMap))
-	ids := make(map[int]int, len(rd.colMap))
-	for k, col := range rd.colMap {
-		keys = append(keys, col.Col.Offset)
-		ids[col.Col.Offset] = int(k)
-	}
-	sort.Ints(keys)
-	for _, id := range keys {
-		col := rd.colMap[int64(ids[id])]
-		if col.GenExpr == nil {
-			continue
-		}
+	for _, offset := range rd.orderedGCOffset {
+		id := int64(rd.offset2Id[offset])
+		col := rd.colMap[id]
 		// Eval the column value
 		val, err := col.GenExpr.Eval(rd.mutRow.ToRow())
 		if err != nil {
@@ -198,7 +236,7 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, row map[
 		}
 
 		rd.mutRow.SetValue(col.Col.Offset, val.GetValue())
-		row[int64(ids[id])] = val
+		row[id] = val
 	}
 	// return the existed and evaluated column map here.
 	return row, nil

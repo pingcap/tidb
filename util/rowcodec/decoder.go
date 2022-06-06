@@ -95,6 +95,8 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, row map[int64]t
 			row[col.ID] = d
 			continue
 		}
+		
+		delete(row, col.ID)
 	}
 	return row, nil
 }

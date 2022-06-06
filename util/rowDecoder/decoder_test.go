@@ -66,8 +66,8 @@ func TestRowDecoder(t *testing.T) {
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
-	deWithNoGenCols := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap2)
+	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap, ctx)
+	deWithNoGenCols := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap2, ctx)
 
 	time1 := types.NewTime(types.FromDate(2019, 01, 01, 8, 01, 01, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	t1 := types.NewTimeDatum(time1)
@@ -78,6 +78,8 @@ func TestRowDecoder(t *testing.T) {
 	time2, err := time1.Add(sc, d1.GetMysqlDuration())
 	require.Nil(t, err)
 	t2 := types.NewTimeDatum(time2)
+
+	c5default, _ := types.ParseDuration(sc, "02:00:02", 0)
 
 	time3, err := time1.Add(sc, types.Duration{Duration: time.Hour*2 + time.Second*2})
 	require.Nil(t, err)
@@ -96,7 +98,7 @@ func TestRowDecoder(t *testing.T) {
 		{
 			[]int64{cols[0].ID, cols[1].ID, cols[2].ID, cols[3].ID},
 			[]types.Datum{types.NewIntDatum(100), types.NewBytesDatum([]byte("abc")), types.NewDecimalDatum(types.NewDecFromInt(1)), t1},
-			[]types.Datum{types.NewIntDatum(100), types.NewBytesDatum([]byte("abc")), types.NewDecimalDatum(types.NewDecFromInt(1)), t1, types.NewDatum(nil), t3},
+			[]types.Datum{types.NewIntDatum(100), types.NewBytesDatum([]byte("abc")), types.NewDecimalDatum(types.NewDecFromInt(1)), t1, types.NewDurationDatum(c5default), t3},
 		},
 		{
 			[]int64{cols[0].ID, cols[1].ID, cols[2].ID, cols[3].ID, cols[4].ID},
@@ -135,6 +137,9 @@ func TestRowDecoder(t *testing.T) {
 		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, nil)
 		require.Nil(t, err)
 		for k, v := range r2 {
+			if model.FindColumnInfoByID(cols, k).GeneratedExprString != "" {
+				continue
+			}
 			v1, ok := r[k]
 			require.True(t, ok)
 			equal, err1 := v.Compare(sc, &v1, collate.GetBinaryCollator())
@@ -169,7 +174,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
+	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap, ctx)
 
 	testRows := []struct {
 		cols   []int64

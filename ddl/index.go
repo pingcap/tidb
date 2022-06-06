@@ -1078,7 +1078,7 @@ type addIndexWorker struct {
 
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
+	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap, sessCtx)
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
 			backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
@@ -1210,7 +1210,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			}
 			// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
 			// the generated value, so we need to clear up the reusing map.
-			w.cleanRowMap()
+			//w.cleanRowMap()
 
 			if recordKey.Cmp(taskRange.endKey) == 0 {
 				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
@@ -1523,7 +1523,7 @@ type cleanUpIndexWorker struct {
 
 func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo) *cleanUpIndexWorker {
 	indexes := make([]table.Index, 0, len(t.Indices()))
-	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
+	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap, sessCtx)
 	for _, index := range t.Indices() {
 		if index.Meta().Global {
 			indexes = append(indexes, index)
