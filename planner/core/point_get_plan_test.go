@@ -701,6 +701,23 @@ func TestBatchPointGetPartition(t *testing.T) {
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows())
 }
 
+func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, UNIQUE KEY (b)) PARTITION BY HASH(b) PARTITIONS 4")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustQuery("explain select * from t where b in (1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get_1 2.00 root table:t, partition:p1,p2, index:b(b) keep order:false, desc:false"))
+	tk.MustQuery("explain select * from t where b in (1, 2, 1)").Check(testkit.Rows(
+		"Batch_Point_Get_1 3.00 root table:t, partition:p1,p2, index:b(b) keep order:false, desc:false"))
+}
+
 func TestIssue19141(t *testing.T) {
 	// For issue 19141, fix partition selection on batch point get.
 	store, clean := testkit.CreateMockStore(t)
