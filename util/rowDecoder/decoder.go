@@ -40,16 +40,18 @@ type Column struct {
 type RowDecoder struct {
 	tbl table.Table
 	// mutRow is used to evaluate the virtual generated column.
-	mutRow      chunk.MutRow
-	needMutRow  bool
-	colMap      map[int64]Column
-	nonGCColMap map[int64]Column
-	gcColMap    map[int64]Column
-	datumSlice  []*types.Datum
-	colTypes    map[int64]*types.FieldType
-	defaultVals []types.Datum
-	cols        []*table.Column
-	pkCols      []int64
+	mutRow          chunk.MutRow
+	needMutRow      bool
+	colMap          map[int64]Column
+	nonGCColMap     map[int64]Column
+	gcColMap        map[int64]Column
+	orderedGCOffset []int
+	offset2Id       map[int]int
+	datumSlice      []*types.Datum
+	colTypes        map[int64]*types.FieldType
+	defaultVals     []types.Datum
+	cols            []*table.Column
+	pkCols          []int64
 }
 
 // NewRowDecoder returns a new RowDecoder.
@@ -83,17 +85,28 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 			nonGCColMap[id] = col
 		}
 	}
+
+	orderedGCOffset := make([]int, 0, len(gcColMap))
+	offset2Id := make(map[int]int, len(gcColMap))
+	for id, col := range gcColMap {
+		orderedGCOffset = append(orderedGCOffset, col.Col.Offset)
+		offset2Id[col.Col.Offset] = int(id)
+	}
+	sort.Ints(orderedGCOffset)
+
 	return &RowDecoder{
-		tbl:         tbl,
-		mutRow:      chunk.MutRowFromTypes(tps),
-		needMutRow:  len(gcColMap) > 0,
-		colMap:      decodeColMap,
-		nonGCColMap: nonGCColMap,
-		gcColMap:    gcColMap,
-		colTypes:    colFieldMap,
-		defaultVals: make([]types.Datum, len(cols)),
-		cols:        cols,
-		pkCols:      pkCols,
+		tbl:             tbl,
+		mutRow:          chunk.MutRowFromTypes(tps),
+		needMutRow:      len(gcColMap) > 0,
+		colMap:          decodeColMap,
+		nonGCColMap:     nonGCColMap,
+		gcColMap:        gcColMap,
+		orderedGCOffset: orderedGCOffset,
+		offset2Id:       offset2Id,
+		colTypes:        colFieldMap,
+		defaultVals:     make([]types.Datum, len(cols)),
+		cols:            cols,
+		pkCols:          pkCols,
 	}
 }
 
@@ -195,18 +208,9 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 // EvalRemainedExprColumnMap is used by ddl column-type-change first column reorg stage.
 // It is always called after DecodeTheExistedColumnMap to finish the generated column evaluation.
 func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, row map[int64]types.Datum) (map[int64]types.Datum, error) {
-	keys := make([]int, 0, len(rd.colMap))
-	ids := make(map[int]int, len(rd.colMap))
-	for k, col := range rd.colMap {
-		keys = append(keys, col.Col.Offset)
-		ids[col.Col.Offset] = int(k)
-	}
-	sort.Ints(keys)
-	for _, id := range keys {
-		col := rd.colMap[int64(ids[id])]
-		if col.GenExpr == nil {
-			continue
-		}
+	for _, offset := range rd.orderedGCOffset {
+		id := int64(rd.offset2Id[offset])
+		col := rd.colMap[id]
 		// Eval the column value
 		val, err := col.GenExpr.Eval(rd.mutRow.ToRow())
 		if err != nil {
@@ -218,7 +222,7 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, row map[
 		}
 
 		rd.mutRow.SetValue(col.Col.Offset, val.GetValue())
-		row[int64(ids[id])] = val
+		row[id] = val
 	}
 	// return the existed and evaluated column map here.
 	return row, nil
