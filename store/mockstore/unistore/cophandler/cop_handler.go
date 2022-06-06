@@ -278,7 +278,18 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		return nil, nil, errors.Trace(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	switch dagReq.TimeZoneName {
+	case "System", "":
+		sc.TimeZone = time.Local
+		if dagReq.TimeZoneOffset > 0 {
+			sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+		}
+	default:
+		sc.TimeZone, err = time.LoadLocation(dagReq.TimeZoneName)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+	}
 	ctx := &dagContext{
 		evalContext:   &evalContext{sc: sc},
 		dbReader:      reader,
