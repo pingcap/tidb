@@ -114,7 +114,6 @@ func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error
 	}
 
 	p.forUpdateTS = 0
-	p.infoSchema = sessiontxn.GetTxnManager(p.sctx).GetTxnInfoSchema()
 
 	return nil
 }
@@ -157,19 +156,8 @@ func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType, val [
 	}
 }
 
-// optimizeWithPlan todo: optimize the forUpdateTs acquisition of point/batch point get
+// optimizeWithPlan todo: optimize the forUpdateTS acquisition
 func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error) {
-	return nil
-}
-
-func (p *PessimisticRRTxnContextProvider) warmUp() error {
-	if p.isTidbSnapshotEnabled() {
-		return nil
-	}
-
-	if err := p.prepareTxn(); err != nil {
-		return err
-	}
 	return nil
 }
 

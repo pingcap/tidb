@@ -17,6 +17,7 @@ package isolation_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"testing"
 	"time"
 
@@ -274,9 +275,22 @@ func TestRCProviderInitialize(t *testing.T) {
 	assertAfterActive.Check(t)
 	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
 	tk.MustExec("rollback")
+
+	// Case Pessimistic Autocommit
+	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+	assert = inActiveRCTxnAssert(se)
+	assertAfterActive = activeRCTxnAssert(t, se, true)
+	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+	provider = assert.CheckAndGetProvider(t)
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	ts, err = provider.GetStmtReadTS()
+	require.NoError(t, err)
+	assertAfterActive.Check(t)
+	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+	tk.MustExec("rollback")
 }
 
-func TestTidbSnapshotVar(t *testing.T) {
+func TestTidbSnapshotVarInRC(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 

@@ -2,11 +2,15 @@ package isolation_test
 
 import (
 	"context"
+	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
@@ -164,6 +168,149 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, CurrentTS, prevTS)
+}
+
+func TestRepeatableReadProviderInitialize(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk.MustExec("set @@tx_isolation = 'REPEATABLE-READ'")
+	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
+
+	// begin outside a txn
+	assert := activePessimisticRRAssert(t, se, true)
+	tk.MustExec("begin")
+	assert.Check(t)
+
+	// begin in a txn
+	assert = activePessimisticRRAssert(t, se, true)
+	tk.MustExec("begin")
+	assert.Check(t)
+
+	// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
+	assert = activePessimisticRRAssert(t, se, true)
+	assert.causalConsistencyOnly = true
+	tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
+	assert.Check(t)
+
+	// EnterNewTxnDefault will create an active txn, but not explicit
+	assert = activePessimisticRRAssert(t, se, false)
+	require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+		Type:    sessiontxn.EnterNewTxnDefault,
+		TxnMode: ast.Pessimistic,
+	}))
+	assert.Check(t)
+
+	// non-active txn and then active it
+	tk.MustExec("rollback")
+	tk.MustExec("set @@autocommit=0")
+	assert = inActivePessimisticRRAssert(se)
+	assertAfterActive := activePessimisticRRAssert(t, se, true)
+	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+	provider := assert.CheckAndGetProvider(t)
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	ts, err := provider.GetStmtReadTS()
+	require.NoError(t, err)
+	assertAfterActive.Check(t)
+	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+	tk.MustExec("rollback")
+
+	// Case Pessimistic Autocommit
+	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+	assert = inActivePessimisticRRAssert(se)
+	assertAfterActive = activePessimisticRRAssert(t, se, true)
+	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+	provider = assert.CheckAndGetProvider(t)
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	ts, err = provider.GetStmtReadTS()
+	require.NoError(t, err)
+	assertAfterActive.Check(t)
+	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+	tk.MustExec("rollback")
+}
+
+func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk.MustExec("set @@tx_isolation = 'REPEATABLE-READ'")
+	safePoint := "20160102-15:04:05 -0700"
+	tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%s', '') ON DUPLICATE KEY UPDATE variable_value = '%s', comment=''`, safePoint, safePoint))
+
+	time.Sleep(time.Millisecond * 50)
+	tk.MustExec("set @a=now(6)")
+	snapshotISVersion := dom.InfoSchema().SchemaMetaVersion()
+	time.Sleep(time.Millisecond * 50)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create temporary table t2(id int)")
+	tk.MustExec("set @@tidb_snapshot=@a")
+	snapshotTS := tk.Session().GetSessionVars().SnapshotTS
+	isVersion := dom.InfoSchema().SchemaMetaVersion()
+
+	assert := activePessimisticRRAssert(t, se, true)
+	tk.MustExec("begin pessimistic")
+	provider := assert.CheckAndGetProvider(t)
+	txn, err := se.Txn(false)
+	require.NoError(t, err)
+	require.Greater(t, txn.StartTS(), snapshotTS)
+
+	checkUseSnapshot := func() {
+		is := provider.GetTxnInfoSchema()
+		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
+		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		readTS, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		require.Equal(t, snapshotTS, readTS)
+		forUpdateTS, err := provider.GetStmtForUpdateTS()
+		require.NoError(t, err)
+		require.Equal(t, readTS, forUpdateTS)
+	}
+
+	checkUseTxn := func() {
+		is := provider.GetTxnInfoSchema()
+		require.Equal(t, isVersion, is.SchemaMetaVersion())
+		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		readTS, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		require.NotEqual(t, snapshotTS, readTS)
+		require.Equal(t, se.GetSessionVars().TxnCtx.StartTS, readTS)
+		forUpdateTS, err := provider.GetStmtForUpdateTS()
+		require.NoError(t, err)
+		require.Greater(t, forUpdateTS, readTS)
+	}
+
+	// information schema and ts should equal to snapshot when tidb_snapshot is set
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	checkUseSnapshot()
+
+	// information schema and ts will restore when set tidb_snapshot to empty
+	tk.MustExec("set @@tidb_snapshot=''")
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	checkUseTxn()
+
+	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
+	tk.MustExec("rollback")
+	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
+	tk.MustExec("set @@autocommit=0")
+	assert = inActivePessimisticRRAssert(se)
+	assertAfterActive := activePessimisticRRAssert(t, se, true)
+	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+	provider = assert.CheckAndGetProvider(t)
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	tk.MustExec("set @@tidb_snapshot=@a")
+	checkUseSnapshot()
+	txn, err = se.Txn(false)
+	require.NoError(t, err)
+	require.False(t, txn.Valid())
+	tk.MustExec("set @@tidb_snapshot=''")
+	checkUseTxn()
+	assertAfterActive.Check(t)
+	tk.MustExec("rollback")
 }
 
 func activePessimisticRRAssert(t *testing.T, sctx sessionctx.Context,
