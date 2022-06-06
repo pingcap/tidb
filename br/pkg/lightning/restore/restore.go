@@ -1355,14 +1355,17 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	// make split region and ingest sst more stable
 	// because importer backend is mostly use for v3.x cluster which doesn't support these api,
 	// so we also don't do this for import backend
-	finishSchedulers := func() {}
+	finishSchedulers := func() {
+		if rc.taskMgr != nil {
+			rc.taskMgr.Close()
+		}
+	}
 	// if one lightning failed abnormally, and can't determine whether it needs to switch back,
 	// we do not do switch back automatically
 	switchBack := false
 	cleanup := false
 	postProgress := func() error { return nil }
-	if rc.cfg.TikvImporter.Backend == config.BackendLocal {
-
+	if rc.cfg.TikvImporter.Backend == config.BackendLocal && !rc.taskMgr.CanPauseSchedulerByKeyRange() {
 		logTask.Info("removing PD leader&region schedulers")
 
 		restoreFn, err := rc.taskMgr.CheckAndPausePdSchedulers(ctx)
