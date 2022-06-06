@@ -188,12 +188,18 @@ func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error
 	}
 
 	optimizeForPointGet := false
-	if _, ok := plan.(*plannercore.PhysicalLock); ok {
-		optimizeForPointGet = true
-	} else if _, ok := plan.(*plannercore.Update); ok {
-		optimizeForPointGet = true
-	} else if _, ok := plan.(*plannercore.Delete); ok {
-		optimizeForPointGet = true
+	if v, ok := plan.(*plannercore.PhysicalLock); ok {
+		if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
+			optimizeForPointGet = true
+		}
+	} else if v, ok := plan.(*plannercore.Update); ok {
+		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
+			optimizeForPointGet = true
+		}
+	} else if v, ok := plan.(*plannercore.Delete); ok {
+		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
+			optimizeForPointGet = true
+		}
 	}
 
 	if p.forUpdateTS == 0 {
