@@ -66,7 +66,7 @@ Normally, the worker executes the sub-jobs one by one serially as if they were p
 
 To ensure atomic execution of a Multi-Schema Change execution, we need to carefully manage the states of the changing schema objects. Let's take the above SQL as an example: If the second sub-job `MODIFY COLUMN a CHAR (255)` fails for some reason, the first sub-job should be able to roll back its changes (roll back the added column `b`).
 
-This requirement means that we cannot simply publish the schema object when a sub-job is finished. Instead, it should remain in a state unnoticeable to users, waiting for the other sub-jobs to complete, eventually publishing all at once when it is confirmed that all sub-jobs have succeeded. This method is similar to 2PC: the "commit" cannot be started until the "prewrites" are completed.
+This requirement means that we cannot simply publish the schema object when a sub-job is finished. Instead, it should remain in a state invisible to users, waiting for the other sub-jobs to complete, eventually publishing all at once when it is confirmed that all sub-jobs have succeeded. This method is similar to 2PC: the "commit" cannot be started until the "prewrites" are completed.
 
 Here is the table of schema states that can occur in different DDLs. Note that the "Revertible States" means that the changes are unnoticeable to the users.
 
