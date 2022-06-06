@@ -224,7 +224,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if fieldTp.GetType() == mysql.TypeNull {
-		fieldTp.SetFlen(1)
+		fieldTp.SetFlen(0)
 		fieldTp.SetDecimal(0)
 		types.SetBinChsClnFlag(fieldTp)
 	}

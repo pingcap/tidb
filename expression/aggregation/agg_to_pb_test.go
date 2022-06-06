@@ -66,7 +66,8 @@ func TestAggFunc2Pb(t *testing.T) {
 			aggFunc, err := NewAggFuncDesc(ctx, funcName, args, hasDistinct)
 			require.NoError(t, err)
 			aggFunc.RetTp = funcTypes[i]
-			pbExpr, _ := AggFuncToPBExpr(ctx, client, aggFunc, kv.UnSpecified)
+			pbExpr, err := AggFuncToPBExpr(ctx, client, aggFunc, kv.UnSpecified)
+			require.NoError(t, err)
 			js, err := json.Marshal(pbExpr)
 			require.NoError(t, err)
 			require.Equal(t, fmt.Sprintf(jsons[i], hasDistinct), string(js))

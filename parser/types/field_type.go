@@ -148,6 +148,9 @@ func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
 }
 
 func (ft *FieldType) UpdateFlenAndDecimalUnderLimit(old *FieldType, deltaDecimal int, deltaFlen int) {
+	if ft.tp != mysql.TypeNewDecimal || old.tp != mysql.TypeNewDecimal {
+		return
+	}
 	if old.decimal < 0 {
 		deltaFlen += mysql.MaxDecimalScale
 		ft.decimal = mysql.MaxDecimalScale
