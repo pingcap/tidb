@@ -1831,7 +1831,10 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 	if expr.GetType().EvalType() != types.ETString {
 		return expr
 	}
-	if expr.GetType().GetCollate() == ec.Collation {
+	// Avoid padding 0 when cast character string to binary,
+	// which might affect string comparision result.
+	// See https://github.com/pingcap/tidb/issues/34823 for details.
+	if expr.GetType().GetCollate() == ec.Collation || ec.Charset == charset.CharsetBin {
 		return expr
 	}
 	tp := expr.GetType().Clone()
@@ -1842,9 +1845,6 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 			return expr
 		}
 	} else if ec.Charset == charset.CharsetBin {
-		// Avoid padding 0 when cast charset to binary,
-		// which might affect string comparision result.
-		// See https://github.com/pingcap/tidb/issues/34823 for details.
 		tp = types.NewFieldType(mysql.TypeVarString)
 	}
 	tp.SetCharset(ec.Charset)
