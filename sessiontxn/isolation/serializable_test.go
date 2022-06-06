@@ -17,6 +17,9 @@ package isolation_test
 import (
 	"context"
 	"fmt"
+	"testing"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/executor"
@@ -30,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"testing"
-	"time"
 )
 
 func TestPessimisticSerializableTxnProviderTS(t *testing.T) {
