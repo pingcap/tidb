@@ -649,8 +649,8 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 			})
 			curColOffset++
 		}
-		if rows.Err() != nil {
-			return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
 		}
 		// shard_row_id/auto random is only available after tidb v4.0.0
 		// `show table next_row_id` is also not available before tidb v4.0.0
@@ -777,8 +777,8 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 	if err := rows.Close(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if rows.Err() != nil {
-		return nil, errors.Trace(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, errors.Trace(err)
 	}
 	return autoIDInfos, nil
 }
