@@ -1844,8 +1844,6 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 		} else {
 			return expr
 		}
-	} else if ec.Charset == charset.CharsetBin {
-		tp = types.NewFieldType(mysql.TypeVarString)
 	}
 	tp.SetCharset(ec.Charset)
 	tp.SetCollate(ec.Collation)
