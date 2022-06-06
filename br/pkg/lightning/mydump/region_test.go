@@ -463,7 +463,7 @@ func TestSampleAndGetAvgRowSize(t *testing.T) {
 				BackslashEscape: true,
 				TrimLastSep:     false,
 			}
-			size, err := SampleAndGetAvgRowSize(&fileInfo, cfg, ioWorkers, loader.GetStore())
+			size, err := GetSampledAvgRowSize(&fileInfo, cfg, ioWorkers, loader.GetStore())
 			require.Nil(t, err)
 			require.GreaterOrEqual(t, fileSize/size, int64(2))
 		}

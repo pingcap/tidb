@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 )
@@ -273,8 +272,9 @@ func makeSourceFileRegion(
 	if !isCsvFile {
 		divisor += 2
 	}
-	sizePerRow, err := SampleAndGetAvgRowSize(&fi, cfg, ioWorkers, store)
+	sizePerRow, err := GetSampledAvgRowSize(&fi, cfg, ioWorkers, store)
 	if err == nil && sizePerRow != 0 {
+		log.L().Warn("fail to sample file", zap.String("path", fi.FileMeta.Path), zap.Error(err))
 		divisor = sizePerRow
 	}
 	// If a csv file is overlarge, we need to split it into multiple regions.
@@ -312,7 +312,7 @@ func makeSourceFileRegion(
 	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.FileSize)}, nil
 }
 
-func SampleAndGetAvgRowSize(
+func GetSampledAvgRowSize(
 	fileInfo *FileInfo,
 	cfg *config.Config,
 	ioWorkers *worker.Pool,
@@ -322,7 +322,7 @@ func SampleAndGetAvgRowSize(
 	defer cancel()
 	reader, err := store.Open(ctx, fileInfo.FileMeta.Path)
 	if err != nil {
-		return 0, nil
+		return 0, err
 	}
 	var parser Parser
 	switch fileInfo.FileMeta.Type {

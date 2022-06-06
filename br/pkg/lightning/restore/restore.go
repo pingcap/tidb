@@ -2151,29 +2151,34 @@ type deliverResult struct {
 }
 
 func (cr *chunkRestore) adjustRowID(rowID int64, rc *Controller) (int64, error) {
-	if rowID > cr.originalRowIDMax {
-		if cr.curRowIDBase == 0 || cr.curRowIDBase > cr.curRowIDMax {
-			// reallocate rowID
-			pos, _ := cr.parser.Pos()
-			leftFileSize := cr.chunk.Chunk.EndOffset - pos
-			newRowIDCount := leftFileSize/int64(cr.avgRowSize) + 1 // plus the current row
-			newBase, newMax, err := cr.tableRestore.allocateRowIDs(newRowIDCount, rc)
-			if err != nil {
-				logger := cr.tableRestore.logger.With(
-					zap.String("tableName", cr.tableRestore.tableName),
-					zap.Int("fileIndex", cr.index),
-					zap.Stringer("path", &cr.chunk.Key),
-					zap.String("task", "re-allocate rowID"),
-				)
-				logger.Error("fail to re-allocate rowIDs", zap.Error(err))
-				return 0, err
-			}
-			cr.curRowIDBase = newBase
-			cr.curRowIDMax = newMax
-		}
-		rowID = cr.curRowIDBase
-		cr.curRowIDBase++
+	if rowID <= cr.originalRowIDMax {
+		// no need to ajust
+		return rowID, nil
 	}
+	// need to adjust rowID
+	// rowID should be within [curRowIDBase, curRowIDMax]
+	if cr.curRowIDBase == 0 || cr.curRowIDBase > cr.curRowIDMax {
+		// 1. curRowIDBase == 0 -> no previous re-allocation
+		// 2. curRowIDBase > curRowIDMax -> run out of allocated IDs
+		pos, _ := cr.parser.Pos()
+		leftFileSize := cr.chunk.Chunk.EndOffset - pos
+		newRowIDCount := leftFileSize/int64(cr.avgRowSize) + 1 // plus the current row
+		newBase, newMax, err := cr.tableRestore.allocateRowIDs(newRowIDCount, rc)
+		if err != nil {
+			logger := cr.tableRestore.logger.With(
+				zap.String("tableName", cr.tableRestore.tableName),
+				zap.Int("fileIndex", cr.index),
+				zap.Stringer("path", &cr.chunk.Key),
+				zap.String("task", "re-allocate rowID"),
+			)
+			logger.Error("fail to re-allocate rowIDs", zap.Error(err))
+			return 0, err
+		}
+		cr.curRowIDBase = newBase
+		cr.curRowIDMax = newMax
+	}
+	rowID = cr.curRowIDBase
+	cr.curRowIDBase++
 	return rowID, nil
 }
 

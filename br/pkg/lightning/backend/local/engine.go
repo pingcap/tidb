@@ -1026,7 +1026,10 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		w.writer = writer
 	}
-	if len(kvs) > 0 && w.prevRowID != 0 && kvs[0].RowID > w.prevRowID+1 {
+	if len(kvs) == 0 {
+		return nil
+	}
+	if w.prevRowID != 0 && kvs[0].RowID > w.prevRowID+1 {
 		// rowID leap. probably re-alloc id
 		// should write to different sst
 		err := w.flushAndNewWriter()
@@ -1059,10 +1062,8 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		kvs = newKvs
 	}
 	tempKvs := make([]common.KvPair, 0)
-	if len(kvs) > 0 {
-		tempKvs = append(tempKvs, kvs[0])
-		w.prevRowID = kvs[0].RowID
-	}
+	tempKvs = append(tempKvs, kvs[0])
+	w.prevRowID = kvs[0].RowID
 	for i := 1; i < len(kvs); i++ {
 		if kvs[i].RowID > kvs[i-1].RowID+1 {
 			// leap id
