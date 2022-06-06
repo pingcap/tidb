@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -54,6 +53,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -937,7 +937,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 
 	tk.MustGetErrCode("rename table ddl_error_table to new_ddl_error_table", errno.ErrEntryTooLarge)
 
-	historyJob, err := getHistoryDDLJob(store, jobID)
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
 	require.NotNil(t, historyJob)
 	require.Equal(t, int64(1), historyJob.ErrorCount)
@@ -1074,7 +1074,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 		for st := range endStatMap {
 			endStates = append(endStates, st)
 		}
-		sort.Slice(endStates, func(i, j int) bool { return endStates[i] < endStates[j] })
+		slices.Sort(endStates)
 		for _, endState := range endStates {
 			for _, curCase := range cases {
 				if endState < curCase.stateEnd {
@@ -1093,10 +1093,10 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 				for _, DDLSQL := range curCase.tk2DDL {
 					tk2.MustExec(DDLSQL)
 				}
-				hook := &ddl.TestDDLCallback{}
+				hook := &ddl.TestDDLCallback{Do: dom}
 				prepared := false
 				committed := false
-				hook.OnJobUpdatedExported = func(job *model.Job) {
+				hook.OnJobRunBeforeExported = func(job *model.Job) {
 					if job.SchemaState == startState {
 						if !prepared {
 							tk.MustExec("begin pessimistic")
@@ -1105,7 +1105,10 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 							}
 							prepared = true
 						}
-					} else if job.SchemaState == endState {
+					}
+				}
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.SchemaState == endState {
 						if !committed {
 							if curCase.failCommit {
 								err := tk.ExecToErr("commit")
@@ -1254,7 +1257,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 
 	var cancelErr error
 	var rs []sqlexec.RecordSet
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	d := dom.DDL()
 	originalHook := d.GetHook()
 	d.SetHook(hook)
@@ -1287,6 +1290,106 @@ func TestCancelJobWriteConflict(t *testing.T) {
 	require.NoError(t, cancelErr)
 	result := tk2.ResultSetToResultWithCtx(context.Background(), rs[0], "cancel ddl job fails")
 	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+}
+
+func TestTxnSavepointWithDDL(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+
+	prepareFn := func() {
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1 (c1 int primary key, c2 int)")
+		tk.MustExec("create table t2 (c1 int primary key, c2 int)")
+	}
+	prepareFn()
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("rollback to s1")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("admin check table t1")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("rollback to s2")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustExec("admin check table t1, t2")
+
+	prepareFn()
+	tk.MustExec("truncate table t1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("rollback to s2")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	err := tk.ExecToErr("commit")
+	require.Error(t, err)
+	require.Regexp(t, ".*8028.*Information schema is changed during the execution of the statement.*", err.Error())
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("admin check table t1, t2")
+}
+
+func TestAmendTxnSavepointWithDDL(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+
+	prepareFn := func() {
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1 (c1 int primary key, c2 int)")
+		tk.MustExec("create table t2 (c1 int primary key, c2 int)")
+	}
+
+	prepareFn()
+	tk.MustExec("truncate table t1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("rollback to s2")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustExec("admin check table t1, t2")
+
+	prepareFn()
+	tk.MustExec("truncate table t1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("savepoint s3")
+	tk.MustExec("insert t2 values (2, 22)")
+	tk.MustExec("rollback to s3")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 11"))
+	tk.MustExec("admin check table t1, t2")
 }
 
 func TestSnapshotVersion(t *testing.T) {

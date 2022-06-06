@@ -246,7 +246,7 @@ func TestParallelDDL(t *testing.T) {
 	require.Less(t, seqIDs[4], seqIDs[8])
 
 	// Table 2 order.
-	require.Less(t, seqIDs[3], seqIDs[10])
+	require.Less(t, seqIDs[3], seqIDs[5])
 
 	// Table 3 order.
 	require.Less(t, seqIDs[6], seqIDs[7])

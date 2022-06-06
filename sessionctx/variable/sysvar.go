@@ -221,12 +221,7 @@ var defaultSysVars = []*SysVar{
 		return strconv.FormatInt(int64(GlobalLogMaxDays.Load()), 10), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBConfig, Value: "", ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
-		conf := config.GetGlobalConfig()
-		j, err := json.MarshalIndent(conf, "", "\t")
-		if err != nil {
-			return "", err
-		}
-		return config.HideConfig(string(j)), nil
+		return config.GetJSONConfig()
 	}},
 	{Scope: ScopeSession, Name: TiDBDDLReorgPriority, Value: "PRIORITY_LOW", skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		s.setDDLReorgPriority(val)
@@ -1411,6 +1406,7 @@ var defaultSysVars = []*SysVar{
 		newMode := strings.ToLower(strings.TrimSpace(val))
 		if PartitionPruneMode(s.PartitionPruneMode.Load()) == Static && PartitionPruneMode(newMode) == Dynamic {
 			s.StmtCtx.AppendWarning(errors.New("Please analyze all partition tables again for consistency between partition and global stats"))
+			s.StmtCtx.AppendWarning(errors.New("Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
 		}
 		s.PartitionPruneMode.Store(newMode)
 		return nil
