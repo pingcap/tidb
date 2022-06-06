@@ -26,7 +26,7 @@ import (
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
-	"crypto/rand"
+	"math/rand"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -2747,6 +2747,7 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 	se, err := CreateSession4TestWithOpt(store, nil)
 	if err == nil {
 		// Cover both chunk rpc encoding and default encoding.
+		// nolint:gosec
 		if rand.Intn(2) == 0 {
 			se.GetSessionVars().EnableChunkRPC = false
 		} else {
