@@ -15,9 +15,12 @@
 package metrics
 
 import (
-	"github.com/pingcap/tidb/config"
+	"sync"
+
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
+	"go.uber.org/zap"
 )
 
 var (
@@ -185,13 +188,15 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
-
-	if config.GetGlobalConfig().Status.MetricsSimplified {
-		unregisterUnusedByGrafana()
-	}
 }
 
-func unregisterUnusedByGrafana() {
+var mode struct {
+	sync.Mutex
+	isSimplified bool
+}
+
+// ToggleSimplifiedMode is used to register/unregister the metrics that unused by grafana.
+func ToggleSimplifiedMode(simplified bool) {
 	var unusedMetricsByGrafana = []prometheus.Collector{
 		StatementDeadlockDetectDuration,
 		ValidateReadTSFromPDCount,
@@ -214,7 +219,23 @@ func unregisterUnusedByGrafana() {
 		tikvmetrics.TiKVRequestRetryTimesHistogram,
 		tikvmetrics.TiKVStatusDuration,
 	}
-	for _, m := range unusedMetricsByGrafana {
-		prometheus.Unregister(m)
+	mode.Lock()
+	defer mode.Unlock()
+	if mode.isSimplified == simplified {
+		return
+	}
+	mode.isSimplified = simplified
+	if simplified {
+		for _, m := range unusedMetricsByGrafana {
+			prometheus.Unregister(m)
+		}
+	} else {
+		for _, m := range unusedMetricsByGrafana {
+			err := prometheus.Register(m)
+			if err != nil {
+				logutil.BgLogger().Error("cannot register metrics", zap.Error(err))
+				break
+			}
+		}
 	}
 }
