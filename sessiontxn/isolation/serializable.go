@@ -15,9 +15,6 @@
 package isolation
 
 import (
-	"context"
-
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -50,26 +47,6 @@ func NewPessimisticSerializableTxnContextProvider(sctx sessionctx.Context,
 	provider.getStmtForUpdateTSFunc = provider.getTxnStartTS
 	provider.getStmtReadTSFunc = provider.getTxnStartTS
 	return provider
-}
-
-// OnStmtRetry is the hook that should be called when a statement is retried internally.
-func (p *PessimisticSerializableTxnContextProvider) OnStmtRetry(_ context.Context) error {
-	return errors.New("Should never retry in serializable isolation")
-}
-
-// OnStmtStart is the hook that should be called when a new statement started
-func (p *PessimisticSerializableTxnContextProvider) OnStmtStart(ctx context.Context) error {
-	return p.baseTxnContextProvider.OnStmtStart(ctx)
-}
-
-// Advise is used to give advice to provider
-func (p *PessimisticSerializableTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
-	switch tp {
-	case sessiontxn.AdviceWarmUp:
-		return p.warmUp()
-	default:
-		return p.baseTxnContextProvider.Advise(tp)
-	}
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
