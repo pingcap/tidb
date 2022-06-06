@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -28,11 +29,34 @@ import (
 	"go.uber.org/zap"
 )
 
+// PessimisticRRTxnContextProvider provides txn context for isolation level repeatable-read
 type PessimisticRRTxnContextProvider struct {
 	baseTxnContextProvider
 
 	// Used for ForUpdateRead statement
 	forUpdateTS uint64
+}
+
+// NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
+func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRRTxnContextProvider {
+	provider := &PessimisticRRTxnContextProvider{
+		baseTxnContextProvider: baseTxnContextProvider{
+			sctx:                  sctx,
+			causalConsistencyOnly: causalConsistencyOnly,
+			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
+				txnCtx.IsPessimistic = true
+				txnCtx.Isolation = ast.RepeatableRead
+			},
+			onTxnActive: func(txn kv.Transaction) {
+				txn.SetOption(kv.Pessimistic, true)
+			},
+		},
+	}
+
+	provider.getStmtReadTSFunc = provider.getTxnStartTS
+	provider.getStmtForUpdateTSFunc = provider.getForUpdateTs
+
+	return provider
 }
 
 func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error) {
@@ -85,28 +109,6 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 	return nil
 }
 
-// NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
-func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRRTxnContextProvider {
-	provider := &PessimisticRRTxnContextProvider{
-		baseTxnContextProvider: baseTxnContextProvider{
-			sctx:                  sctx,
-			causalConsistencyOnly: causalConsistencyOnly,
-			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
-				txnCtx.IsPessimistic = true
-				txnCtx.Isolation = ast.RepeatableRead
-			},
-			onTxnActive: func(txn kv.Transaction) {
-				txn.SetOption(kv.Pessimistic, true)
-			},
-		},
-	}
-
-	provider.getStmtReadTSFunc = provider.getTxnStartTS
-	provider.getStmtForUpdateTSFunc = provider.getForUpdateTs
-
-	return provider
-}
-
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error {
 	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
@@ -118,6 +120,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error
 	return nil
 }
 
+// OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err error) {
 	if err = p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
@@ -137,6 +140,8 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
+	case sessiontxn.StmtErrAfterQuery:
+		return p.handleAfterQueryError(err)
 	case sessiontxn.StmtErrAfterPessimisticLock:
 		return p.handleAfterPessimisticLockError(err)
 	default:

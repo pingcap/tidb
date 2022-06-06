@@ -3,6 +3,9 @@ package isolation_test
 import (
 	"context"
 	"fmt"
+	"testing"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
@@ -17,8 +20,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"testing"
-	"time"
 )
 
 func newDeadLockError(isRetryable bool) error {
@@ -80,6 +81,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtRetry(context.TODO())
+	require.NoError(t, err)
 	// In OnStmtErrorForNextAction, we set the txnCtx.forUpdateTS to be the latest ts, which is used to
 	// update the provider's in OnStmtRetry. So, if we acquire new ts now, it will be less than the current ts.
 	compareTS2 = getOracleTS(t, se)
@@ -95,6 +97,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtStart(context.TODO())
+	require.NoError(t, err)
 	// Unlike StmtRetry which uses forUpdateTS got in OnStmtErrorForNextAction, OnStmtStart will reset provider's forUpdateTS,
 	// which leads GetStmtForUpdateTS to acquire the latest ts.
 	compareTS2 = getOracleTS(t, se)
