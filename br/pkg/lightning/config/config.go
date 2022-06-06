@@ -532,6 +532,7 @@ type TikvImporter struct {
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
+	StoreWriteLimitPerSec   ByteSize `toml:"store-write-limit-per-sec" json:"store-write-limit-per-sec"`
 }
 
 type Checkpoint struct {

@@ -770,3 +770,46 @@ func TestNeedSplit(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreWriteLimiter(t *testing.T) {
+	// Test create store write limiter with limit math.MaxInt.
+	limiter := newStoreWriteLimiter(math.MaxInt)
+	err := limiter.WaitN(context.Background(), 1, 1024)
+	require.NoError(t, err)
+
+	// Test WaitN exceeds the burst.
+	limiter = newStoreWriteLimiter(100)
+	start := time.Now()
+	// 120 is the initial burst, 150 is the number of new tokens.
+	err = limiter.WaitN(context.Background(), 1, 120+120)
+	require.NoError(t, err)
+	require.Greater(t, time.Since(start), time.Second)
+
+	// Test WaitN with different store id.
+	limiter = newStoreWriteLimiter(100)
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel()
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(storeID uint64) {
+			defer wg.Done()
+			start = time.Now()
+			var gotTokens int
+			for {
+				n := rand.Intn(50)
+				if limiter.WaitN(ctx, storeID, n) != nil {
+					break
+				}
+				gotTokens += n
+			}
+			elapsed := time.Since(start)
+			maxTokens := 120 + int(float64(elapsed)/float64(time.Second)*100)
+			// In theory, gotTokens should be less than or equal to maxTokens.
+			// But we allow a little of error to avoid the test being flaky.
+			require.LessOrEqual(t, gotTokens, maxTokens+1)
+
+		}(uint64(i))
+	}
+	wg.Wait()
+}
