@@ -24,10 +24,12 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 )
 
+// PessimisticSerializableTxnContextProvider provides txn context for isolation level oracle-like serializable
 type PessimisticSerializableTxnContextProvider struct {
 	baseTxnContextProvider
 }
 
+// NewPessimisticSerializableTxnContextProvider returns a new PessimisticSerializableTxnContextProvider
 func NewPessimisticSerializableTxnContextProvider(sctx sessionctx.Context,
 	causalConsistencyOnly bool) *PessimisticSerializableTxnContextProvider {
 	provider := &PessimisticSerializableTxnContextProvider{
@@ -56,10 +58,7 @@ func (p *PessimisticSerializableTxnContextProvider) OnStmtRetry(_ context.Contex
 
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticSerializableTxnContextProvider) OnStmtStart(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
-		return err
-	}
-	return nil
+	return p.baseTxnContextProvider.OnStmtStart(ctx)
 }
 
 // Advise is used to give advice to provider
