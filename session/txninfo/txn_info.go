@@ -41,12 +41,13 @@ const (
 	TxnRollingBack
 )
 
+// StateLabel is used to translate TxnRunningState to its prometheus label name.
 var StateLabel map[TxnRunningState]string = map[TxnRunningState]string{
 	TxnIdle:        "idle",
-	TxnRunning:     "running",
-	TxnLockWaiting: "lock_waiting",
+	TxnRunning:     "executing_sql",
+	TxnLockWaiting: "waiting_for_lock",
 	TxnCommitting:  "committing",
-	TxnRollingBack: "rollingback",
+	TxnRollingBack: "rolling_back",
 }
 
 const (

@@ -85,7 +85,7 @@ func (txn *LazyTxn) init() {
 	txn.mutations = make(map[int64]*binlog.TableMutation)
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
-	txn.updateState(txninfo.TxnIdle)
+	txn.mu.TxnInfo = txninfo.TxnInfo{}
 }
 
 // call this under lock!
@@ -100,7 +100,9 @@ func (txn *LazyTxn) updateState(state txninfo.TxnRunningState) {
 			hasLockLbl = "true"
 		}
 		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel[lastState], hasLockLbl).Observe(time.Since(lastStateChangeTime).Seconds())
+		metrics.TxnStatusGauge.WithLabelValues(txninfo.StateLabel[lastState]).Dec()
 	}
+	metrics.TxnStatusGauge.WithLabelValues(txninfo.StateLabel[state]).Inc()
 }
 
 func (txn *LazyTxn) initStmtBuf() {
@@ -153,9 +155,19 @@ func (txn *LazyTxn) resetTxnInfo(
 	currentSQLDigest string,
 	allSQLDigests []string,
 ) {
+	if !txn.mu.LastStateChangeTime.IsZero() {
+		lastState := txn.mu.State
+		hasLockLbl := "false"
+		if !txn.mu.TxnInfo.BlockStartTime.IsZero() {
+			hasLockLbl = "true"
+		}
+		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel[lastState], hasLockLbl).Observe(time.Since(txn.mu.TxnInfo.LastStateChangeTime).Seconds())
+		metrics.TxnStatusGauge.WithLabelValues(txninfo.StateLabel[lastState]).Dec()
+	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.TxnInfo.StartTS = startTS
 	txn.mu.TxnInfo.State = state
+	metrics.TxnStatusGauge.WithLabelValues(txninfo.StateLabel[state]).Inc()
 	txn.mu.TxnInfo.LastStateChangeTime = time.Now()
 	txn.mu.TxnInfo.EntriesCount = entriesCount
 	txn.mu.TxnInfo.EntriesSize = entriesSize
@@ -298,6 +310,7 @@ func (txn *LazyTxn) changeToInvalid() {
 			hasLockLbl = "true"
 		}
 		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel[lastState], hasLockLbl).Observe(time.Since(lastStateChangeTime).Seconds())
+		metrics.TxnStatusGauge.WithLabelValues(txninfo.StateLabel[lastState]).Dec()
 	}
 }
 

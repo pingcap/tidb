@@ -135,7 +135,14 @@ var (
 			Name:      "non_transactional_delete_count",
 			Help:      "Counter of non-transactional delete",
 		})
-
+	TxnStatusGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "txn_state_count",
+			Help:      "Transaction in different states in this instant",
+		}, []string{LblType},
+	)
 	TxnDurationHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -176,8 +183,8 @@ const (
 	LblCTEType     = "cte_type"
 	LblIdle        = "idle"
 	LblRunning     = "executing_sql"
-	LblLockWaiting = "wait_for_lock"
-	LblCommitting  = "commit"
-	LblRollingBack = "rollback"
+	LblLockWaiting = "waiting_for_lock"
+	LblCommitting  = "committing"
+	LblRollingBack = "rolling_back"
 	LblHasLock     = "has_lock"
 )
