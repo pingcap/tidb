@@ -28,7 +28,7 @@ import (
 
 func digest(digests []string) uint64 {
 	// We use FNV-1a hash to generate the 64bit digest
-	// since 64bit digest use less memory and is FNV-1a is faster than most of other hash algorithms
+	// since 64bit digest use less memory and FNV-1a is faster than most of other hash algorithms
 	// You can refer to https://softwareengineering.stackexchange.com/questions/49550/which-hashing-algorithm-is-best-for-uniqueness-and-speed
 	hash := fnv.New64a()
 	for _, digest := range digests {

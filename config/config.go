@@ -257,16 +257,16 @@ type Config struct {
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 	// EnableGlobalKill indicates whether to enable global kill.
-	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
+	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
 	// EnableBatchDML, MemQuotaQuery, OOMAction unused since bootstrap v90
-	EnableBatchDML bool       `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	MemQuotaQuery  int64      `toml:"mem-quota-query" json:"mem-quota-query"`
-	OOMAction      string     `toml:"oom-action" json:"oom-action"`
-	TrxSummary     TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
+	EnableBatchDML bool   `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	MemQuotaQuery  int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	OOMAction      string `toml:"oom-action" json:"oom-action"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed

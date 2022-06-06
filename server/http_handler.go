@@ -768,7 +768,6 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			cfg := config.GetGlobalConfig()
 			cfg.TrxSummary.TransactionSummaryCapacity = uint(capacity)
 			config.StoreGlobalConfig(cfg)
-			// deadlockhistory.GlobalDeadlockHistory.Resize(uint(capacity))
 			txninfo.Recorder.ResizeSummaries(uint(capacity))
 		}
 	} else {
