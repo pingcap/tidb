@@ -2180,7 +2180,9 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
-	s.PrepareTSFuture(ctx)
+	if err = sessiontxn.WarmUpTxn(s); err != nil {
+		return
+	}
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -2287,15 +2289,19 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		s.PrepareTSFuture(ctx)
-		stmtCtx.Priority = kv.PriorityHigh
-		resultSet, err = runStmt(ctx, s, stmt)
+		if err = sessiontxn.WarmUpTxn(s); err == nil {
+			stmtCtx.Priority = kv.PriorityHigh
+			resultSet, err = runStmt(ctx, s, stmt)
+		}
 	case nil:
 		// cache is invalid
 		if prepareStmt.ForUpdateRead {
-			s.PrepareTSFuture(ctx)
+			err = sessiontxn.WarmUpTxn(s)
 		}
-		resultSet, err = runStmt(ctx, s, stmt)
+
+		if err == nil {
+			resultSet, err = runStmt(ctx, s, stmt)
+		}
 	default:
 		prepared.CachedPlan = nil
 		return nil, false, nil
@@ -3159,14 +3165,6 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)
-	} else if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
-		// Prepare the statement future if the transaction is valid in RC transactions.
-		// If the `RCCheckTS` is used, try to use the last valid ts to read.
-		if s.GetSessionVars().StmtCtx.RCCheckTS {
-			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
-		} else {
-			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
-		}
 	}
 }
 
