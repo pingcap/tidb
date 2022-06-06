@@ -536,7 +536,7 @@ func TestBuildTableSampleQueries(t *testing.T) {
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	metrics := newMetrics(&promutil.PlainNoAutoRegisterFactory{}, []string{})
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 
 	d := &Dumper{
 		tctx:                      tctx,
@@ -948,7 +948,7 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	metrics := newMetrics(&promutil.PlainNoAutoRegisterFactory{}, []string{})
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 
 	d := &Dumper{
 		tctx:                      tctx,
@@ -1109,7 +1109,7 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	metrics := newMetrics(&promutil.PlainNoAutoRegisterFactory{}, []string{})
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 
 	d := &Dumper{
 		tctx:                      tctx,
@@ -1367,7 +1367,7 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 			{"t4", 0, TableTypeBase},
 		},
 	}
-	metrics := newMetrics(&promutil.PlainNoAutoRegisterFactory{}, []string{})
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 
 	d := &Dumper{
 		tctx:                      tctx,

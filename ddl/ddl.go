@@ -470,9 +470,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 
-	d.wg.Add(1)
-	go d.limitDDLJobs()
-
+	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
@@ -980,7 +978,7 @@ func GetDDLInfo(txn kv.Transaction) (*Info, error) {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
+	_, info.ReorgHandle, _, _, err = newReorgHandler(t).GetDDLReorgHandle(addIdxJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -1181,4 +1179,9 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 // AddHistoryDDLJob adds DDL job to history table.
 func AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bool) error {
 	return t.AddHistoryDDLJob(job, updateRawArgs)
+}
+
+// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+func GetLastHistoryDDLJobsIterator(m *meta.Meta) (meta.LastJobIterator, error) {
+	return m.GetLastHistoryDDLJobsIterator()
 }

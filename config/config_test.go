@@ -264,7 +264,7 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
-# alter-primary-key is used to control whether the primary keys are clustered. 
+# alter-primary-key is used to control whether the primary keys are clustered.
 # Note that this config is deprecated. Only valid when @@global.tidb_enable_clustered_index = 'int_only'.
 # Default is false, only the integer primary keys are clustered.
 # If it is true, all types of primary keys are nonclustered.
@@ -649,7 +649,7 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
-		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: enable-batch-dml, log.query-log-max-len, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
+		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, log.enable-slow-log, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.force-priority, performance.memory-usage-alarm-ratio, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
 	}
 
 	for _, test := range configTest {
