@@ -7,12 +7,14 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"testing"
+	"time"
 )
 
 func newDeadLockError(isRetryable bool) error {
@@ -110,7 +112,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	require.Nil(t, err)
 }
 
-func TestRepeatableReadProvider(t *testing.T) {
+func TestRepeatableReadProviderTS(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -135,14 +137,14 @@ func TestRepeatableReadProvider(t *testing.T) {
 	require.Greater(t, compareTS, CurrentTS)
 	prevTS = CurrentTS
 
-	// The read ts should also be less than the compareTS in a new statement
+	// The read ts should also be less than the compareTS in a new statement (after calling OnStmtStart)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, CurrentTS, prevTS)
 
-	// The read ts should not be changed
+	// The read ts should not be changed after calling OnStmtRetry
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtRetry(context.TODO()))
 	CurrentTS, err = provider.GetStmtReadTS()
@@ -164,32 +166,30 @@ func TestRepeatableReadProvider(t *testing.T) {
 	require.Equal(t, CurrentTS, prevTS)
 }
 
-func TestSomething(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
+func activePessimisticRRAssert(t *testing.T, sctx sessionctx.Context,
+	inTxn bool) *txnAssert[*isolation.PessimisticRRTxnContextProvider] {
+	return &txnAssert[*isolation.PessimisticRRTxnContextProvider]{
+		sctx:         sctx,
+		isolation:    "REPEATABLE-READ",
+		minStartTime: time.Now(),
+		active:       true,
+		inTxn:        inTxn,
+		minStartTS:   getOracleTS(t, sctx),
+	}
+}
 
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-
-	tk1.MustExec("create table t (id int primary key, v int)")
-	tk1.MustExec("insert into t values(1,1),(2,2)")
-
-	tk1.MustExec("set  @@tx_isolation='REPEATABLE-READ'")
-	tk1.MustExec("begin pessimistic")
-
-	tk2.MustExec("insert into t values(3,3)")
-
-	tk1.MustQuery("select * from t where id = 1 for update")
-
-	tk1.MustQuery("select * from t where id = 3 for update").Check(testkit.Rows("3 3"))
+func inActivePessimisticRRAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticRRTxnContextProvider] {
+	return &txnAssert[*isolation.PessimisticRRTxnContextProvider]{
+		sctx:         sctx,
+		isolation:    "REPEATABLE-READ",
+		minStartTime: time.Now(),
+		active:       false,
+	}
 }
 
 func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit) *isolation.PessimisticRRTxnContextProvider {
 	tk.MustExec("set @@tx_isolation = 'REPEATABLE-READ'")
+	assert := activePessimisticRRAssert(t, tk.Session(), true)
 	tk.MustExec("begin pessimistic")
-	provider := sessiontxn.GetTxnManager(tk.Session()).GetContextProvider()
-	require.IsType(t, &isolation.PessimisticRRTxnContextProvider{}, provider)
-	return provider.(*isolation.PessimisticRRTxnContextProvider)
+	return assert.CheckAndGetProvider(t)
 }

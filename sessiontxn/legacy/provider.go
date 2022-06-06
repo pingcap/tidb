@@ -190,7 +190,7 @@ func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context) error {
 }
 
 // Advise is used to give advice to provider
-func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
+func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
 	switch tp {
 	case sessiontxn.AdviceWarmUp:
 		p.Sctx.PrepareTSFuture(p.Ctx)

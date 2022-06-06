@@ -146,15 +146,18 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point session
 }
 
 // Advise is used to give advice to provider
-func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
+func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType, val []any) error {
 	switch tp {
 	case sessiontxn.AdviceWarmUp:
 		return p.warmUp()
+	case sessiontxn.AdviceOptimizeWithPlan:
+		return p.optimizeWithPlan(val)
 	default:
-		return p.baseTxnContextProvider.Advise(tp)
+		return p.baseTxnContextProvider.Advise(tp, val)
 	}
 }
 
+// optimizeWithPlan todo: optimize the forUpdateTs acquisition of point/batch point get
 func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error) {
 	return nil
 }
