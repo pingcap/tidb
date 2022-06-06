@@ -334,7 +334,7 @@ func (s *session) cleanRetryInfo() {
 			if ok {
 				preparedAst = preparedObj.PreparedAst
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
-				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion)
+				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion, 0)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -1943,7 +1943,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
-		return nil, err
+		return recordSet, err
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -2180,7 +2180,9 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
-	s.PrepareTSFuture(ctx)
+	if err = sessiontxn.WarmUpTxn(s); err != nil {
+		return
+	}
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -2287,15 +2289,19 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		s.PrepareTSFuture(ctx)
-		stmtCtx.Priority = kv.PriorityHigh
-		resultSet, err = runStmt(ctx, s, stmt)
+		if err = sessiontxn.WarmUpTxn(s); err == nil {
+			stmtCtx.Priority = kv.PriorityHigh
+			resultSet, err = runStmt(ctx, s, stmt)
+		}
 	case nil:
 		// cache is invalid
 		if prepareStmt.ForUpdateRead {
-			s.PrepareTSFuture(ctx)
+			err = sessiontxn.WarmUpTxn(s)
 		}
-		resultSet, err = runStmt(ctx, s, stmt)
+
+		if err == nil {
+			resultSet, err = runStmt(ctx, s, stmt)
+		}
 	default:
 		prepared.CachedPlan = nil
 		return nil, false, nil
@@ -2304,7 +2310,7 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 }
 
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
-// Be careful for the short path, current precondition is ths cached plan satisfying
+// Be careful with the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
 func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt, isStaleness bool) (bool, error) {
 	prepared := preparedStmt.PreparedAst
@@ -2383,9 +2389,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, err
 		}
-	} else if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
-		is = domain.GetDomain(s).InfoSchema()
-		is = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
@@ -2538,12 +2541,14 @@ func (s *session) NewTxn(ctx context.Context) error {
 	s.txn.changeInvalidToValid(txn)
 	is := temptable.AttachLocalTemporaryTableInfoSchema(s, domain.GetDomain(s).InfoSchema())
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		InfoSchema:  is,
-		CreateTime:  time.Now(),
-		StartTS:     txn.StartTS(),
-		ShardStep:   int(s.sessionVars.ShardAllocateStep),
-		IsStaleness: false,
-		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
+		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+			InfoSchema:  is,
+			CreateTime:  time.Now(),
+			StartTS:     txn.StartTS(),
+			ShardStep:   int(s.sessionVars.ShardAllocateStep),
+			IsStaleness: false,
+			TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
+		},
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
@@ -2585,12 +2590,14 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		InfoSchema:  is,
-		CreateTime:  time.Now(),
-		StartTS:     txn.StartTS(),
-		ShardStep:   int(s.sessionVars.ShardAllocateStep),
-		IsStaleness: true,
-		TxnScope:    txnScope,
+		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+			InfoSchema:  is,
+			CreateTime:  time.Now(),
+			StartTS:     txn.StartTS(),
+			ShardStep:   int(s.sessionVars.ShardAllocateStep),
+			IsStaleness: true,
+			TxnScope:    txnScope,
+		},
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
@@ -3158,14 +3165,6 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)
-	} else if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
-		// Prepare the statement future if the transaction is valid in RC transactions.
-		// If the `RCCheckTS` is used, try to use the last valid ts to read.
-		if s.GetSessionVars().StmtCtx.RCCheckTS {
-			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
-		} else {
-			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
-		}
 	}
 }
 
