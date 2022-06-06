@@ -45,3 +45,32 @@ func TestClone(t *testing.T) {
 	require.Equal(t, col, desc.Args[0])
 	require.False(t, desc.equal(ctx, cloned))
 }
+
+func TestBaseFunc_InferAggRetType(t *testing.T) {
+	ctx := mock.NewContext()
+	doubleType := types.NewFieldType(mysql.TypeDouble)
+	bitType := types.NewFieldType(mysql.TypeBit)
+
+	funcNames := []string{
+		ast.AggFuncMax, ast.AggFuncMin,
+	}
+	dataTypes := []*types.FieldType{
+		doubleType, bitType,
+	}
+
+	for _, dataType := range dataTypes {
+		notNullType := dataType.Clone()
+		notNullType.AddFlag(mysql.NotNullFlag)
+		col := &expression.Column{
+			UniqueID: 0,
+			RetType:  notNullType,
+		}
+		for _, name := range funcNames {
+			desc, err := newBaseFuncDesc(ctx, name, []expression.Expression{col})
+			require.NoError(t, err)
+			err = desc.TypeInfer(ctx)
+			require.NoError(t, err)
+			require.Equal(t, dataType, desc.RetTp)
+		}
+	}
+}

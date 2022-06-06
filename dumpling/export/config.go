@@ -17,13 +17,15 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/util"
-	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/promutil"
+	filter "github.com/pingcap/tidb/util/table-filter"
 )
 
 const (
@@ -79,7 +81,6 @@ const (
 // Config is the dump config for dumpling
 type Config struct {
 	storage.BackendOptions
-	ExtStorage storage.ExternalStorage `json:"-"`
 
 	specifiedTables          bool
 	AllowCleartextPasswords  bool
@@ -135,9 +136,13 @@ type Config struct {
 	FileSize            uint64
 	StatementSize       uint64
 	SessionParams       map[string]interface{}
-	Labels              prometheus.Labels `json:"-"`
 	Tables              DatabaseTables
 	CollationCompatible string
+
+	Labels       prometheus.Labels       `json:"-"`
+	PromFactory  promutil.Factory        `json:"-"`
+	PromRegistry promutil.Registry       `json:"-"`
+	ExtStorage   storage.ExternalStorage `json:"-"`
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -165,7 +170,7 @@ func DefaultConfig() *Config {
 		SortByPk:            true,
 		Tables:              nil,
 		Snapshot:            "",
-		Consistency:         consistencyTypeAuto,
+		Consistency:         ConsistencyTypeAuto,
 		NoViews:             true,
 		NoSequences:         true,
 		Rows:                UnspecifiedSize,
@@ -183,6 +188,8 @@ func DefaultConfig() *Config {
 		PosAfterConnect:     false,
 		CollationCompatible: LooseCollationCompatible,
 		specifiedTables:     false,
+		PromFactory:         promutil.NewDefaultFactory(),
+		PromRegistry:        promutil.NewDefaultRegistry(),
 	}
 }
 
@@ -231,7 +238,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagLoglevel, "info", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
 	flags.StringP(flagLogfile, "L", "", "Log file `path`, leave empty to write to console")
 	flags.String(flagLogfmt, "text", "Log `format`: {text|json}")
-	flags.String(flagConsistency, consistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
+	flags.String(flagConsistency, ConsistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
 	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
 	flags.Bool(flagNoSequences, true, "Do not dump sequences")
