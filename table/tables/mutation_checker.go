@@ -457,9 +457,9 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				value := indexMutation.value
 				if len(value) > 0 {
 					value[len(value)-1] += 1
-				}
-				if err := memBuffer.Set(indexMutation.key, value); err != nil {
-					return errors.Trace(err)
+					if err := memBuffer.Set(indexMutation.key, value); err != nil {
+						return errors.Trace(err)
+					}
 				}
 			}
 		default:
