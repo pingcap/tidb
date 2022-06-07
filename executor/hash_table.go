@@ -120,8 +120,9 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 	matched = make([]chunk.Row, 0, len(innerPtrs))
 	var matchedRow chunk.Row
 	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
+	var chk *chunk.Chunk
 	for _, ptr := range innerPtrs {
-		matchedRow, err = c.rowContainer.GetRow(ptr)
+		matchedRow, chk, err = c.rowContainer.GetRowAndAppendToChunk(ptr, chk)
 		if err != nil {
 			return
 		}
