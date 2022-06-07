@@ -140,15 +140,6 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		}
 	}
 
-	//if provider, ok := txnManager.GetContextProvider().(*isolation.PessimisticRRTxnContextProvider); ok {
-	//	provider.GetStmtForUpdateTSFunc = func() (uint64, error) {
-	//		if b.forUpdateTS != 0 {
-	//			return b.forUpdateTS, nil
-	//		}
-	//		return b.getReadTS()
-	//	}
-	//}
-
 	return b
 }
 

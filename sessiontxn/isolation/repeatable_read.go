@@ -58,7 +58,7 @@ func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsisten
 	}
 
 	provider.getStmtReadTSFunc = provider.getTxnStartTS
-	provider.GetStmtForUpdateTSFunc = provider.getForUpdateTs
+	provider.getStmtForUpdateTSFunc = provider.getForUpdateTs
 
 	return provider
 }
@@ -208,9 +208,7 @@ func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error
 		}
 	}
 
-	if p.forUpdateTS == 0 {
-		p.followingStmtIsPointGetForUpdate = mayOptimizeForPointGet
-	}
+	p.followingStmtIsPointGetForUpdate = mayOptimizeForPointGet
 
 	return nil
 }

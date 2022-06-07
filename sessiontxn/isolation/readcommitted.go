@@ -72,7 +72,7 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 	}
 
 	provider.getStmtReadTSFunc = provider.getStmtTS
-	provider.GetStmtForUpdateTSFunc = provider.getStmtTS
+	provider.getStmtForUpdateTSFunc = provider.getStmtTS
 	return provider
 }
 

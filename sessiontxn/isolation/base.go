@@ -45,7 +45,7 @@ type baseTxnContextProvider struct {
 	onInitializeTxnCtx     func(*variable.TransactionContext)
 	onTxnActive            func(kv.Transaction)
 	getStmtReadTSFunc      func() (uint64, error)
-	GetStmtForUpdateTSFunc func() (uint64, error)
+	getStmtForUpdateTSFunc func() (uint64, error)
 
 	// Runtime states
 	ctx           context.Context
@@ -56,7 +56,7 @@ type baseTxnContextProvider struct {
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
 func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) (err error) {
-	if p.getStmtReadTSFunc == nil || p.GetStmtForUpdateTSFunc == nil {
+	if p.getStmtReadTSFunc == nil || p.getStmtForUpdateTSFunc == nil {
 		return errors.New("ts functions should not be nil")
 	}
 
@@ -116,7 +116,7 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return snapshotTS, nil
 	}
-	return p.GetStmtForUpdateTSFunc()
+	return p.getStmtForUpdateTSFunc()
 }
 
 func (p *baseTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
