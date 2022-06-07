@@ -1799,7 +1799,7 @@ func TestParseTimeFromFloat64(t *testing.T) {
 		h   int
 		m   int
 		s   int
-		ms  int
+		us  int
 		err *terror.Error
 	}{
 		{20000102, mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
@@ -1821,7 +1821,7 @@ func TestParseTimeFromFloat64(t *testing.T) {
 		require.Equalf(t, c.h, res.Hour(), "Hour mismatch for case %v", c)
 		require.Equalf(t, c.m, res.Minute(), "Minute mismatch for case %v", c)
 		require.Equalf(t, c.s, res.Second(), "Second mismatch for case %v", c)
-		require.Equalf(t, c.ms, res.Microsecond(), "Microsecond mismatch for case %v", c)
+		require.Equalf(t, c.us, res.Microsecond(), "Microsecond mismatch for case %v", c)
 		if c.err == nil {
 			require.NoErrorf(t, err, "Unexpected error for case %v", c)
 		} else {
@@ -1843,7 +1843,7 @@ func TestParseTimeFromDecimal(t *testing.T) {
 		h   int
 		m   int
 		s   int
-		ms  int
+		us  int
 		err *terror.Error
 	}{
 		{types.NewDecFromStringForTest("20000102"), mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
@@ -1865,7 +1865,7 @@ func TestParseTimeFromDecimal(t *testing.T) {
 		require.Equalf(t, c.h, res.Hour(), "Hour mismatch for case %v", c)
 		require.Equalf(t, c.m, res.Minute(), "Minute mismatch for case %v", c)
 		require.Equalf(t, c.s, res.Second(), "Second mismatch for case %v", c)
-		require.Equalf(t, c.ms, res.Microsecond(), "Microsecond mismatch for case %v", c)
+		require.Equalf(t, c.us, res.Microsecond(), "Microsecond mismatch for case %v", c)
 		if c.err == nil {
 			require.NoErrorf(t, err, "Unexpected error for case %v", c)
 		} else {
