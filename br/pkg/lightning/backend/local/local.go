@@ -309,8 +309,8 @@ func NewLocalBackend(
 		keyAdapter = dupDetectKeyAdapter{}
 	}
 	var writeLimiter *storeWriteLimiter
-	if cfg.TikvImporter.StoreWriteLimitPerSec > 0 {
-		writeLimiter = newStoreWriteLimiter(int(cfg.TikvImporter.StoreWriteLimitPerSec))
+	if cfg.TikvImporter.StoreWriteBWLimit > 0 {
+		writeLimiter = newStoreWriteLimiter(int(cfg.TikvImporter.StoreWriteBWLimit))
 	}
 	local := &local{
 		engines:  sync.Map{},
