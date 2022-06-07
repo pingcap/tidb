@@ -558,6 +558,134 @@ func (w *worker) unlockSeqNum(err error) {
 	}
 }
 
+func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
+	if !job.IsRollbackDone() {
+		job.State = model.JobStateSynced
+	}
+	err := w.finishDDLJob(t, job)
+	if err != nil {
+		w.sess.rollback()
+		return err
+	}
+
+	err = w.sess.commit()
+	if err != nil {
+		return err
+	}
+	asyncNotify(d.ddlJobDoneCh)
+	return nil
+}
+
+func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job) error {
+	var (
+		err       error
+		schemaVer int64
+		runJobErr error
+		waitTime  = 2 * d.lease
+	)
+	defer func() {
+		w.unlockSeqNum(err)
+	}()
+
+	err = w.sess.begin()
+	if err != nil {
+		return err
+	}
+	txn, err := w.sess.txn()
+	if err != nil {
+		return err
+	}
+	// only general ddls allowed to be executed when TiKV is disk full.
+	if w.tp == addIdxWorker && job.IsRunning() {
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+	}
+	w.setDDLLabelForTopSQL(job)
+	if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
+		txn.SetOption(kv.ResourceGroupTagger, tagger)
+	}
+	t := meta.NewMeta(txn)
+	if job.IsDone() || job.IsRollbackDone() {
+		err = w.HandleJobDone(d, job, t)
+		return err
+	}
+
+	d.mu.RLock()
+	d.mu.hook.OnJobRunBefore(job)
+	d.mu.RUnlock()
+
+	// If running job meets error, we will save this error in job Error
+	// and retry later if the job is not cancelled.
+	schemaVer, runJobErr = w.runDDLJob(d, t, job)
+
+	if job.IsCancelled() {
+		defer d.ResetSchemaVersion(job)
+		w.sess.reset()
+		err = w.finishDDLJob(t, job)
+		if err != nil {
+			w.sess.rollback()
+			return err
+		}
+		err = w.sess.commit()
+		return err
+	}
+
+	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
+		// If the running job meets an error
+		// and the job state is rolling back, it means that we have already handled this error.
+		// Some DDL jobs (such as adding indexes) may need to update the table info and the schema version,
+		// then shouldn't discard the KV modification.
+		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
+		// Otherwise, we should discard the KV modification when running job.
+		w.sess.reset()
+		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
+		// Result in the retry duration is up to 2 * lease.
+		schemaVer = 0
+	}
+
+	err = w.updateDDLJob(t, job, runJobErr != nil)
+	if err = w.handleUpdateJobError(t, job, err); err != nil {
+		w.sess.rollback()
+		d.ResetSchemaVersion(job)
+		return err
+	}
+	writeBinlog(d.binlogCli, txn, job)
+	err = w.sess.commit()
+	d.ResetSchemaVersion(job)
+	if err != nil {
+		return err
+	}
+	w.needSync(job)
+
+	if runJobErr != nil {
+		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
+		// which may act like a deadlock.
+		logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
+			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
+		time.Sleep(GetWaitTimeWhenErrorOccurred())
+	}
+
+	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
+	// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
+	// the newest schema.
+	ctx, cancel := context.WithTimeout(w.ctx, waitTime)
+	w.waitSchemaChanged(ctx, d, waitTime, schemaVer, job)
+	cancel()
+	d.synced(job)
+
+	if RunInGoTest {
+		// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
+		d.mu.RLock()
+		d.mu.hook.OnSchemaStateChanged()
+		d.mu.RUnlock()
+	}
+
+	d.mu.RLock()
+	d.mu.hook.OnJobUpdated(job)
+	d.mu.RUnlock()
+
+	return nil
+}
+
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return nil
@@ -666,6 +794,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 			time.Sleep(GetWaitTimeWhenErrorOccurred())
 		}
+		d.ResetSchemaVersion(job)
 
 		if err != nil {
 			w.unlockSeqNum(err)
@@ -1063,8 +1192,8 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(_ *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
-	schemaVersion, err := t.GenSchemaVersion()
+func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
+	schemaVersion, err := d.SetSchemaVersion(job, d.store)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
