@@ -177,41 +177,78 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 		p.planCost += childCost
 	}
 
-	// to keep compatible with the previous cost implementation, re-calculate table-scan cost by using index stats-count again (see copTask.finishIndexPlan).
-	// TODO: amend table-side cost here later
-	var tmp PhysicalPlan
-	for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
-	}
-	ts := tmp.(*PhysicalTableScan)
-	tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
+	selfCost, err := p.calSelfCost(taskType, costFlag)
 	if err != nil {
 		return 0, err
 	}
-	p.planCost -= tblCost
-	p.planCost += getCardinality(p.indexPlan, costFlag) * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
-
-	// index-side net I/O cost: rows * row-size * net-factor
-	netFactor := getTableNetFactor(p.tablePlan)
-	rowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	p.planCost += getCardinality(p.indexPlan, costFlag) * rowSize * netFactor
-
-	// index-side net seek cost
-	p.planCost += estimateNetSeekCost(p.indexPlan)
-
-	// table-side net I/O cost: rows * row-size * net-factor
-	tblRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-	p.planCost += getCardinality(p.tablePlan, costFlag) * tblRowSize * netFactor
-
-	// table-side seek cost
-	p.planCost += estimateNetSeekCost(p.tablePlan)
-
-	// consider concurrency
-	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
-
-	// lookup-cpu-cost in TiDB
-	p.planCost += p.GetCost(costFlag)
+	p.planCost += selfCost
 	p.planCostInit = true
 	return p.planCost, nil
+}
+
+func (p *PhysicalIndexLookUpReader) calSelfCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+	selfCost := 0.0
+	switch p.ctx.GetSessionVars().CostModelVersion {
+	case CostModelV1:
+		// to keep compatible with the previous cost implementation, re-calculate table-scan cost by using index stats-count again (see copTask.finishIndexPlan).
+		var tmp PhysicalPlan
+		for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
+		}
+		ts := tmp.(*PhysicalTableScan)
+		tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
+		if err != nil {
+			return 0, err
+		}
+		selfCost -= tblCost
+		selfCost += getCardinality(p.indexPlan, costFlag) * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
+
+		// index-side net I/O cost: rows * row-size * net-factor
+		netFactor := getTableNetFactor(p.tablePlan)
+		rowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
+		selfCost += getCardinality(p.indexPlan, costFlag) * rowSize * netFactor
+
+		// index-side net seek cost
+		selfCost += estimateNetSeekCost(p.indexPlan)
+
+		// table-side net I/O cost: rows * row-size * net-factor
+		tblRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+		selfCost += getCardinality(p.tablePlan, costFlag) * tblRowSize * netFactor
+
+		// table-side seek cost
+		selfCost += estimateNetSeekCost(p.tablePlan)
+
+		// consider concurrency
+		selfCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+
+		// lookup-cpu-cost in TiDB
+		selfCost += p.GetCost(costFlag)
+	case CostModelV2:
+		// index-side net I/O cost: rows * row-size * net-factor
+		netFactor := getTableNetFactor(p.tablePlan)
+		rowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
+		selfCost += getCardinality(p.indexPlan, costFlag) * rowSize * netFactor
+
+		// index-side net seek cost
+		selfCost += estimateNetSeekCost(p.indexPlan)
+
+		// table-side net I/O cost: rows * row-size * net-factor
+		tblRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+		selfCost += getCardinality(p.tablePlan, costFlag) * tblRowSize * netFactor
+
+		// double-read seek cost: numLookupTasks * seek-factor
+		lookupRows := p.indexPlan.StatsCount()
+		// TODO: estimate numLookupTasks more precisely, for example, consider back-off strategy
+		//   on Executor and correlation between this index and PK
+		numLookupTasks := (lookupRows + 511) / 512 // assume the batch-size is 512
+		selfCost += numLookupTasks * p.ctx.GetSessionVars().GetSeekFactor(nil)
+
+		// consider concurrency
+		selfCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+
+		// lookup-cpu-cost in TiDB
+		selfCost += p.GetCost(costFlag)
+	}
+	return selfCost, nil
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
