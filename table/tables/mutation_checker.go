@@ -436,8 +436,14 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				key := indexMutation.key
 				memBuffer.RemoveFromBuffer(key)
 				key[len(key)-1] += 1
-				if err := memBuffer.Set(key, indexMutation.value); err != nil {
-					return errors.Trace(err)
+				if len(indexMutation.value) == 0 {
+					if err := memBuffer.Delete(key); err != nil {
+						return errors.Trace(err)
+					}
+				} else {
+					if err := memBuffer.Set(key, indexMutation.value); err != nil {
+						return errors.Trace(err)
+					}
 				}
 			}
 		case "corruptIndexValue":
