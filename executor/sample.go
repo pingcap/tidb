@@ -34,8 +34,6 @@ import (
 
 var _ Executor = &TableSampleExecutor{}
 
-const sampleMethodRegionConcurrency = 5
-
 // TableSampleExecutor fetches a few rows through kv.Scan
 // according to the specific sample method.
 type TableSampleExecutor struct {
@@ -285,7 +283,7 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 	ver := kv.Version{Ver: s.startTS}
 	snap := s.ctx.GetStore().GetSnapshot(ver)
 	setOptionForTopSQL(s.ctx.GetSessionVars().StmtCtx, snap)
-	concurrency := sampleMethodRegionConcurrency
+	concurrency := s.ctx.GetSessionVars().ExecutorConcurrency
 	if len(ranges) < concurrency {
 		concurrency = len(ranges)
 	}

@@ -59,6 +59,8 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
 
+	// joinNodeNum indicates the number of join nodes except leading join nodes in the current join group
+	joinNodeNum := len(s.curJoinGroup)
 	if leadingJoinNodes != nil {
 		// The leadingJoinNodes should be the first element in the s.curJoinGroup.
 		// So it can be joined first.
@@ -70,6 +72,12 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 		newNode, err := s.constructConnectedJoinTree(tracer)
 		if err != nil {
 			return nil, err
+		}
+		if joinNodeNum > 0 && len(s.curJoinGroup) == joinNodeNum {
+			// Getting here means that there is no join condition between the table used in the leading hint and other tables
+			// For example: select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3
+			// We can not let table t3 join first.
+			s.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check if the leading hint table has join conditions with other tables"))
 		}
 		cartesianGroup = append(cartesianGroup, newNode.p)
 	}

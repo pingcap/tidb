@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 
@@ -694,15 +695,19 @@ type compactClientHandler struct {
 
 type compactRequestMocker struct {
 	tikv.Client
-	handlers               []*compactClientHandler
+	t        *testing.T
+	handlers []*compactClientHandler
+
+	mu                     sync.Mutex
 	receivedRequestsOfAddr map[string]int
-	t                      *testing.T
 }
 
 func (client *compactRequestMocker) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if req.Type == tikvrpc.CmdCompact {
+		client.mu.Lock()
 		client.receivedRequestsOfAddr[addr]++
 		handlerKey := fmt.Sprintf("%s/#%d", addr, client.receivedRequestsOfAddr[addr])
+		client.mu.Unlock()
 		for _, handler := range client.handlers {
 			if handler.matcher.MatchString(handlerKey) {
 				handler.hit.Store(true)
