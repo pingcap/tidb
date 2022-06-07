@@ -272,6 +272,10 @@ const (
 	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// TiDBOptConcurrencyFactor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
+	// TiDBOptTiFlashScanFactor ...
+	TiDBOptTiFlashScanFactor = "tidb_opt_tiflash_scan_factor"
+	// TiDBOptTiFlashCPUFactor ...
+	TiDBOptTiFlashCPUFactor = "tidb_opt_tiflash_cpu_factor"
 
 	// TiDBIndexJoinBatchSize is used to set the batch size of an index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.

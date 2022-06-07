@@ -760,6 +760,10 @@ type SessionVars struct {
 	DiskFactor float64
 	// ConcurrencyFactor is the CPU cost of additional one goroutine.
 	ConcurrencyFactor float64
+	// TiFlashScanFactor ...
+	TiFlashScanFactor float64
+	// TiFlashCPUFactor ...
+	TiFlashCPUFactor float64
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
