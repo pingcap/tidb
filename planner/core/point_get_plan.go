@@ -355,13 +355,13 @@ func (p *BatchPointGetPlan) AccessObject(normalized bool) string {
 		if normalized {
 			buffer.WriteString(", partition:?")
 		} else {
-			for i, PartitionInfo := range p.PartitionInfos {
+			for i, partitionInfo := range p.PartitionInfos {
 				if i == 0 {
 					buffer.WriteString(", partition:")
 				} else {
 					buffer.WriteString(",")
 				}
-				buffer.WriteString(PartitionInfo.Name.O)
+				buffer.WriteString(partitionInfo.Name.O)
 			}
 		}
 	}
