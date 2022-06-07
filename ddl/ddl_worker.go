@@ -91,9 +91,12 @@ type worker struct {
 	wg              sync.WaitGroup
 
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
+	sess            *session     // sess is used and only used in running DDL job.
 	delRangeManager delRangeManager
 	logCtx          context.Context
 	lockSeqNum      bool
+
+	concurrentDDL bool
 
 	*ddlCtx
 }
@@ -119,7 +122,7 @@ func NewJobContext() *JobContext {
 	}
 }
 
-func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
+func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx, concurrentDDL bool) *worker {
 	worker := &worker{
 		id:              ddlWorkerID.Add(1),
 		tp:              tp,
@@ -128,8 +131,8 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		ddlCtx:          dCtx,
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
+		concurrentDDL:   concurrentDDL,
 	}
-
 	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
 	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
 	return worker
@@ -154,6 +157,9 @@ func (w *worker) String() string {
 
 func (w *worker) Close() {
 	startTime := time.Now()
+	if w.sess != nil {
+		w.sessPool.put(w.sess.session())
+	}
 	w.wg.Wait()
 	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }

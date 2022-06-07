@@ -31,6 +31,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -51,9 +52,12 @@ import (
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	goutil "github.com/pingcap/tidb/util"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
@@ -204,6 +208,9 @@ type ddl struct {
 	sessPool          *sessionPool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
+	// used in the concurrency ddl.
+	reorgWorkerPool      *workerPool
+	generalDDLWorkerPool *workerPool
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -476,13 +483,47 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	return delRangeMgr
 }
 
+func (d *ddl) readyForConcurrencyDDL() {
+	workerFactor := func(tp workerType) func() (pools.Resource, error) {
+		return func() (pools.Resource, error) {
+			wk := newWorker(d.ctx, tp, d.sessPool, d.delRangeMgr, d.ddlCtx, true)
+			sessForJob, err := d.sessPool.get()
+			if err != nil {
+				return nil, err
+			}
+			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			wk.sess = newSession(sessForJob)
+			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
+			return wk, nil
+		}
+	}
+	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactor(addIdxWorker), batchAddingJobs, batchAddingJobs, 0), reorg)
+	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactor(generalWorker), 1, 1, 0), general)
+}
+
+func (d *ddl) readyForDDL() {
+	d.workers = make(map[workerType]*worker, 2)
+	d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx, false)
+	d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx, false)
+	for _, worker := range d.workers {
+		worker.wg.Add(1)
+		w := worker
+		go w.start(d.ddlCtx)
+
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
+
+		// When the start function is called, we will send a fake job to let worker
+		// checks owner firstly and try to find whether a job exists and run.
+		asyncNotify(worker.ddlJobCh)
+	}
+}
+
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
-
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
@@ -499,21 +540,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			return errors.Trace(err)
 		}
 
-		d.workers = make(map[workerType]*worker, 2)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
-		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-		for _, worker := range d.workers {
-			worker.wg.Add(1)
-			w := worker
-			go w.start(d.ddlCtx)
 
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
-
-			// When the start function is called, we will send a fake job to let worker
-			// checks owner firstly and try to find whether a job exists and run.
-			asyncNotify(worker.ddlJobCh)
-		}
+		d.readyForConcurrencyDDL()
+		d.readyForDDL()
 
 		go d.schemaSyncer.StartCleanWork()
 		if config.TableLockEnabled() {
@@ -533,16 +563,36 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
+const ddlCount = "select count(1) from mysql.tidb_ddl_history"
+
 // GetNextDDLSeqNum return the next ddl seq num.
 func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer d.sessPool.put(sess)
 	var count uint64
 	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = runInTxn(newSession(sess), func(s *session) error {
+		txn, err := s.txn()
+		if err != nil {
+			return err
+		}
+		rows, err := s.execute(ctx, ddlCount, "get_history_ddl_cnt")
+		if err != nil {
+			return err
+		}
 		t := meta.NewMeta(txn)
-		var err error
-		count, err = t.GetHistoryDDLCount()
-		return err
+		c1, err := t.GetHistoryDDLCount()
+		if err != nil {
+			return err
+		}
+		c2 := rows[0].GetUint64(0)
+		count = mathutil.Max(c1, c2)
+		return nil
 	})
+
 	return count, err
 }
 
@@ -556,6 +606,8 @@ func (d *ddl) close() {
 	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
+	d.reorgWorkerPool.close()
+	d.generalDDLWorkerPool.close()
 
 	for _, worker := range d.workers {
 		worker.Close()
@@ -565,10 +617,7 @@ func (d *ddl) close() {
 	if d.delRangeMgr != nil {
 		d.delRangeMgr.clear()
 	}
-	if d.sessPool != nil {
-		d.sessPool.close()
-	}
-
+	d.sessPool.close()
 	variable.UnregisterStatistics(d)
 
 	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
@@ -1189,6 +1238,64 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 		return err
 	}
 	return IterHistoryDDLJobs(txn, finishFn)
+}
+
+// session wraps sessionctx.Context for transaction usage.
+type session struct {
+	sessionctx.Context
+}
+
+func newSession(s sessionctx.Context) *session {
+	return &session{s}
+}
+
+func (s *session) begin() error {
+	err := sessiontxn.NewTxn(context.Background(), s)
+	if err != nil {
+		return err
+	}
+	s.GetSessionVars().SetInTxn(true)
+	return nil
+}
+
+func (s *session) commit() error {
+	s.StmtCommit()
+	return s.CommitTxn(context.Background())
+}
+
+func (s *session) txn() (kv.Transaction, error) {
+	return s.Txn(true)
+}
+
+func (s *session) rollback() {
+	s.StmtRollback()
+	s.RollbackTxn(context.Background())
+}
+
+func (s *session) reset() {
+	s.StmtRollback()
+}
+
+func (s *session) execute(ctx context.Context, query string, label string) ([]chunk.Row, error) {
+	var err error
+	rs, err := s.Context.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if rs == nil {
+		return nil, nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return rows, nil
+}
+
+func (s *session) session() sessionctx.Context {
+	return s.Context
 }
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.
