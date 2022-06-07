@@ -617,7 +617,7 @@ func (g gener) gen() interface{} {
 {{ define "addOrSubDateCases" }}
 	{{- range $sig := .Sigs }}
 		// {{ $sig.SigName }}
-    	{{- if and (eq $sig.TypeA.ETName "Duration") (eq $sig.Output.ETName "Duration") -}}
+		{{- if and (eq $sig.TypeA.ETName "Duration") (eq $sig.Output.ETName "Duration") -}}
 			{{- $unitList := getIntervalUnitListForDurationAsDuration -}}
 			{{- range $unit := $unitList }}
 				{
@@ -636,8 +636,8 @@ func (g gener) gen() interface{} {
 					chunkSize: 128,
 				},
 			{{- end }}
-    	{{- else if and (eq $sig.TypeA.ETName "Duration") (eq $sig.Output.ETName "Datetime") -}}
-            // TODO: Make the following cases stable, i.e., shouldn't be affected by crossing a day (date part is padded to current date).
+		{{- else if and (eq $sig.TypeA.ETName "Duration") (eq $sig.Output.ETName "Datetime") -}}
+			// TODO: Make the following cases stable, i.e., shouldn't be affected by crossing a day (date part is padded to current date).
 			{{- $unitList := getIntervalUnitListForDurationAsDatetime -}}
 			{{- range $unit := $unitList }}
 				{
@@ -656,7 +656,7 @@ func (g gener) gen() interface{} {
 					chunkSize: 128,
 				},
 			{{- end }}
-    	{{- else -}}
+		{{- else -}}
 			{{- $unitList := getIntervalUnitList -}}
 			{{- range $unit := $unitList }}
 				{
