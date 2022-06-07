@@ -2934,7 +2934,7 @@ func (du *baseDateArithmetical) getIntervalFromReal(ctx sessionctx.Context, args
 	return strconv.FormatFloat(interval, 'f', args[1].GetType().GetDecimal(), 64), false, nil
 }
 
-func (du *baseDateArithmetical) add(ctx sessionctx.Context, date types.Time, interval string, unit string, resultFsp int) (types.Time, bool, error) {
+func (du *baseDateArithmetical) add(ctx sessionctx.Context, date types.Time, interval, unit string, resultFsp int) (types.Time, bool, error) {
 	year, month, day, nano, _, err := types.ParseDurationValue(unit, interval)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
