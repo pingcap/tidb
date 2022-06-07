@@ -73,17 +73,13 @@ func (p *OptimisticTxnContextProvider) optimizeWithPlan(val []any) (err error) {
 		plan = execute.Plan
 	}
 
-	sessVars := p.sctx.GetSessionVars()
-	if sessVars.InTxn() || !sessVars.IsAutocommit() {
-		return nil
-	}
-
 	ok, err = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx, plan)
 	if err != nil {
 		return err
 	}
 
 	if ok {
+		sessVars := p.sctx.GetSessionVars()
 		logutil.BgLogger().Debug("init txnStartTS with MaxUint64",
 			zap.Uint64("conn", sessVars.ConnectionID),
 			zap.String("text", sessVars.StmtCtx.OriginalSQL),

@@ -98,7 +98,8 @@ type AdviceType int
 
 const (
 	// AdviceWarmUp indicates to warm up the provider's inner state.
-	// For example, the provider can prefetch tso when it is advised.
+	// For most TxnContextProviders, it will start fetching transaction's timestamp
+	// from PD asynchronously after `AdviceWarmUp` is advised.
 	AdviceWarmUp AdviceType = iota
 	// AdviceOptimizeWithPlan indicates to do some optimizations with the given plan
 	AdviceOptimizeWithPlan

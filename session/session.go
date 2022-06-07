@@ -2511,10 +2511,15 @@ func (s *session) isTxnRetryable() bool {
 		return false
 	}
 
+	// When `@@tidb_snapshot` is set, it is a ready-only statement and will not cause the errors that should retry a transaction in optimistic mode.
+	if sessVars.SnapshotTS != 0 {
+		return false
+	}
+
 	// If the session is not InTxn, it is an auto-committed transaction.
-	// The auto-committed transaction could always retry when @@tidb_snapshot is not set.
+	// The auto-committed transaction could always retry.
 	if !sessVars.InTxn() {
-		return sessVars.SnapshotTS == 0
+		return true
 	}
 
 	// The internal transaction could always retry.

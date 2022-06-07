@@ -93,7 +93,7 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 		}
 
 		sessVars.TxnCtx.IsPessimistic = p.Pessimistic
-		if _, err := p.activeTxn(); err != nil {
+		if _, err := p.activateTxn(); err != nil {
 			return err
 		}
 
@@ -218,8 +218,8 @@ func (p *SimpleTxnContextProvider) prepareTSFuture() error {
 	return p.Sctx.PrepareTSFuture(p.Ctx, future, txnScope)
 }
 
-// activeTxn actives the txn
-func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
+// activateTxn actives the txn
+func (p *SimpleTxnContextProvider) activateTxn() (kv.Transaction, error) {
 	if p.isTxnActive {
 		return p.Sctx.Txn(true)
 	}
