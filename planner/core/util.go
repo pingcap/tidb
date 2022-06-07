@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"golang.org/x/exp/slices"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -294,7 +294,7 @@ func extractStringFromStringSet(set set.StringSet) string {
 	for k := range set {
 		l = append(l, fmt.Sprintf(`"%s"`, k))
 	}
-	sort.Strings(l)
+	slices.Sort(l)
 	return strings.Join(l, ",")
 }
 
@@ -303,7 +303,7 @@ func extractStringFromStringSlice(ss []string) string {
 	if len(ss) < 1 {
 		return ""
 	}
-	sort.Strings(ss)
+	slices.Sort(ss)
 	return strings.Join(ss, ",")
 }
 
@@ -316,7 +316,7 @@ func extractStringFromUint64Slice(slice []uint64) string {
 	for _, k := range slice {
 		l = append(l, fmt.Sprintf(`%d`, k))
 	}
-	sort.Strings(l)
+	slices.Sort(l)
 	return strings.Join(l, ",")
 }
 
@@ -329,7 +329,7 @@ func extractStringFromBoolSlice(slice []bool) string {
 	for _, k := range slice {
 		l = append(l, fmt.Sprintf(`%t`, k))
 	}
-	sort.Strings(l)
+	slices.Sort(l)
 	return strings.Join(l, ",")
 }
 
