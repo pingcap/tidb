@@ -535,8 +535,8 @@ func (t *tester) executeStmt(query string) error {
 			}
 			t.buf.WriteString("\n")
 		}
-		err = rows.Err()
-		if err != nil {
+
+		if err = rows.Err(); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
