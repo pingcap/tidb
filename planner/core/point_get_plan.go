@@ -621,36 +621,46 @@ func newBatchPointGetPlan(
 			handleParams[i] = con
 		}
 
-		partitionInfos := make([]*model.PartitionDefinition, 0, len(pairs))
-		var isTableDual bool
-		tmpPair := make([]nameValuePair, 1, 1)
-		var tmpPartitionDefinition *model.PartitionDefinition
-		for _, pair := range pairs {
-			tmpPair[0] = pair
-			tmpPartitionDefinition, _, isTableDual = getPartitionInfo(ctx, tbl, tmpPair)
-			if isTableDual {
-				return nil
+		if tbl.GetPartitionInfo() != nil {
+			partitionInfos := make([]*model.PartitionDefinition, 0, len(pairs))
+			var isTableDual bool
+			tmpPair := make([]nameValuePair, 1, 1)
+			var tmpPartitionDefinition *model.PartitionDefinition
+			for _, pair := range pairs {
+				tmpPair[0] = pair
+				tmpPartitionDefinition, _, isTableDual = getPartitionInfo(ctx, tbl, tmpPair)
+				if isTableDual {
+					return nil
+				}
+				partitionInfos = append(partitionInfos, tmpPartitionDefinition)
 			}
-			partitionInfos = append(partitionInfos, tmpPartitionDefinition)
-		}
 
-		sort.SliceStable(partitionInfos, func(i, j int) bool {
-			return partitionInfos[i].ID < partitionInfos[j].ID
-		})
-		filterPartitionInfos := partitionInfos[:0]
-		for i := 0; i < len(partitionInfos); i++ {
-			if i == 0 || partitionInfos[i].ID != partitionInfos[i-1].ID {
-				filterPartitionInfos = append(filterPartitionInfos, partitionInfos[i])
+			sort.SliceStable(partitionInfos, func(i, j int) bool {
+				return partitionInfos[i].ID < partitionInfos[j].ID
+			})
+			filterPartitionInfos := partitionInfos[:0]
+			for i := 0; i < len(partitionInfos); i++ {
+				if i == 0 || partitionInfos[i].ID != partitionInfos[i-1].ID {
+					filterPartitionInfos = append(filterPartitionInfos, partitionInfos[i])
+				}
 			}
+
+			return BatchPointGetPlan{
+				TblInfo:        tbl,
+				Handles:        handles,
+				HandleParams:   handleParams,
+				HandleType:     &handleCol.FieldType,
+				PartitionExpr:  partitionExpr,
+				PartitionInfos: filterPartitionInfos,
+			}.Init(ctx, statsInfo, schema, names, 0)
 		}
 
 		return BatchPointGetPlan{
-			TblInfo:        tbl,
-			Handles:        handles,
-			HandleParams:   handleParams,
-			HandleType:     &handleCol.FieldType,
-			PartitionExpr:  partitionExpr,
-			PartitionInfos: filterPartitionInfos,
+			TblInfo:       tbl,
+			Handles:       handles,
+			HandleParams:  handleParams,
+			HandleType:    &handleCol.FieldType,
+			PartitionExpr: partitionExpr,
 		}.Init(ctx, statsInfo, schema, names, 0)
 	}
 
@@ -798,38 +808,53 @@ func newBatchPointGetPlan(
 		if p, ok := colExpr.(*ast.ParenthesesExpr); ok {
 			colExpr = p.Expr
 		}
-		colName, ok := colExpr.(*ast.ColumnNameExpr)
-		if !ok {
-			return nil
+		if tbl.GetPartitionInfo() != nil {
+			colName, ok := colExpr.(*ast.ColumnNameExpr)
+			if !ok {
+				return nil
+			}
+			for i := 0; i < len(values); i++ {
+				pairs = append(pairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: item.GetType(), value: values[i], con: valuesParams[i]})
+			}
 		}
-		for i := 0; i < len(values); i++ {
-			pairs = append(pairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: item.GetType(), value: values[i], con: valuesParams[i]})
-		}
+
 		indexValues[i] = values
 		indexValueParams[i] = valuesParams
 
 	}
-	partitionInfos := make([]*model.PartitionDefinition, 0, len(pairs))
-	var isTableDual bool
-	var tmpPartitionInfo *model.PartitionDefinition
-	tmpPair := make([]nameValuePair, 1, 1)
-	for _, pair := range pairs {
-		tmpPair[0] = pair
-		tmpPartitionInfo, _, isTableDual = getPartitionInfo(ctx, tbl, tmpPair)
-		if isTableDual {
-			return nil
+	if tbl.GetPartitionInfo() != nil {
+		partitionInfos := make([]*model.PartitionDefinition, 0, len(pairs))
+		var isTableDual bool
+		var tmpPartitionInfo *model.PartitionDefinition
+		tmpPair := make([]nameValuePair, 1, 1)
+		for _, pair := range pairs {
+			tmpPair[0] = pair
+			tmpPartitionInfo, _, isTableDual = getPartitionInfo(ctx, tbl, tmpPair)
+			if isTableDual {
+				return nil
+			}
+			partitionInfos = append(partitionInfos, tmpPartitionInfo)
 		}
-		partitionInfos = append(partitionInfos, tmpPartitionInfo)
-	}
 
-	sort.SliceStable(partitionInfos, func(i, j int) bool {
-		return partitionInfos[i].ID < partitionInfos[j].ID
-	})
-	filterPartitionInfos := partitionInfos[:0]
-	for i := 0; i < len(partitionInfos); i++ {
-		if i == 0 || partitionInfos[i].ID != partitionInfos[i-1].ID {
-			filterPartitionInfos = append(filterPartitionInfos, partitionInfos[i])
+		sort.SliceStable(partitionInfos, func(i, j int) bool {
+			return partitionInfos[i].ID < partitionInfos[j].ID
+		})
+		filterPartitionInfos := partitionInfos[:0]
+		for i := 0; i < len(partitionInfos); i++ {
+			if i == 0 || partitionInfos[i].ID != partitionInfos[i-1].ID {
+				filterPartitionInfos = append(filterPartitionInfos, partitionInfos[i])
+			}
 		}
+		return BatchPointGetPlan{
+			TblInfo:          tbl,
+			IndexInfo:        matchIdxInfo,
+			IndexValues:      indexValues,
+			IndexValueParams: indexValueParams,
+			IndexColTypes:    indexTypes,
+			PartitionColPos:  pos,
+			PartitionExpr:    partitionExpr,
+			PartitionInfos:   filterPartitionInfos,
+		}.Init(ctx, statsInfo, schema, names, 0)
 	}
 
 	return BatchPointGetPlan{
@@ -840,7 +865,6 @@ func newBatchPointGetPlan(
 		IndexColTypes:    indexTypes,
 		PartitionColPos:  pos,
 		PartitionExpr:    partitionExpr,
-		PartitionInfos:   filterPartitionInfos,
 	}.Init(ctx, statsInfo, schema, names, 0)
 }
 

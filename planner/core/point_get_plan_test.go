@@ -716,6 +716,24 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		"Batch_Point_Get_1 2.00 root table:t, partition:p1,p2, index:b(b) keep order:false, desc:false"))
 	tk.MustQuery("explain select * from t where b in (1, 2, 1)").Check(testkit.Rows(
 		"Batch_Point_Get_1 3.00 root table:t, partition:p1,p2, index:b(b) keep order:false, desc:false"))
+
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (id int, name int) PARTITION BY LIST COLUMNS(id,name) (" +
+		"partition p0 values IN ((1, 1),(2, 2)), " +
+		"partition p1 values IN ((3, 3),(4, 4)), " +
+		"partition p3 values IN ((5, 5)))")
+	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustQuery("explain select * from t1 where (id, name) in ((1, 1), (3, 3))").Check(testkit.Rows())
+
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("CREATE TABLE t2 (id int, name varchar(10)) PARTITION BY LIST COLUMNS(id,name) (" +
+		"partition p0 values IN ((1,'a'),(2,'b')), " +
+		"partition p1 values IN ((3,'c'),(4,'d')), " +
+		"partition p3 values IN ((5,'e')))")
+	tk.MustExec("insert into t2 values(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')")
+	tk.MustQuery("explain select * from t2 where (id, name) in ((1, 'a'), (3, 'c'))").Check(testkit.Rows())
 }
 
 func TestIssue19141(t *testing.T) {
