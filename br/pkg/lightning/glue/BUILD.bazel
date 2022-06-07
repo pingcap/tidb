@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "glue",
+    srcs = ["glue.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/lightning/glue",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/lightning/checkpoints",
+        "//br/pkg/lightning/common",
+        "//br/pkg/lightning/config",
+        "//br/pkg/lightning/log",
+        "//parser",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//types",
+        "//util/sqlexec",
+    ],
+)

@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "brietest_test",
+    srcs = [
+        "backup_restore_test.go",
+        "binlog_test.go",
+        "main_test.go",
+    ],
+    deps = [
+        "//config",
+        "//parser/mysql",
+        "//sessionctx/binloginfo",
+        "//store/mockstore/mockcopr",
+        "//testkit",
+        "//tests/realtikvtest",
+        "@com_github_pingcap_tipb//go-binlog",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+    ],
+)
