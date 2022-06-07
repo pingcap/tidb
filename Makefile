@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
 
 default: server buildsucc
 
@@ -420,3 +420,38 @@ tools/bin/gotestsum: tools/check/go.mod
 
 generate_grafana_scripts:
 	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
+
+bazel_ci_prepare:
+	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci  //:gazelle
+
+bazel_prepare:
+	bazel run  //:gazelle
+
+bazel_test: failpoint-enable bazel_ci_prepare
+	bazel --output_user_root=/home/jenkins/.tidb/tmp test --config=ci  \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/lightning/log:log_test -//br/pkg/task:task_test
+
+
+bazel_coverage_test: failpoint-enable bazel_ci_prepare
+	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/lightning/log:log_test -//br/pkg/task:task_test
+
+bazel_build: bazel_ci_prepare
+	mkdir -p bin
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //tidb-server/... //br/cmd/... //cmd/...
+	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
+	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
+	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
+
+bazel_fail_build:  failpoint-enable bazel_ci_prepare
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //...
+
+bazel_clean:
+	bazel --output_user_root=/home/jenkins/.tidb/tmp clean
+
+bazel_junit:
+	bazel_collect
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
