@@ -124,7 +124,6 @@ var (
 	_ functionClass = &timestampLiteralFunctionClass{}
 	_ functionClass = &lastDayFunctionClass{}
 	_ functionClass = &addSubDateFunctionClass{}
-	_ functionClass = &addSubDateFunctionClass{}
 )
 
 var (
