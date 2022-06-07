@@ -2794,6 +2794,10 @@ func (du *baseDateArithmetical) getDateFromReal(ctx sessionctx.Context, args []E
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 
+	// Now the actual date.Type() might be date, datetime or timestamp.
+	// Date and datetime is treated as is.
+	// Timestamp is treated as datetime.
+	// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
 	dateTp := mysql.TypeDate
 	if date.Type() == mysql.TypeDatetime || date.Type() == mysql.TypeTimestamp || types.IsClockUnit(unit) {
 		dateTp = mysql.TypeDatetime
@@ -2814,6 +2818,10 @@ func (du *baseDateArithmetical) getDateFromDecimal(ctx sessionctx.Context, args 
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 
+	// Now the actual date.Type() might be date, datetime or timestamp.
+	// Date and datetime is treated as is.
+	// Timestamp is treated as datetime.
+	// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
 	dateTp := mysql.TypeDate
 	if date.Type() == mysql.TypeDatetime || date.Type() == mysql.TypeTimestamp || types.IsClockUnit(unit) {
 		dateTp = mysql.TypeDatetime
@@ -2828,6 +2836,10 @@ func (du *baseDateArithmetical) getDateFromDatetime(ctx sessionctx.Context, args
 		return types.ZeroTime, true, err
 	}
 
+	// Now the actual date.Type() might be date, datetime or timestamp.
+	// Date and datetime is treated as is.
+	// Timestamp is treated as datetime.
+	// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
 	if types.IsClockUnit(unit) || date.Type() == mysql.TypeTimestamp {
 		date.SetType(mysql.TypeDatetime)
 	}
@@ -2939,9 +2951,8 @@ func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time,
 	goTime = goTime.Add(time.Duration(nano))
 	goTime = types.AddDate(year, month, day, goTime)
 
-	if resultFsp != types.UnspecifiedFsp {
-		date.SetFsp(resultFsp)
-	}
+	// Adjust fsp as required by outer - always respect type inference.
+	date.SetFsp(resultFsp)
 
 	// fix https://github.com/pingcap/tidb/issues/11329
 	if goTime.Year() == 0 {
@@ -2974,9 +2985,8 @@ func (du *baseDateArithmetical) addDuration(ctx sessionctx.Context, d types.Dura
 	if err != nil {
 		return types.ZeroDuration, true, err
 	}
-	if resultFsp != types.UnspecifiedFsp {
-		retDur.Fsp = resultFsp
-	}
+	// Adjust fsp as required by outer - always respect type inference.
+	retDur.Fsp = resultFsp
 	return retDur, false, nil
 }
 
@@ -2989,9 +2999,8 @@ func (du *baseDateArithmetical) subDuration(ctx sessionctx.Context, d types.Dura
 	if err != nil {
 		return types.ZeroDuration, true, err
 	}
-	if resultFsp != types.UnspecifiedFsp {
-		retDur.Fsp = resultFsp
-	}
+	// Adjust fsp as required by outer - always respect type inference.
+	retDur.Fsp = resultFsp
 	return retDur, false, nil
 }
 

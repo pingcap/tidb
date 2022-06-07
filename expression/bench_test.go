@@ -855,6 +855,7 @@ func (g *timeStrGener) gen() interface{} {
 	return fmt.Sprintf("%d:%d:%d", hour, minute, second)
 }
 
+// dateIntGener is used to generate int values which are date format.
 type dateIntGener struct {
 	dateGener
 }
@@ -868,6 +869,7 @@ func (g dateIntGener) gen() interface{} {
 	return num
 }
 
+// dateTimeIntGener is used to generate int values which are dateTime format.
 type dateTimeIntGener struct {
 	dateTimeGener
 }
@@ -881,6 +883,7 @@ func (g dateTimeIntGener) gen() interface{} {
 	return num
 }
 
+// dateOrDatetimeIntGener is used to generate int values which are date or datetime format.
 type dateOrDatetimeIntGener struct {
 	dateRatio float64
 	dateIntGener
@@ -895,6 +898,8 @@ func (g dateOrDatetimeIntGener) gen() interface{} {
 	return g.dateTimeIntGener.gen()
 }
 
+// dateRealGener is used to generate floating point values which are date format.
+// `fspRatio` is used to control the ratio of values with ms part. I.e., 20010203.000456789 is a valid representation of a date.
 type dateRealGener struct {
 	fspRatio float64
 	dateGener
@@ -915,6 +920,8 @@ func (g dateRealGener) gen() interface{} {
 	return num
 }
 
+// dateTimeRealGener is used to generate floating point values which are dateTime format.
+// `fspRatio` is used to control the ratio of values with ms part.
 type dateTimeRealGener struct {
 	fspRatio float64
 	dateTimeGener
@@ -926,7 +933,7 @@ func (g dateTimeRealGener) gen() interface{} {
 	if err != nil {
 		panic(err)
 	}
-	// Ignore the ms part in generated time - it's too normal, we want sometimes more than 6 digits.
+	// Ignore the ms part in generated time - it's too normal, we want sometimes more than 6 digits, generated down below.
 	num := float64(tmp)
 
 	if g.randGen.Float64() >= g.fspRatio {
@@ -937,6 +944,7 @@ func (g dateTimeRealGener) gen() interface{} {
 	return num
 }
 
+// dateOrDatetimeRealGener is used to generate floating point values which are date or datetime format.
 type dateOrDatetimeRealGener struct {
 	dateRatio float64
 	dateRealGener
@@ -951,6 +959,8 @@ func (g dateOrDatetimeRealGener) gen() interface{} {
 	return g.dateTimeRealGener.gen()
 }
 
+// dateDecimalGener is used to generate decimals which are date format.
+// `fspRatio` is used to control the ratio of values with ms part. I.e., 20010203.000456789 is a valid representation of a date.
 type dateDecimalGener struct {
 	fspRatio float64
 	dateGener
@@ -965,7 +975,7 @@ func (g dateDecimalGener) gen() interface{} {
 	}
 
 	fracPart := new(types.MyDecimal)
-	// Make fractional part no larger than 9 digits.
+	// Make fractional part no longer than 9 digits to avoid decimal truncation.
 	frac := float64(int64(g.randGen.Float64()*1000000000)) / float64(1000000000)
 	err := fracPart.FromFloat64(frac)
 	if err != nil {
@@ -979,6 +989,7 @@ func (g dateDecimalGener) gen() interface{} {
 	return res
 }
 
+// dateTimeDecimalGener is used to generate decimals which are dateTime format.
 type dateTimeDecimalGener struct {
 	fspRatio float64
 	dateTimeGener
@@ -993,7 +1004,7 @@ func (g dateTimeDecimalGener) gen() interface{} {
 	}
 
 	fracPart := new(types.MyDecimal)
-	// Make fractional part no larger than 9 digits.
+	// Make fractional part no longer than 9 digits to avoid decimal truncation.
 	frac := float64(int64(g.randGen.Float64()*1000000000)) / float64(1000000000)
 	err := fracPart.FromFloat64(frac)
 	if err != nil {
@@ -1007,6 +1018,7 @@ func (g dateTimeDecimalGener) gen() interface{} {
 	return res
 }
 
+// dateOrDatetimeDecimalGener is used to generate decimals which are date or datetime format.
 type dateOrDatetimeDecimalGener struct {
 	dateRatio float64
 	dateDecimalGener
