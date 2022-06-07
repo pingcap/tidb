@@ -35,8 +35,10 @@ type PessimisticRRTxnContextProvider struct {
 	baseTxnContextProvider
 
 	// Used for ForUpdateRead statement
-	forUpdateTS             uint64
-	followingStmtIsPointGet bool
+	forUpdateTS uint64
+	// It may decide whether to update forUpdateTs when calling provider's getForUpdateTs
+	// See more details in the comments of optimizeWithPlan
+	followingStmtIsPointGetForUpdate bool
 }
 
 // NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
@@ -66,7 +68,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 		return p.forUpdateTS, nil
 	}
 
-	if p.followingStmtIsPointGet {
+	if p.followingStmtIsPointGetForUpdate {
 		return p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS(), nil
 	}
 
@@ -104,7 +106,7 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 
 	// Because the ForUpdateTS is used for the snapshot for reading data in DML.
 	// We can avoid allocating a global TSO here to speed it up by using the local TSO.
-	version, err := sctx.GetStore().CurrentVersion(seCtx.GetSessionVars().TxnCtx.TxnScope)
+	version, err := sctx.GetStore().CurrentVersion(sctx.GetSessionVars().TxnCtx.TxnScope)
 	if err != nil {
 		return err
 	}
@@ -122,7 +124,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error
 	}
 
 	p.forUpdateTS = 0
-	p.followingStmtIsPointGet = false
+	p.followingStmtIsPointGetForUpdate = false
 
 	return nil
 }
@@ -141,7 +143,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 		p.forUpdateTS = 0
 	}
 
-	p.followingStmtIsPointGet = false
+	p.followingStmtIsPointGetForUpdate = false
 
 	return nil
 }
@@ -168,7 +170,9 @@ func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType, val [
 	}
 }
 
-// optimizeWithPlan todo: optimize the forUpdateTS acquisition
+// optimizeWithPlan optimizes for-update-like point get execution. We set p.followingStmtIsPointGetForUpdate
+// to be true. And when p.getForUpdateTs is called, we do not acquire tso from PD immediately but return the value of
+// txnCtx.GetForUpdateTS() expecting that the values that the point get operation acquires have not been changed.
 func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
@@ -187,23 +191,23 @@ func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error
 		plan = execute.Plan
 	}
 
-	optimizeForPointGet := false
+	mayOptimizeForPointGet := false
 	if v, ok := plan.(*plannercore.PhysicalLock); ok {
 		if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
-			optimizeForPointGet = true
+			mayOptimizeForPointGet = true
 		}
 	} else if v, ok := plan.(*plannercore.Update); ok {
 		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
-			optimizeForPointGet = true
+			mayOptimizeForPointGet = true
 		}
 	} else if v, ok := plan.(*plannercore.Delete); ok {
 		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
-			optimizeForPointGet = true
+			mayOptimizeForPointGet = true
 		}
 	}
 
 	if p.forUpdateTS == 0 {
-		p.followingStmtIsPointGet = optimizeForPointGet
+		p.followingStmtIsPointGetForUpdate = mayOptimizeForPointGet
 	}
 
 	return nil

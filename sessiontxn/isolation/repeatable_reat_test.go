@@ -330,6 +330,58 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
+func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1,1), (2,2)")
+	se := tk.Session()
+	provider := initializeRepeatableReadProvider(t, tk)
+	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
+
+	stmt, err := parser.New().ParseOneStmt("delete from t where id = 1", "", "")
+	require.NoError(t, err)
+	compareTs := getOracleTS(t, se)
+	compiler := executor.Compiler{Ctx: se}
+	_, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	ts, err := provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, compareTs, ts)
+	require.Equal(t, ts, forUpdateTS)
+
+	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
+	require.NoError(t, err)
+	compiler = executor.Compiler{Ctx: se}
+	_, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Equal(t, ts, forUpdateTS)
+
+	stmt, err = parser.New().ParseOneStmt("select * from (select * from t where id = 1 for update) as t1 for update", "", "")
+	require.NoError(t, err)
+	compiler = executor.Compiler{Ctx: se}
+	_, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Equal(t, ts, forUpdateTS)
+
+	// Now, test for one that does not use the optimization
+	stmt, err = parser.New().ParseOneStmt("select * from t for update", "", "")
+	compareTs = getOracleTS(t, se)
+	require.NoError(t, err)
+	compiler = executor.Compiler{Ctx: se}
+	_, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, ts, compareTs)
+}
+
 func activePessimisticRRAssert(t *testing.T, sctx sessionctx.Context,
 	inTxn bool) *txnAssert[*isolation.PessimisticRRTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticRRTxnContextProvider]{
