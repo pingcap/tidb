@@ -138,6 +138,19 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 }
 
+func TestSomething(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+	tk.MustExec("LOAD DATA LOCAL INFILE '/home/spadea/1.csv' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (k,id,c,dt,vv,ts)")
+	results := tk.MustQuery("select * from t66")
+	require.Equal(t, len(results.Rows()), 4)
+}
+
 func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()

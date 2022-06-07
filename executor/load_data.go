@@ -129,6 +129,34 @@ type FieldMapping struct {
 	UserVar *ast.VariableExpr
 }
 
+// reorderColumns reorder the e.insertColumns according to the order of columnNames
+func (e *LoadDataInfo) reorderColumns(columnNames []string) error {
+	cols := e.insertColumns
+
+	if len(cols) != len(columnNames) {
+		return errors.New("LOAD DATA: columns unmatched")
+	}
+
+	reorderedColumns := make([]*table.Column, 0, len(cols))
+
+	if columnNames == nil {
+		return nil
+	}
+
+	for _, col := range cols {
+		for _, colName := range columnNames {
+			if col.Name.O == colName {
+				reorderedColumns = append(reorderedColumns, col)
+				break
+			}
+		}
+	}
+
+	e.insertColumns = reorderedColumns
+
+	return nil
+}
+
 // initLoadColumns sets columns which the input fields loaded to.
 func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 	var cols []*table.Column
@@ -161,6 +189,11 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 			break
 		}
 	}
+
+	if err = e.reorderColumns(columnNames); err != nil {
+		return err
+	}
+
 	e.rowLen = len(e.insertColumns)
 	// Check column whether is specified only once.
 	err = table.CheckOnce(cols)
