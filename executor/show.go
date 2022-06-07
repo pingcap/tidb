@@ -19,6 +19,7 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/domain/infosync"
 	"sort"
 	"strconv"
 	"strings"
@@ -219,7 +220,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus()
 	case ast.ShowRegions:
-		return e.fetchShowTableRegions()
+		return e.fetchShowTableRegions(ctx)
 	case ast.ShowBuiltins:
 		return e.fetchShowBuiltins()
 	case ast.ShowBackups:
@@ -1818,7 +1819,7 @@ func (e *ShowExec) appendRow(row []interface{}) {
 	}
 }
 
-func (e *ShowExec) fetchShowTableRegions() error {
+func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	store := e.ctx.GetStore()
 	tikvStore, ok := store.(helper.Storage)
 	if !ok {
@@ -1867,8 +1868,55 @@ func (e *ShowExec) fetchShowTableRegions() error {
 		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
 	}
 
-	if err != nil {
-		return err
+	// not for table index
+	if len(e.IndexName.L) == 0 {
+		var scheduleState map[int64]infosync.PlacementScheduleState
+		schedulingConstraints := make(map[int64]*model.PlacementSettings)
+		tblPlacement, err := e.getTablePlacement(tb.Meta())
+		if err != nil {
+			return err
+		}
+
+		physicalIDToRegionID := make(map[int64]uint64)
+		for i := range regions {
+			physicalIDToRegionID[regions[i].physicalID] = regions[i].region.GetId()
+		}
+
+		// partitioned table
+		if tb.Meta().GetPartitionInfo() != nil {
+			for _, part := range tb.Meta().GetPartitionInfo().Definitions {
+				_, err = fetchScheduleState(ctx, scheduleState, part.ID)
+				if err != nil {
+					return err
+				}
+				placement, err := e.getPolicyPlacement(part.PlacementPolicyRef)
+				if err != nil {
+					return err
+				}
+				if placement == nil {
+					schedulingConstraints[int64(physicalIDToRegionID[part.ID])] = tblPlacement
+				} else {
+					schedulingConstraints[int64(physicalIDToRegionID[part.ID])] = placement
+				}
+			}
+		} else {
+			// un-partitioned table
+			schedulingConstraints[int64(physicalIDToRegionID[tb.Meta().ID])] = tblPlacement
+			_, err = fetchScheduleState(ctx, scheduleState, tb.Meta().ID)
+			if err != nil {
+				return err
+			}
+		}
+
+		for i := range regions {
+			constraint := schedulingConstraints[int64(regions[i].region.Id)]
+			if constraint == nil {
+				regions[i].schedulingConstraints = ""
+			} else {
+				regions[i].schedulingConstraints = constraint.String()
+			}
+			regions[i].schedulingState = scheduleState[int64(regions[i].region.Id)].String()
+		}
 	}
 	e.fillRegionsToChunk(regions)
 	return nil
@@ -1926,6 +1974,8 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 		e.result.AppendUint64(8, regions[i].readBytes)
 		e.result.AppendInt64(9, regions[i].approximateSize)
 		e.result.AppendInt64(10, regions[i].approximateKeys)
+		e.result.AppendString(11, regions[i].schedulingConstraints)
+		e.result.AppendString(12, regions[i].schedulingState)
 	}
 }
 

@@ -610,16 +610,19 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 
 // RegionMeta contains a region's peer detail
 type regionMeta struct {
-	region          *metapb.Region
-	leaderID        uint64
-	storeID         uint64 // storeID is the store ID of the leader region.
-	start           string
-	end             string
-	scattering      bool
-	writtenBytes    uint64
-	readBytes       uint64
-	approximateSize int64
-	approximateKeys int64
+	region                *metapb.Region
+	leaderID              uint64
+	storeID               uint64 // storeID is the store ID of the leader region.
+	start                 string
+	end                   string
+	scattering            bool
+	writtenBytes          uint64
+	readBytes             uint64
+	approximateSize       int64
+	approximateKeys       int64
+	schedulingConstraints string
+	schedulingState       string
+	physicalID            int64
 }
 
 func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
@@ -785,11 +788,13 @@ func getRegionMeta(tikvStore helper.Storage, regionMetas []*tikv.Region, uniqueR
 		}
 		uniqueRegionMap[r.GetID()] = struct{}{}
 		regions = append(regions, regionMeta{
-			region:   r.GetMeta(),
-			leaderID: r.GetLeaderPeerID(),
-			storeID:  r.GetLeaderStoreID(),
+			region:     r.GetMeta(),
+			leaderID:   r.GetLeaderPeerID(),
+			storeID:    r.GetLeaderStoreID(),
+			physicalID: physicalTableID,
 		})
 	}
+
 	regions, err := getRegionInfo(tikvStore, regions)
 	if err != nil {
 		return regions, err
