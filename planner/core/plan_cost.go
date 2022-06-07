@@ -69,23 +69,50 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	var cpuFactor float64
-	switch taskType {
-	case property.RootTaskType, property.MppTaskType:
-		cpuFactor = p.ctx.GetSessionVars().CPUFactor
-	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
-		cpuFactor = p.ctx.GetSessionVars().CopCPUFactor
-	default:
-		return 0, errors.Errorf("unknown task type %v", taskType)
-	}
 	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
 	if err != nil {
 		return 0, err
 	}
 	p.planCost = childCost
-	p.planCost += getCardinality(p.children[0], costFlag) * cpuFactor // selection cost: rows * cpu-factor
+	selfCost, err := p.calSelfCost(taskType, costFlag)
+	if err != nil {
+		return 0, err
+	}
+	p.planCost += selfCost
 	p.planCostInit = true
 	return p.planCost, nil
+}
+
+func (p *PhysicalSelection) calSelfCost(taskType property.TaskType, costFlag uint64) (float64, error) {
+	switch p.ctx.GetSessionVars().CostModelVersion {
+	case CostModelV1:
+		// selection cost: rows * cpu-factor
+		var cpuFactor float64
+		switch taskType {
+		case property.RootTaskType, property.MppTaskType:
+			cpuFactor = p.ctx.GetSessionVars().CPUFactor
+		case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+			cpuFactor = p.ctx.GetSessionVars().CopCPUFactor
+		default:
+			return 0, errors.Errorf("unknown task type %v", taskType)
+		}
+		return getCardinality(p.children[0], costFlag) * cpuFactor, nil
+	case CostModelV2:
+		// selection cost: rows * cpu-factor
+		var cpuFactor float64
+		switch taskType {
+		case property.RootTaskType:
+			cpuFactor = p.ctx.GetSessionVars().CPUFactor
+		case property.MppTaskType: // use dedicated cpu factor for TiFlash
+			cpuFactor = p.ctx.GetSessionVars().TiFlashCPUFactor
+		case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+			cpuFactor = p.ctx.GetSessionVars().CopCPUFactor
+		default:
+			return 0, errors.Errorf("unknown task type %v", taskType)
+		}
+		return getCardinality(p.children[0], costFlag) * cpuFactor, nil
+	}
+	return 0, errors.Errorf("unknown cost model version %v", p.ctx.GetSessionVars().CostModelVersion)
 }
 
 // GetCost computes the cost of projection operator itself.
