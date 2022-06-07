@@ -759,7 +759,7 @@ func (g *dateTimeGener) gen() interface{} {
 	return t
 }
 
-// dateTimeStrGener is used to generate strings which are dataTime format.
+// dateTimeStrGener is used to generate strings which are dateTime format.
 // Fsp must be -1 to 9 otherwise will be ignored. -1 will generate a 0 to 9 random length fsp part, otherwise the fsp part will be of fixed length.
 // Fsp more than 6 is to test robustness of fsp part parsing.
 type dateTimeStrGener struct {
