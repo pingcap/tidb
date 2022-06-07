@@ -58,6 +58,10 @@ func TestPreferRangeScan(t *testing.T) {
 	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
 	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
 	tk.MustExec("analyze table test;")
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	var input []string
 	var output []struct {
 		SQL  string
