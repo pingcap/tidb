@@ -1116,7 +1116,7 @@ var defaultSysVars = []*SysVar{
 		s.TiFlashScanFactor = tidbOptFloat64(val, DefOptScanFactor)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptTiFlashConcurrencyFactor, Value: strconv.FormatFloat(DefOptCPUFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptTiFlashCPUFactor, Value: strconv.FormatFloat(DefOptCPUFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.TiFlashCPUFactor = tidbOptFloat64(val, DefOptCPUFactor)
 		return nil
 	}},
