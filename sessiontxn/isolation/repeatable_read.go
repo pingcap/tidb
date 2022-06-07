@@ -91,10 +91,10 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 }
 
 func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
-	seCtx := p.sctx
+	sctx := p.sctx
 	var txn kv.Transaction
 
-	if txn, err = seCtx.Txn(false); err != nil {
+	if txn, err = sctx.Txn(false); err != nil {
 		return err
 	}
 
@@ -104,13 +104,13 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 
 	// Because the ForUpdateTS is used for the snapshot for reading data in DML.
 	// We can avoid allocating a global TSO here to speed it up by using the local TSO.
-	version, err := seCtx.GetStore().CurrentVersion(seCtx.GetSessionVars().TxnCtx.TxnScope)
+	version, err := sctx.GetStore().CurrentVersion(seCtx.GetSessionVars().TxnCtx.TxnScope)
 	if err != nil {
 		return err
 	}
 
-	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
-	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
+	sctx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
+	txn.SetOption(kv.SnapshotTS, sctx.GetSessionVars().TxnCtx.GetForUpdateTS())
 
 	return nil
 }
