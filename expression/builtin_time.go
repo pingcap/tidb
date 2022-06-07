@@ -3390,31 +3390,31 @@ func (du *baseDateArithmetical) vecGetIntervalFromReal(b *baseBuiltinFunc, input
 
 type funcTimeOpForDateAddSub func(da *baseDateArithmetical, ctx sessionctx.Context, date types.Time, interval, unit string, resultFsp int) (types.Time, bool, error)
 
-func addTime(da *baseDateArithmetical, ctx sessionctx.Context, date types.Time, interval string, unit string, resultFsp int) (types.Time, bool, error) {
+func addTime(da *baseDateArithmetical, ctx sessionctx.Context, date types.Time, interval, unit string, resultFsp int) (types.Time, bool, error) {
 	return da.add(ctx, date, interval, unit, resultFsp)
 }
 
-func subTime(da *baseDateArithmetical, ctx sessionctx.Context, date types.Time, interval string, unit string, resultFsp int) (types.Time, bool, error) {
+func subTime(da *baseDateArithmetical, ctx sessionctx.Context, date types.Time, interval, unit string, resultFsp int) (types.Time, bool, error) {
 	return da.sub(ctx, date, interval, unit, resultFsp)
 }
 
-type funcDurationOpForDateAddSub func(da *baseDateArithmetical, ctx sessionctx.Context, d types.Duration, interval string, unit string, resultFsp int) (types.Duration, bool, error)
+type funcDurationOpForDateAddSub func(da *baseDateArithmetical, ctx sessionctx.Context, d types.Duration, interval, unit string, resultFsp int) (types.Duration, bool, error)
 
-func addDuration(da *baseDateArithmetical, ctx sessionctx.Context, d types.Duration, interval string, unit string, resultFsp int) (types.Duration, bool, error) {
+func addDuration(da *baseDateArithmetical, ctx sessionctx.Context, d types.Duration, interval, unit string, resultFsp int) (types.Duration, bool, error) {
 	return da.addDuration(ctx, d, interval, unit, resultFsp)
 }
 
-func subDuration(da *baseDateArithmetical, ctx sessionctx.Context, d types.Duration, interval string, unit string, resultFsp int) (types.Duration, bool, error) {
+func subDuration(da *baseDateArithmetical, ctx sessionctx.Context, d types.Duration, interval, unit string, resultFsp int) (types.Duration, bool, error) {
 	return da.subDuration(ctx, d, interval, unit, resultFsp)
 }
 
-type funcSetPbCodeOp func(b builtinFunc, add tipb.ScalarFuncSig, sub tipb.ScalarFuncSig)
+type funcSetPbCodeOp func(b builtinFunc, add, sub tipb.ScalarFuncSig)
 
-func setAdd(b builtinFunc, add tipb.ScalarFuncSig, sub tipb.ScalarFuncSig) {
+func setAdd(b builtinFunc, add, sub tipb.ScalarFuncSig) {
 	b.setPbCode(add)
 }
 
-func setSub(b builtinFunc, add tipb.ScalarFuncSig, sub tipb.ScalarFuncSig) {
+func setSub(b builtinFunc, add, sub tipb.ScalarFuncSig) {
 	b.setPbCode(sub)
 }
 

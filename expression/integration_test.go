@@ -7336,7 +7336,7 @@ func TestIssue31799(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
-func TestIssue31876(t *testing.T) {
+func TestIssue31867(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
