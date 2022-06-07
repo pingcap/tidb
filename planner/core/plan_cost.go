@@ -371,10 +371,13 @@ func (p *PhysicalTableScan) calSelfCost(taskType property.TaskType, costFlag uin
 		return getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor, nil
 	case CostModelV2:
 		// scan cost: rows * log2(row-size) * scan-factor
-		// TODO: dedicated scan factor for TiFlash
 		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
 		if p.Desc {
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+		}
+		if taskType == property.MppTaskType || p.StoreType == kv.TiFlash {
+			// TODO: dedicated scan factor for TiFlash
+			// scanFactor = ...
 		}
 		rowSize := p.getScanRowSize()
 		logRowSize := 1.0
