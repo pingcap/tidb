@@ -25,19 +25,56 @@ When users attempt to migrate data from MySQL-like databases, they may expend ad
 
 Above all, the lack of this capability can be a blocking issue for those who wish to use TiDB.
 
+### Goal
+
+- Support MySQL-compatible Multi-Schema Change that used commonly, including `ADD/DROP COLUMN`, `ADD/DROP INDEX`, `MODIFY COLUMN`, `RENAME COLUMN`, etc.
+
+### Non-goals
+
+- Support TiDB-specific Multi-Schema Change like `ADD TIFLASH REPLICA`, `ADD PARTITION`, `ALTER PARTITION`, etc.
+- Resolve the 'schema is change' error when DDL and DML are executed concurrently.
+- Be 100% compatible with MySQL. MySQL may reorder the execution of schema changes, which makes the behavior counter-intuitive.
+
 ## Proposal
+
+### Data Structure
 
 The implementation is based on the [online DDL architecture](https://github.com/pingcap/tidb/blob/e0c461a84cf4ad55c7b51c3f9db7f7b9ba51bb62/docs/design/2018-10-08-online-DDL.md). Similar to the existing [Job](https://github.com/pingcap/tidb/blob/6bd54bea8a9ec25c8d65fcf1157c5ee7a141ab0b/parser/model/ddl.go/#L262) structure, we introduce a new structure "SubJob":
 
 - "Job": A job is generally the internal representation of one DDL statement.
 - "SubJob": A sub-job is a representation of one DDL schema change. A job may contain zero(when multi-schema change is not applicable) or more sub-jobs.
 
+```SQL
+// Job represents a DDL action.
+type Job struct {
+    Type       ActionType    `json:"type"`
+    State      JobState      `json:"state"`
+    // ...
+    MultiSchemaInfo *MultiSchemaInfo `json:"multi_schema_info"`
+}
+
+// MultiSchemaInfo contains information for multi-schema change.
+type MultiSchemaInfo struct {
+   // ...
+   SubJobs  []SubJob `json:"sub_jobs"`
+}
+
+// SubJob represents one schema change in a multi-schema change DDL.
+type SubJob struct {
+   Type    ActionType      `json:"type"`
+   State   JobState        `json:"state"`
+   // ...
+}
+```
+
+The field `ActionType` stands for the type of DDL. For example, `ADD COLUMN` is mapped to `ActionAddColumn`; `MODIFY COLUMN` is mapped to `ActionModifyColumn`.
+
 The Multi-Schema Change DDL jobs have the type `ActionMultiSchemaChange`. In the current worker model, there is a dedicated code path (`onMultiSchemaChange()`) to run these jobs. Only Multi-Schema Change jobs can have sub-jobs.
 
 For example, the DDL statement
 
 ```SQL
-ALTER TABLE t ADD COLUMN b INT, MODIFY COLUMN a CHAR(255);
+ALTER TABLE t ADD COLUMN b INT, MODIFY COLUMN a CHAR(10);
 ```
 
 can be modeled as a job like
@@ -62,9 +99,39 @@ job := &Job {
 
 In this way, we pack multiple schema changes into one job. Like any other job, it enqueue the DDL job queue stored in the storage and waits for an appropriate worker to pick it up and process it.
 
-Normally, the worker executes the sub-jobs one by one serially as if they were plain jobs. However, in abnormal cases, things become complex.
+### Job/Sub-job Execution
 
-To ensure atomic execution of a Multi-Schema Change execution, we need to carefully manage the states of the changing schema objects. Let's take the above SQL as an example: If the second sub-job `MODIFY COLUMN a CHAR (255)` fails for some reason, the first sub-job should be able to roll back its changes (roll back the added column `b`).
+As shown in the code above, there is a field `State` in both `Job` and `SubJob`. All the possible states and the changes are listed here:
+
+```
+           ┌-->---    Done     --------->----------┐
+None -> Running -> Rollingback -> RollbackDone -> Synced
+           └-->--- Cancelling  -> Cancelled    -->-┘
+```
+
+We can divided the states into four types:
+
+| States      | Normal        | Abnormal                |
+|-------------|---------------|-------------------------|
+| Uncompleted | None, Running | Rollingback, Cancelling |
+| Completed   | Done          | RollbackDone, Cancelled |
+
+Since a `Job` is executed by a DDL worker, the sub-jobs are executed in a single thread. The general principal to select a sub-job is as follows:
+
+- For the normal state, the first uncompleted sub-job is selected in ascending order, i.e., the sub-job with the smaller order number is executed first.
+- For the abnormal state, the first uncompleted sub-job is selected in decending order, i.e., the sub-job with the larger number is executed first.
+
+When one of the sub-job becomes abnormal, the parent job and all the other sub-jobs are changed to an abnormal state.
+
+### Schema Object State Management
+
+To ensure atomic execution of Multi-Schema Change, we need to carefully manage the states of the changing schema objects. Let's take the above SQL as an example:
+
+```SQL
+ALTER TABLE t ADD COLUMN b INT, MODIFY COLUMN a CHAR(10);
+```
+
+If the second sub-job `MODIFY COLUMN a CHAR (10)` fails for some reason(rows have more than ten characters), the first sub-job should be able to roll back its changes (roll back the added column `b`).
 
 This requirement means that we cannot simply publish the schema object when a sub-job is finished. Instead, it should remain in a state invisible to users, waiting for the other sub-jobs to complete, eventually publishing all at once when it is confirmed that all sub-jobs have succeeded. This method is similar to 2PC: the "commit" cannot be started until the "prewrites" are completed.
 
@@ -81,9 +148,9 @@ Here is the table of schema states that can occur in different DDLs. Note that t
 
 To achieve this behavior, we introduce a flag named "non-revertible" in the sub-job. This flag is set when a schema object has reached the last revertible state. When all sub-jobs are non-revertible, all associated schema objects change to the next state in one transaction. After that, the sub-jobs are executed serially to do the rest.
 
-On the other hand, if there is an error returned by any sub-job before all of them become non-revertible, the entire job is placed in to a `rollingback` state. For the executed sub-jobs, we set them to `cancelling`; for the unexecuted sub-jobs, we set them to `cancelled`.
+On the other hand, if there is an error returned by any sub-job before all of them become non-revertible, the entire job is placed in to a `Rollingback` state. For the executed sub-jobs, we set them to `Cancelling`; for the unexecuted sub-jobs, we set them to `Cancelled`.
 
-Finally, we consider the extreme case: an error occurs while all the sub-jobs are non-revertible. In this situation, we tend to assume that the error can be resolved in a trivial way, e.g., by retrying. This behavior is consistent with the current DDL implementation. Let's take `DROP COLUMN` as an example: Once the column enters the "Write-Only" state, there is no way to abort this job.
+Finally, we consider the extreme case: an error occurs while all the sub-jobs are non-revertible. There are two kinds of errors in general, the logical error(such as the violation of unique constraint, out-of-range data) and the physical error(such as unavailablity of the network, unusability of the storage). In this situation, the error is guaranteed to be a physical one: we tend to assume that it can be resolved in a trivial way, e.g., by retrying. This behavior is consistent with the current DDL implementation. Take `DROP COLUMN` as an example, once the column enters the "Write-Only" state, there is no way to abort this job.
 
 ## Compatibility
 
