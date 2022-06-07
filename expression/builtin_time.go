@@ -3497,7 +3497,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	dateEvalTp := args[0].GetType().EvalType()
 	// Some special evaluation type treatment.
 	// Note that it could be more elegant if we always evaluate datetime for int, real, decimal and string, by leveraging existing implicit casts.
-	// However, MySQL has a nasty behavior for date_add(string, ...), whose result depends on the content of the first argument.
+	// However, MySQL has a wierd behavior for date_add(string, ...), whose result depends on the content of the first argument.
 	// E.g., date_add('2000-01-02 00:00:00', interval 1 day) evaluates to '2021-01-03 00:00:00' (which is normal),
 	// whereas date_add('2000-01-02', interval 1 day) evaluates to '2000-01-03' instead of '2021-01-03 00:00:00'.
 	// This requires a customized parsing of the content of the first argument, by recognizing if it is a pure date format or contains HMS part.
