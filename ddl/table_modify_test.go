@@ -51,7 +51,7 @@ func TestCreateTable(t *testing.T) {
 	require.Equal(t, "a", col.Name.L)
 	d, ok := col.DefaultValue.(string)
 	require.True(t, ok)
-	require.Equal(t, "2.0", d)
+	require.Equal(t, "2", d)
 
 	tk.MustExec("drop table t")
 	tk.MustGetErrCode("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg", errno.ErrUnknownCharacterSet)
