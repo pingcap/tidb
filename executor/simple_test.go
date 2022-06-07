@@ -773,37 +773,6 @@ func TestDropStats(t *testing.T) {
 	h.SetLease(0)
 }
 
-func TestDropStatsFromKV(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (c1 varchar(20), c2 varchar(20))")
-	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
-	tk.MustExec("insert into t select * from t")
-	tk.MustExec("insert into t select * from t")
-	tk.MustExec("analyze table t with 2 topn")
-	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
-	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
-		testkit.Rows("0 16"))
-	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
-		testkit.Rows("1", "2"))
-	ret := tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID)
-	require.True(t, len(ret.Rows()) > 0)
-	ret = tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID)
-	require.True(t, len(ret.Rows()) > 0)
-
-	tk.MustExec("drop stats t")
-	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
-		testkit.Rows("0 16"))
-	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
-		testkit.Rows())
-	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
-		testkit.Rows())
-	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
-		testkit.Rows())
-}
-
 func TestFlushTables(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

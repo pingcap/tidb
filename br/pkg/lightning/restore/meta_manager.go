@@ -237,8 +237,8 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				maxRowIDMax = rowIDMax
 			}
 		}
-		if rows.Err() != nil {
-			return errors.Trace(rows.Err())
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
 		}
 
 		// no enough info are available, fetch row_id max for table
@@ -452,8 +452,8 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		}
 		rows.Close()
 		closed = true
-		if rows.Err() != nil {
-			return errors.Trace(rows.Err())
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
 		}
 
 		// nolint:gosec
