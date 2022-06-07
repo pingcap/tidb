@@ -95,6 +95,7 @@ type HashJoinExec struct {
 
 	stats *hashJoinRuntimeStats
 
+	// We pre-alloc and reuse the Rows and RowPtrs for each probe goroutine, to avoid allocation frequently
 	buildSideRows    [][]chunk.Row
 	buildSideRowPtrs [][]chunk.RowPtr
 }
