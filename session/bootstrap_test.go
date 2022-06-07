@@ -146,14 +146,14 @@ func TestBootstrapWithError(t *testing.T) {
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
-
+		err := InitDDLJobTables(store)
+		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		domain.BindDomain(se, dom)
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
-
 		doDDLWorks(se)
 	}
 

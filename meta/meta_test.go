@@ -765,3 +765,65 @@ func TestSequenceKey(b *testing.T) {
 	require.NoError(b, err)
 	require.Equal(b, tableID, id)
 }
+
+func TestCreateMySQLDatabase(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMeta(txn)
+
+	dbID, err := m.CreateMySQLDatabase()
+	require.NoError(t, err)
+	require.Greater(t, dbID, int64(0))
+
+	anotherDBID, err := m.CreateMySQLDatabase()
+	require.NoError(t, err)
+	require.Equal(t, dbID, anotherDBID)
+
+	err = txn.Rollback()
+	require.NoError(t, err)
+}
+
+func TestDDLTable(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMeta(txn)
+
+	exists, err := m.CheckDDLTableExists()
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	err = m.SetDDLTables()
+	require.NoError(t, err)
+
+	exists, err = m.CheckDDLTableExists()
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	err = m.SetConcurrentDDL(true)
+	require.NoError(t, err)
+	b, err := m.IsConcurrentDDL()
+	require.NoError(t, err)
+	require.True(t, b)
+	err = m.SetConcurrentDDL(false)
+	require.NoError(t, err)
+	b, err = m.IsConcurrentDDL()
+	require.NoError(t, err)
+	require.False(t, b)
+
+	err = txn.Rollback()
+	require.NoError(t, err)
+}

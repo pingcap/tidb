@@ -76,6 +76,7 @@ var (
 	mPolicyPrefix     = "Policy"
 	mPolicyGlobalID   = []byte("PolicyGlobalID")
 	mPolicyMagicByte  = CurrentMagicByteVer
+	mDDLTableVersion  = []byte("DDLTableVersion")
 )
 
 const (
@@ -488,6 +489,48 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	}
 
 	return m.txn.HSet(dbKey, tableKey, data)
+}
+
+// SetDDLTables write a key into storage.
+func (m *Meta) SetDDLTables() error {
+	_, err := m.txn.Inc(mDDLTableVersion, 1)
+	return errors.Trace(err)
+}
+
+// CreateMySQLDatabase creates mysql schema
+func (m *Meta) CreateMySQLDatabase() (int64, error) {
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return 0, err
+	}
+	for _, db := range dbs {
+		if db.Name.L == mysql.SystemDB {
+			return db.ID, nil
+		}
+	}
+
+	id, err := m.GenGlobalID()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	db := model.DBInfo{
+		ID:      id,
+		Name:    model.NewCIStr(mysql.SystemDB),
+		Charset: mysql.UTF8MB4Charset,
+		Collate: mysql.UTF8MB4DefaultCollation,
+		State:   model.StatePublic,
+	}
+	err = m.CreateDatabase(&db)
+	return db.ID, err
+}
+
+// CheckDDLTableExists check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckDDLTableExists() (bool, error) {
+	v, err := m.txn.Get(mDDLTableVersion)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return len(v) != 0, nil
 }
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,

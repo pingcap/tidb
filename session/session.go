@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
@@ -2796,7 +2797,52 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 	return false, nil
 }
 
-var errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
+var (
+	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
+	// DDLJobTables is a list of tables definitions used in concurrent DDL.
+	DDLJobTables = []string{
+		"create table tidb_ddl_job(job_id bigint not null, reorg int, schema_id bigint, table_id bigint, job_meta longblob, is_drop_schema int, primary key(job_id))",
+		"create table tidb_ddl_reorg(job_id bigint not null, ele_id bigint, ele_type blob, start_key blob, end_key blob, physical_id bigint, reorg_meta longblob, unique key(job_id, ele_id, ele_type(20)))",
+		"create table tidb_ddl_history(job_id bigint not null, job_meta longblob, db_name char(64), table_name char(64), schema_id bigint, table_id bigint, create_time datetime, primary key(job_id))",
+	}
+)
+
+// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+func InitDDLJobTables(store kv.Storage) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		exists, err := t.CheckDDLTableExists()
+		if err != nil || exists {
+			return errors.Trace(err)
+		}
+		dbID, err := t.CreateMySQLDatabase()
+		if err != nil {
+			return err
+		}
+		p := parser.New()
+		for _, s := range DDLJobTables {
+			stmt, err := p.ParseOneStmt(s, "", "")
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tblInfo.State = model.StatePublic
+			tblInfo.ID, err = t.GenGlobalID()
+			tblInfo.UpdateTS = t.StartTS
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = t.CreateTableOrView(dbID, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return t.SetDDLTables()
+	})
+}
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
@@ -2810,6 +2856,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	err := InitDDLJobTables(store)
+	if err != nil {
+		return nil, err
 	}
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
