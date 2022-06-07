@@ -44,6 +44,7 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -51,7 +52,7 @@ var (
 	// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
 	RunWorker = true
 	// ddlWorkerID is used for generating the next DDL worker ID.
-	ddlWorkerID = int32(0)
+	ddlWorkerID = atomicutil.NewInt32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 )
@@ -90,9 +91,12 @@ type worker struct {
 	wg              sync.WaitGroup
 
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
+	sess            *session
 	delRangeManager delRangeManager
 	logCtx          context.Context
 	lockSeqNum      bool
+
+	concurrentDDL bool
 
 	*ddlCtx
 }
@@ -116,17 +120,17 @@ func NewJobContext() *JobContext {
 	}
 }
 
-func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
+func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx, concurrentDDL bool) *worker {
 	worker := &worker{
-		id:              atomic.AddInt32(&ddlWorkerID, 1),
+		id:              ddlWorkerID.Add(1),
 		tp:              tp,
 		ddlJobCh:        make(chan struct{}, 1),
 		ctx:             ctx,
 		ddlCtx:          dCtx,
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
+		concurrentDDL:   concurrentDDL,
 	}
-
 	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
 	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
 	return worker
@@ -149,8 +153,11 @@ func (w *worker) String() string {
 	return fmt.Sprintf("worker %d, tp %s", w.id, w.typeStr())
 }
 
-func (w *worker) close() {
+func (w *worker) Close() {
 	startTime := time.Now()
+	if w.sess != nil {
+		w.sessPool.put(w.sess.session())
+	}
 	w.wg.Wait()
 	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -537,6 +544,17 @@ func (w *JobContext) setDDLLabelForTopSQL(job *model.Job) {
 		w.ddlJobCtx = topsql.AttachAndRegisterSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, false)
 	} else {
 		topsql.AttachAndRegisterSQLInfo(w.ddlJobCtx, w.cacheNormalizedSQL, w.cacheDigest, false)
+	}
+}
+
+func (w *worker) unlockSeqNum(err error) {
+	if w.lockSeqNum {
+		if err != nil {
+			// if meet error, we should reset seqNum.
+			w.ddlSeqNumMu.seqNum--
+		}
+		w.lockSeqNum = false
+		w.ddlSeqNumMu.Unlock()
 	}
 }
 
