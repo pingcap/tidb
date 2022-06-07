@@ -409,15 +409,6 @@ dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
 	@make failpoint-disable
 	./dumpling/tests/run.sh $(CASE)
 
-dumpling_tools:
-	@echo "install dumpling tools..."
-	@cd dumpling/tools && make
-
-dumpling_tidy:
-	@echo "go mod tidy"
-	GO111MODULE=on go mod tidy
-	git diff --exit-code go.mod go.sum dumpling/tools/go.mod dumpling/tools/go.sum
-
 dumpling_bins:
 	@which bin/tidb-server
 	@which bin/minio
