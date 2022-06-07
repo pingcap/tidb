@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
@@ -123,7 +124,6 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
-	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
 }
 
 // resetTxnInfo resets the transaction info.
@@ -143,7 +143,18 @@ func (txn *LazyTxn) resetTxnInfo(
 	txn.mu.TxnInfo.StartTS = startTS
 	txn.mu.TxnInfo.State = state
 	txn.mu.TxnInfo.EntriesCount = entriesCount
-	txn.mu.TxnInfo.EntriesSize = entriesSize
+	tracker := txn.mu.TxnInfo.MemDBFootprint
+
+	// TODO: set appropriate action and limit.
+	if tracker != nil {
+		tracker.Detach()
+		memory.InitTracker(tracker, memory.LabelForMemDB, int64(config.GetGlobalConfig().Performance.TxnTotalSizeLimit), &memory.PanicOnExceed{})
+	} else {
+		txn.mu.TxnInfo.MemDBFootprint = memory.NewTracker(memory.LabelForMemDB, int64(config.GetGlobalConfig().Performance.TxnTotalSizeLimit))
+		txn.mu.TxnInfo.MemDBFootprint.SetActionOnExceed(&memory.PanicOnExceed{})
+	}
+
+	txn.mu.TxnInfo.MemDBFootprint.Consume(int64(entriesSize))
 	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
 	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
 }
@@ -154,6 +165,22 @@ func (txn *LazyTxn) Size() int {
 		return 0
 	}
 	return txn.Transaction.Size()
+}
+
+// Mem implements the MemBuffer interface.
+func (txn *LazyTxn) Mem() uint64 {
+	if txn.Transaction == nil {
+		return 0
+	}
+	return txn.Transaction.Mem()
+}
+
+// SetMemoryFootprintChangeHook sets the hook to be called when the memory footprint of this transaction changes.
+func (txn *LazyTxn) SetMemoryFootprintChangeHook(hook func(uint64)) {
+	if txn.Transaction == nil {
+		return
+	}
+	txn.Transaction.SetMemoryFootprintChangeHook(hook)
 }
 
 // Valid implements the kv.Transaction interface.
@@ -222,7 +249,7 @@ func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
 		kvTxn.StartTS(),
 		txninfo.TxnIdle,
 		uint64(txn.Transaction.Len()),
-		uint64(txn.Transaction.Size()),
+		txn.Transaction.Mem(),
 		"",
 		nil)
 }
@@ -256,7 +283,7 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 		t.StartTS(),
 		txninfo.TxnIdle,
 		uint64(txn.Transaction.Len()),
-		uint64(txn.Transaction.Size()),
+		txn.Transaction.Mem(),
 		txn.mu.TxnInfo.CurrentSQLDigest,
 		txn.mu.TxnInfo.AllSQLDigests)
 
@@ -408,7 +435,6 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	txn.mu.TxnInfo.State = originState
 	txn.mu.TxnInfo.BlockStartTime.Valid = false
 	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
-	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
 	return err
 }
 

@@ -119,7 +119,7 @@ func TestBasicTxnState(t *testing.T) {
 	require.Nil(t, info)
 }
 
-func TestEntriesCountAndSize(t *testing.T) {
+func TestEntriesCount(t *testing.T) {
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
@@ -130,12 +130,30 @@ func TestEntriesCountAndSize(t *testing.T) {
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Session().TxnInfo()
 	require.Equal(t, uint64(1), info.EntriesCount)
-	require.Equal(t, uint64(29), info.EntriesSize)
 	tk.MustExec("insert into t(a) values (2);")
 	info = tk.Session().TxnInfo()
 	require.Equal(t, uint64(2), info.EntriesCount)
-	require.Equal(t, uint64(58), info.EntriesSize)
 	tk.MustExec("commit;")
+}
+
+func TestMemDBTracker(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	session := tk.Session()
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("begin")
+	println(session.TxnInfo().MemDBFootprint.BytesConsumed())
+	for i := 0; i < (1 << 10); i++ {
+		tk.MustExec("insert t (id) values (1)")
+	}
+	require.Less(t, int64(1<<(10+4)), session.TxnInfo().MemDBFootprint.BytesConsumed())
+
+	for i := 0; i < (1 << 14); i++ {
+		tk.MustExec("insert t (id) values (1)")
+	}
+	require.Less(t, int64(1<<(14+4)), session.TxnInfo().MemDBFootprint.BytesConsumed())
 }
 
 func TestRunning(t *testing.T) {

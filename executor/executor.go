@@ -159,7 +159,7 @@ func init() {
 	variable.SetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.SetBytesLimit
 	variable.GetMemQuotaAnalyze = GlobalAnalyzeMemoryTracker.GetBytesLimit
 	// TODO: do not attach now to avoid impact to global, will attach later when analyze memory track is stable
-	//GlobalAnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+	// GlobalAnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 }
 
 // SetLogHook sets a hook for PanicOnExceed.

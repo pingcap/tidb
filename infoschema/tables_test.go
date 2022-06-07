@@ -622,12 +622,12 @@ INSERT INTO ...;
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
 	tk := testkit.NewTestKit(t, store)
 
-	//check schema
+	// check schema
 	tk.MustQuery(`select COUNT(*) from information_schema.columns
 WHERE table_name = 'slow_query' and column_name = '` + columnName + `'`).
 		Check(testkit.Rows("1"))
 
-	//check select
+	// check select
 	tk.MustQuery(`select ` + columnName +
 		` from information_schema.slow_query`).Check(testkit.Rows("1"))
 
@@ -1446,7 +1446,7 @@ func TestTiDBTrx(t *testing.T) {
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
-		EntriesSize:      19,
+		MemDBFootprint:   19,
 		ConnectionID:     2,
 		Username:         "root",
 		CurrentDB:        "test",

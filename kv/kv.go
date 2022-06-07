@@ -189,6 +189,10 @@ type Transaction interface {
 	AssertionProto
 	// Size returns sum of keys and values length.
 	Size() int
+	// Mem returns the memory consumption of the transaction.
+	Mem() uint64
+	// SetMemoryFootprintChangeHook sets the hook that will be called when the memory footprint changes.
+	SetMemoryFootprintChangeHook(func(uint64))
 	// Len returns the number of entries in the DB.
 	Len() int
 	// Reset reset the Transaction to initial states.

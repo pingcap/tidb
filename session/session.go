@@ -2504,6 +2504,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.txn.SetOption(kv.IsolationLevel, kv.RC)
 		}
 		setTxnAssertionLevel(&s.txn, s.sessionVars.AssertionLevel)
+		s.SetMemoryFootprintChangeHook()
 	}
 	return &s.txn, nil
 }
@@ -2565,6 +2566,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
 	s.txn.changeInvalidToValid(txn)
+	s.SetMemoryFootprintChangeHook()
 	is := temptable.AttachLocalTemporaryTableInfoSchema(s, domain.GetDomain(s).InfoSchema())
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
@@ -2611,6 +2613,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	txn.SetOption(kv.TxnScope, txnScope)
 	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
 	s.txn.changeInvalidToValid(txn)
+	s.SetMemoryFootprintChangeHook()
 	is, err := getSnapshotInfoSchema(s, txn.StartTS())
 	if err != nil {
 		return errors.Trace(err)
@@ -3228,6 +3231,29 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	return sessiontxn.NewTxn(ctx, s)
 }
 
+// InitTxnWithStartTS create a transaction with startTS.
+func (s *session) InitTxnWithStartTS(startTS uint64) error {
+	if s.txn.Valid() {
+		return nil
+	}
+
+	// no need to get txn from txnFutureCh since txn should init with startTs
+	txn, err := s.store.Begin(tikv.WithTxnScope(s.GetSessionVars().CheckAndGetTxnScope()), tikv.WithStartTS(startTS))
+	if err != nil {
+		return err
+	}
+	txn.SetVars(s.sessionVars.KVVars)
+	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
+	s.txn.changeInvalidToValid(txn)
+	s.SetMemoryFootprintChangeHook()
+	err = s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return err
+	}
+	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	return nil
+}
+
 // GetSnapshotWithTS returns a snapshot with ts.
 func (s *session) GetSnapshotWithTS(ts uint64) kv.Snapshot {
 	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
@@ -3509,6 +3535,15 @@ func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
 
 func (s *session) GetStmtStats() *stmtstats.StatementStats {
 	return s.stmtStats
+}
+
+// SetMemoryFootprintChangeHook sets the hook that is called when the memdb changes its size.
+// Call this after s.txn becomes valid, since TxnInfo is initialized when the txn becomes valid.
+func (s *session) SetMemoryFootprintChangeHook() {
+	hook := func(mem uint64) {
+		s.TxnInfo().MemDBFootprint.ReplaceBytesUsed(int64(mem))
+	}
+	s.txn.SetMemoryFootprintChangeHook(hook)
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.

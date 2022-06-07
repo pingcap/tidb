@@ -335,3 +335,7 @@ func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.K
 	}
 	return isUntouchedValue, nil
 }
+
+func (txn *tikvTxn) SetMemoryFootprintChangeHook(hook func(uint64)) {
+	txn.KVTxn.SetMemoryFootprintChangeHook(hook)
+}
