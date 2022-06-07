@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 )
 
 func TestCollationColumnEstimate(t *testing.T) {
@@ -853,7 +852,7 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 		statsTbl.Columns[int64(i)] = &statistics.Column{
 			Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
 			Info:      tbl.Columns[i-1],
-			Loaded:    atomic.NewBool(true),
+			Loaded:    true,
 		}
 	}
 

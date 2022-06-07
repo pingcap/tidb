@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 )
 
 type testStatisticsSamples struct {
@@ -255,7 +254,7 @@ func SubTestColumnRange() func(*testing.T) {
 			Histogram: *hg,
 			CMSketch:  buildCMSketch(s.rc.(*recordSet).data),
 			Info:      &model.ColumnInfo{},
-			Loaded:    atomic.NewBool(true),
+			Loaded:    true,
 		}
 		tbl := &Table{
 			HistColl: HistColl{
@@ -328,7 +327,7 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		hg.PreCalculateScalar()
 		require.NoError(t, err)
 		require.Equal(t, int64(100000), rowCount)
-		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, Loaded: atomic.NewBool(true)}
+		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, Loaded: true}
 		tbl := &Table{
 			HistColl: HistColl{
 				Count:   int64(col.TotalRowCount()),

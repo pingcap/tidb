@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 )
 
 func TestNewHistogramBySelectivity(t *testing.T) {
@@ -41,7 +40,7 @@ func TestNewHistogramBySelectivity(t *testing.T) {
 	intCol := &Column{}
 	intCol.Histogram = *NewHistogram(1, 30, 30, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
 	intCol.IsHandle = true
-	intCol.Loaded = atomic.NewBool(true)
+	intCol.Loaded = true
 	for i := 0; i < 10; i++ {
 		intCol.Bounds.AppendInt64(0, int64(i*3))
 		intCol.Bounds.AppendInt64(0, int64(i*3+2))
@@ -63,7 +62,7 @@ num: 1 lower_bound: 12 upper_bound: 14 repeats: 0 ndv: 0
 num: 30 lower_bound: 27 upper_bound: 29 repeats: 0 ndv: 0`
 
 	stringCol := &Column{}
-	stringCol.Loaded = atomic.NewBool(true)
+	stringCol.Loaded = true
 	stringCol.Histogram = *NewHistogram(2, 15, 30, 0, types.NewFieldType(mysql.TypeString), chunk.InitialCapacity, 0)
 	stringCol.Bounds.AppendString(0, "a")
 	stringCol.Bounds.AppendString(0, "aaaabbbb")

@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -1061,16 +1060,13 @@ type Column struct {
 	// Loaded means if the histogram, the topn and the cm sketch are loaded fully.
 	// Those three parts of a Column is loaded lazily. It will only be loaded after trying to use them.
 	// Note: Currently please use Column.IsLoaded() to check if it's loaded.
-	Loaded *atomic.Bool
+	Loaded bool
 }
 
 // IsLoaded is a wrap around c.Loaded.
 // It's just for safe when we are switching from `c.notNullCount() > 0)` to `c.Loaded`.
 func (c *Column) IsLoaded() bool {
-	if c.Loaded == nil {
-		return false
-	}
-	return c.Loaded.Load() || c.notNullCount() > 0
+	return c.Loaded || c.notNullCount() > 0
 }
 
 func (c *Column) String() string {
@@ -1326,11 +1322,7 @@ func (c *Column) ItemID() int64 {
 func (c *Column) DropEvicted() {
 	if c.StatsVer < Version2 {
 		c.CMSketch = nil
-		if c.Loaded == nil {
-			c.Loaded = atomic.NewBool(false)
-		} else {
-			c.Loaded.Store(false)
-		}
+		c.Loaded = false
 	}
 }
 
@@ -1774,7 +1766,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 				zap.Error(err))
 			continue
 		}
-		newCol.Loaded = atomic.NewBool(oldCol.Loaded.Load())
+		newCol.Loaded = oldCol.Loaded
 		newColl.Columns[node.ID] = newCol
 	}
 	for id, idx := range coll.Indices {
