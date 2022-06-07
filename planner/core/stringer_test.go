@@ -89,6 +89,14 @@ func TestPlanStringer(t *testing.T) {
 			plan: "Show(database_pattern:[%t%])",
 		},
 		{
+			sql:  "show table status in test like 'T%'",
+			plan: "Show(table_pattern:[t%])",
+		},
+		{
+			sql:  "show table status in test like '%T%'",
+			plan: "Show(table_pattern:[%t%])",
+		},
+		{
 			sql:  "show collation like 't'",
 			plan: "Show(collation:[t])",
 		},
