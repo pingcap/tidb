@@ -413,8 +413,7 @@ func (p *PhysicalTableScan) calSelfCost(taskType property.TaskType, costFlag uin
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
 		if taskType == property.MppTaskType || p.StoreType == kv.TiFlash {
-			// TODO: dedicated scan factor for TiFlash
-			// scanFactor = ...
+			scanFactor = p.ctx.GetSessionVars().TiFlashScanFactor
 		}
 		rowSize := p.getScanRowSize()
 		logRowSize := 1.0
