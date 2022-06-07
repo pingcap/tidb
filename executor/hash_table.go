@@ -87,7 +87,7 @@ type hashRowContainer struct {
 	rowContainer *chunk.RowContainer
 	memTracker   *memory.Tracker
 
-	// chkBuf buffer the data if rowContainer is spilled.
+	// chkBuf buffer the data reads from the disk if rowContainer is spilled.
 	chkBuf *chunk.Chunk
 }
 
