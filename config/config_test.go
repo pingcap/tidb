@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -1061,8 +1060,6 @@ func TestDeprecatedConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
 	configFile := "config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
