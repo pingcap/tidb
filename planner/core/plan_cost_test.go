@@ -249,10 +249,10 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t where k=1 and mod(k, b)=2",
 		"select * from t where k in (1, 2, 3, 4, 5) and mod(k, b)=2",
 		// union all
-		"select * from t use index(primary) union all select * from t use index(primary) where a < 200",
-		"select b from t use index(primary) union all select b from t use index(b) where b < 200",
-		"select b from t use index(b) where b < 400 union all select b from t use index(b) where b < 200",
-		"select * from t use index(primary) union all select * from t use index(b) where b < 200",
+		//"select * from t use index(primary) union all select * from t use index(primary) where a < 200",
+		//"select b from t use index(primary) union all select b from t use index(b) where b < 200",
+		//"select b from t use index(b) where b < 400 union all select b from t use index(b) where b < 200",
+		//"select * from t use index(primary) union all select * from t use index(b) where b < 200",
 	}
 
 	for _, q := range queries {
