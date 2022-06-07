@@ -24,13 +24,36 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
 )
+
+// withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
+	return mockstore.WithMultipleOptions(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < nodes {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+}
 
 func TestCompactTableNoTiFlashReplica(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)

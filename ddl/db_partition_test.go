@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -3022,17 +3021,12 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	jobID := row.GetInt64(0)
 
 	var tableIDs []int64
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMeta(txn)
-		historyJob, err := tt.GetHistoryDDLJob(jobID)
-		require.NoError(t, err)
-		err = historyJob.DecodeArgs(&tableIDs)
-		require.NoError(t, err)
-		// There is 2 partitions.
-		require.Equal(t, 3, len(tableIDs))
-		return nil
-	})
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
+	err = historyJob.DecodeArgs(&tableIDs)
+	require.NoError(t, err)
+	// There is 2 partitions.
+	require.Equal(t, 3, len(tableIDs))
 
 	startTime := time.Now()
 	done := waitGCDeleteRangeDone(t, tk, tableIDs[2])
