@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "backoff",
+    srcs = ["backoff.go"],
+    importpath = "github.com/pingcap/tidb/store/driver/backoff",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv",
+        "//store/driver/error",
+        "@com_github_tikv_client_go_v2//tikv",
+    ],
+)
