@@ -139,10 +139,17 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 					terror.Log(err)
 				}
 			}
+			cms, topN, err := statistics.DecodeCMSketchAndTopN(row.GetBytes(6), nil)
+			if err != nil {
+				cms = nil
+				terror.Log(errors.Trace(err))
+			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
 			col := &statistics.Column{
 				Histogram:  *hist,
+				CMSketch:   cms,
+				TopN:       topN,
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
 				Count:      nullCount + topnCount,
