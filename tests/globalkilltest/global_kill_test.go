@@ -373,12 +373,11 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 		return
 	}
 	rows.Next()
-	if rows.Err() != nil {
-		ch <- sleepResult{err: rows.Err()}
+	if err := rows.Err(); err != nil {
+		ch <- sleepResult{err: err}
 		return
 	}
-	err = rows.Close()
-	if err != nil {
+	if err = rows.Close(); err != nil {
 		ch <- sleepResult{err: err}
 	}
 
