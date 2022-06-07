@@ -56,14 +56,20 @@ func PreparedPlanCacheEnabled() bool {
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
 // At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
 type planCacheKey struct {
-	database             string
-	connID               uint64
-	stmtText             string
-	schemaVersion        int64
-	sqlMode              mysql.SQLMode
-	timezoneOffset       int
-	isolationReadEngines map[kv.StoreType]struct{}
-	selectLimit          uint64
+	database      string
+	connID        uint64
+	stmtText      string
+	schemaVersion int64
+
+	// Only be set in rc or for update read and leave it default otherwise.
+	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
+	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
+	// the plan in rc or for update read.
+	lastUpdatedSchemaVersion int64
+	sqlMode                  mysql.SQLMode
+	timezoneOffset           int
+	isolationReadEngines     map[kv.StoreType]struct{}
+	selectLimit              uint64
 
 	hash []byte
 }
@@ -82,6 +88,7 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
+		key.hash = codec.EncodeInt(key.hash, key.lastUpdatedSchemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
 		if _, ok := key.isolationReadEngines[kv.TiDB]; ok {
@@ -115,9 +122,15 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 }
 
 // NewPlanCacheKey creates a new planCacheKey object.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64) (kvcache.Key, error) {
+// Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
+// differentiate the cache key. In other cases, it will be 0.
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
+	lastUpdatedSchemaVersion int64) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
+	}
+	if schemaVersion == 0 {
+		return nil, errors.New("Schema version uninitialized")
 	}
 	if stmtDB == "" {
 		stmtDB = sessionVars.CurrentDB
@@ -127,14 +140,15 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
 	key := &planCacheKey{
-		database:             stmtDB,
-		connID:               sessionVars.ConnectionID,
-		stmtText:             stmtText,
-		schemaVersion:        schemaVersion,
-		sqlMode:              sessionVars.SQLMode,
-		timezoneOffset:       timezoneOffset,
-		isolationReadEngines: make(map[kv.StoreType]struct{}),
-		selectLimit:          sessionVars.SelectLimit,
+		database:                 stmtDB,
+		connID:                   sessionVars.ConnectionID,
+		stmtText:                 stmtText,
+		schemaVersion:            schemaVersion,
+		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
+		sqlMode:                  sessionVars.SQLMode,
+		timezoneOffset:           timezoneOffset,
+		isolationReadEngines:     make(map[kv.StoreType]struct{}),
+		selectLimit:              sessionVars.SelectLimit,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
