@@ -1167,7 +1167,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableTablePartition = val
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableListTablePartition, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableListTablePartition, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableListTablePartition = TiDBOptOn(val)
 		return nil
 	}},
@@ -1406,6 +1406,7 @@ var defaultSysVars = []*SysVar{
 		newMode := strings.ToLower(strings.TrimSpace(val))
 		if PartitionPruneMode(s.PartitionPruneMode.Load()) == Static && PartitionPruneMode(newMode) == Dynamic {
 			s.StmtCtx.AppendWarning(errors.New("Please analyze all partition tables again for consistency between partition and global stats"))
+			s.StmtCtx.AppendWarning(errors.New("Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
 		}
 		s.PartitionPruneMode.Store(newMode)
 		return nil
