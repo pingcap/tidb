@@ -92,6 +92,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	return
 }
 
+// updateForUpdateTS acquires the latest TSO and update the TransactionContext and kv.Transaction with it.
 func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 	sctx := p.sctx
 	var txn kv.Transaction
@@ -171,8 +172,9 @@ func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType, val [
 }
 
 // optimizeWithPlan optimizes for-update-like point get execution. We set p.followingStmtIsPointGetForUpdate
-// to be true. And when p.getForUpdateTs is called, we do not acquire tso from PD immediately but return the value of
+// to be true in these cases. And when p.getForUpdateTs is called, we do not acquire tso from PD immediately but return the value of
 // txnCtx.GetForUpdateTS() expecting that the values that the point get operation acquires have not been changed.
+// If these values that the point get operations acquires have been changed, we update ts in error handling.
 func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
