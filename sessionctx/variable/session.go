@@ -2490,11 +2490,17 @@ func (s *SessionVars) CleanupTxnReadTSIfUsed() {
 
 // GetCPUFactor returns the session variable cpuFactor
 func (s *SessionVars) GetCPUFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.cpuFactorV2
+	}
 	return s.cpuFactor
 }
 
 // GetCopCPUFactor returns the session variable copCPUFactor
 func (s *SessionVars) GetCopCPUFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.copCPUFactorV2
+	}
 	return s.copCPUFactor
 }
 
@@ -2526,6 +2532,9 @@ func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
+	if s.CostModelVersion == 2 {
+		return s.networkFactorV2
+	}
 	return s.networkFactor
 }
 
@@ -2537,6 +2546,9 @@ func (s *SessionVars) GetScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
+	if s.CostModelVersion == 2 {
+		return s.scanFactorV2
+	}
 	return s.scanFactor
 }
 
@@ -2547,6 +2559,9 @@ func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
+	}
+	if s.CostModelVersion == 2 {
+		return s.descScanFactorV2
 	}
 	return s.descScanFactor
 }
@@ -2563,6 +2578,9 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
+	}
+	if s.CostModelVersion == 2 {
+		return s.seekFactorV2
 	}
 	return s.seekFactor
 }
