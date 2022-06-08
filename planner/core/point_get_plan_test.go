@@ -662,18 +662,18 @@ func TestBatchPointGetPartition(t *testing.T) {
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 	tk.MustQuery("explain format = 'brief' select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Batch_Point_Get 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
+		"Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3 handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4"))
 
 	tk.MustQuery("explain format = 'brief' update t set b = b + 1 where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Update N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
+		"Update N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3 handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustExec("update t set b = b + 1 where a in (1, 2, 3, 4)")
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows("1 2", "2 3", "3 4", "4 5"))
 
 	tk.MustQuery("explain format = 'brief' delete from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Delete N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
+		"Delete N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3 handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustExec("delete from t where a in (1, 2, 3, 4)")
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows())
@@ -681,21 +681,23 @@ func TestBatchPointGetPartition(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int, c int, primary key (a, b)) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b = 1").Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) "))
+
 	tk.MustQuery("explain format = 'brief' select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows(
-		"Batch_Point_Get 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+		"Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").
 		Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3", "4 4 4"))
 
 	tk.MustQuery("explain format = 'brief' update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4))").Check(testkit.Rows(
-		"Update N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+		"Update N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustExec("update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4))")
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Sort().
 		Check(testkit.Rows("1 1 2", "2 2 3", "3 3 4", "4 4 5"))
 
 	tk.MustQuery("explain format = 'brief' delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4))").Check(testkit.Rows(
-		"Delete N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+		"Delete N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustExec("delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4))")
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows())
@@ -718,13 +720,24 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		"Batch_Point_Get_1 3.00 root table:t, partition:p1,p2, index:b(b) keep order:false, desc:false"))
 
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0 (id int, name int) PARTITION BY LIST COLUMNS(id) (" +
+		"partition p0 values IN (1, 2), " +
+		"partition p1 values IN (3, 4), " +
+		"partition p3 values IN (5))")
+	tk.MustExec("insert into t0 values(1, 1), (2, 2), (3, 3), (4, 4)")
+	// can't hit BatchPointGet, because not hash partition.
+	tk.MustQuery("explain select * from t0 where id in (1, 3)")
+
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (id int, name int) PARTITION BY LIST COLUMNS(id,name) (" +
 		"partition p0 values IN ((1, 1),(2, 2)), " +
 		"partition p1 values IN ((3, 3),(4, 4)), " +
 		"partition p3 values IN ((5, 5)))")
 	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustQuery("explain select * from t1 where (id, name) in ((1, 1), (3, 3))").Check(testkit.Rows())
+	// can't hit BatchPointGet, because not hash partition.
+	tk.MustQuery("explain select * from t1 where (id, name) in ((1, 1), (3, 3))")
 
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t2")
@@ -733,7 +746,8 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		"partition p1 values IN ((3,'c'),(4,'d')), " +
 		"partition p3 values IN ((5,'e')))")
 	tk.MustExec("insert into t2 values(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')")
-	tk.MustQuery("explain select * from t2 where (id, name) in ((1, 'a'), (3, 'c'))").Check(testkit.Rows())
+	// can't hit BatchPointGet, because not hash partition.
+	tk.MustQuery("explain select * from t2 where (id, name) in ((1, 'a'), (3, 'c'))")
 }
 
 func TestIssue19141(t *testing.T) {

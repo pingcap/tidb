@@ -585,7 +585,7 @@ func newBatchPointGetPlan(
 		// condition key of where is primary key
 		var handles = make([]kv.Handle, len(patternInExpr.List))
 		var handleParams = make([]*expression.Constant, len(patternInExpr.List))
-		pairs := make([]nameValuePair, 0, 8)
+		partitionInfos := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
 			// SELECT * FROM t WHERE (key) in ((1), (2))
 			if p, ok := item.(*ast.ParenthesesExpr); ok {
@@ -616,51 +616,38 @@ func newBatchPointGetPlan(
 			if intDatum == nil {
 				return nil
 			}
-			pairs = append(pairs, nameValuePair{colName: handleCol.Name.L, colFieldType: item.GetType(), value: d, con: con})
 			handles[i] = kv.IntHandle(intDatum.GetInt64())
 			handleParams[i] = con
-		}
-
-		if tbl.GetPartitionInfo() != nil {
-			partitionInfos := make([]*model.PartitionDefinition, 0, len(pairs))
-			var isTableDual bool
-			tmpPair := make([]nameValuePair, 1, 1)
-			var tmpPartitionDefinition *model.PartitionDefinition
-			for _, pair := range pairs {
-				tmpPair[0] = pair
-				tmpPartitionDefinition, _, isTableDual = getPartitionInfo(ctx, tbl, tmpPair)
-				if isTableDual {
-					return nil
-				}
+			pairs := []nameValuePair{{colName: handleCol.Name.L, colFieldType: item.GetType(), value: *intDatum, con: con}}
+			tmpPartitionDefinition, _, isTableDual := getPartitionInfo(ctx, tbl, pairs)
+			if isTableDual {
+				return nil
+			}
+			if tmpPartitionDefinition != nil {
 				partitionInfos = append(partitionInfos, tmpPartitionDefinition)
 			}
+		}
 
-			sort.SliceStable(partitionInfos, func(i, j int) bool {
-				return partitionInfos[i].ID < partitionInfos[j].ID
-			})
-			filterPartitionInfos := partitionInfos[:0]
-			for i := 0; i < len(partitionInfos); i++ {
-				if i == 0 || partitionInfos[i].ID != partitionInfos[i-1].ID {
-					filterPartitionInfos = append(filterPartitionInfos, partitionInfos[i])
-				}
+		sort.SliceStable(partitionInfos, func(i, j int) bool {
+			return partitionInfos[i].ID < partitionInfos[j].ID
+		})
+		filterPartitionInfos := partitionInfos[:0]
+		for i := 0; i < len(partitionInfos); i++ {
+			if i == 0 || partitionInfos[i].ID != partitionInfos[i-1].ID {
+				filterPartitionInfos = append(filterPartitionInfos, partitionInfos[i])
 			}
-
-			return BatchPointGetPlan{
-				TblInfo:        tbl,
-				Handles:        handles,
-				HandleParams:   handleParams,
-				HandleType:     &handleCol.FieldType,
-				PartitionExpr:  partitionExpr,
-				PartitionInfos: filterPartitionInfos,
-			}.Init(ctx, statsInfo, schema, names, 0)
+		}
+		if len(filterPartitionInfos) == 0 {
+			filterPartitionInfos = nil
 		}
 
 		return BatchPointGetPlan{
-			TblInfo:       tbl,
-			Handles:       handles,
-			HandleParams:  handleParams,
-			HandleType:    &handleCol.FieldType,
-			PartitionExpr: partitionExpr,
+			TblInfo:        tbl,
+			Handles:        handles,
+			HandleParams:   handleParams,
+			HandleType:     &handleCol.FieldType,
+			PartitionExpr:  partitionExpr,
+			PartitionInfos: filterPartitionInfos,
 		}.Init(ctx, statsInfo, schema, names, 0)
 	}
 
@@ -715,15 +702,17 @@ func newBatchPointGetPlan(
 
 	indexValues := make([][]types.Datum, len(patternInExpr.List))
 	indexValueParams := make([][]*expression.Constant, len(patternInExpr.List))
-	pairs := make([]nameValuePair, 0, 8)
+	partitionInfos := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
+
 	var indexTypes []*types.FieldType
 	for i, item := range patternInExpr.List {
-		// SELECT * FROM t WHERE (key) in ((1), (2))
+		// SELECT * FROM t WHERE (key) in ((1), (2)) or SELECT * FROM t WHERE (key1, key2) in ((1, 1), (2, 2))
 		if p, ok := item.(*ast.ParenthesesExpr); ok {
 			item = p.Expr
 		}
 		var values []types.Datum
 		var valuesParams []*expression.Constant
+		var pairs []nameValuePair
 		switch x := item.(type) {
 		case *ast.RowExpr:
 			// The `len(values) == len(valuesParams)` should be satisfied in this mode
@@ -731,6 +720,7 @@ func newBatchPointGetPlan(
 				return nil
 			}
 			values = make([]types.Datum, len(x.Values))
+			pairs = make([]nameValuePair, 0, len(x.Values))
 			valuesParams = make([]*expression.Constant, len(x.Values))
 			initTypes := false
 			if indexTypes == nil { // only init once
@@ -738,6 +728,7 @@ func newBatchPointGetPlan(
 				initTypes = true
 			}
 			for index, inner := range x.Values {
+				// permutations is used to match column and value.
 				permIndex := permutations[index]
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
@@ -746,6 +737,7 @@ func newBatchPointGetPlan(
 						return nil
 					}
 					values[permIndex] = innerX.Datum
+					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
 				case *driver.ParamMarkerExpr:
 					con, err := expression.ParamMarkerExpression(ctx, innerX, true)
 					if err != nil {
@@ -764,6 +756,7 @@ func newBatchPointGetPlan(
 					if initTypes {
 						indexTypes[permIndex] = &colInfos[index].FieldType
 					}
+					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
 				default:
 					return nil
 				}
@@ -780,6 +773,7 @@ func newBatchPointGetPlan(
 			}
 			values = []types.Datum{*dval}
 			valuesParams = []*expression.Constant{nil}
+			pairs = append(pairs, nameValuePair{colName: whereColNames[0], value: *dval})
 		case *driver.ParamMarkerExpr:
 			if len(whereColNames) != 1 {
 				return nil
@@ -801,60 +795,33 @@ func newBatchPointGetPlan(
 			if indexTypes == nil { // only init once
 				indexTypes = []*types.FieldType{&colInfos[0].FieldType}
 			}
+			pairs = append(pairs, nameValuePair{colName: whereColNames[0], value: *dval})
+
 		default:
 			return nil
 		}
-		colExpr := patternInExpr.Expr
-		if p, ok := colExpr.(*ast.ParenthesesExpr); ok {
-			colExpr = p.Expr
-		}
-		if tbl.GetPartitionInfo() != nil {
-			colName, ok := colExpr.(*ast.ColumnNameExpr)
-			if !ok {
-				return nil
-			}
-			for i := 0; i < len(values); i++ {
-				pairs = append(pairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: item.GetType(), value: values[i], con: valuesParams[i]})
-			}
-		}
-
 		indexValues[i] = values
 		indexValueParams[i] = valuesParams
-
-	}
-	if tbl.GetPartitionInfo() != nil {
-		partitionInfos := make([]*model.PartitionDefinition, 0, len(pairs))
-		var isTableDual bool
-		var tmpPartitionInfo *model.PartitionDefinition
-		tmpPair := make([]nameValuePair, 1, 1)
-		for _, pair := range pairs {
-			tmpPair[0] = pair
-			tmpPartitionInfo, _, isTableDual = getPartitionInfo(ctx, tbl, tmpPair)
-			if isTableDual {
-				return nil
-			}
+		tmpPartitionInfo, _, isTableDual := getPartitionInfo(ctx, tbl, pairs)
+		if isTableDual {
+			return nil
+		}
+		if tmpPartitionInfo != nil {
 			partitionInfos = append(partitionInfos, tmpPartitionInfo)
 		}
 
-		sort.SliceStable(partitionInfos, func(i, j int) bool {
-			return partitionInfos[i].ID < partitionInfos[j].ID
-		})
-		filterPartitionInfos := partitionInfos[:0]
-		for i := 0; i < len(partitionInfos); i++ {
-			if i == 0 || partitionInfos[i].ID != partitionInfos[i-1].ID {
-				filterPartitionInfos = append(filterPartitionInfos, partitionInfos[i])
-			}
+	}
+	sort.SliceStable(partitionInfos, func(i, j int) bool {
+		return partitionInfos[i].ID < partitionInfos[j].ID
+	})
+	filterPartitionInfos := partitionInfos[:0]
+	for i := 0; i < len(partitionInfos); i++ {
+		if i == 0 || partitionInfos[i].ID != partitionInfos[i-1].ID {
+			filterPartitionInfos = append(filterPartitionInfos, partitionInfos[i])
 		}
-		return BatchPointGetPlan{
-			TblInfo:          tbl,
-			IndexInfo:        matchIdxInfo,
-			IndexValues:      indexValues,
-			IndexValueParams: indexValueParams,
-			IndexColTypes:    indexTypes,
-			PartitionColPos:  pos,
-			PartitionExpr:    partitionExpr,
-			PartitionInfos:   filterPartitionInfos,
-		}.Init(ctx, statsInfo, schema, names, 0)
+	}
+	if len(filterPartitionInfos) == 0 {
+		filterPartitionInfos = nil
 	}
 
 	return BatchPointGetPlan{
@@ -865,6 +832,7 @@ func newBatchPointGetPlan(
 		IndexColTypes:    indexTypes,
 		PartitionColPos:  pos,
 		PartitionExpr:    partitionExpr,
+		PartitionInfos:   filterPartitionInfos,
 	}.Init(ctx, statsInfo, schema, names, 0)
 }
 
@@ -875,6 +843,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 		return nil
 	}
 	// `expr1 in (1, 2) and expr2 in (1, 2)` isn't PatternInExpr, so it can't use tryWhereIn2BatchPointGet.
+	// (expr1, expr2) in ((1, 1), (2, 2)) can hit it.
 	in, ok := selStmt.Where.(*ast.PatternInExpr)
 	if !ok || in.Not || len(in.List) < 1 {
 		return nil
