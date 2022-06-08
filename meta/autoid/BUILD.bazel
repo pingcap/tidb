@@ -1,0 +1,58 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "autoid",
+    srcs = [
+        "autoid.go",
+        "errors.go",
+        "memid.go",
+    ],
+    importpath = "github.com/pingcap/tidb/meta/autoid",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//kv",
+        "//meta",
+        "//metrics",
+        "//parser/model",
+        "//parser/mysql",
+        "//types",
+        "//util/dbterror",
+        "//util/execdetails",
+        "//util/logutil",
+        "//util/mathutil",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tikv_client_go_v2//txnkv/txnsnapshot",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "autoid_test",
+    srcs = [
+        "autoid_test.go",
+        "bench_test.go",
+        "main_test.go",
+        "memid_test.go",
+        "seq_autoid_test.go",
+    ],
+    deps = [
+        ":autoid",
+        "//kv",
+        "//meta",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/terror",
+        "//store/mockstore",
+        "//testkit/testsetup",
+        "//types",
+        "//util",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

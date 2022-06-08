@@ -686,13 +686,12 @@ func GetSessionVariable(ctx context.Context, db QueryExecutor, variable string) 
 	*/
 
 	for rows.Next() {
-		err = rows.Scan(&variable, &value)
-		if err != nil {
+		if err = rows.Scan(&variable, &value); err != nil {
 			return "", errors.Trace(err)
 		}
 	}
 
-	if rows.Err() != nil {
+	if err := rows.Err(); err != nil {
 		return "", errors.Trace(err)
 	}
 

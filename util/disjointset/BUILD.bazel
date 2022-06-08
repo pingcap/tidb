@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "disjointset",
+    srcs = ["int_set.go"],
+    importpath = "github.com/pingcap/tidb/util/disjointset",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "disjointset_test",
+    srcs = [
+        "int_set_test.go",
+        "main_test.go",
+    ],
+    embed = [":disjointset"],
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//assert",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
