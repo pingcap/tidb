@@ -654,12 +654,10 @@ type SessionVars struct {
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
-	// CPUFactor is the CPU cost of processing one expression for one row.
-	CPUFactor float64
-	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
-	CopCPUFactor float64
-	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
-	CopTiFlashConcurrencyFactor float64
+	// cpuFactor is the CPU cost of processing one expression for one row.
+	cpuFactor float64
+	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
+	copCPUFactor float64
 	// networkFactor is the network cost of transferring 1 byte data.
 	networkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
@@ -668,12 +666,15 @@ type SessionVars struct {
 	descScanFactor float64
 	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
 	seekFactor float64
-	// MemoryFactor is the memory cost of storing one tuple.
-	MemoryFactor float64
-	// DiskFactor is the IO cost of reading/writing one byte to temporary disk.
-	DiskFactor float64
-	// ConcurrencyFactor is the CPU cost of additional one goroutine.
-	ConcurrencyFactor float64
+	// memoryFactor is the memory cost of storing one tuple.
+	memoryFactor float64
+	// diskFactor is the IO cost of reading/writing one byte to temporary disk.
+	diskFactor float64
+	// concurrencyFactor is the CPU cost of additional one goroutine.
+	concurrencyFactor float64
+
+	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
+	CopTiFlashConcurrencyFactor float64
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
@@ -1224,16 +1225,16 @@ func NewSessionVars() *SessionVars {
 		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
-		CPUFactor:                   DefOptCPUFactor,
-		CopCPUFactor:                DefOptCopCPUFactor,
+		cpuFactor:                   DefOptCPUFactor,
+		copCPUFactor:                DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
 		networkFactor:               DefOptNetworkFactor,
 		scanFactor:                  DefOptScanFactor,
 		descScanFactor:              DefOptDescScanFactor,
 		seekFactor:                  DefOptSeekFactor,
-		MemoryFactor:                DefOptMemoryFactor,
-		DiskFactor:                  DefOptDiskFactor,
-		ConcurrencyFactor:           DefOptConcurrencyFactor,
+		memoryFactor:                DefOptMemoryFactor,
+		diskFactor:                  DefOptDiskFactor,
+		concurrencyFactor:           DefOptConcurrencyFactor,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
@@ -2345,6 +2346,31 @@ func (s *SessionVars) CleanupTxnReadTSIfUsed() {
 		s.TxnReadTS = NewTxnReadTS(0)
 		s.SnapshotInfoschema = nil
 	}
+}
+
+// GetCPUFactor returns the session variable cpuFactor
+func (s *SessionVars) GetCPUFactor() float64 {
+	return s.cpuFactor
+}
+
+// GetCopCPUFactor returns the session variable copCPUFactor
+func (s *SessionVars) GetCopCPUFactor() float64 {
+	return s.copCPUFactor
+}
+
+// GetMemoryFactor returns the session variable memoryFactor
+func (s *SessionVars) GetMemoryFactor() float64 {
+	return s.memoryFactor
+}
+
+// GetDiskFactor returns the session variable diskFactor
+func (s *SessionVars) GetDiskFactor() float64 {
+	return s.diskFactor
+}
+
+// GetConcurrencyFactor returns the session variable concurrencyFactor
+func (s *SessionVars) GetConcurrencyFactor() float64 {
+	return s.concurrencyFactor
 }
 
 // GetNetworkFactor returns the session variable networkFactor
