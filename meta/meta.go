@@ -15,6 +15,7 @@
 package meta
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -77,6 +78,7 @@ var (
 	mPolicyGlobalID   = []byte("PolicyGlobalID")
 	mPolicyMagicByte  = CurrentMagicByteVer
 	mDDLTableVersion  = []byte("DDLTableVersion")
+	mConcurrentDDL    = []byte("concurrentDDL")
 )
 
 const (
@@ -533,6 +535,27 @@ func (m *Meta) CheckDDLTableExists() (bool, error) {
 	return len(v) != 0, nil
 }
 
+// SetConcurrentDDL set the concurrent DDL flag.
+func (m *Meta) SetConcurrentDDL(b bool) error {
+	var data []byte
+	if b {
+		data = []byte("1")
+	} else {
+		data = []byte("0")
+	}
+	return errors.Trace(m.txn.Set(mConcurrentDDL, data))
+}
+
+// IsConcurrentDDL returns true if the concurrent DDL flag is set.
+func (m *Meta) IsConcurrentDDL() (bool, error) {
+	val, err := m.txn.Get(mConcurrentDDL)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	return len(val) == 0 || bytes.Equal(val, []byte("1")), nil
+}
+
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
 func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIncID, autoRandID int64) error {
@@ -846,8 +869,8 @@ var (
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode(true)
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
 	if err == nil {
 		err = m.txn.RPush(key, b)
 	}
@@ -861,7 +884,17 @@ func (m *Meta) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) erro
 		listKey = jobListKeys[0]
 	}
 
-	return m.enQueueDDLJob(listKey, job)
+	return m.enQueueDDLJob(listKey, job, true)
+}
+
+// EnQueueDDLJobNoUpdate adds a DDL job to the list without update raw args.
+func (m *Meta) EnQueueDDLJobNoUpdate(job *model.Job, jobListKeys ...JobListKeyType) error {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
+	return m.enQueueDDLJob(listKey, job, false)
 }
 
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
@@ -1247,25 +1280,52 @@ func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, element *Element, start
 }
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
-func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *Element) error {
-	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID), element.EncodeElement())
+func (m *Meta) UpdateDDLReorgHandle(jobID int64, startKey, endKey kv.Key, physicalTableID int64, element *Element) error {
+	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobCurrentElement(jobID), element.EncodeElement())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if startKey != nil {
-		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID, element), startKey)
+		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(jobID, element), startKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	if endKey != nil {
-		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID, element), endKey)
+		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobEndHandle(jobID, element), endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID, element), []byte(strconv.FormatInt(physicalTableID, 10)))
+	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPhysicalTableID(jobID, element), []byte(strconv.FormatInt(physicalTableID, 10)))
 	return errors.Trace(err)
+}
+
+// ClearAllDDLReorgHandle clears all reorganization related handles.
+func (m *Meta) ClearAllDDLReorgHandle() error {
+	return m.txn.HClear(mDDLJobReorgKey)
+}
+
+// ClearALLDDLJob clears all DDL jobs.
+func (m *Meta) ClearALLDDLJob() error {
+	if err := m.txn.LClear(mDDLJobAddIdxList); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.LClear(mDDLJobListKey); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.LClear(mDDLJobHistoryKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// ClearAllHistoryJob clears all DDL jobs.
+func (m *Meta) ClearAllHistoryJob() error {
+	if err := m.txn.HClear(mDDLJobHistoryKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // RemoveReorgElement removes the element of the reorganization information.

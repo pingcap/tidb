@@ -257,7 +257,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		case model.ActionModifyColumn:
 			metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String())).Set(0)
 		}
-		if err1 := RemoveDDLReorgHandle(w.sessPool, job, reorgInfo.elements); err1 != nil {
+		if err1 := rh.RemoveReorgElements(job, reorgInfo.elements); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 			return errors.Trace(err1)
 		}
@@ -591,7 +591,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		// Third step, we need to remove the element information to make sure we can save the reorganized information to storage.
 		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
 			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 3, 4) {
-				if err := rh.RemoveReorgElement(job); err != nil {
+				if err := rh.RemoveReorgElementFailPoint(job); err != nil {
 					failpoint.Return(nil, errors.Trace(err))
 				}
 				info.first = true
@@ -639,7 +639,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			// Second step, we need to remove the element information to make sure we can get the error of "ErrDDLReorgElementNotExist".
 			// However, since "txn.Reset()" will be called later, the reorganized information cannot be saved to storage.
 			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 2, 3) {
-				if err := rh.RemoveReorgElement(job); err != nil {
+				if err := rh.RemoveReorgElementFailPoint(job); err != nil {
 					failpoint.Return(nil, errors.Trace(err))
 				}
 			}
@@ -653,7 +653,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()), zap.Bool("enableConcurrentDDL", rh.enableConcurrentDDL))
 			}
 			return &info, errors.Trace(err)
 		}
@@ -780,21 +780,29 @@ func (r *reorgHandler) UpdateDDLReorgStartHandle(job *model.Job, element *meta.E
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
 func (r *reorgHandler) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	if r.enableConcurrentDDL {
-		return updateDDLReorgHandle(r.s, job, startKey, endKey, physicalTableID, element)
+		return updateDDLReorgHandle(r.s, job.ID, startKey, endKey, physicalTableID, element)
 	}
-	return r.m.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
+	return r.m.UpdateDDLReorgHandle(job.ID, startKey, endKey, physicalTableID, element)
 }
 
 // InitDDLReorgHandle initializes the job reorganization information.
 func (r *reorgHandler) InitDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	if r.enableConcurrentDDL {
-		return initDDLReorgHandle(r.s, job, startKey, endKey, physicalTableID, element)
+		return initDDLReorgHandle(r.s, job.ID, startKey, endKey, physicalTableID, element)
 	}
-	return r.m.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
+	return r.m.UpdateDDLReorgHandle(job.ID, startKey, endKey, physicalTableID, element)
 }
 
-// RemoveReorgElement removes the element of the reorganization information.
-func (r *reorgHandler) RemoveReorgElement(job *model.Job) error {
+// RemoveReorgElements removes the elements of the reorganization information.
+func (r *reorgHandler) RemoveReorgElements(job *model.Job, elements []*meta.Element) error {
+	if r.enableConcurrentDDL {
+		return removeDDLReorgHandle(r.s, job, elements)
+	}
+	return r.m.RemoveDDLReorgHandle(job, elements)
+}
+
+// RemoveReorgElementFailPoint removes the element of the reorganization information.
+func (r *reorgHandler) RemoveReorgElementFailPoint(job *model.Job) error {
 	if r.enableConcurrentDDL {
 		return removeReorgElement(r.s, job)
 	}
@@ -819,11 +827,7 @@ func RemoveDDLReorgHandle(pool *sessionPool, job *model.Job, elements []*meta.El
 		sess.rollback()
 		return err
 	}
-	if variable.EnableConcurrentDDL.Load() {
-		err = removeDDLReorgHandle(sess, job, elements)
-	} else {
-		err = meta.NewMeta(txn).RemoveDDLReorgHandle(job, elements)
-	}
+	err = newReorgHandler(meta.NewMeta(txn), sess, variable.EnableConcurrentDDL.Load()).RemoveReorgElements(job, elements)
 	if err != nil {
 		sess.rollback()
 		return err

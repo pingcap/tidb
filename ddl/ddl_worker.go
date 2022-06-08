@@ -283,7 +283,7 @@ func (d *ddl) limitDDLJobs() {
 			for i := 0; i < jobLen; i++ {
 				tasks = append(tasks, <-d.limitJobCh)
 			}
-			if variable.EnableConcurrentDDL.Load() {
+			if tasks[0].v == nil && variable.EnableConcurrentDDL.Load() {
 				d.addConcurrencyDDLJobs(tasks)
 			} else {
 				d.addBatchDDLJobs(tasks)
@@ -396,12 +396,13 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 			jobTasks[i] = job
 			injectModifyJobArgFailPoint(job)
 		}
-		err = d.addDDLJobs(jobTasks)
-		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
-			if val.(bool) {
-				err = errors.Errorf("mockAddBatchDDLJobsErr")
-			}
-		})
+		sess, err1 := d.sessPool.get()
+		if err1 == nil {
+			sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			err1 = addDDLJobs(newSession(sess), jobTasks, true)
+			d.sessPool.put(sess)
+		}
+		err = err1
 	}
 	var jobs strings.Builder
 	for _, task := range tasks {
@@ -706,6 +707,10 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job) error {
 	if err != nil {
 		return err
 	}
+	if !variable.EnableConcurrentDDL.Load() {
+		w.sess.rollback()
+		return nil
+	}
 	txn, err := w.sess.txn()
 	if err != nil {
 		return err
@@ -826,7 +831,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
 	waitDependencyJobCnt := 0
 	for {
-		if isChanClosed(w.ctx.Done()) {
+		if variable.EnableConcurrentDDL.Load() || isChanClosed(w.ctx.Done()) {
 			return nil
 		}
 
@@ -845,11 +850,23 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 			var err error
 			t := newMetaWithQueueTp(txn, w.tp)
+
+			d.runningJobs.Lock()
 			// We become the owner. Get the first job and run it.
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
+				d.runningJobs.Unlock()
 				return errors.Trace(err)
 			}
+			if _, exist := d.runningJobs.runningJobMap[job.ID]; exist {
+				job = nil
+				d.runningJobs.Unlock()
+				return nil
+			}
+			d.runningJobs.runningJobMap[job.ID] = struct{}{}
+			d.runningJobs.Unlock()
+
+			defer d.deleteRunningDDLJobMap(job.ID)
 
 			// only general ddls allowed to be executed when TiKV is disk full.
 			if w.tp == addIdxWorker && job.IsRunning() {

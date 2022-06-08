@@ -510,10 +510,10 @@ func TestDDL(t *testing.T) {
 			require.Equal(t, int64(0), k)
 
 			element = &meta.Element{ID: 222, TypeKey: meta.ColumnElementKey}
-			err = m.UpdateDDLReorgHandle(job, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element)
+			err = m.UpdateDDLReorgHandle(job.ID, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element)
 			require.NoError(t, err)
 			element1 := &meta.Element{ID: 223, TypeKey: meta.IndexElementKey}
-			err = m.UpdateDDLReorgHandle(job, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element1)
+			err = m.UpdateDDLReorgHandle(job.ID, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element1)
 			require.NoError(t, err)
 
 			e, i, j, k, err = m.GetDDLReorgHandle(job)

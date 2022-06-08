@@ -24,11 +24,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -157,7 +159,7 @@ func (d *ddl) startDispatchLoop() {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
-		if !d.isOwner() {
+		if !variable.EnableConcurrentDDL.Load() || !d.isOwner() {
 			d.once.Store(true)
 			time.Sleep(time.Second)
 			continue
@@ -232,14 +234,19 @@ const (
 	updateConcurrencyDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
 )
 
-func (d *ddl) addDDLJobs(jobs []*model.Job) error {
+func addDDLJobs(sess *session, jobs []*model.Job, updateRawArgs bool) error {
+	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
+		}
+	})
 	if len(jobs) == 0 {
 		return nil
 	}
 	var sql bytes.Buffer
 	sql.WriteString(addDDLJobSQL)
 	for i, job := range jobs {
-		b, err := job.Encode(true)
+		b, err := job.Encode(updateRawArgs)
 		if err != nil {
 			return err
 		}
@@ -248,14 +255,9 @@ func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 		}
 		sql.WriteString(fmt.Sprintf("(%d, %t, %d, %d, %s, %t)", job.ID, job.MayNeedReorg(), job.SchemaID, job.TableID, wrapKey2String(b), job.Type == model.ActionDropSchema))
 	}
-	sess, err := d.sessPool.get()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	defer d.sessPool.put(sess)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, err = newSession(sess).execute(ctx, sql.String(), "insert_job")
+	_, err := sess.execute(ctx, sql.String(), "insert_job")
 	logutil.BgLogger().Debug("[ddl] add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
 	return errors.Trace(err)
 }
@@ -319,16 +321,16 @@ func updateDDLReorgStartHandle(sess *session, job *model.Job, element *meta.Elem
 	return err
 }
 
-func updateDDLReorgHandle(sess *session, job *model.Job, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d where job_id = %d",
-		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, job.ID)
+		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, jobID)
 	_, err := sess.execute(context.Background(), sql, "update_handle")
 	return err
 }
 
-func initDDLReorgHandle(sess *session, job *model.Job, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+func initDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	sql := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
-		job.ID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
+		jobID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
 	_, err := sess.execute(context.Background(), sql, "update_handle")
 	return err
 }
@@ -378,18 +380,174 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 	return jobs, nil
 }
 
+// MigrateExistingDDLs move existing DDLs in queue to table.
+func (d *ddl) MigrateExistingDDLs(force bool) error {
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(sess)
+	return runInTxn(newSession(sess), func(se *session) error {
+		txn, err := se.txn()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		t := meta.NewMeta(txn)
+		isConcurrentDDL, err := t.IsConcurrentDDL()
+		if !force && (isConcurrentDDL || err != nil) {
+			return errors.Trace(err)
+		}
+		for _, tp := range []workerType{addIdxWorker, generalWorker} {
+			t := newMetaWithQueueTp(txn, tp)
+			jobs, err := t.GetAllDDLJobsInQueue()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = addDDLJobs(se, jobs, false)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if tp == addIdxWorker {
+				for _, job := range jobs {
+					element, start, end, pid, err := t.GetDDLReorgHandle(job)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					if meta.ErrDDLReorgElementNotExist.Equal(err) {
+						continue
+					}
+					err = initDDLReorgHandle(se, job.ID, start, end, pid, element)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+		}
+
+		iterator, err := t.GetLastHistoryDDLJobsIterator()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		jobs := make([]*model.Job, 0, 128)
+		for {
+			jobs, err = iterator.GetLastJobs(128, jobs)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if len(jobs) == 0 {
+				break
+			}
+			for _, job := range jobs {
+				err := addHistoryDDLJob(se, job, false)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+
+		if err = t.ClearALLDDLJob(); err != nil {
+			return errors.Trace(err)
+		}
+		if err = t.ClearAllDDLReorgHandle(); err != nil {
+			return errors.Trace(err)
+		}
+		if err := t.ClearAllHistoryJob(); err != nil {
+			return errors.Trace(err)
+		}
+		return t.SetConcurrentDDL(true)
+	})
+}
+
+// BackOffDDLs move existing DDLs in table to queue.
+func (d *ddl) BackOffDDLs() error {
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(sess)
+	return runInTxn(newSession(sess), func(se *session) error {
+		txn, err := se.txn()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		t := meta.NewMeta(txn)
+		isConcurrentDDL, err := t.IsConcurrentDDL()
+		if !isConcurrentDDL || err != nil {
+			return errors.Trace(err)
+		}
+		jobs, err := getJobsBySQL(se, "tidb_ddl_job", "1 order by job_id")
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for _, job := range jobs {
+			jobListKey := meta.DefaultJobListKey
+			if job.MayNeedReorg() {
+				jobListKey = meta.AddIndexJobListKey
+			}
+			if err := t.EnQueueDDLJobNoUpdate(job, jobListKey); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		reorgHandle, err := se.execute(context.Background(), "select job_id, start_key, end_key, physical_id, ele_id, ele_type from mysql.tidb_ddl_reorg", "get_handle")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, row := range reorgHandle {
+			if err := t.UpdateDDLReorgHandle(row.GetInt64(0), row.GetBytes(1), row.GetBytes(2), row.GetInt64(3), &meta.Element{ID: row.GetInt64(4), TypeKey: row.GetBytes(5)}); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		iterator := &ConcurrentDDLLastJobIterator{
+			sess:   se,
+			offset: 0,
+		}
+
+		jobs = make([]*model.Job, 0, 128)
+		for {
+			jobs, err = iterator.GetLastJobs(128, jobs)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if len(jobs) == 0 {
+				break
+			}
+			for _, job := range jobs {
+				err := t.AddHistoryDDLJob(job, false)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+
+		// clean up these 3 tables.
+		_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_job", "delete_old_ddl")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_reorg", "delete_old_reorg")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_history", "delete_old_history")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return t.SetConcurrentDDL(false)
+	})
+}
+
 func runInTxn(se *session, f func(*session) error) (err error) {
 	err = se.begin()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			se.rollback()
-			return
-		}
-		err = se.commit()
-	}()
 	err = f(se)
-	return
+	if err != nil {
+		se.rollback()
+		return
+	}
+	return errors.Trace(se.commit())
 }

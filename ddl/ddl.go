@@ -195,11 +195,17 @@ type DDL interface {
 	SetHook(h Callback)
 	// DoDDLJob does the DDL job, it's exported for test.
 	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
+	// MigrateExistingDDLs move existing DDLs in queue to table.
+	MigrateExistingDDLs(bool) error
+	// BackOffDDLs move existing DDLs in table to queue.
+	BackOffDDLs() error
 }
 
 type limitJobTask struct {
 	job *model.Job
 	err chan error
+
+	v interface{}
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -558,6 +564,8 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
+	variable.SwitchConcurrentDDL = d.SwitchConcurrentDDL
+
 	return d
 }
 
@@ -898,14 +906,15 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-	task := &limitJobTask{job, make(chan error)}
+	v := ctx.Value(sessionctx.Concurrent)
+	task := &limitJobTask{job, make(chan error), v}
 	d.limitJobCh <- task
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			task1 := &limitJobTask{job, make(chan error)}
+			task1 := &limitJobTask{job, make(chan error), v}
 			d.limitJobCh <- task1
 			<-task.err
 			// The second job result is used for test.
@@ -961,8 +970,13 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Info("[ddl] DoDDLJob will quit because context done")
 			return context.Canceled
 		}
-
-		historyJob, err = d.getHistoryDDLJob(jobID)
+		sess, err := d.sessPool.get()
+		if err != nil {
+			logutil.BgLogger().Error("[ddl] get session failed, check again", zap.Error(err))
+			continue
+		}
+		historyJob, err = getHistoryJobByID(sess, jobID, v == nil && variable.EnableConcurrentDDL.Load())
+		d.sessPool.put(sess)
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
@@ -1074,6 +1088,29 @@ func (d *ddl) startCleanDeadTableLock() {
 			return
 		}
 	}
+}
+
+func (d *ddl) SwitchConcurrentDDL(b bool) error {
+	if !d.isOwner() {
+		return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+			isConcurrentDDL, err := meta.NewMeta(txn).IsConcurrentDDL()
+			if err != nil {
+				return err
+			}
+			if isConcurrentDDL != b {
+				return errors.New("please set it on the DDL owner node")
+			}
+			return nil
+		})
+	}
+	var err error
+	if b {
+		err = d.MigrateExistingDDLs(false)
+	} else {
+		err = d.BackOffDDLs()
+	}
+	logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("concurrentDDL", b), zap.Error(err))
+	return err
 }
 
 // RecoverInfo contains information needed by DDL.RecoverTable.
@@ -1608,7 +1645,11 @@ func GetAllHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta) ([]*model.Job, 
 
 // GetHistoryJobByID return history DDL job by ID.
 func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
-	if variable.EnableConcurrentDDL.Load() {
+	return getHistoryJobByID(sess, id, variable.EnableConcurrentDDL.Load())
+}
+
+func getHistoryJobByID(sess sessionctx.Context, id int64, fromTable bool) (*model.Job, error) {
+	if fromTable {
 		jobs, err := getJobsBySQL(newSession(sess), "tidb_ddl_history", fmt.Sprintf("job_id = %d", id))
 		if err != nil || len(jobs) == 0 {
 			return nil, errors.Trace(err)
