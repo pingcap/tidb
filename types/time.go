@@ -1848,7 +1848,7 @@ func getTime(sc *stmtctx.StatementContext, num, originNum int64, tp byte) (Time,
 // parseDateTimeFromNum parses date time from num.
 // See number_to_datetime function.
 // https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c
-func parseDateTimeFromNum(num int64) (Time, error) {
+func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error) {
 	t := ZeroDate
 	// Check zero.
 	if num == 0 {
@@ -1859,7 +1859,7 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 	// Check datetime type.
 	if num >= 10000101000000 {
 		t.SetType(mysql.TypeDatetime)
-		return getTime(nil, num, originNum, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Check MMDD.
@@ -1871,7 +1871,7 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 	// YYMMDD, year: 2000-2069
 	if num <= (70-1)*10000+1231 {
 		num = (num + 20000000) * 1000000
-		return getTime(nil, num, originNum, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Check YYMMDD.
@@ -1883,13 +1883,13 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 	// YYMMDD, year: 1970-1999
 	if num <= 991231 {
 		num = (num + 19000000) * 1000000
-		return getTime(nil, num, originNum, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Adjust hour/min/second.
 	if num <= 99991231 {
 		num = num * 1000000
-		return getTime(nil, num, originNum, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Check MMDDHHMMSS.
@@ -1904,7 +1904,7 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 	// YYMMDDHHMMSS, 2000-2069
 	if num <= 69*10000000000+1231235959 {
 		num = num + 20000000000000
-		return getTime(nil, num, originNum, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Check YYYYMMDDHHMMSS.
@@ -1916,10 +1916,10 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 	// YYMMDDHHMMSS, 1970-1999
 	if num <= 991231235959 {
 		num = num + 19000000000000
-		return getTime(nil, num, originNum, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
-	return getTime(nil, num, originNum, t.Type())
+	return getTime(sc, num, originNum, t.Type())
 }
 
 // ParseTime parses a formatted string with type tp and specific fsp.
@@ -2014,7 +2014,7 @@ func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int)
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 
-	t, err := parseDateTimeFromNum(num)
+	t, err := parseDateTimeFromNum(sc, num)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
@@ -2598,16 +2598,16 @@ func IsDateFormat(format string) bool {
 }
 
 // ParseTimeFromInt64 parses mysql time value from int64.
-func ParseTimeFromInt64(num int64) (Time, error) {
-	return parseDateTimeFromNum(num)
+func ParseTimeFromInt64(sc *stmtctx.StatementContext, num int64) (Time, error) {
+	return parseDateTimeFromNum(sc, num)
 }
 
 // ParseTimeFromFloat64 parses mysql time value from float64.
 // It is used in scenarios that distinguish date and datetime, e.g., date_add/sub() with first argument being real.
 // For example, 20010203 parses to date (no HMS) and 20010203040506 parses to datetime (with HMS).
-func ParseTimeFromFloat64(f float64) (Time, error) {
+func ParseTimeFromFloat64(sc *stmtctx.StatementContext, f float64) (Time, error) {
 	intPart := int64(f)
-	t, err := parseDateTimeFromNum(intPart)
+	t, err := parseDateTimeFromNum(sc, intPart)
 	if err != nil {
 		return ZeroTime, err
 	}
@@ -2624,13 +2624,13 @@ func ParseTimeFromFloat64(f float64) (Time, error) {
 // ParseTimeFromDecimal parses mysql time value from decimal.
 // It is used in scenarios that distinguish date and datetime, e.g., date_add/sub() with first argument being decimal.
 // For example, 20010203 parses to date (no HMS) and 20010203040506 parses to datetime (with HMS).
-func ParseTimeFromDecimal(dec *MyDecimal) (t Time, err error) {
+func ParseTimeFromDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (t Time, err error) {
 	intPart, err := dec.ToInt()
 	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
 		return ZeroTime, err
 	}
 	fsp := mathutil.Min(MaxFsp, int(dec.GetDigitsFrac()))
-	t, err = parseDateTimeFromNum(intPart)
+	t, err = parseDateTimeFromNum(sc, intPart)
 	if err != nil {
 		return ZeroTime, err
 	}
