@@ -822,9 +822,9 @@ func TestLimitIndexEstimation(t *testing.T) {
 		SQL  string
 		Plan []string
 	}
-       // When paging is used, there is a 'paging:true' makes the explain output differ.
-       // IndexLookUp 0.00 root  paging:true
-       tk.MustExec("set @@tidb_enable_paging = off")
+	// When paging is used, there is a 'paging:true' makes the explain output differ.
+	// IndexLookUp 0.00 root  paging:true
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
 	analyzeSuiteData.GetTestCases(t, &input, &output)

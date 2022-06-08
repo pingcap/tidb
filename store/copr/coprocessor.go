@@ -82,10 +82,12 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option)
 	}
-	
+
 	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
 		req.Paging = false
 	})
+
+	fmt.Println("Send() ... kv ranges ==", req.KeyRanges)
 
 	if req.StoreType == kv.TiDB {
 		// TiDB coprocessor doesn't support paging
@@ -107,6 +109,11 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	if err != nil {
 		return copErrorResponse{err}
 	}
+
+	for _, t := range tasks {
+		fmt.Println("tasks ====", t.ranges)
+	}
+
 	it := &copIterator{
 		store:           c.store,
 		req:             req,
@@ -941,6 +948,7 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	if task.ranges.Len() == 0 {
 		return nil, nil
 	}
+	fmt.Println("calculate remain ranges ==== ", task.ranges)
 	task.pagingSize = paging.GrowPagingSize(task.pagingSize)
 	return []*copTask{task}, nil
 }

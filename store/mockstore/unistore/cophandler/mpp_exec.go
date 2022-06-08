@@ -15,9 +15,9 @@
 package cophandler
 
 import (
-	"fmt"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"sort"
@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -102,9 +102,9 @@ func (b *baseMPPExec) stop() error {
 }
 
 type scanResult struct {
-	chk *chunk.Chunk
+	chk              *chunk.Chunk
 	lastProcessedKey kv.Key
-	err error
+	err              error
 }
 
 type tableScanExec struct {
@@ -186,7 +186,7 @@ func (e *tableScanExec) open() error {
 		// close the channel when done scanning, so that next() will got nil chunk
 		defer close(e.result)
 		var i int
-		var ran kv.KeyRange 
+		var ran kv.KeyRange
 		for i, ran = range e.kvRanges {
 			oldCnt := e.rowCnt
 			if e.desc {
@@ -224,7 +224,6 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 	fmt.Println("run in table scan next()", e.paging)
 	// Update the range for coprocessor paging protocol.
 	if e.paging != nil && result.err == nil {
-		fmt.Println("e.paging is SET!")
 		if e.desc {
 			if result.lastProcessedKey != nil {
 				*e.paging = coprocessor.KeyRange{Start: result.lastProcessedKey}
@@ -281,7 +280,7 @@ type indexScanExec struct {
 	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
 	physTblIDColIdx *int
 	// This is used to update the paging range result, updated in next().
-	paging *coprocessor.KeyRange
+	paging                 *coprocessor.KeyRange
 	chunkLastProcessedKeys []kv.Key
 }
 

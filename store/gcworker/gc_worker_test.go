@@ -101,7 +101,7 @@ func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite, clean func()) {
 }
 
 func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType) (s *mockGCWorkerSuite, clean func()) {
-	s = new(mockGCWorkerSuite)	
+	s = new(mockGCWorkerSuite)
 	hijackClient := func(client tikv.Client) tikv.Client {
 		s.client = &mockGCWorkerClient{Client: client}
 		client = s.client
@@ -953,7 +953,6 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	}()
 	s, clean := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV)
 	defer clean()
-
 
 	var (
 		firstAccess    = true

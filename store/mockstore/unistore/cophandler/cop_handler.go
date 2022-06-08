@@ -186,7 +186,7 @@ func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingS
 	}
 	chunks, err := mppExecute(exec, dagCtx, dagReq, pagingSize)
 	fmt.Println("paging range result ==", lastRange, dagCtx.keyRanges)
-	if lastRange != nil && len(lastRange.Start)==0 && len(lastRange.End) == 0 {
+	if lastRange != nil && len(lastRange.Start) == 0 && len(lastRange.End) == 0 {
 		fmt.Println("what the fuck???")
 		lastRange = nil
 	}
@@ -204,8 +204,6 @@ func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest, pagin
 	if err != nil {
 		return
 	}
-
-	fmt.Println(" 666666666666 mpp execute?")
 
 	var totalRows uint64
 	var chk *chunk.Chunk

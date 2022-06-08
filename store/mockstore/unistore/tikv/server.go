@@ -15,7 +15,6 @@
 package tikv
 
 import (
-	"fmt"
 	"context"
 	"io"
 	"sync/atomic"
@@ -555,7 +554,6 @@ func (svr *Server) RawDeleteRange(context.Context, *kvrpcpb.RawDeleteRangeReques
 
 // Coprocessor implements implements the tikvpb.TikvServer interface.
 func (svr *Server) Coprocessor(_ context.Context, req *coprocessor.Request) (*coprocessor.Response, error) {
-	fmt.Println("HERE ... .Coprocessor???")
 	reqCtx, err := newRequestCtx(svr, req.Context, "Coprocessor")
 	if err != nil {
 		return &coprocessor.Response{OtherError: convertToKeyError(err).String()}, nil

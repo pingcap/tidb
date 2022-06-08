@@ -56,7 +56,6 @@ func TestIntegrationCopCache(t *testing.T) {
 	// TODO(tiancaiamao) update the test and support cop cache for paging.
 	tk.MustExec("set @@tidb_enable_paging = off")
 
-
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tblInfo.Meta().ID
