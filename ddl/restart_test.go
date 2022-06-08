@@ -79,7 +79,7 @@ func runInterruptedJob(d *ddl, job *model.Job, doneCh chan error) {
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {
 			// imitate DoDDLJob's logic, quit only find history
-			history, _ = d.getHistoryDDLJob(job.ID)
+			history, _ = GetHistoryJobByID(ctx, job.ID)
 			if history != nil {
 				err = history.Error
 			}
