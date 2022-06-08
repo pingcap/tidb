@@ -2882,7 +2882,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
+		fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 		err = dom.LoadPrivilegeLoop(ses[3])
+		fmt.Println("after !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 		if err != nil {
 			return nil, err
 		}

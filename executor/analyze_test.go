@@ -1019,6 +1019,10 @@ func TestAnalyzeIncremental(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 1")
+
+	// TODO(tiancaiamao) analyze protocol has not implement paging yet.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	testAnalyzeIncremental(tk, t, dom)
 }
 
