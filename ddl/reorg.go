@@ -253,9 +253,9 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 		switch reorgInfo.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
+			metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String())).Set(0)
 		case model.ActionModifyColumn:
-			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
+			metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String())).Set(0)
 		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
@@ -321,9 +321,9 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	}
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblAddIndex, reorgInfo.SchemaName, tblInfo.Name.String())).Set(progress * 100)
 	case model.ActionModifyColumn:
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String())).Set(progress * 100)
 	}
 }
 

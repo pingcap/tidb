@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -207,10 +208,12 @@ func (d *ddl) doDDLJob(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.insertRunningDDLJobMap(job.ID)
 	d.wg.Run(func() {
+		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
 			pool.put(wk)
 			d.deleteRunningDDLJobMap(job.ID)
 			asyncNotify(d.ddlJobCh)
+			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 		// we should wait 2 * d.lease time to guarantee all TiDB server have finished the schema change.
 		// see waitSchemaSynced for more details.
