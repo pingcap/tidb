@@ -7,6 +7,10 @@
 
 * [Introduction](#introduction)
 * [Motivation or Background](#motivation-or-background)
+* [Current implementation](#current-implementation)
+* [Goal](#goal)
+* [Not Goal](#not-goal)
+* [Idea](#idea)
 * [Detailed Design](#detailed-design)
 * [Test Design](#test-design)
     * [Compatibility Tests](#compatibility-tests)
@@ -15,26 +19,58 @@
 
 ## Introduction
 
-This document describes the design of the feature Concurrent DDL, which will makes DDL run concurrently, the DDLs in different table will not block each other.
+This document describes the design of Concurrent DDL, which makes DDL in different table are executed concurrently and do not block each other.
 
 ## Motivation or Background
 
-DDL (Data Definition Language) is a data definition language, commonly used to describe and manage database schema objects, including but not limited to tables, indexes, views, constraints, etc., is one of the most commonly used database languages. The DDL change in TiDB is based on the two queues at the cluster level to achieve lock-free management, which solves the DDL conflict problem. However, under the concurrent execution of a large number of DDLs, especially when the execution time of DDLs is long, the phenomenon of DDL queuing and blocking will occur, which affects the performance of TiDB and hurts the user experience.
+DDL (Data Definition Language) is a data definition language, commonly used to describe and manage database schema objects, including but not limited to tables, indexes, views, constraints, etc., and is one of the most commonly used database languages. The DDL change in TiDB relies on the two cluster-level queues to achieve lock-free management, solving the DDL conflict problem. However,  when a large number of DDLs are executed simultaneously, especially when the execution time of DDLs is long,  DDL queuing and blocking occurs, which affects the performance of TiDB and  degrades the user experience.
 
-In previous implementation, there are 2 queues in tikv store the DDL information, one is `addIndex` type that store the long run DDL job like `create index`, another is `general` type that store the DDL like `create table`. When DDL is coming, the DDL will marshal to json and store into the queue.
+## Current implementation
 
-Consider the following DDLs:
+In a cluster, TiDB chooses a DDL owner to run the DDL job. There is only one owner at a time, the other TiDBs can still receive the DDLs and keep them in TiKV waiting for the owner to run it. We divide the DDL into two types. reorg for DDL job that takes a long time, general for short time, they are stored in two queues and the corresponding DDL worker always fetches the first one and runs it.
+It encounters some scenarios where a DDL would be blocked by other unrelated DDLs
+
+1. Block happens in the same queue. _(reorg job blocks reorg job)_
+
+```sql
+CREATE INDEX idx on t(a int);   -- t is a big table
+CREATE INDEX idx on t1(a int);  -- t1 is a small table
 ```
-CREATE INDEX idx on t(a int);
-ALTER TABLE t ADD COLUMN b int;
-CREATE TABLE t1(a int);
+
+The 2nd DDL is blocked by the 1st because they are in the same queue and only the first is able to run. Create index on `t1` have to wait until `t` is done.
+
+2. Block happens on dependency check. _(reorg job blocks general job)_
+
+In current implementation, we have a constraint that can not run two DDLs one the same table at the same time, such as
+
+```sql
+CREATE INDEX idx on t(a int)    -- reorg queue
+ALTER TABLE t ADD COLUMN b int  -- general queue
+CREATE TABLE t1(a int)          -- general queue 
 ```
-Even though TiDB can run 3rd DDL, it have to wait the previous two finished because 2nd and 3rd DDL are in the same queue. It will be a big problem in big cluster with lots of DDLs.
 
+Because of the constraint, the 2nd DDL will be blocked by the 1st(they all operate the table t), and the 3rd is blocked by 2nd(they all in general queue). Finally, 3rd blocked by 1st, it does not make sence.
 
-This proposal force on the concurrency between different table, for the DDLs on the same table, make them serially.
+The problems above are more noticeable in a big cluster. Some of them already reported by the users, we have to take it into account. So, I propose refining the DDL framework from queue based to table based, and making some improvements to it.
+
+## Goal
+
+- Make DDLs on the different tables not block each other.
+> Limited by DDL workers' count, we can still encounter this problem(when all workers are busy)
+
+## Not Goal
+
+- Concurrency on the same table.
+
+## Idea
+
+1. The `queue base` DDL framework is not easy to find the proper DDL job, it can only get the first one. 
+2. It's necessary to replace the queue with other data structures so that we can manipulate DDL job easily.
+3. To solve this problem, we design the `table base` DDL framework. It can pick up any ready-to-run DDL job by SQL statement.
 
 ## Detailed Design
+
+### Table Definition
 
 Several tables will be provided to maintain the DDL meta in the DDL job's life cycle.
 
@@ -64,8 +100,13 @@ Table `mysql.tidb_ddl_reorg` contains the reorg job data.
 | start_key     | blob       | YES  |      |
 | end_key       | blob       | YES  |      |
 | physical_id   | bigint(20) | YES  |      |
+| reorg_meta    | blob       | YES  |      |
 +---------------+------------+------+------+
 ```
+> `ele_id`, `start_key`, `end_key`, `physical_id` are the reorg context of a certain element.
+
+> An element is a column or an index that needs to reorg.
+
 
 Table `mysql.tidb_ddl_history` stores the finished DDL job.
 ```
@@ -89,6 +130,8 @@ update mysql.tidb_ddl_job set job_meta = ... where job_id = ... -- update ddl jo
 select * from mysql.tidb_ddl_job -- get ddl jobs
 ```
 
+If a DDL job is done, the worker will delete that job in `tidb_ddl_job` and its related reorg information in `tidb_ddl_reorg`, then insert the job `into tidb_ddl_history`.
+
 ### DDL job manager
 
 DDL job manager will find the runnable DDL job and dispatch the jobs to DDL workers.
@@ -106,10 +149,11 @@ for {
         case <-notifyDDLJobByEtcdCh:
     }
 
-    job = findrunnableJob()
-    if job != nil {
-        waitForFreeWorker();
-        go runJob(job)
+    if freeWorkerCount() > 0 {
+        job = findrunnableJob()
+        if job != nil {
+            go runJob(job)
+        }
     }
 }
 ```
@@ -119,15 +163,18 @@ To prevent all the workers in worker pool occupied by the long run job like `add
 ```golang
 for {
     // ...
-    generalJob = findRunnableGeneralJob()
-    reorgJob = findRunnableReorgJob()
-    if generalJob != nil {
-        waitForFreeGeneralWorker();
-        go runGeneralJob(job)
+    if freeGeneralWorkerCount() > 0 {
+        generalJob = findRunnableGeneralJob()
+        if generalJob != nil {
+            go runGeneralJob(generalJob)
+        }
     }
-    if reorgJob != nil {
-        waitForFreeReorgWorker();
-        go runReorgJob(job)
+    
+    if freeReorgWorkerCount() > 0 {
+        reorgJob = findRunnableReorgJob()
+        if reorgJob != nil {
+            go runReorgJob(reorgJob)
+        }
     }
 }
 ```
@@ -162,7 +209,7 @@ Rule 4: if the job is `drop schema`, check if there is a smaller job id on the s
 select * from mysql.tidb_ddl_job where job_id < {job.id} limit 1;
 ```
 
-For reorg job, the process is almost the same.
+If there are records, we can not run the drop schema job.
 
 ![ddl-job-manager](./imgs/ddl-job-manager.png)
 
@@ -207,10 +254,10 @@ if needDoUpgrade {
 
 ### Compatibility with CDC
 
-CDC will watch the key of the finished job in **queue** and sync the DDLs to other cluster, after concurrent DDL is implemented, CDC should watch the key of the finished job in **table**.
+CDC will watch the key range of the ddl job **queue** and sync the finished DDLs to other cluster, after concurrent DDL is implemented, CDC should watch the key range of the `tidb_ddl_job` table and unmarshal the ddl job.
+Since we maintain the old ddl framework at the same time, CDC should be able to watch key range of the ddl job queue and `tidb_ddl_job` table.
+After several versions, CDC can remove the code of watching the key range of the queue.
 
-When upgrading a cluster, CDC should upgrade before TiDB and be able to watch the key of the finished job in **table** and **queue** at the same time. 
-After several versions, CDC can remove the code of watching the key in **queue**.
 
 ### How to change the tables(`tidb_ddl_job`, `tidb_ddl_reorg`, `tidb_ddl_history`) meta?
 
