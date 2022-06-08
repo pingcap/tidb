@@ -619,11 +619,13 @@ const (
 	version90 = 90
 	// version91 converts prepared-plan-cache to sysvars
 	version91 = 91
+	// version92 for concurrent ddl.
+	version92 = 92
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version91
+var currentBootstrapVersion int64 = version92
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -783,6 +785,13 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
+	// only upgrade from under version88 should require owner.
+	if ver <= version92 {
+		ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+		err := domain.GetDomain(s).DDL().OwnerManager().RequireOwner(ctx)
+		cancelFunc()
+		terror.MustNil(err)
+	}
 	// Do upgrade works then update bootstrap version.
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
@@ -790,6 +799,11 @@ func upgrade(s Session) {
 
 	updateBootstrapVer(s)
 	_, err = s.ExecuteInternal(context.Background(), "COMMIT")
+
+	if err == nil && ver <= version92 {
+		logutil.BgLogger().Info("start migrate DDLs")
+		err = domain.GetDomain(s).DDL().MigrateExistingDDLs()
+	}
 
 	if err != nil {
 		sleepTime := 1 * time.Second

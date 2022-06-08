@@ -773,6 +773,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
 	waitDependencyJobCnt := 0
 	for {
+		d.queueDDL.Wait()
 		if isChanClosed(w.ctx.Done()) {
 			return nil
 		}
