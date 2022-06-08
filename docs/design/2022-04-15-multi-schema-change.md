@@ -5,18 +5,19 @@
 
 ## Abstract
 
-This proposes an implementation of applying multiple schema changes in one `ALTER TABLE` SQL statement.
+This proposes an implementation of applying multiple schema changes in one `ALTER TABLE` statement.
 
 ## Background
 
-Multi-Schema Change is one of MySQL's extended features to the SQL standard. It allows the users to atomically make multiple schema changes in one SQL statement, including column and index `ADD`, `ALTER`, `DROP`, and `CHANGE`, as well as table option changes. For example:
+Multi-Schema Change is one of MySQL's extended features to the SQL standard. It allows the users to atomically make multiple schema changes in one statement, including column and index `ADD`, `ALTER`, `DROP`, and `CHANGE`, as well as table option changes. For example:
 
 ```sql
 CREATE TABLE t (a INT, c INT);
-ALTER TABLE t ADD COLUMN b INT AUTO_INCREMENT PRIMARY KEY, 
+ALTER TABLE t ADD COLUMN b INT, 
  MODIFY COLUMN c CHAR(5),
  ADD INDEX idx(a),
- AUTO_INCREMENT = 1000;
+ ADD PRIMARY KEY (c),
+ COMMENT = "comments for t";
 ```
 
 Currently, TiDB only supports one schema change per SQL statement and limited multi-schema changes for some rare cases.
