@@ -2965,12 +2965,14 @@ func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time,
 	return date, false, nil
 }
 
-func (du *baseDateArithmetical) addDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string, resultFsp int) (types.Duration, bool, error) {
+type funcDurationOp func(d, interval types.Duration) (types.Duration, error)
+
+func (du *baseDateArithmetical) opDuration(ctx sessionctx.Context, op funcDurationOp, d types.Duration, interval string, unit string, resultFsp int) (types.Duration, bool, error) {
 	dur, err := types.ExtractDurationValue(unit, interval)
 	if err != nil {
 		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
 	}
-	retDur, err := d.Add(dur)
+	retDur, err := op(d, dur)
 	if err != nil {
 		return types.ZeroDuration, true, err
 	}
@@ -2979,8 +2981,18 @@ func (du *baseDateArithmetical) addDuration(ctx sessionctx.Context, d types.Dura
 	return retDur, false, nil
 }
 
+func (du *baseDateArithmetical) addDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string, resultFsp int) (types.Duration, bool, error) {
+	add := func(d, interval types.Duration) (types.Duration, error) {
+		return d.Add(interval)
+	}
+	return du.opDuration(ctx, add, d, interval, unit, resultFsp)
+}
+
 func (du *baseDateArithmetical) subDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string, resultFsp int) (types.Duration, bool, error) {
-	return du.addDuration(ctx, d.Neg(), interval, unit, resultFsp)
+	sub := func(d, interval types.Duration) (types.Duration, error) {
+		return d.Sub(interval)
+	}
+	return du.opDuration(ctx, sub, d, interval, unit, resultFsp)
 }
 
 func (du *baseDateArithmetical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string, resultFsp int) (types.Time, bool, error) {
