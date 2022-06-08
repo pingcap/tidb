@@ -60,7 +60,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
 	require.Equal(t, uint(128), client.GetBatchDdlSize())
-	require.True(t, true, client.IsOnline())
+	require.True(t, client.IsOnline())
 }
 
 func TestCheckRestoreDBAndTable(t *testing.T) {
