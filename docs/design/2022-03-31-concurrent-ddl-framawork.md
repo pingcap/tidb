@@ -1,6 +1,6 @@
 # TiDB Design Documents
 
-- Author(s): [Jiwei Xiong](http://github.com/xiongjiwei), [Wenjun Huang](http://github.com/wjhuang2016)
+- Author(s): [Jiwei Xiong](http://github.com/xiongjiwei), [Wenjun Huang](http://github.com/wjhuang2016), [Xia Li](https://github.com/zimulala)
 - Tracking Issue: https://github.com/pingcap/tidb/issues/32031
 
 ## Table of Contents
