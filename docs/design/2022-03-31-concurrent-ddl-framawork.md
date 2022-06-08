@@ -158,7 +158,7 @@ for {
 }
 ```
 
-To prevent all the workers in worker pool occupied by the long run job like `add index`, TiDB will divide the pool into two types: `addIndex` worker pool and `general` worker pool, then the DDL job manager will be
+To prevent all the workers in worker pool occupied by the long run job like `add index`, TiDB will divide the pool into two types: `reorg` worker pool and `general` worker pool, then the DDL job manager will be
 
 ```golang
 for {
