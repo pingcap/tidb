@@ -192,11 +192,11 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 		}
 	}
 
-	//// e.insertColumns is appended according to the original tables' column sequence.
-	//// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
-	//if err = e.reorderColumns(columnNames); err != nil {
-	//	return err
-	//}
+	// e.insertColumns is appended according to the original tables' column sequence.
+	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
+	if err = e.reorderColumns(columnNames); err != nil {
+		return err
+	}
 
 	e.rowLen = len(e.insertColumns)
 	// Check column whether is specified only once.
