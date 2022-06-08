@@ -22,11 +22,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pingcap/tidb/sessionctx"
-
-	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -36,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"golang.org/x/exp/slices"
 )
 
 // topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.
@@ -295,7 +294,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 			vals[i] = c.table[i][j] - uint32(noise) + temp
 		}
 	}
-	sort.Sort(sortutil.Uint32Slice(vals))
+	slices.Sort(vals)
 	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
 	if res > min+temp {
 		res = min + temp

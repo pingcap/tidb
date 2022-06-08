@@ -707,6 +707,8 @@ const (
 	// TiDBFastDDL indicates whether use lighting to help acceleate adding index stmt.
 	TiDBFastDDL = "tidb_fast_ddl"
 	TiDBDiskQuota = "tidb_disk_quota"
+	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
+	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
 )
 
 // TiDB intentional limits
@@ -897,6 +899,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 	DefTiDBFastDDL                               = false
 	DefTiDBDiskQuota                             = 100        // 100GB
+	DefTiDBEnableConcurrentDDL                   = true
 )
 
 // Process global variables.
@@ -924,6 +927,8 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
+	EnablePointGetCache                   = atomic.NewBool(DefTiDBPointGetCache)
+	EnableChangeMultiSchema               = atomic.NewBool(DefTiDBChangeMultiSchema)
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
@@ -946,6 +951,7 @@ var (
 	FastDDL                               = atomic.NewBool(false)
 	// Temporary Variable for set dist quota for lightning add index, int type, GB as unit
     DiskQuota                             = atomic.NewInt32(100)
+	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 )
 
 var (
