@@ -33,7 +33,7 @@ Above all, the lack of this capability can be a blocking issue for those who wis
 
 - Support TiDB-specific Multi-Schema Change like `ADD TIFLASH REPLICA`, `ADD PARTITION`, `ALTER PARTITION`, etc.
 - Resolve the 'schema is changed' error when DDL and DML are executed concurrently.
-- Be 100% compatible with MySQL. MySQL may reorder the execution of schema changes, which makes the behavior counter-intuitive.
+- Be 100% compatible with MySQL. MySQL may reorder the execution of schema changes, which makes the behavior counter-intuitive sometimes.
 
 ## Proposal
 
