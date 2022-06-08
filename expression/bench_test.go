@@ -899,7 +899,7 @@ func (g dateOrDatetimeIntGener) gen() interface{} {
 }
 
 // dateRealGener is used to generate floating point values which are date format.
-// `fspRatio` is used to control the ratio of values with us part. I.e., 20010203.000456789 is a valid representation of a date.
+// `fspRatio` is used to control the ratio of values with fractional part. I.e., 20010203.000456789 is a valid representation of a date.
 type dateRealGener struct {
 	fspRatio float64
 	dateGener
@@ -921,7 +921,7 @@ func (g dateRealGener) gen() interface{} {
 }
 
 // dateTimeRealGener is used to generate floating point values which are dateTime format.
-// `fspRatio` is used to control the ratio of values with us part.
+// `fspRatio` is used to control the ratio of values with fractional part.
 type dateTimeRealGener struct {
 	fspRatio float64
 	dateTimeGener
@@ -933,13 +933,15 @@ func (g dateTimeRealGener) gen() interface{} {
 	if err != nil {
 		panic(err)
 	}
-	// Ignore the us part in generated time - it's too normal, we want sometimes more than 6 digits, generated down below.
 	num := float64(tmp)
 
 	if g.randGen.Float64() >= g.fspRatio {
 		return num
 	}
 
+	// Not using `t`'s us part since it's too regular.
+	// Instead, generating a more arbitrary fractional part, e.g. with more than 6 digits.
+	// We want the parsing logic to be strong enough to deal with this arbitrary fractional number.
 	num += g.randGen.Float64()
 	return num
 }
@@ -960,7 +962,7 @@ func (g dateOrDatetimeRealGener) gen() interface{} {
 }
 
 // dateDecimalGener is used to generate decimals which are date format.
-// `fspRatio` is used to control the ratio of values with us part. I.e., 20010203.000456789 is a valid representation of a date.
+// `fspRatio` is used to control the ratio of values with fractional part. I.e., 20010203.000456789 is a valid representation of a date.
 type dateDecimalGener struct {
 	fspRatio float64
 	dateGener
