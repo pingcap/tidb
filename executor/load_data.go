@@ -130,6 +130,7 @@ type FieldMapping struct {
 }
 
 // reorderColumns reorder the e.insertColumns according to the order of columnNames
+// Note: We must ensure there must be one-to-one mapping between e.insertColumns and columnNames in terms of column name.
 func (e *LoadDataInfo) reorderColumns(columnNames []string) error {
 	cols := e.insertColumns
 
@@ -137,19 +138,20 @@ func (e *LoadDataInfo) reorderColumns(columnNames []string) error {
 		return errors.New("LOAD DATA: columns unmatched")
 	}
 
-	reorderedColumns := make([]*table.Column, 0, len(cols))
+	reorderedColumns := make([]*table.Column, len(cols))
 
 	if columnNames == nil {
 		return nil
 	}
 
+	mapping := make(map[string]int)
+	for idx, colName := range columnNames {
+		mapping[colName] = idx
+	}
+
 	for _, col := range cols {
-		for _, colName := range columnNames {
-			if col.Name.O == colName {
-				reorderedColumns = append(reorderedColumns, col)
-				break
-			}
-		}
+		idx := mapping[col.Name.O]
+		reorderedColumns[idx] = col
 	}
 
 	e.insertColumns = reorderedColumns
@@ -190,9 +192,11 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 		}
 	}
 
-	if err = e.reorderColumns(columnNames); err != nil {
-		return err
-	}
+	//// e.insertColumns is appended according to the original tables' column sequence.
+	//// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
+	//if err = e.reorderColumns(columnNames); err != nil {
+	//	return err
+	//}
 
 	e.rowLen = len(e.insertColumns)
 	// Check column whether is specified only once.
