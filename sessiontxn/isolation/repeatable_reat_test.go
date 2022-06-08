@@ -345,7 +345,9 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.NoError(t, err)
 	compareTs := getOracleTS(t, se)
 	compiler := executor.Compiler{Ctx: se}
-	_, err = compiler.Compile(context.TODO(), stmt)
+	execStmt, err := compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	err = sessiontxn.OptimizeWithPlan(se, execStmt.Plan)
 	require.NoError(t, err)
 	ts, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
@@ -355,7 +357,9 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
 	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
-	_, err = compiler.Compile(context.TODO(), stmt)
+	execStmt, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	err = sessiontxn.OptimizeWithPlan(se, execStmt.Plan)
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
@@ -364,7 +368,9 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	stmt, err = parser.New().ParseOneStmt("select * from (select * from t where id = 1 for update) as t1 for update", "", "")
 	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
-	_, err = compiler.Compile(context.TODO(), stmt)
+	execStmt, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	err = sessiontxn.OptimizeWithPlan(se, execStmt.Plan)
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
@@ -375,7 +381,9 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	compareTs = getOracleTS(t, se)
 	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
-	_, err = compiler.Compile(context.TODO(), stmt)
+	execStmt, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	err = sessiontxn.OptimizeWithPlan(se, execStmt.Plan)
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
