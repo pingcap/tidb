@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 type TiDBManager struct {
 	db     *sql.DB
