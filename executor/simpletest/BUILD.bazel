@@ -15,3 +15,19 @@ go_test(
         "@org_uber_go_goleak//:goleak",
     ],
 )
+
+go_test(
+    name = "simpletest_test",
+    srcs = [
+        "main_test.go",
+        "simple_test.go",
+    ],
+    deps = [
+        "//config",
+        "//meta/autoid",
+        "//testkit",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
