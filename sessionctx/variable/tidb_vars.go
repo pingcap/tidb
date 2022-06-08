@@ -276,6 +276,7 @@ const (
 	// Factors for Cost Model Ver2
 	TiDBOptCPUFactorV2         = "tidb_opt_cpu_factor_v2"
 	TiDBOptCopCPUFactorV2      = "tidb_opt_copcpu_factor_v2"
+	TiDBOptTiFlashCPUFactorV2  = "tidb_opt_tiflash_cpu_factor_v2"
 	TiDBOptNetworkFactorV2     = "tidb_opt_network_factor_v2"
 	TiDBOptScanFactorV2        = "tidb_opt_scan_factor_v2"
 	TiDBOptDescScanFactorV2    = "tidb_opt_desc_factor_v2"
@@ -771,7 +772,6 @@ const (
 	DefOptCPUFactorV2                            = 3.0
 	DefOptCopCPUFactorV2                         = 3.0
 	DefOptTiFlashCPUFactorV2                     = 3.0
-	DefOptTiFlashConcurrencyFactorV2             = 24.0
 	DefOptNetworkFactorV2                        = 1.0
 	DefOptScanFactorV2                           = 1.5
 	DefOptDescScanFactorV2                       = 3.0
