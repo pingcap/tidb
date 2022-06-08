@@ -2768,8 +2768,7 @@ func (du *baseDateArithmetical) getDateFromInt(ctx sessionctx.Context, args []Ex
 		return types.ZeroTime, true, err
 	}
 
-	sc := ctx.GetSessionVars().StmtCtx
-	date, err := types.ParseTimeFromInt64(sc, dateInt)
+	date, err := types.ParseTimeFromInt64(dateInt)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -2788,8 +2787,7 @@ func (du *baseDateArithmetical) getDateFromReal(ctx sessionctx.Context, args []E
 		return types.ZeroTime, true, err
 	}
 
-	sc := ctx.GetSessionVars().StmtCtx
-	date, err := types.ParseTimeFromFloat64(sc, dateReal)
+	date, err := types.ParseTimeFromFloat64(dateReal)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -2812,8 +2810,7 @@ func (du *baseDateArithmetical) getDateFromDecimal(ctx sessionctx.Context, args 
 		return types.ZeroTime, true, err
 	}
 
-	sc := ctx.GetSessionVars().StmtCtx
-	date, err := types.ParseTimeFromDecimal(sc, dateDec)
+	date, err := types.ParseTimeFromDecimal(dateDec)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -3027,14 +3024,13 @@ func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, input *chu
 	result.MergeNulls(buf)
 	dates := result.Times()
 	i64s := buf.Int64s()
-	sc := b.ctx.GetSessionVars().StmtCtx
 	isClockUnit := types.IsClockUnit(unit)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 
-		date, err := types.ParseTimeFromInt64(sc, i64s[i])
+		date, err := types.ParseTimeFromInt64(i64s[i])
 		if err != nil {
 			err = handleInvalidTimeError(b.ctx, err)
 			if err != nil {
@@ -3069,14 +3065,13 @@ func (du *baseDateArithmetical) vecGetDateFromReal(b *baseBuiltinFunc, input *ch
 	result.MergeNulls(buf)
 	dates := result.Times()
 	f64s := buf.Float64s()
-	sc := b.ctx.GetSessionVars().StmtCtx
 	isClockUnit := types.IsClockUnit(unit)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 
-		date, err := types.ParseTimeFromFloat64(sc, f64s[i])
+		date, err := types.ParseTimeFromFloat64(f64s[i])
 		if err != nil {
 			err = handleInvalidTimeError(b.ctx, err)
 			if err != nil {
@@ -3110,7 +3105,6 @@ func (du *baseDateArithmetical) vecGetDateFromDecimal(b *baseBuiltinFunc, input 
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf)
 	dates := result.Times()
-	sc := b.ctx.GetSessionVars().StmtCtx
 	isClockUnit := types.IsClockUnit(unit)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
@@ -3118,7 +3112,7 @@ func (du *baseDateArithmetical) vecGetDateFromDecimal(b *baseBuiltinFunc, input 
 		}
 
 		dec := buf.GetDecimal(i)
-		date, err := types.ParseTimeFromDecimal(sc, dec)
+		date, err := types.ParseTimeFromDecimal(dec)
 		if err != nil {
 			err = handleInvalidTimeError(b.ctx, err)
 			if err != nil {
