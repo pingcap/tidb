@@ -7376,7 +7376,7 @@ func TestIssue31867(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
-func TestDateAddForDaylightSavingTs(t *testing.T) {
+func TestDateAddForNonExistingTimestamp(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -7385,6 +7385,7 @@ func TestDateAddForDaylightSavingTs(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(ts timestamp)")
+	// Non-existing CET timestamp.
 	tk.MustGetErrCode("insert into t values('2022-03-27 02:30:00')", errno.ErrTruncatedWrongValue)
 	tk.MustExec("insert into t values('2022-03-27 01:30:00')")
 	tk.MustExec("insert into t values('2022-10-30 02:30:00')")
