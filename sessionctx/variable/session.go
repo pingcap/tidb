@@ -2500,7 +2500,7 @@ func (s *SessionVars) GetCopCPUFactor() float64 {
 
 // GetTiFlashCPUFactor ...
 func (s *SessionVars) GetTiFlashCPUFactor() float64 {
-	return s.tiflashCPUFactor
+	return s.tiflashCPUFactorV2
 }
 
 // GetMemoryFactor returns the session variable memoryFactor
@@ -2553,7 +2553,7 @@ func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
 
 // GetTiFlashScanFactor ...
 func (s *SessionVars) GetTiFlashScanFactor() float64 {
-	return s.tiflashScanFactor
+	return s.tiflashScanFactorV2
 }
 
 // GetSeekFactor returns the session variable seekFactor
