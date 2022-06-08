@@ -512,59 +512,44 @@ func (b *{{.SigName}}) vectorized() bool {
 {{ end }}{{/* range */}}
 `))
 
+func getIntervalUnitListForDurationAsDuration() []string {
+	return []string{
+		"MICROSECOND",
+		"SECOND",
+		"MINUTE",
+		"HOUR",
+		"SECOND_MICROSECOND",
+		"MINUTE_MICROSECOND",
+		"MINUTE_SECOND",
+		"HOUR_MICROSECOND",
+		"HOUR_SECOND",
+		"HOUR_MINUTE",
+		"DAY_MICROSECOND",
+	}
+}
+
+func getIntervalUnitListForDurationAsDatetime() []string {
+	return []string{
+		"DAY",
+		"WEEK",
+		"MONTH",
+		"QUARTER",
+		"YEAR",
+		"DAY_SECOND",
+		"DAY_MINUTE",
+		"DAY_HOUR",
+		"YEAR_MONTH",
+	}
+}
+
+func getIntervalUnitList() []string {
+	return append(getIntervalUnitListForDurationAsDuration(), getIntervalUnitListForDurationAsDatetime()...)
+}
+
 var testFileFuncs = template.FuncMap{
-	"getIntervalUnitList": func() []string {
-		return []string{
-			"MICROSECOND",
-			"SECOND",
-			"MINUTE",
-			"HOUR",
-			"DAY",
-			"WEEK",
-			"MONTH",
-			"QUARTER",
-			"YEAR",
-			"SECOND_MICROSECOND",
-			"MINUTE_MICROSECOND",
-			"MINUTE_SECOND",
-			"HOUR_MICROSECOND",
-			"HOUR_SECOND",
-			"HOUR_MINUTE",
-			"DAY_MICROSECOND",
-			"DAY_SECOND",
-			"DAY_MINUTE",
-			"DAY_HOUR",
-			"YEAR_MONTH",
-		}
-	},
-	"getIntervalUnitListForDurationAsDuration": func() []string {
-		return []string{
-			"MICROSECOND",
-			"SECOND",
-			"MINUTE",
-			"HOUR",
-			"SECOND_MICROSECOND",
-			"MINUTE_MICROSECOND",
-			"MINUTE_SECOND",
-			"HOUR_MICROSECOND",
-			"HOUR_SECOND",
-			"HOUR_MINUTE",
-			"DAY_MICROSECOND",
-		}
-	},
-	"getIntervalUnitListForDurationAsDatetime": func() []string {
-		return []string{
-			"DAY",
-			"WEEK",
-			"MONTH",
-			"QUARTER",
-			"YEAR",
-			"DAY_SECOND",
-			"DAY_MINUTE",
-			"DAY_HOUR",
-			"YEAR_MONTH",
-		}
-	},
+	"getIntervalUnitListForDurationAsDuration": getIntervalUnitListForDurationAsDuration,
+	"getIntervalUnitListForDurationAsDatetime": getIntervalUnitListForDurationAsDatetime,
+	"getIntervalUnitList":                      getIntervalUnitList,
 }
 
 var testFile = template.Must(template.New("").Funcs(testFileFuncs).Parse(`
