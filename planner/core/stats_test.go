@@ -133,6 +133,9 @@ func TestNDVGroupCols(t *testing.T) {
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	var input []string
 	var output []struct {
 		SQL  string

@@ -484,7 +484,7 @@ type ShowDDLJobsExec struct {
 // nolint:structcheck
 type DDLJobRetriever struct {
 	runningJobs    []*model.Job
-	historyJobIter *meta.LastJobIterator
+	historyJobIter meta.LastJobIterator
 	cursor         int
 	is             infoschema.InfoSchema
 	activeRoles    []*auth.RoleIdentity
@@ -498,7 +498,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
 	if err != nil {
 		return err
 	}
-	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIterator(m)
 	if err != nil {
 		return err
 	}
