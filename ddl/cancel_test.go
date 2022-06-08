@@ -50,7 +50,7 @@ func testMatchCancelState(t *testing.T, job *model.Job, cancelState interface{},
 			return false
 		}
 		return job.SchemaState == v
-	case []model.SchemaState: // For multi-schema change sub-jobs.
+	case subStates: // For multi-schema change sub-jobs.
 		if job.MultiSchemaInfo == nil {
 			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v)", sql, v)
 			assert.Failf(t, msg, "use model.SchemaState as the cancel state instead")
