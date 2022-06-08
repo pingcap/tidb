@@ -744,12 +744,16 @@ type SessionVars struct {
 	cpuFactor float64
 	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
 	copCPUFactor float64
+	// tiflashCPUFactor ...
+	tiflashCPUFactor float64
 	// networkFactor is the network cost of transferring 1 byte data.
 	networkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
 	scanFactor float64
 	// descScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
 	descScanFactor float64
+	// tiflashScanFactor ...
+	tiflashScanFactor float64
 	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
 	seekFactor float64
 	// memoryFactor is the memory cost of storing one tuple.
@@ -2474,6 +2478,11 @@ func (s *SessionVars) GetCopCPUFactor() float64 {
 	return s.copCPUFactor
 }
 
+// GetTiFlashCPUFactor ...
+func (s *SessionVars) GetTiFlashCPUFactor() float64 {
+	return s.tiflashCPUFactor
+}
+
 // GetMemoryFactor returns the session variable memoryFactor
 func (s *SessionVars) GetMemoryFactor() float64 {
 	return s.memoryFactor
@@ -2520,6 +2529,11 @@ func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.descScanFactor
+}
+
+// GetTiFlashScanFactor ...
+func (s *SessionVars) GetTiFlashScanFactor() float64 {
+	return s.tiflashScanFactor
 }
 
 // GetSeekFactor returns the session variable seekFactor

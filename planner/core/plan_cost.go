@@ -84,7 +84,7 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 		if p.ctx.GetSessionVars().CostModelVersion == CostModelV1 {
 			cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
 		} else {
-			cpuFactor = p.ctx.GetSessionVars().TiFlashCPUFactor
+			cpuFactor = p.ctx.GetSessionVars().GetTiFlashCPUFactor()
 		}
 	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
 		cpuFactor = p.ctx.GetSessionVars().GetCopCPUFactor()
@@ -421,7 +421,7 @@ func (p *PhysicalTableScan) calSelfCost(taskType property.TaskType, costFlag uin
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
 		if taskType == property.MppTaskType || p.StoreType == kv.TiFlash {
-			scanFactor = p.ctx.GetSessionVars().TiFlashScanFactor
+			scanFactor = p.ctx.GetSessionVars().GetTiFlashScanFactor()
 		}
 		rowSize := p.getScanRowSize()
 		logRowSize := 1.0
