@@ -160,7 +160,7 @@ Finally, we consider the extreme case: an error occurs while all the sub-jobs ar
 
 When a TiDB cluster performs a rolling upgrade, there are 2 cases:
 
-1. DDL owner is the new version of TiDB. When users execute a Multi-Schema Change statement on an old version of TiDB, they receive an "Unsupported Multi-Schema Change" error message.
+1. DDL owner is the new version of TiDB. When users execute a Multi-Schema Change statement on an old version of TiDB, they receive an "unsupported multi-schema change" error message.
 2. DDL owner is the old version of TiDB. When users execute a Multi-Schema Change statement on a new version of TiDB, they receive the "invalid ddl job type" error message.
 
 In both cases, the Multi-Schema Change statement cannot be executed. Therefore, users should avoid executing Multi-Schema Change during a rolling upgrade.
