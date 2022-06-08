@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "txntest_test",
+    srcs = [
+        "isolation_test.go",
+        "main_test.go",
+        "txn_state_test.go",
+        "txn_test.go",
+    ],
+    deps = [
+        "//kv",
+        "//parser",
+        "//session/txninfo",
+        "//testkit",
+        "//tests/realtikvtest",
+        "//types",
+        "//util",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
