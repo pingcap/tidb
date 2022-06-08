@@ -983,9 +983,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 					cntPlan += 1
 					planCounter.Dec(1)
 				}
-				curIsBetter, err := compareTaskCost(ds.ctx, pointGetTask, t)
-				if err != nil {
-					return nil, 0, err
+				curIsBetter, cerr := compareTaskCost(ds.ctx, pointGetTask, t)
+				if cerr != nil {
+					return nil, 0, cerr
 				}
 				if curIsBetter || planCounter.Empty() {
 					t = pointGetTask
