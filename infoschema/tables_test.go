@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1441,12 +1442,14 @@ func TestTiDBTrx(t *testing.T) {
 	tk.MustExec("update test_tidb_trx set i = i + 1")
 	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
 	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 2)}
+	memDBTracker := memory.NewTracker(memory.LabelForMemDB, -1)
+	memDBTracker.Consume(19)
 	sm.txnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
-		MemDBFootprint:   19,
+		MemDBFootprint:   memDBTracker,
 		ConnectionID:     2,
 		Username:         "root",
 		CurrentDB:        "test",

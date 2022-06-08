@@ -144,6 +144,9 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		return types.NewDatum(info.EntriesCount)
 	},
 	MemBufferBytesStr: func(info *TxnInfo) types.Datum {
+		if info.MemDBFootprint == nil {
+			return types.NewDatum(0)
+		}
 		return types.NewDatum(info.MemDBFootprint.BytesConsumed())
 	},
 	SessionIDStr: func(info *TxnInfo) types.Datum {
