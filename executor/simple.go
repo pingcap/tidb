@@ -1293,6 +1293,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			break
 		}
 
+		// delete privileges from mysql.columns_priv
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.ColumnPrivTable, user.Hostname, user.Username)
+		if _, err = sqlExecutor.ExecuteInternal(context.TODO(), sql.String()); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
 		// delete relationship from mysql.role_edges
 		sql.Reset()
 		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE TO_HOST = %? and TO_USER = %?;`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
