@@ -15,10 +15,6 @@
 package ddl
 
 import (
-	"context"
-
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -49,19 +45,20 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
-	var ddlInfo *Info
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		var err1 error
-		ddlInfo, err1 = GetDDLInfo(txn)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		return errors.Trace(err1)
-	})
+	sess, err := d.sessPool.get()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
+	}
+	defer d.sessPool.put(sess)
+	s := newSession(sess)
+	err = s.begin()
+	if err != nil {
+		return nil, err
+	}
+	ddlInfo, err := GetDDLInfo(sess)
+	_ = s.commit()
+	if err != nil {
+		return nil, err
 	}
 
 	m[ddlSchemaVersion] = ddlInfo.SchemaVer

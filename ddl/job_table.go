@@ -17,11 +17,14 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -217,6 +220,108 @@ func (d *ddl) doDDLJob(wk *worker, pool *workerPool, job *model.Job) {
 			logutil.BgLogger().Info("[ddl] handle ddl job failed", zap.Error(err), zap.String("job", job.String()))
 		}
 	})
+}
+
+// getDDLReorgHandle get ddl reorg handle.
+func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	rows, err := sess.execute(context.Background(), sql, "get_handle")
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, nil, nil, 0, meta.ErrDDLReorgElementNotExist
+	}
+	id := rows[0].GetInt64(0)
+	tp := rows[0].GetBytes(1)
+	element = &meta.Element{
+		ID:      id,
+		TypeKey: tp,
+	}
+	startKey = rows[0].GetBytes(2)
+	endKey = rows[0].GetBytes(3)
+	physicalTableID = rows[0].GetInt64(4)
+	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
+	// update them to table's in this case.
+	if physicalTableID == 0 {
+		if job.ReorgMeta != nil {
+			endKey = kv.IntHandle(job.ReorgMeta.EndHandle).Encoded()
+		} else {
+			endKey = kv.IntHandle(math.MaxInt64).Encoded()
+		}
+		physicalTableID = job.TableID
+		logutil.BgLogger().Warn("new TiDB binary running on old TiDB DDL reorg data",
+			zap.Int64("partition ID", physicalTableID),
+			zap.Stringer("startHandle", startKey),
+			zap.Stringer("endHandle", endKey))
+	}
+	return
+}
+
+func updateDDLReorgStartHandle(sess *session, job *model.Job, element *meta.Element, startKey kv.Key) error {
+	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s where job_id = %d",
+		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), job.ID)
+	_, err := sess.execute(context.Background(), sql, "update_start_handle")
+	return err
+}
+
+func updateDDLReorgHandle(sess *session, job *model.Job, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d where job_id = %d",
+		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, job.ID)
+	_, err := sess.execute(context.Background(), sql, "update_handle")
+	return err
+}
+
+func initDDLReorgHandle(sess *session, job *model.Job, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	sql := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
+		job.ID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
+	_, err := sess.execute(context.Background(), sql, "update_handle")
+	return err
+}
+
+func removeDDLReorgHandle(sess *session, job *model.Job, elements []*meta.Element) error {
+	if len(elements) == 0 {
+		return nil
+	}
+	eids := make([]string, 0, len(elements))
+	for _, e := range elements {
+		eids = append(eids, strconv.FormatInt(e.ID, 10))
+	}
+
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d and ele_id in (%s)", job.ID, strings.Join(eids, ","))
+	_, err := sess.execute(context.Background(), sql, "remove_handle")
+	return err
+}
+
+func removeReorgElement(sess *session, job *model.Job) error {
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	_, err := sess.execute(context.Background(), sql, "remove_handle")
+	return err
+}
+
+func wrapKey2String(key []byte) string {
+	if len(key) == 0 {
+		return "''"
+	}
+	return fmt.Sprintf("0x%x", key)
+}
+
+func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
+	rows, err := sess.execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := make([]*model.Job, 0, 16)
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		job := model.Job{}
+		err := job.Decode(jobBinary)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, &job)
+	}
+	return jobs, nil
 }
 
 func runInTxn(se *session, f func(*session) error) (err error) {

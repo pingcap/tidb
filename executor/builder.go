@@ -348,13 +348,8 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		b.err = err
 		return nil
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		b.err = err
-		return nil
-	}
 
-	ddlInfo, err := ddl.GetDDLInfo(txn)
+	ddlInfo, err := ddl.GetDDLInfo(e.ctx)
 	if err != nil {
 		b.err = err
 		return nil

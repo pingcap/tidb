@@ -409,7 +409,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 
 	if err != nil {
 		// Update the reorg handle that has been processed.
-		err1 := reorgInfo.UpdateReorgMeta(nextKey)
+		err1 := reorgInfo.UpdateReorgMeta(nextKey, w.sessPool)
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
 			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),

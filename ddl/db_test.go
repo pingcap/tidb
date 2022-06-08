@@ -642,7 +642,10 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+	var element *meta.Element
+	var start, end kv.Key
+	var physicalID int64
+	element, start, end, physicalID, err = ddl.NewReorgHandlerForTest(m, testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)

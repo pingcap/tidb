@@ -601,7 +601,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-	rh := newReorgHandler(t)
+	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
 	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
@@ -1439,7 +1439,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(start)
+	err = reorg.UpdateReorgMeta(start, w.sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo",
 		zap.Int64("jobID", reorg.Job.ID),
 		zap.ByteString("elementType", reorg.currElement.TypeKey),
@@ -1625,7 +1625,7 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(reorg.StartKey)
+	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
 		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
 		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),
