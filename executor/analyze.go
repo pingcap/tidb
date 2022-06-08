@@ -103,11 +103,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	close(taskCh)
 	e.wg.Wait()
 	close(resultsCh)
-	for _, task := range e.tasks {
-		if task.colExec != nil && task.colExec.memTracker != nil {
-			task.colExec.memTracker.Detach()
-		}
-	}
 	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
@@ -115,6 +110,11 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	err = e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
 	if err != nil {
 		return err
+	}
+	for _, task := range e.tasks {
+		if task.colExec != nil && task.colExec.memTracker != nil {
+			task.colExec.memTracker.Detach()
+		}
 	}
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.ctx)
