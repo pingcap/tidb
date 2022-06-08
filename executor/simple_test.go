@@ -988,6 +988,44 @@ func TestShowGrantsAfterDropRole(t *testing.T) {
 	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CREATE USER ON *.* TO 'u29473'@'%'"))
 }
 
+func TestPrivilegesAfterDropUser(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int, v int)")
+	defer tk.MustExec("drop table t1")
+
+	tk.MustExec("CREATE USER u1 require ssl")
+	defer tk.MustExec("DROP USER IF EXISTS u1")
+
+	tk.MustExec("GRANT CREATE ON test.* TO u1")
+	tk.MustExec("GRANT UPDATE ON test.t1 TO u1")
+	tk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO u1")
+	tk.MustExec("GRANT SELECT(v), UPDATE(v) on test.t1 TO u1")
+
+	tk.MustQuery("SELECT COUNT(1) FROM mysql.global_grants WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT COUNT(1) FROM mysql.global_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT COUNT(1) FROM mysql.tables_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT COUNT(1) FROM mysql.columns_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u1'@'%'",
+		"GRANT CREATE ON test.* TO 'u1'@'%'",
+		"GRANT UPDATE ON test.t1 TO 'u1'@'%'",
+		"GRANT SELECT(v), UPDATE(v) ON test.t1 TO 'u1'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%'",
+	))
+
+	tk.MustExec("DROP USER u1")
+	err := tk.QueryToErr("SHOW GRANTS FOR u1")
+	require.Equal(t, "[privilege:1141]There is no such grant defined for user 'u1' on host '%'", err.Error())
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE USER='u1' AND HOST='%'").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM mysql.global_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM mysql.tables_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM mysql.columns_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows())
+}
+
 func TestDropRoleAfterRevoke(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
