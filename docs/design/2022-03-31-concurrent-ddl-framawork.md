@@ -27,7 +27,7 @@ DDL (Data Definition Language) is a data definition language, commonly used to d
 
 ## Current implementation
 
-In a cluster, TiDB chooses a DDL owner to run the DDL job. There is only one owner at a time, the other TiDBs can still receive the DDLs and keep them in TiKV waiting for the owner to run it. We divide the DDL into two types. reorg for DDL job that takes a long time, general for short time, they are stored in two queues and the corresponding DDL worker always fetches the first one and runs it.
+In a cluster, TiDB chooses a DDL owner to run the DDL job. There is only one owner at a time, the other TiDBs can still receive the DDLs and keep them in TiKV waiting for the owner to run it. We divide the DDL into two types. `reorg` for DDL job that takes a long time, contains data change, such as `add index`. `general` for short time, only meta data change, such as `create table`, they are stored in two queues and the corresponding DDL worker always fetches the first one and runs it.
 It encounters some scenarios where a DDL would be blocked by other unrelated DDLs
 
 1. Block happens in the same queue. _(reorg job blocks reorg job)_
@@ -76,46 +76,45 @@ Several tables will be provided to maintain the DDL meta in the DDL job's life c
 
 Table `mysql.tidb_ddl_job` stores all the queueing DDL meta.
 ```
-+----------------+------------+------+------+----------------------------------+
-| Field          | Type       | Null | Key  | Comment                          |
-+----------------+------------+------+------+----------------------------------+
-| job_id         | bigint(20) | NO   | PRI  | DDL job id                       |
-| reorg          | bigint(20) | YES  |      | True if this DDL need reorg      |
-| schema_id      | bigint(20) | YES  |      | The schema ID relate to this DDL |
-| table_id       | bigint(20) | YES  |      | The table ID relate to this DDL  |
-| job_meta       | blob       | YES  |      | The arguments of this DDL job    |
-| is_drop_schema | bigint(20) | YES  |      | True if the DDL is a drop schema |
-+----------------+------------+------+------+---------+------------------------+
++----------------+------+------+----------------------------------+
+| Field          | Null | Key  | Comment                          |
++----------------+------+------+----------------------------------+
+| job_id         | NO   | PRI  | DDL job ID                       |
+| reorg          | YES  |      | True if this DDL need reorg      |
+| schema_id      | YES  |      | The schema ID relate to this DDL |
+| table_id       | YES  |      | The table ID relate to this DDL  |
+| job_meta       | YES  |      | The arguments of this DDL job    |
+| is_drop_schema | YES  |      | True if the DDL is a drop schema |
++----------------+------+------+---------+------------------------+
 ```
 
 Table `mysql.tidb_ddl_reorg` contains the reorg job data.
 ```
-+---------------+------------+------+------+
-| Field         | Type       | Null | Key  |
-+---------------+------------+------+------+
-| job_id        | bigint(20) | NO   |      |
-| ele_id        | bigint(20) | YES  |      |
-| curr_ele_id   | bigint(20) | YES  |      |
-| curr_ele_type | blob       | YES  |      |
-| start_key     | blob       | YES  |      |
-| end_key       | blob       | YES  |      |
-| physical_id   | bigint(20) | YES  |      |
-| reorg_meta    | blob       | YES  |      |
-+---------------+------------+------+------+
++---------------+------+------+-----------------------------------------+
+| Field         | Null | Key  | Comment                                 |
++---------------+------+------+-----------------------------------------+
+| job_id        | NO   |      | DDL Job ID                              |
+| curr_ele_id   | YES  |      | Current processing element ID           |
+| curr_ele_type | YES  |      | Current processing element type         |
+| ele_id        | YES  |      | Element ID for processing               |
+| start_key     | YES  |      | The start key for the certain element   |
+| end_key       | YES  |      | The end key for the certain element     |
+| physical_id   | YES  |      | The physical ID for the certain element |
+| reorg_meta    | YES  |      | reserved for add index                  |
++---------------+------+------+-----------------------------------------+
 ```
-> `ele_id`, `start_key`, `end_key`, `physical_id` are the reorg context of a certain element.
-
 > An element is a column or an index that needs to reorg.
 
+> `ele_id`, `start_key`, `end_key`, `physical_id` are the reorg context of a certain element.
 
 Table `mysql.tidb_ddl_history` stores the finished DDL job.
 ```
-+---------------+------------+------+------+
-| Field         | Type       | Null | Key  |
-+---------------+------------+------+------+
-| job_id        | bigint(20) | NO   | PRI  |
-| job_meta      | blob       | YES  |      |
-+---------------+------------+------+------+
++---------------+------+------+-------------------------------+
+| Field         | Null | Key  | Comment                       |  
++---------------+------+------+-------------------------------+
+| job_id        | NO   | PRI  | DDL job ID                    |  
+| job_meta      | YES  |      | The arguments of this DDL job |
++---------------+------+------+-------------------------------+
 ```
 
 In bootstrap step, TiDB will build these tables meta and put it into tikv directly. For new cluster, TiDB will also build `mysql` schema meta.
@@ -180,10 +179,10 @@ for {
 ```
 
 The runnable job defines as
-1. not running.
-2. the minimum job id on the same table.
-3. no smaller `drop schema` job id on the same schema.
-4. no smaller job id on the same schema if the job type is `drop schema`.
+1. It is not running.
+2. It is with the minimal job id for all queueing jobs that refer to the same table.
+3. Its job id is larger than `drop schema` job id, when a `drop schema` job exists in the job queue trying to drop the same schema.
+4. When the job is `drop schema`, it is with the minimal job id for all queueing jobs refer to the same schema.
 
 to get a general job, we can use SQL
 ```sql
