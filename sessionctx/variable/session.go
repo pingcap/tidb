@@ -744,16 +744,12 @@ type SessionVars struct {
 	cpuFactor float64
 	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
 	copCPUFactor float64
-	// tiflashCPUFactor ...
-	tiflashCPUFactor float64
 	// networkFactor is the network cost of transferring 1 byte data.
 	networkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
 	scanFactor float64
 	// descScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
 	descScanFactor float64
-	// tiflashScanFactor ...
-	tiflashScanFactor float64
 	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
 	seekFactor float64
 	// memoryFactor is the memory cost of storing one tuple.
@@ -762,6 +758,30 @@ type SessionVars struct {
 	diskFactor float64
 	// concurrencyFactor is the CPU cost of additional one goroutine.
 	concurrencyFactor float64
+
+	// factors for cost model v2
+	// cpuFactor is the CPU cost of processing one expression for one row.
+	cpuFactorV2 float64
+	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
+	copCPUFactorV2 float64
+	// tiflashCPUFactor ...
+	tiflashCPUFactorV2 float64
+	// networkFactor is the network cost of transferring 1 byte data.
+	networkFactorV2 float64
+	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
+	scanFactorV2 float64
+	// descScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
+	descScanFactorV2 float64
+	// tiflashScanFactor ...
+	tiflashScanFactorV2 float64
+	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	seekFactorV2 float64
+	// memoryFactor is the memory cost of storing one tuple.
+	memoryFactorV2 float64
+	// diskFactor is the IO cost of reading/writing one byte to temporary disk.
+	diskFactorV2 float64
+	// concurrencyFactor is the CPU cost of additional one goroutine.
+	concurrencyFactorV2 float64
 
 	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
 	CopTiFlashConcurrencyFactor float64

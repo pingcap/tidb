@@ -272,10 +272,18 @@ const (
 	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// TiDBOptConcurrencyFactor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
-	// TiDBOptTiFlashScanFactor ...
-	TiDBOptTiFlashScanFactor = "tidb_opt_tiflash_scan_factor"
-	// TiDBOptTiFlashCPUFactor ...
-	TiDBOptTiFlashCPUFactor = "tidb_opt_tiflash_cpu_factor"
+
+	// Factors for Cost Model Ver2
+	TiDBOptCPUFactorV2         = "tidb_opt_cpu_factor_v2"
+	TiDBOptCopCPUFactorV2      = "tidb_opt_copcpu_factor_v2"
+	TiDBOptNetworkFactorV2     = "tidb_opt_network_factor_v2"
+	TiDBOptScanFactorV2        = "tidb_opt_scan_factor_v2"
+	TiDBOptDescScanFactorV2    = "tidb_opt_desc_factor_v2"
+	TiDBOptTiFlashScanFactorV2 = "tidb_opt_tiflash_scan_factor_v2"
+	TiDBOptSeekFactorV2        = "tidb_opt_seek_factor_v2"
+	TiDBOptMemoryFactorV2      = "tidb_opt_memory_factor_v2"
+	TiDBOptDiskFactorV2        = "tidb_opt_disk_factor_v2"
+	TiDBOptConcurrencyFactorV2 = "tidb_opt_concurrency_factor_v2"
 
 	// TiDBIndexJoinBatchSize is used to set the batch size of an index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
@@ -760,6 +768,18 @@ const (
 	DefOptMemoryFactor                           = 0.001
 	DefOptDiskFactor                             = 1.5
 	DefOptConcurrencyFactor                      = 3.0
+	DefOptCPUFactorV2                            = 3.0
+	DefOptCopCPUFactorV2                         = 3.0
+	DefOptTiFlashCPUFactorV2                     = 3.0
+	DefOptTiFlashConcurrencyFactorV2             = 24.0
+	DefOptNetworkFactorV2                        = 1.0
+	DefOptScanFactorV2                           = 1.5
+	DefOptDescScanFactorV2                       = 3.0
+	DefOptTiFlashScanFactorV2                    = 3.0
+	DefOptSeekFactorV2                           = 20.0
+	DefOptMemoryFactorV2                         = 0.001
+	DefOptDiskFactorV2                           = 1.5
+	DefOptConcurrencyFactorV2                    = 3.0
 	DefOptInSubqToJoinAndAgg                     = true
 	DefOptPreferRangeScan                        = false
 	DefBatchInsert                               = false
