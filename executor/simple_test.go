@@ -778,10 +778,8 @@ func TestFlushTables(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
-	_, err := tk.Exec("FLUSH TABLES")
-	require.NoError(t, err)
-
-	_, err = tk.Exec("FLUSH TABLES WITH READ LOCK")
+	tk.MustExec("FLUSH TABLES")
+	err := tk.ExecToErr("FLUSH TABLES WITH READ LOCK")
 	require.Error(t, err)
 
 }
