@@ -2735,7 +2735,7 @@ func TestTimeBuiltin(t *testing.T) {
 	// Customized check for the cases of adddate(time, ...) - it returns datetime with current date padded.
 	// 1. Check if the result contains space, that is, it must contain YMD part.
 	// 2. Check if the result's suffix matches expected, that is, the HMS part is an exact match.
-	custCheck := func(actual []string, expected []interface{}) bool {
+	checkHmsMatch := func(actual []string, expected []interface{}) bool {
 		return strings.Contains(actual[0], " ") && strings.HasSuffix(actual[0], expected[0].(string))
 	}
 
@@ -2779,9 +2779,9 @@ func TestTimeBuiltin(t *testing.T) {
 		subDate := fmt.Sprintf("select date_sub(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
 		if tc.checkHmsOnly {
 			result = tk.MustQuery(addDate)
-			result.CustCheck(testkit.Rows(tc.AddResult), custCheck)
+			result.CheckWithFunc(testkit.Rows(tc.AddResult), checkHmsMatch)
 			result = tk.MustQuery(subDate)
-			result.CustCheck(testkit.Rows(tc.SubResult), custCheck)
+			result.CheckWithFunc(testkit.Rows(tc.SubResult), checkHmsMatch)
 		} else {
 			result = tk.MustQuery(addDate)
 			result.Check(testkit.Rows(tc.AddResult))
@@ -2811,8 +2811,8 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQuery(`select adddate(cast("2000-02-01" as datetime), cast("xxx" as SIGNED))`).Check(testkit.Rows("2000-02-01 00:00:00"))
 	tk.MustQuery(`select adddate(cast("xxx" as datetime), cast(1 as SIGNED))`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select adddate(20100101, cast(1 as decimal))`).Check(testkit.Rows("2010-01-02"))
-	tk.MustQuery(`select adddate(cast('10:10:10' as time), 1)`).CustCheck(testkit.Rows("10:10:10"), custCheck)
-	tk.MustQuery(`select adddate(cast('10:10:10' as time), cast(1 as decimal))`).CustCheck(testkit.Rows("10:10:10"), custCheck)
+	tk.MustQuery(`select adddate(cast('10:10:10' as time), 1)`).CheckWithFunc(testkit.Rows("10:10:10"), checkHmsMatch)
+	tk.MustQuery(`select adddate(cast('10:10:10' as time), cast(1 as decimal))`).CheckWithFunc(testkit.Rows("10:10:10"), checkHmsMatch)
 
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)

@@ -49,13 +49,13 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.require.Equal(needBuff.String(), resBuff.String(), res.comment)
 }
 
-// CustCheck asserts the result match the expected results in the way `check` function specifies.
-func (res *Result) CustCheck(expected [][]interface{}, check func([]string, []interface{}) bool) {
+// CheckWithFunc asserts the result match the expected results in the way `f` specifies.
+func (res *Result) CheckWithFunc(expected [][]interface{}, f func([]string, []interface{}) bool) {
 	res.require.Equal(len(res.rows), len(expected), res.comment+"Result length mismatch")
 
 	for i, resRow := range res.rows {
 		expectedRow := expected[i]
-		res.require.Truef(check(resRow, expectedRow), res.comment+"\nCustom check failed\nactual: %s\nexpected: %s", resRow, expectedRow)
+		res.require.Truef(f(resRow, expectedRow), res.comment+"\nCheck with function failed\nactual: %s\nexpected: %s", resRow, expectedRow)
 	}
 }
 
