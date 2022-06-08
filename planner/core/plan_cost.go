@@ -247,7 +247,9 @@ func (p *PhysicalIndexLookUpReader) calSelfCost(taskType property.TaskType, cost
 		lookupRows := p.indexPlan.StatsCount()
 		// TODO: estimate numLookupTasks more precisely, for example, consider back-off strategy
 		//   on Executor and correlation between this index and PK
-		numLookupTasks := (lookupRows + 511) / 512 // assume the batch-size is 512
+		batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
+		magicDistRatio := 40.0 // indicate how many requests corresponding to a batch
+		numLookupTasks := (lookupRows / batchSize) * magicDistRatio
 		selfCost += numLookupTasks * p.ctx.GetSessionVars().GetSeekFactor(nil)
 
 		// consider concurrency
