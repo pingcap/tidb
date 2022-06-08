@@ -976,15 +976,15 @@ func (g dateDecimalGener) gen() interface{} {
 		return intPart
 	}
 
-	fracPart := new(types.MyDecimal)
-	// Make fractional part no longer than 9 digits to avoid decimal truncation.
-	frac := float64(int64(g.randGen.Float64()*1000000000)) / float64(1000000000)
-	err := fracPart.FromFloat64(frac)
-	if err != nil {
+	// Generate a fractional part that is at most 9 digits.
+	fracDigits := g.randGen.Intn(1000000000)
+	fracPart := new(types.MyDecimal).FromInt(int64(fracDigits))
+	if err := fracPart.Shift(-9); err != nil {
 		panic(err)
 	}
+
 	res := new(types.MyDecimal)
-	err = types.DecimalAdd(intPart, fracPart, res)
+	err := types.DecimalAdd(intPart, fracPart, res)
 	if err != nil {
 		panic(err)
 	}
@@ -999,19 +999,27 @@ type dateTimeDecimalGener struct {
 
 func (g dateTimeDecimalGener) gen() interface{} {
 	t := g.dateTimeGener.gen().(types.Time)
-	intPart := t.ToNumber()
+	num := t.ToNumber()
+	// Not using `num`'s fractional part so that we can:
+	// 1. Return early for non-fsp values.
+	// 2. Generate a more arbitrary fractional part if needed.
+	i, err := num.ToInt()
+	if err != nil {
+		panic(err)
+	}
+	intPart := new(types.MyDecimal).FromInt(i)
 
 	if g.randGen.Float64() >= g.fspRatio {
 		return intPart
 	}
 
-	fracPart := new(types.MyDecimal)
-	// Make fractional part no longer than 9 digits to avoid decimal truncation.
-	frac := float64(int64(g.randGen.Float64()*1000000000)) / float64(1000000000)
-	err := fracPart.FromFloat64(frac)
-	if err != nil {
+	// Generate a fractional part that is at most 9 digits.
+	fracDigits := g.randGen.Intn(1000000000)
+	fracPart := new(types.MyDecimal).FromInt(int64(fracDigits))
+	if err := fracPart.Shift(-9); err != nil {
 		panic(err)
 	}
+
 	res := new(types.MyDecimal)
 	err = types.DecimalAdd(intPart, fracPart, res)
 	if err != nil {
