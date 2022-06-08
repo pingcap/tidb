@@ -242,16 +242,22 @@ func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 }
 
 // GetRow returns the row the ptr pointed to.
-func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
+func (c *RowContainer) GetRow(ptr RowPtr) (row Row, err error) {
+	row, _, err = c.GetRowAndAppendToChunk(ptr, nil)
+	return row, err
+}
+
+// GetRowAndAppendToChunk gets a Row from the RowContainer by RowPtr.
+func (c *RowContainer) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, _ *Chunk, err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.alreadySpilled() {
 		if err := c.m.records.spillError; err != nil {
-			return Row{}, err
+			return Row{}, nil, err
 		}
-		return c.m.records.inDisk.GetRow(ptr)
+		return c.m.records.inDisk.GetRowAndAppendToChunk(ptr, chk)
 	}
-	return c.m.records.inMemory.GetRow(ptr), nil
+	return c.m.records.inMemory.GetRow(ptr), nil, nil
 }
 
 // GetMemTracker returns the memory tracker in records, panics if the RowContainer has already spilled.

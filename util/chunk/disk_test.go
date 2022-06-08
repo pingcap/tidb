@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	errors2 "github.com/pingcap/errors"
@@ -189,7 +190,7 @@ func (l *listInDiskWriteDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	if err != nil {
 		return row, err
 	}
-	row = format.toMutRow(l.fieldTypes).ToRow()
+	row, _ = format.toRow(l.fieldTypes, nil)
 	return row, err
 }
 
@@ -211,7 +212,7 @@ func checkRow(t *testing.T, row1, row2 Row) {
 	}
 }
 
-func testListInDisk(t *testing.T) {
+func testListInDisk(t *testing.T, concurrency int) {
 	numChk, numRow := 10, 1000
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
@@ -236,13 +237,26 @@ func testListInDisk(t *testing.T) {
 		}
 	}
 
+	expectRows := make([]Row, 0, len(ptrs))
 	for _, rowPtr := range ptrs {
-		row1, err := lChecksum.GetRow(rowPtr)
+		row, err := lDisk.GetRow(rowPtr)
 		require.NoError(t, err)
-		row2, err := lDisk.GetRow(rowPtr)
-		require.NoError(t, err)
-		checkRow(t, row1, row2)
+		expectRows = append(expectRows, row)
 	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(concurrency)
+	for con := 0; con < concurrency; con++ {
+		go func() {
+			for i, rowPtr := range ptrs {
+				row, err := lChecksum.GetRow(rowPtr)
+				require.NoError(t, err)
+				checkRow(t, row, expectRows[i])
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 }
 
 func TestListInDiskWithChecksum(t *testing.T) {
@@ -250,7 +264,15 @@ func TestListInDiskWithChecksum(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
 	})
-	t.Run("testListInDisk", testListInDisk)
+	t.Run("testListInDisk", func(t *testing.T) {
+		testListInDisk(t, 1)
+	})
+	t.Run("testListInDisk", func(t *testing.T) {
+		testListInDisk(t, 2)
+	})
+	t.Run("testListInDisk", func(t *testing.T) {
+		testListInDisk(t, 8)
+	})
 
 	t.Run("testReaderWithCache", testReaderWithCache)
 	t.Run("testReaderWithCacheNoFlush", testReaderWithCacheNoFlush)
@@ -261,7 +283,15 @@ func TestListInDiskWithChecksumAndEncrypt(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
 	})
-	t.Run("testListInDisk", testListInDisk)
+	t.Run("testListInDisk", func(t *testing.T) {
+		testListInDisk(t, 1)
+	})
+	t.Run("testListInDisk", func(t *testing.T) {
+		testListInDisk(t, 2)
+	})
+	t.Run("testListInDisk", func(t *testing.T) {
+		testListInDisk(t, 8)
+	})
 
 	t.Run("testReaderWithCache", testReaderWithCache)
 	t.Run("testReaderWithCacheNoFlush", testReaderWithCacheNoFlush)
