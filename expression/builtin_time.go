@@ -2773,11 +2773,11 @@ func (du *baseDateArithmetical) getDateFromInt(ctx sessionctx.Context, args []Ex
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 
-	dateTp := mysql.TypeDate
-	if date.Type() == mysql.TypeDatetime || date.Type() == mysql.TypeTimestamp || types.IsClockUnit(unit) {
-		dateTp = mysql.TypeDatetime
+	// The actual date.Type() might be date or datetime.
+	// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
+	if types.IsClockUnit(unit) {
+		date.SetType(mysql.TypeDatetime)
 	}
-	date.SetType(dateTp)
 	return date, false, nil
 }
 
@@ -2792,15 +2792,11 @@ func (du *baseDateArithmetical) getDateFromReal(ctx sessionctx.Context, args []E
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 
-	// Now the actual date.Type() might be date, datetime or timestamp.
-	// Date and datetime is treated as is.
-	// Timestamp is treated as datetime.
+	// The actual date.Type() might be date or datetime.
 	// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
-	dateTp := mysql.TypeDate
-	if date.Type() == mysql.TypeDatetime || date.Type() == mysql.TypeTimestamp || types.IsClockUnit(unit) {
-		dateTp = mysql.TypeDatetime
+	if types.IsClockUnit(unit) {
+		date.SetType(mysql.TypeDatetime)
 	}
-	date.SetType(dateTp)
 	return date, false, nil
 }
 
@@ -2815,15 +2811,11 @@ func (du *baseDateArithmetical) getDateFromDecimal(ctx sessionctx.Context, args 
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 
-	// Now the actual date.Type() might be date, datetime or timestamp.
-	// Date and datetime is treated as is.
-	// Timestamp is treated as datetime.
+	// The actual date.Type() might be date or datetime.
 	// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
-	dateTp := mysql.TypeDate
-	if date.Type() == mysql.TypeDatetime || date.Type() == mysql.TypeTimestamp || types.IsClockUnit(unit) {
-		dateTp = mysql.TypeDatetime
+	if types.IsClockUnit(unit) {
+		date.SetType(mysql.TypeDatetime)
 	}
-	date.SetType(dateTp)
 	return date, false, nil
 }
 
@@ -2833,8 +2825,8 @@ func (du *baseDateArithmetical) getDateFromDatetime(ctx sessionctx.Context, args
 		return types.ZeroTime, true, err
 	}
 
-	// Now the actual date.Type() might be date, datetime or timestamp.
-	// Date and datetime is treated as is.
+	// The actual date.Type() might be date, datetime or timestamp.
+	// Datetime is treated as is.
 	// Timestamp is treated as datetime.
 	// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
 	if types.IsClockUnit(unit) || date.Type() == mysql.TypeTimestamp {
@@ -3040,11 +3032,11 @@ func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, input *chu
 			continue
 		}
 
-		dateTp := mysql.TypeDate
-		if date.Type() == mysql.TypeDatetime || date.Type() == mysql.TypeTimestamp || isClockUnit {
-			dateTp = mysql.TypeDatetime
+		// The actual date.Type() might be date or datetime.
+		// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
+		if isClockUnit {
+			date.SetType(mysql.TypeDatetime)
 		}
-		date.SetType(dateTp)
 		dates[i] = date
 	}
 	return nil
@@ -3081,11 +3073,11 @@ func (du *baseDateArithmetical) vecGetDateFromReal(b *baseBuiltinFunc, input *ch
 			continue
 		}
 
-		dateTp := mysql.TypeDate
-		if date.Type() == mysql.TypeDatetime || date.Type() == mysql.TypeTimestamp || isClockUnit {
-			dateTp = mysql.TypeDatetime
+		// The actual date.Type() might be date or datetime.
+		// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
+		if isClockUnit {
+			date.SetType(mysql.TypeDatetime)
 		}
-		date.SetType(dateTp)
 		dates[i] = date
 	}
 	return nil
@@ -3122,11 +3114,11 @@ func (du *baseDateArithmetical) vecGetDateFromDecimal(b *baseBuiltinFunc, input 
 			continue
 		}
 
-		dateTp := mysql.TypeDate
-		if date.Type() == mysql.TypeDatetime || date.Type() == mysql.TypeTimestamp || isClockUnit {
-			dateTp = mysql.TypeDatetime
+		// The actual date.Type() might be date or datetime.
+		// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
+		if isClockUnit {
+			date.SetType(mysql.TypeDatetime)
 		}
-		date.SetType(dateTp)
 		dates[i] = date
 	}
 	return nil
@@ -3190,6 +3182,10 @@ func (du *baseDateArithmetical) vecGetDateFromDatetime(b *baseBuiltinFunc, input
 			continue
 		}
 
+		// The actual date[i].Type() might be date, datetime or timestamp.
+		// Datetime is treated as is.
+		// Timestamp is treated as datetime.
+		// When the unit contains clock, the date part is treated as datetime even though it might be actually a date.
 		if isClockUnit || dates[i].Type() == mysql.TypeTimestamp {
 			dates[i].SetType(mysql.TypeDatetime)
 		}
