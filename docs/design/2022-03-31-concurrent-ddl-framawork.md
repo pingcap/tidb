@@ -58,7 +58,7 @@ The problems above are more noticeable in a big cluster. Some of them already re
 - Make DDLs on the different tables not block each other.
 > Limited by DDL workers' count, we can still encounter this problem(when all workers are busy)
 
-## Not Goal
+## Non-Goal
 
 - Concurrency on the same table.
 
