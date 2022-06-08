@@ -248,6 +248,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 		memDelta += p.valSet.Insert(joinedVal)
+		memDelta += int64(len(joinedVal))
 		// write separator
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
@@ -577,6 +578,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			continue
 		}
 		memDelta += p.valSet.Insert(joinedVal)
+		memDelta += int64(len(joinedVal))
 		sortRow := sortRow{
 			buffer:  buffer,
 			byItems: make([]*types.Datum, 0, len(e.byItems)),

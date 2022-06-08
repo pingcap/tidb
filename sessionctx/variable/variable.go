@@ -516,10 +516,7 @@ func (sv *SysVar) SkipInit() bool {
 	// These a special "Global-only" sysvars that for backward compatibility
 	// are currently cached in the session. Please don't add to this list.
 	switch sv.Name {
-	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
-		TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
-		TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
-		TiDBEnableTelemetry, TiDBEnablePointGetCache:
+	case TiDBRowFormatVersion:
 		return false
 	}
 	return !sv.HasSessionScope()
@@ -535,7 +532,7 @@ func (sv *SysVar) SkipInit() bool {
 func (sv *SysVar) SkipSysvarCache() bool {
 	switch sv.Name {
 	case TiDBGCEnable, TiDBGCRunInterval, TiDBGCLifetime,
-		TiDBGCConcurrency, TiDBGCScanLockMode, TiDBGCMaxWaitTime:
+		TiDBGCConcurrency, TiDBGCScanLockMode:
 		return true
 	}
 	return false
