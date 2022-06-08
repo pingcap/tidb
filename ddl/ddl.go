@@ -193,6 +193,10 @@ type DDL interface {
 	SetHook(h Callback)
 	// DoDDLJob does the DDL job, it's exported for test.
 	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
+	// MigrateExistingDDLs move existing DDLs in queue to table.
+	MigrateExistingDDLs() error
+	// BackOffDDLs move existing DDLs in table to queue.
+	BackOffDDLs() error
 }
 
 type limitJobTask struct {
@@ -277,6 +281,9 @@ type ddlCtx struct {
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
 
+	concurrentDDL *workerActivityManager
+	queueDDL      *workerActivityManager
+
 	*waitSchemaSyncedController
 	*schemaVersionManager
 	// reorgCtx is used for reorganization.
@@ -302,6 +309,32 @@ type ddlCtx struct {
 	ddlSeqNumMu struct {
 		sync.Mutex
 		seqNum uint64
+	}
+}
+
+type workerActivityManager struct {
+	sync.Mutex
+	sync.WaitGroup
+
+	b bool
+}
+
+func newWorkerActivityManager() *workerActivityManager {
+	w := &workerActivityManager{}
+	w.Add(1)
+	return w
+}
+
+func (w *workerActivityManager) active(b bool) {
+	w.Lock()
+	defer w.Unlock()
+	if w.b != b {
+		if b {
+			w.Done()
+		} else {
+			w.Add(1)
+		}
+		w.b = b
 	}
 }
 
@@ -529,6 +562,8 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
+	ddlCtx.concurrentDDL = newWorkerActivityManager()
+	ddlCtx.queueDDL = newWorkerActivityManager()
 	d := &ddl{
 		ddlCtx:              ddlCtx,
 		limitJobCh:          make(chan *limitJobTask, batchAddingJobs),
@@ -617,6 +652,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
+		d.watchConcurrentDDLSwitch()
 		d.readyForConcurrencyDDL()
 		d.readyForDDL()
 
@@ -1024,6 +1060,52 @@ func (d *ddl) startCleanDeadTableLock() {
 			return
 		}
 	}
+}
+
+func (d *ddl) setWorkerActivity() {
+	b := variable.EnableConcurrentDDL.Load()
+	d.queueDDL.active(!b)
+	d.concurrentDDL.active(b)
+}
+
+func (d *ddl) watchConcurrentDDLSwitch() {
+	d.wg.Run(func() {
+		original := variable.EnableConcurrentDDL.Load()
+		d.setWorkerActivity()
+
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		var err error
+
+		for {
+			select {
+			case <-d.ctx.Done():
+				// make them active, let worker quit.
+				d.queueDDL.active(true)
+				d.concurrentDDL.active(true)
+				return
+			case <-ticker.C:
+				err = nil
+				v := variable.EnableConcurrentDDL.Load()
+				if original != v {
+					original = v
+					if v {
+						err = d.MigrateExistingDDLs()
+					} else {
+						err = d.BackOffDDLs()
+					}
+					logutil.BgLogger().Info("migrate DDL", zap.Error(err))
+					if err != nil {
+						// set back if meet error.
+						variable.EnableConcurrentDDL.Store(original)
+						continue
+					}
+					d.setWorkerActivity()
+				}
+			}
+		}
+	})
 }
 
 // RecoverInfo contains information needed by DDL.RecoverTable.

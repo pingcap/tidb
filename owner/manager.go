@@ -17,6 +17,7 @@ package owner
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
 	util2 "github.com/pingcap/tidb/util"
@@ -114,6 +116,47 @@ func (m *ownerManager) Cancel() {
 
 // RequireOwner implements Manager.RequireOwner interface.
 func (m *ownerManager) RequireOwner(ctx context.Context) error {
+	var allServerInfo map[string]*infosync.ServerInfo
+	var err error
+	for !m.IsOwner() {
+		select {
+		case <-ctx.Done():
+			return errors.Trace(ctx.Err())
+		default:
+		}
+		if allServerInfo == nil {
+			allServerInfo, err = infosync.GetAllServerInfo(context.Background())
+			if err != nil {
+				logutil.BgLogger().Warn("get all server info error", zap.Error(err))
+				// wait 1 seconds and try again.
+				time.Sleep(1 * time.Second)
+				continue
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ownerID, err := m.GetOwnerID(ctx)
+		cancel()
+		if err != nil {
+			logutil.BgLogger().Warn("get owner info error", zap.Error(err))
+			continue
+		}
+		owner, ok := allServerInfo[ownerID]
+		if !ok {
+			logutil.BgLogger().Warn("member updated, try again")
+			time.Sleep(1 * time.Second)
+		}
+		url := fmt.Sprintf("http://%s:%d/ddl/owner/resign", owner.IP, owner.StatusPort)
+		rs, err := http.Post(url, "text/plain", nil) // #nosec
+		if err != nil {
+			logutil.BgLogger().Warn("resign owner meet error", zap.Error(err))
+		} else {
+			if err := rs.Body.Close(); err != nil {
+				logutil.BgLogger().Warn("close response body meet error", zap.Error(err))
+			}
+		}
+		// wait for new election.
+		time.Sleep(500 * time.Millisecond)
+	}
 	return nil
 }
 

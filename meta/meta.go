@@ -1271,6 +1271,33 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, phy
 	return errors.Trace(err)
 }
 
+// ClearALLDDLReorgHandle clears all reorganization related handles.
+func (m *Meta) ClearALLDDLReorgHandle() error {
+	return m.txn.HClear(mDDLJobReorgKey)
+}
+
+// ClearALLDDLJob clears all DDL jobs.
+func (m *Meta) ClearALLDDLJob() error {
+	if err := m.txn.LClear(mDDLJobAddIdxList); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.LClear(mDDLJobListKey); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.LClear(mDDLJobHistoryKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// ClearALLHistoryJob clears all DDL jobs.
+func (m *Meta) ClearALLHistoryJob() error {
+	if err := m.txn.HClear(mDDLJobHistoryKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // RemoveReorgElement removes the element of the reorganization information.
 func (m *Meta) RemoveReorgElement(job *model.Job) error {
 	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))

@@ -154,6 +154,7 @@ func (d *ddl) startDispatchLoop() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	for {
+		d.concurrentDDL.Wait()
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
@@ -384,4 +385,179 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 		jobs = append(jobs, &job)
 	}
 	return jobs, nil
+}
+
+func (d *ddl) MigrateExistingDDLs() (err error) {
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(sess)
+	se := newSession(sess)
+	// clean up these 3 tables.
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_job", "delete_old_ddl")
+	if err != nil {
+		return err
+	}
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_reorg", "delete_old_reorg")
+	if err != nil {
+		return err
+	}
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_history", "delete_old_history")
+	if err != nil {
+		return err
+	}
+
+	err = se.begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			se.rollback()
+		} else {
+			err = se.commit()
+		}
+	}()
+	txn, err := se.txn()
+	if err != nil {
+		return err
+	}
+
+	for _, tp := range []workerType{addIdxWorker, generalWorker} {
+		t := newMetaWithQueueTp(txn, tp)
+		jobs, err := t.GetAllDDLJobsInQueue()
+		if err != nil {
+			return err
+		}
+		err = d.addDDLJobs(jobs)
+		if err != nil {
+			return err
+		}
+		if tp == addIdxWorker {
+			for _, job := range jobs {
+				element, start, end, pid, err := t.GetDDLReorgHandle(job)
+				if err != nil {
+					return err
+				}
+				err = updateDDLReorgHandle(se, job, start, end, pid, element)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	t := meta.NewMeta(txn)
+	iterator, err := t.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	jobs := make([]*model.Job, 0, 128)
+	for {
+		jobs, err = iterator.GetLastJobs(128, jobs)
+		if err != nil {
+			return err
+		}
+		if len(jobs) == 0 {
+			break
+		}
+		for _, job := range jobs {
+			err := addHistoryDDLJob(se, job, false)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if err = t.ClearALLDDLJob(); err != nil {
+		return
+	}
+	if err = t.ClearALLDDLReorgHandle(); err != nil {
+		return
+	}
+	if err = t.ClearALLHistoryJob(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *ddl) BackOffDDLs() (err error) {
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(sess)
+
+	err = kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		if err := t.ClearALLDDLReorgHandle(); err != nil {
+			return err
+		}
+		if err := t.ClearALLDDLJob(); err != nil {
+			return err
+		}
+		return t.ClearALLHistoryJob()
+	})
+	if err != nil {
+		return err
+	}
+
+	se := newSession(sess)
+	err = se.begin()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err != nil {
+			se.rollback()
+		} else {
+			err = se.commit()
+		}
+	}()
+	jobs, err := getJobsBySQL(se, "tidb_ddl_job", "1 order by job_id")
+	if err != nil {
+		return err
+	}
+
+	reorgHandle, err := se.execute(context.Background(), "select start_key, end_key, physical_id, curr_ele_id, curr_ele_type from mysql.tidb_ddl_reorg", "get_handle")
+	if err != nil {
+		return err
+	}
+	txn, err := se.txn()
+	if err != nil {
+		return err
+	}
+	t := meta.NewMeta(txn)
+	for _, job := range jobs {
+		jobListKey := meta.DefaultJobListKey
+		if job.MayNeedReorg() {
+			jobListKey = meta.AddIndexJobListKey
+		}
+		if err := t.EnQueueDDLJob(job, jobListKey); err != nil {
+			return err
+		}
+	}
+	for _, row := range reorgHandle {
+		jobID := row.GetInt64(0)
+		if err := t.UpdateDDLReorgHandle(jobs[jobID], row.GetBytes(0), row.GetBytes(1), row.GetInt64(2), &meta.Element{ID: row.GetInt64(3), TypeKey: row.GetBytes(4)}); err != nil {
+			return err
+		}
+	}
+
+	// clean up these 3 tables.
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_job", "delete_old_ddl")
+	if err != nil {
+		return err
+	}
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_reorg", "delete_old_reorg")
+	if err != nil {
+		return err
+	}
+	_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_history", "delete_old_history")
+	if err != nil {
+		return err
+	}
+	return
 }
