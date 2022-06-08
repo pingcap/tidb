@@ -7376,6 +7376,25 @@ func TestIssue31867(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
+func TestDateAddForDaylightSavingTs(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = 'CET'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(ts timestamp)")
+	tk.MustGetErrCode("insert into t values('2022-03-27 02:30:00')", errno.ErrTruncatedWrongValue)
+	tk.MustExec("insert into t values('2022-03-27 01:30:00')")
+	tk.MustExec("insert into t values('2022-10-30 02:30:00')")
+	tk.MustQuery("select date_add(ts, interval 1 hour) from t order by ts").Check([][]interface{}{
+		{"2022-03-27 02:30:00"},
+		{"2022-10-30 03:30:00"},
+	})
+	tk.MustExec("drop table t")
+}
+
 func TestImcompleteDateFunc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
