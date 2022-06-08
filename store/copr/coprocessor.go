@@ -981,6 +981,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		logutil.Logger(bo.GetCtx()).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.GetID()),
+			zap.Uint64("bucketsVer", task.bucketsVer),
+			zap.Uint64("number of ranges in copTask", uint64(task.ranges.Len())),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
 		if strings.Contains(err.Error(), "write conflict") {
