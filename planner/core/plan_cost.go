@@ -1215,13 +1215,7 @@ func updateEstRows(operator PhysicalPlan, costFlag uint64) {
 
 	actRows := getOperatorActRows(operator)
 	stats := operator.Stats()
-	estRows := float64(stats.Count())
-	var newStats *property.StatsInfo
-	if estRows > 0 {
-		newStats = stats.Scale(actRows / estRows)
-	} else {
-		newStats = &property.StatsInfo{RowCount: actRows}
-	}
+	newStats := &property.StatsInfo{RowCount: actRows}
 	*stats = *newStats
 }
 
