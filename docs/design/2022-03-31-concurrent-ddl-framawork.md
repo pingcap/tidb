@@ -230,9 +230,11 @@ select * from mysql.tidb_history_job;
 
 find the cancel job and update the DDL meta to `JobStateCancelling` state
 ```sql
+begin;
 select job_meta from mysql.tidb_ddl_job where job_id = {job_id};
 -- set the job state to `JobStateCancelling`
 update mysql.tidb_ddl_job set job_meta = {job} where job_id = {job.id}
+commit;
 ```
 
 ### Upgrade compatibility
@@ -273,9 +275,6 @@ be executed successfully by the other old TiDB instance.
 ## Test Design
 
 We will use [schrddl](https://github.com/PingCAP-QE/schrddl) test the concurrent DDL framework.
-
-### Compatibility Tests
-
 
 ### Benchmark Tests
 
