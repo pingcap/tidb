@@ -211,7 +211,13 @@ select * from mysql.tidb_ddl_job where job_id < {job.id} limit 1;
 
 If there are records, we can not run the drop schema job.
 
-![ddl-job-manager](./imgs/ddl-job-manager.png)
+The workflow will looks like
+
+![concurrent-ddl-framework](./imgs/concurrendl-ddl.png)
+
+compare current implementataion
+
+![queue-base-ddl-framework](./imgs/queue-ddl.png)
 
 ### Show DDL jobs
 
