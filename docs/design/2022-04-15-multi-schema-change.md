@@ -30,12 +30,12 @@ Above all, the lack of this capability can be a blocking issue for those who wis
 
 - Support MySQL-compatible Multi-Schema Change that used commonly, including `ADD/DROP COLUMN`, `ADD/DROP INDEX`, `MODIFY COLUMN`, `RENAME COLUMN`, etc.
 
-### Non-goals
+### Non-Goals
 
 - Support TiDB-specific Multi-Schema Change like `ADD TIFLASH REPLICA`, `ADD PARTITION`, `ALTER PARTITION`, etc.
 - Resolve the 'schema is changed' error when DDL and DML are executed concurrently.
 - Be 100% compatible with MySQL. MySQL may reorder the execution of schema changes, which makes the behavior counter-intuitive sometimes.
-- Improve the performance of DDL, although it introduces a way to improve the performance of long-running jobs(see 'Future work' part).
+- Improve the performance of DDL, although it introduces a way to improve the performance of long-running jobs(see 'Future Work' part).
 
 ## Proposal
 
@@ -205,7 +205,7 @@ ERROR 1060 (42S21): Duplicate column name 'b'
 
 TiDB validates the schema changes against a snapshot schema structure retrieved before the execution, regardless of the previous changes in the same DDL statement. This may affect some common use cases. For example, `ALTER TABLE t ADD COLUMN a, ADD INDEX i1(a);` is not supported. However, it is not difficult to support such statements: removing the specific validation is enough. 
 
-## Future work
+## Future Work
 
 In the future, this implementation can be utilized to develop other features or achieve some optimizations:
 
