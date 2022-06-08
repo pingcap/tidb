@@ -2980,17 +2980,7 @@ func (du *baseDateArithmetical) addDuration(ctx sessionctx.Context, d types.Dura
 }
 
 func (du *baseDateArithmetical) subDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string, resultFsp int) (types.Duration, bool, error) {
-	dur, err := types.ExtractDurationValue(unit, interval)
-	if err != nil {
-		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
-	}
-	retDur, err := d.Sub(dur)
-	if err != nil {
-		return types.ZeroDuration, true, err
-	}
-	// Adjust fsp as required by outer - always respect type inference.
-	retDur.Fsp = resultFsp
-	return retDur, false, nil
+	return du.addDuration(ctx, d.Neg(), interval, unit, resultFsp)
 }
 
 func (du *baseDateArithmetical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string, resultFsp int) (types.Time, bool, error) {
