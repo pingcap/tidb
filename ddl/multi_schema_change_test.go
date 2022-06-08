@@ -518,6 +518,7 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index i1(a), add unique index i2(a, b), add unique index i3(c);",
 		errno.ErrDupEntry)
 	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
+	tk.MustExec("alter table t add index i1(a), add index i2(a, b), add index i3(c);")
 }
 
 func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {

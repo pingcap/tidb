@@ -415,7 +415,7 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 	updateRawArgs := true
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// so we shouldn't replace RawArgs with the marshaling Args.
-	if meetErr && (job.RawArgs != nil && job.Args == nil) {
+	if meetErr && (job.RawArgs != nil && job.Args == nil) && job.MultiSchemaInfo == nil {
 		logutil.Logger(w.logCtx).Info("[ddl] meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 		updateRawArgs = false

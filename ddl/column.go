@@ -233,7 +233,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		}
 		return ver, errors.Trace(err)
 	}
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+	if job.MultiSchemaInfo != nil && !job.IsRollingback() && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
 		job.SchemaState = colInfo.State
 		// Store the mark and enter the next DDL handling loop.

@@ -689,7 +689,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
 	}
 
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+	if job.MultiSchemaInfo != nil && !job.IsRollingback() && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
 		job.SchemaState = indexInfo.State
 		return updateVersionAndTableInfo(d, t, job, tblInfo, false)
