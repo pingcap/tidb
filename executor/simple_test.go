@@ -192,7 +192,7 @@ func TestRole(t *testing.T) {
 	tk.MustExec("insert into mysql.default_roles (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) values ('localhost','test','%','test1')")
 
 	dropUserSQL := `DROP ROLE IF EXISTS 'test'@'localhost' ;`
-	_, err := tk.Exec(dropUserSQL)
+	err := tk.ExecToErr(dropUserSQL)
 	require.NoError(t, err)
 
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test" and Host="localhost"`)
@@ -215,7 +215,7 @@ func TestRole(t *testing.T) {
 	result.Check(testkit.Rows("r_2"))
 
 	grantRoleSQL = `GRANT 'r_1'@'localhost' TO 'r_3'@'localhost', 'r_4'@'localhost';`
-	_, err = tk.Exec(grantRoleSQL)
+	err = tk.ExecToErr(grantRoleSQL)
 	require.Error(t, err)
 
 	// Test grant role for current_user();
@@ -244,13 +244,13 @@ func TestRole(t *testing.T) {
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','root')")
 	tk.MustExec("flush privileges")
 	tk.MustExec("SET DEFAULT ROLE r_1, r_2 TO root")
-	_, err = tk.Exec("revoke test@localhost, r_1 from root;")
+	err = tk.ExecToErr("revoke test@localhost, r_1 from root;")
 	require.NoError(t, err)
-	_, err = tk.Exec("revoke `r_2`@`%` from root, u_2;")
+	err = tk.ExecToErr("revoke `r_2`@`%` from root, u_2;")
 	require.Error(t, err)
-	_, err = tk.Exec("revoke `r_2`@`%` from root;")
+	err = tk.ExecToErr("revoke `r_2`@`%` from root;")
 	require.NoError(t, err)
-	_, err = tk.Exec("revoke `r_1`@`%` from root;")
+	err = tk.ExecToErr("revoke `r_1`@`%` from root;")
 	require.NoError(t, err)
 	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
 	result.Check(nil)
@@ -309,36 +309,36 @@ func TestDefaultRole(t *testing.T) {
 	tk.MustExec("flush privileges;")
 
 	setRoleSQL := `SET DEFAULT ROLE r_3 TO u_1;`
-	_, err := tk.Exec(setRoleSQL)
+	err := tk.ExecToErr(setRoleSQL)
 	require.Error(t, err)
 
 	setRoleSQL = `SET DEFAULT ROLE r_1 TO u_1000;`
-	_, err = tk.Exec(setRoleSQL)
+	err = tk.ExecToErr(setRoleSQL)
 	require.Error(t, err)
 
 	setRoleSQL = `SET DEFAULT ROLE r_1, r_3 TO u_1;`
-	_, err = tk.Exec(setRoleSQL)
+	err = tk.ExecToErr(setRoleSQL)
 	require.Error(t, err)
 
 	setRoleSQL = `SET DEFAULT ROLE r_1 TO u_1;`
-	_, err = tk.Exec(setRoleSQL)
+	err = tk.ExecToErr(setRoleSQL)
 	require.NoError(t, err)
 	result := tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
 	result.Check(testkit.Rows("r_1"))
 	setRoleSQL = `SET DEFAULT ROLE r_2 TO u_1;`
-	_, err = tk.Exec(setRoleSQL)
+	err = tk.ExecToErr(setRoleSQL)
 	require.NoError(t, err)
 	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
 	result.Check(testkit.Rows("r_2"))
 
 	setRoleSQL = `SET DEFAULT ROLE ALL TO u_1;`
-	_, err = tk.Exec(setRoleSQL)
+	err = tk.ExecToErr(setRoleSQL)
 	require.NoError(t, err)
 	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
 	result.Check(testkit.Rows("r_1", "r_2"))
 
 	setRoleSQL = `SET DEFAULT ROLE NONE TO u_1;`
-	_, err = tk.Exec(setRoleSQL)
+	err = tk.ExecToErr(setRoleSQL)
 	require.NoError(t, err)
 	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
 	result.Check(nil)
@@ -427,7 +427,7 @@ func TestUser(t *testing.T) {
 
 	// Test alter user user().
 	alterUserSQL = `ALTER USER USER() IDENTIFIED BY '1';`
-	_, err := tk.Exec(alterUserSQL)
+	err := tk.ExecToErr(alterUserSQL)
 	require.Truef(t, terror.ErrorEqual(err, errors.New("Session user is empty")), "err %v", err)
 	sess, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -464,7 +464,7 @@ func TestUser(t *testing.T) {
 
 	// Test 'identified by password'
 	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password 'xxx';`
-	_, err = tk.Exec(createUserSQL)
+	err = tk.ExecToErr(createUserSQL)
 	require.Truef(t, terror.ErrorEqual(executor.ErrPasswordFormat, err), "err %v", err)
 	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password '*3D56A309CD04FA2EEF181462E59011F075C89548';`
 	tk.MustExec(createUserSQL)
@@ -472,7 +472,7 @@ func TestUser(t *testing.T) {
 	tk.MustExec(dropUserSQL)
 
 	// Test drop user meet error
-	_, err = tk.Exec(dropUserSQL)
+	err = tk.ExecToErr(dropUserSQL)
 	require.Truef(t, terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), "err %v", err)
 
 	createUserSQL = `CREATE USER 'test1'@'localhost'`
@@ -481,7 +481,7 @@ func TestUser(t *testing.T) {
 	tk.MustExec(createUserSQL)
 
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
-	_, err = tk.Exec(dropUserSQL)
+	err = tk.ExecToErr(dropUserSQL)
 	require.Truef(t, terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), "err %v", err)
 
 	// Close issue #17639
@@ -513,7 +513,7 @@ func TestUser(t *testing.T) {
 	tk.MustQuery(querySQL).Check(testkit.Rows("userD demo.com"))
 
 	createUserSQL = `create user foo@localhost identified with 'foobar';`
-	_, err = tk.Exec(createUserSQL)
+	err = tk.ExecToErr(createUserSQL)
 	require.Truef(t, terror.ErrorEqual(err, executor.ErrPluginIsNotLoaded), "err %v", err)
 
 	tk.MustExec(`create user joan;`)
@@ -564,7 +564,7 @@ func TestSetPwd(t *testing.T) {
 	// set password
 	setPwdSQL := `SET PASSWORD = 'pwd'`
 	// Session user is empty.
-	_, err := tk.Exec(setPwdSQL)
+	err := tk.ExecToErr(setPwdSQL)
 	require.Error(t, err)
 	sess, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -572,7 +572,7 @@ func TestSetPwd(t *testing.T) {
 	ctx := tk.Session().(sessionctx.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost", AuthUsername: "testpwd1", AuthHostname: "localhost"}
 	// Session user doesn't exist.
-	_, err = tk.Exec(setPwdSQL)
+	err = tk.ExecToErr(setPwdSQL)
 	require.Truef(t, terror.ErrorEqual(err, executor.ErrPasswordNoMatch), "err %v", err)
 	// normal
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd", Hostname: "localhost", AuthUsername: "testpwd", AuthHostname: "localhost"}
@@ -778,22 +778,17 @@ func TestFlushTables(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
-	_, err := tk.Exec("FLUSH TABLES")
-	require.NoError(t, err)
-
-	_, err = tk.Exec("FLUSH TABLES WITH READ LOCK")
+	tk.MustExec("FLUSH TABLES")
+	err := tk.ExecToErr("FLUSH TABLES WITH READ LOCK")
 	require.Error(t, err)
-
 }
 
 func TestUseDB(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	_, err := tk.Exec("USE test")
-	require.NoError(t, err)
-
-	_, err = tk.Exec("USE ``")
+	tk.MustExec("USE test")
+	err := tk.ExecToErr("USE ``")
 	require.Truef(t, terror.ErrorEqual(core.ErrNoDB, err), "err %v", err)
 }
 
@@ -871,13 +866,13 @@ func TestRoleAtomic(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create role r2;")
-	_, err := tk.Exec("create role r1, r2, r3")
+	err := tk.ExecToErr("create role r1, r2, r3")
 	require.Error(t, err)
 	// Check atomic create role.
 	result := tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
 	result.Check(testkit.Rows("r2"))
 	// Check atomic drop role.
-	_, err = tk.Exec("drop role r1, r2, r3")
+	err = tk.ExecToErr("drop role r1, r2, r3")
 	require.Error(t, err)
 	result = tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
 	result.Check(testkit.Rows("r2"))
@@ -953,9 +948,9 @@ func TestIssue23649(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP USER IF EXISTS issue23649;")
 	tk.MustExec("CREATE USER issue23649;")
-	_, err := tk.Exec("GRANT bogusrole to issue23649;")
+	err := tk.ExecToErr("GRANT bogusrole to issue23649;")
 	require.Equal(t, "[executor:3523]Unknown authorization ID `bogusrole`@`%`", err.Error())
-	_, err = tk.Exec("GRANT bogusrole to nonexisting;")
+	err = tk.ExecToErr("GRANT bogusrole to nonexisting;")
 	require.Equal(t, "[executor:3523]Unknown authorization ID `bogusrole`@`%`", err.Error())
 }
 
