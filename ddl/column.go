@@ -701,7 +701,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(0)
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
 		job.Args = append(job.Args, changingCol, changingIdxs, rmIdxIDs)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
@@ -1103,7 +1103,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
-		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_rate"),
+		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 		sqlMode:        reorgInfo.ReorgMeta.SQLMode,
