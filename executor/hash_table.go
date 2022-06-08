@@ -86,9 +86,6 @@ type hashRowContainer struct {
 
 	rowContainer *chunk.RowContainer
 	memTracker   *memory.Tracker
-
-	// chkBuf buffer the data reads from the disk if rowContainer is spilled.
-	chkBuf *chunk.Chunk
 }
 
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
@@ -125,7 +122,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 	var matchedRow chunk.Row
 	matchedPtrs = matchedPtrs[:0]
 	for _, ptr := range innerPtrs {
-		matchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(ptr, c.chkBuf)
+		matchedRow, err = c.rowContainer.GetRow(ptr)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -226,7 +223,6 @@ func (c *hashRowContainer) Len() uint64 {
 
 func (c *hashRowContainer) Close() error {
 	defer c.memTracker.Detach()
-	c.chkBuf = nil
 	return c.rowContainer.Close()
 }
 

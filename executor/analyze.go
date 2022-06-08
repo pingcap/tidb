@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,6 +63,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var _ Executor = &AnalyzeExec{}
@@ -1114,8 +1114,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	// The order of the samples are broken when merging samples from sub-collectors.
 	// So now we need to sort the samples according to the handle in order to calculate correlation.
-	sort.Slice(rootRowCollector.Base().Samples, func(i, j int) bool {
-		return rootRowCollector.Base().Samples[i].Handle.Compare(rootRowCollector.Base().Samples[j].Handle) < 0
+	slices.SortFunc(rootRowCollector.Base().Samples, func(i, j *statistics.ReservoirRowSampleItem) bool {
+		return i.Handle.Compare(j.Handle) < 0
 	})
 
 	totalLen := len(e.colsInfo) + len(e.indexes)
@@ -2262,8 +2262,8 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		// Build collector properties.
 		collector := e.collectors[i]
 		collector.Samples = collector.Samples[:e.sampCursor]
-		sort.Slice(collector.Samples, func(i, j int) bool {
-			return collector.Samples[i].Handle.Compare(collector.Samples[j].Handle) < 0
+		slices.SortFunc(collector.Samples, func(i, j *statistics.SampleItem) bool {
+			return i.Handle.Compare(j.Handle) < 0
 		})
 		collector.CalcTotalSize()
 		// Adjust the row count in case the count of `tblStats` is not accurate and too small.

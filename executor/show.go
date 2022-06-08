@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"golang.org/x/exp/slices"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -401,7 +402,7 @@ func moveInfoSchemaToFront(dbs []string) {
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	sort.Strings(dbs)
+	slices.Sort(dbs)
 	var (
 		fieldPatternsLike collate.WildcardPattern
 		fieldFilter       string
@@ -506,7 +507,7 @@ func (e *ShowExec) fetchShowTables() error {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
 	}
-	sort.Strings(tableNames)
+	slices.Sort(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
 			e.appendRow([]interface{}{v, tableTypes[v]})

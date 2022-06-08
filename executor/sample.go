@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"sort"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/tikv/client-go/v2/tikv"
+	"golang.org/x/exp/slices"
 )
 
 var _ Executor = &TableSampleExecutor{}
@@ -228,8 +228,8 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 }
 
 func sortRanges(ranges []kv.KeyRange, isDesc bool) {
-	sort.Slice(ranges, func(i, j int) bool {
-		ir, jr := ranges[i].StartKey, ranges[j].StartKey
+	slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+		ir, jr := i.StartKey, j.StartKey
 		if !isDesc {
 			return ir.Cmp(jr) < 0
 		}
