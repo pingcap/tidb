@@ -619,12 +619,14 @@ func newBatchPointGetPlan(
 			handles[i] = kv.IntHandle(intDatum.GetInt64())
 			handleParams[i] = con
 			pairs := []nameValuePair{{colName: handleCol.Name.L, colFieldType: item.GetType(), value: *intDatum, con: con}}
-			tmpPartitionDefinition, _, isTableDual := getPartitionInfo(ctx, tbl, pairs)
-			if isTableDual {
-				return nil
-			}
-			if tmpPartitionDefinition != nil {
-				partitionInfos = append(partitionInfos, tmpPartitionDefinition)
+			if tbl.GetPartitionInfo() != nil {
+				tmpPartitionDefinition, _, isTableDual := getPartitionInfo(ctx, tbl, pairs)
+				if isTableDual {
+					return nil
+				}
+				if tmpPartitionDefinition != nil {
+					partitionInfos = append(partitionInfos, tmpPartitionDefinition)
+				}
 			}
 		}
 
@@ -802,12 +804,14 @@ func newBatchPointGetPlan(
 		}
 		indexValues[i] = values
 		indexValueParams[i] = valuesParams
-		tmpPartitionInfo, _, isTableDual := getPartitionInfo(ctx, tbl, pairs)
-		if isTableDual {
-			return nil
-		}
-		if tmpPartitionInfo != nil {
-			partitionInfos = append(partitionInfos, tmpPartitionInfo)
+		if tbl.GetPartitionInfo() != nil {
+			tmpPartitionInfo, _, isTableDual := getPartitionInfo(ctx, tbl, pairs)
+			if isTableDual {
+				return nil
+			}
+			if tmpPartitionInfo != nil {
+				partitionInfos = append(partitionInfos, tmpPartitionInfo)
+			}
 		}
 
 	}
