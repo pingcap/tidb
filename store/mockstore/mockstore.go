@@ -95,6 +95,15 @@ type mockOptions struct {
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
 type MockTiKVStoreOption func(*mockOptions)
 
+// WithMultipleOptions merges multiple options into one option.
+func WithMultipleOptions(opts ...MockTiKVStoreOption) MockTiKVStoreOption {
+	return func(args *mockOptions) {
+		for _, opt := range opts {
+			opt(args)
+		}
+	}
+}
+
 // WithClientHijacker hijacks KV client's behavior, makes it easy to simulate the network
 // problem between TiDB and TiKV.
 func WithClientHijacker(hijacker func(tikv.Client) tikv.Client) MockTiKVStoreOption {

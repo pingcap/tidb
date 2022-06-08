@@ -23,16 +23,17 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
@@ -47,9 +48,12 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerAfterBuildExecutor", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerAfterPessimisticLockErrorRetry", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertNotStaleReadForExecutorGetReadTS", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan", "return"))
 
 	store, do, clean := testkit.CreateMockStoreAndDomain(t)
 
@@ -74,9 +78,12 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerAfterBuildExecutor"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerAfterPessimisticLockErrorRetry"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertNotStaleReadForExecutorGetReadTS"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan"))
 
 		tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
 		tk.Session().SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
@@ -396,6 +403,7 @@ func TestTxnContextForHistoricalRead(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%s', '') ON DUPLICATE KEY UPDATE variable_value = '%s', comment=''`, safePoint, safePoint))
 
 	is1 := do.InfoSchema()
+	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("set @a=now(6)")
 	// change schema
 	tk.MustExec("alter table t2 add column(c1 int)")
@@ -450,6 +458,7 @@ func TestTxnContextForStaleRead(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%s', '') ON DUPLICATE KEY UPDATE variable_value = '%s', comment=''`, safePoint, safePoint))
 
 	is1 := do.InfoSchema()
+	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("set @a=now(6)")
 	time.Sleep(time.Millisecond * 1200)
 
@@ -515,6 +524,9 @@ func TestTxnContextForStaleRead(t *testing.T) {
 func TestTxnContextForPrepareExecute(t *testing.T) {
 	store, do, deferFunc := setupTxnContextTest(t)
 	defer deferFunc()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -542,8 +554,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	})
 
 	// Test PlanCache
-	path = []string{"assertTxnManagerInCachedPlanExec", "assertTxnManagerInShortPointGetPlan"}
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, nil, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -584,6 +595,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	se := tk.Session()
 
 	is1 := do.InfoSchema()
+	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("set @a=now(6)")
 	tk.MustExec("prepare s1 from 'select * from t1 where id=1'")
 	tk.MustExec("prepare s2 from 'select * from t1 as of timestamp @a where id=1 '")
@@ -676,16 +688,15 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 11"))
 	})
 
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, do.InfoSchema())
 	path := append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
 	doWithCheckPath(t, se, path, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
-		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11 100"))
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
 	})
 
 	doWithCheckPath(t, se, normalPathRecords, func() {
-		tk.MustQuery("execute s").Check(testkit.Rows("1 11 100"))
+		tk.MustQuery("execute s").Check(testkit.Rows("1 11"))
 	})
 
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)

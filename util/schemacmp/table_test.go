@@ -18,7 +18,6 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser"
@@ -31,10 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/schemacmp"
 	"github.com/stretchr/testify/require"
 )
-
-func Test(t *testing.T) {
-	TestingT(t)
-}
 
 func toTableInfo(parser *parser.Parser, sctx sessionctx.Context, createTableStmt string) (*model.TableInfo, error) {
 	node, err := parser.ParseOneStmt(createTableStmt, "", "")
@@ -59,7 +54,7 @@ func checkDecodeFieldTypes(t *testing.T, info *model.TableInfo, tt schemacmp.Tab
 }
 
 func TestJoinSchemas(t *testing.T) {
-	parser := parser.New()
+	p := parser.New()
 	sctx := mock.NewContext()
 	testCases := []struct {
 		name    string
@@ -437,9 +432,9 @@ func TestJoinSchemas(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tia, err := toTableInfo(parser, sctx, tc.a)
+		tia, err := toTableInfo(p, sctx, tc.a)
 		require.NoError(t, err)
-		tib, err := toTableInfo(parser, sctx, tc.b)
+		tib, err := toTableInfo(p, sctx, tc.b)
 		require.NoError(t, err)
 
 		a := schemacmp.Encode(tia)
@@ -448,7 +443,7 @@ func TestJoinSchemas(t *testing.T) {
 		checkDecodeFieldTypes(t, tib, b)
 		var j schemacmp.Table
 		if len(tc.joinErr) == 0 {
-			tij, err := toTableInfo(parser, sctx, tc.join)
+			tij, err := toTableInfo(p, sctx, tc.join)
 			require.NoError(t, err)
 			j = schemacmp.Encode(tij)
 		}
@@ -501,9 +496,9 @@ func TestJoinSchemas(t *testing.T) {
 }
 
 func TestTableString(t *testing.T) {
-	parser := parser.New()
+	p := parser.New()
 	sctx := mock.NewContext()
-	ti, err := toTableInfo(parser, sctx, "CREATE TABLE tb (a INT, b INT)")
+	ti, err := toTableInfo(p, sctx, "CREATE TABLE tb (a INT, b INT)")
 	require.NoError(t, err)
 
 	charsets := []string{"", mysql.DefaultCharset}
@@ -515,7 +510,7 @@ func TestTableString(t *testing.T) {
 			sql := strings.ToLower(schemacmp.Encode(ti).String())
 			require.Equal(t, charset != "", strings.Contains(sql, "charset"))
 			require.Equal(t, collate != "", strings.Contains(sql, "collate"))
-			_, err := toTableInfo(parser, sctx, sql)
+			_, err := toTableInfo(p, sctx, sql)
 			require.NoError(t, err)
 		}
 	}

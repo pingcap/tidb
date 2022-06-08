@@ -75,6 +75,10 @@ const (
 	AssertionFastStr = "FAST"
 	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
 	AssertionOffStr = "OFF"
+	// OOMActionCancel constants represents the valid action configurations for OOMAction "CANCEL".
+	OOMActionCancel = "CANCEL"
+	// OOMActionLog constants represents the valid action configurations for OOMAction "LOG".
+	OOMActionLog = "LOG"
 )
 
 // Global config name list.
@@ -401,7 +405,6 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 	if val > sv.MaxValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
 		return strconv.FormatUint(sv.MaxValue, 10), nil
-
 	}
 	return value, nil
 }
@@ -513,13 +516,26 @@ func (sv *SysVar) SkipInit() bool {
 	// These a special "Global-only" sysvars that for backward compatibility
 	// are currently cached in the session. Please don't add to this list.
 	switch sv.Name {
-	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
-		TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
-		TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
-		TiDBEnableTelemetry, TiDBEnablePointGetCache:
+	case TiDBRowFormatVersion:
 		return false
 	}
 	return !sv.HasSessionScope()
+}
+
+// SkipSysvarCache returns true if the sysvar should not re-execute on peers
+// This doesn't make sense for the GC variables because they are based in tikv
+// tables. We'd effectively be reading and writing to the same table, which
+// could be in an unsafe manner. In future these variables might be converted
+// to not use a different table internally, but to do that we need to first
+// fix upgrade/downgrade so we know that older servers won't be in the cluster
+// which update only these values.
+func (sv *SysVar) SkipSysvarCache() bool {
+	switch sv.Name {
+	case TiDBGCEnable, TiDBGCRunInterval, TiDBGCLifetime,
+		TiDBGCConcurrency, TiDBGCScanLockMode:
+		return true
+	}
+	return false
 }
 
 var sysVars map[string]*SysVar

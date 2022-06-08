@@ -141,6 +141,10 @@ func TestTiDBClusterConfig(t *testing.T) {
 				"index-usage-sync-lease": "0s",
 				"INDEX-USAGE-SYNC-LEASE": "0s",
 			},
+			"enable-batch-dml": "false",
+			"prepared-plan-cache": map[string]string{
+				"enabled": "true",
+			},
 		}
 		return configuration, nil
 	}
@@ -203,7 +207,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 		"pd key2.nest2 n-value2",
 	))
 	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-	require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnigns: %+v", warnings))
+	require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnings: %+v", warnings))
 	require.Equal(t, int32(12), requestCounter)
 
 	// TODO: we need remove it when index usage is GA.
@@ -213,6 +217,10 @@ func TestTiDBClusterConfig(t *testing.T) {
 		require.True(t, ok)
 		require.NotContains(t, s, "index-usage-sync-lease")
 		require.NotContains(t, s, "INDEX-USAGE-SYNC-LEASE")
+		// Should not contain deprecated items
+		// https://github.com/pingcap/tidb/issues/34867
+		require.NotContains(t, s, "enable-batch-dml")
+		require.NotContains(t, s, "prepared-plan-cache.enabled")
 	}
 
 	// type => server index => row

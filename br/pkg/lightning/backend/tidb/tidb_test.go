@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -219,10 +219,10 @@ func testStrictMode(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	ft := *types.NewFieldType(mysql.TypeVarchar)
-	ft.Charset = charset.CharsetUTF8MB4
+	ft.SetCharset(charset.CharsetUTF8MB4)
 	col0 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
 	ft = *types.NewFieldType(mysql.TypeString)
-	ft.Charset = charset.CharsetASCII
+	ft.SetCharset(charset.CharsetASCII)
 	col1 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
 	tblInfo := &model.TableInfo{ID: 1, Columns: []*model.ColumnInfo{col0, col1}, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
@@ -270,6 +270,8 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.AutoIncrementFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
 			Name:       model.NewCIStr("t"),
@@ -277,12 +279,10 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.AutoIncrementFlag,
-					},
+					Name:      model.NewCIStr("id"),
+					Offset:    0,
+					State:     model.StatePublic,
+					FieldType: ft,
 				},
 			},
 		},
@@ -307,6 +307,8 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.AutoIncrementFlag | mysql.UnsignedFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
 			Name:       model.NewCIStr("t"),
@@ -314,12 +316,10 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.AutoIncrementFlag | mysql.UnsignedFlag,
-					},
+					Name:      model.NewCIStr("id"),
+					Offset:    0,
+					State:     model.StatePublic,
+					FieldType: ft,
 				},
 			},
 		},
@@ -344,6 +344,8 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.AutoIncrementFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
 			Name:       model.NewCIStr("t"),
@@ -351,12 +353,10 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.AutoIncrementFlag,
-					},
+					Name:      model.NewCIStr("id"),
+					Offset:    0,
+					State:     model.StatePublic,
+					FieldType: ft,
 				},
 			},
 		},
@@ -381,6 +381,8 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.PriKeyFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
 			Name:           model.NewCIStr("t"),
@@ -389,12 +391,10 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 			AutoRandomBits: 1,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.PriKeyFlag,
-					},
+					Name:                model.NewCIStr("id"),
+					Offset:              0,
+					State:               model.StatePublic,
+					FieldType:           ft,
 					GeneratedExprString: "1 + 2",
 				},
 			},
@@ -424,7 +424,7 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)
-	require.False(t, utils.IsRetryableError(err), "err: %v", err)
+	require.False(t, common.IsRetryableError(err), "err: %v", err)
 }
 
 func TestWriteRowsErrorDowngradingAll(t *testing.T) {
@@ -594,6 +594,14 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	rawRow := make([]types.Datum, 0)
+	for i := 0; i < 15; i++ {
+		rawRow = append(rawRow, types.NewIntDatum(0))
+	}
+	row, err = encoder.Encode(logger, rawRow, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "12.csv", 0)
+	require.NotNil(t, err)
+	require.Contains(t, err.Error(), "column count mismatch, at most")
 	return dataRows
 }
 

@@ -20,8 +20,10 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -36,20 +38,23 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	goutil "github.com/pingcap/tidb/util"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -174,7 +179,7 @@ type DDL interface {
 	// GetID gets the ddl ID.
 	GetID() string
 	// GetTableMaxHandle gets the max row ID of a normal table or a partition.
-	GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
+	GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetHook gets the hook. It's exported for testing.
@@ -193,8 +198,6 @@ type limitJobTask struct {
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
 	m          sync.RWMutex
-	ctx        context.Context
-	cancel     context.CancelFunc
 	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 	limitJobCh chan *limitJobTask
 
@@ -207,6 +210,8 @@ type ddl struct {
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
+	ctx          context.Context
+	cancel       context.CancelFunc
 	uuid         string
 	store        kv.Storage
 	ownerManager owner.Manager
@@ -219,6 +224,19 @@ type ddlCtx struct {
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
+
+	// reorgCtx is used for reorganization.
+	reorgCtx struct {
+		sync.RWMutex
+		// reorgCtxMap maps job ID to reorg context.
+		reorgCtxMap map[int64]*reorgCtx
+	}
+
+	jobCtx struct {
+		sync.RWMutex
+		// jobCtxMap maps job ID to job's ctx.
+		jobCtxMap map[int64]*JobContext
+	}
 
 	// hook may be modified.
 	mu struct {
@@ -240,6 +258,77 @@ func (dc *ddlCtx) isOwner() bool {
 		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
 	return isOwner
+}
+
+func (dc *ddlCtx) setDDLLabelForTopSQL(job *model.Job) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	if !exists {
+		ctx = NewJobContext()
+		dc.jobCtx.jobCtxMap[job.ID] = ctx
+	}
+	ctx.setDDLLabelForTopSQL(job)
+}
+
+func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(job *model.Job) tikvrpc.ResourceGroupTagger {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	if !exists {
+		return nil
+	}
+	return ctx.getResourceGroupTaggerForTopSQL()
+}
+
+func (dc *ddlCtx) removeJobCtx(job *model.Job) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	delete(dc.jobCtx.jobCtxMap, job.ID)
+}
+
+func (dc *ddlCtx) jobContext(job *model.Job) *JobContext {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	if jobContext, exists := dc.jobCtx.jobCtxMap[job.ID]; exists {
+		return jobContext
+	}
+	return NewJobContext()
+}
+
+func (dc *ddlCtx) getReorgCtx(job *model.Job) *reorgCtx {
+	dc.reorgCtx.RLock()
+	defer dc.reorgCtx.RUnlock()
+	return dc.reorgCtx.reorgCtxMap[job.ID]
+}
+
+func (dc *ddlCtx) newReorgCtx(r *reorgInfo) *reorgCtx {
+	rc := &reorgCtx{}
+	rc.doneCh = make(chan error, 1)
+	// initial reorgCtx
+	rc.setRowCount(r.Job.GetRowCount())
+	rc.setNextKey(r.StartKey)
+	rc.setCurrentElement(r.currElement)
+	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
+	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
+	dc.reorgCtx.Lock()
+	defer dc.reorgCtx.Unlock()
+	dc.reorgCtx.reorgCtxMap[r.Job.ID] = rc
+	return rc
+}
+
+func (dc *ddlCtx) removeReorgCtx(job *model.Job) {
+	dc.reorgCtx.Lock()
+	defer dc.reorgCtx.Unlock()
+	delete(dc.reorgCtx.reorgCtxMap, job.ID)
+}
+
+func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
+	rc := dc.getReorgCtx(job)
+	if rc == nil {
+		return
+	}
+	rc.notifyReorgCancel()
 }
 
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
@@ -340,14 +429,16 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		tableLockCkr: deadLockCkr,
 		etcdCli:      opt.EtcdCli,
 	}
+	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
+	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
+	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	d := &ddl{
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 	}
-	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	return d
 }
@@ -379,8 +470,8 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 
-	d.wg.Add(1)
-	go d.limitDDLJobs()
+	d.wg.Run(d.limitDDLJobs)
+	d.sessPool = newSessionPool(ctxPool, d.store)
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
@@ -391,7 +482,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		}
 
 		d.workers = make(map[workerType]*worker, 2)
-		d.sessPool = newSessionPool(ctxPool)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
 		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
@@ -407,11 +497,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			asyncNotify(worker.ddlJobCh)
 		}
 
-		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
-			return err
-		})
+		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
 		if err != nil {
 			return err
 		}
@@ -432,6 +518,18 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Run(d.PollTiFlashRoutine)
 
 	return nil
+}
+
+// GetNextDDLSeqNum return the next ddl seq num.
+func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
+	var count uint64
+	err := kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err error
+		count, err = t.GetHistoryDDLCount()
+		return err
+	})
+	return count, err
 }
 
 func (d *ddl) close() {
@@ -561,29 +659,13 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-// mayNeedReorg indicates that this job may need to reorganize the data.
-func mayNeedReorg(job *model.Job) bool {
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		return true
-	case model.ActionModifyColumn:
-		if len(job.CtxVars) > 0 {
-			needReorg, ok := job.CtxVars[0].(bool)
-			return ok && needReorg
-		}
-		return false
-	default:
-		return false
-	}
-}
-
 func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	// If the workers don't run, we needn't notify workers.
 	if !RunWorker {
 		return
 	}
 	var worker *worker
-	if mayNeedReorg(job) {
+	if job.MayNeedReorg() {
 		worker = d.workers[addIdxWorker]
 	} else {
 		worker = d.workers[generalWorker]
@@ -611,69 +693,6 @@ func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
 	}
 	ctx.GetSessionVars().LastDDLInfo.Query = job.Query
 	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
-}
-
-// DoDDLJob will return
-func checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
-	if !(flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil) {
-		return
-	}
-
-	// Check binlog.
-	if historyJob.BinlogInfo.FinishedTS == 0 {
-		panic(fmt.Sprintf("job ID %d, BinlogInfo.FinishedTS is 0", historyJob.ID))
-	}
-
-	// Check DDL query.
-	switch historyJob.Type {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
-		if historyJob.Query != "" {
-			panic(fmt.Sprintf("job ID %d, type %s, query %s", historyJob.ID, historyJob.Type.String(), historyJob.Query))
-		}
-		return
-	default:
-		if historyJob.Query == "skip" {
-			// Skip the check if the test explicitly set the query.
-			return
-		}
-	}
-	p := parser.New()
-	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
-	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
-	stmt, _, err := p.ParseSQL(historyJob.Query)
-	if err != nil {
-		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s, err %s", historyJob.ID, historyJob.Query, err.Error()))
-	}
-	if len(stmt) != 1 && historyJob.Type != model.ActionCreateTables {
-		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-	}
-	for _, st := range stmt {
-		switch historyJob.Type {
-		case model.ActionCreatePlacementPolicy:
-			if _, ok := st.(*ast.CreatePlacementPolicyStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateTable:
-			if _, ok := st.(*ast.CreateTableStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateSchema:
-			if _, ok := st.(*ast.CreateDatabaseStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateTables:
-			_, isCreateTable := st.(*ast.CreateTableStmt)
-			_, isCreateSeq := st.(*ast.CreateSequenceStmt)
-			_, isCreateView := st.(*ast.CreateViewStmt)
-			if !isCreateTable && !isCreateSeq && !isCreateView {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		default:
-			if _, ok := st.(ast.DDLNode); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		}
-	}
 }
 
 func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
@@ -748,7 +767,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			continue
 		}
 
-		checkHistoryJobInTest(ctx, historyJob)
+		d.checkHistoryJobInTest(ctx, historyJob)
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
@@ -920,4 +939,249 @@ func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 		}
 	}
 	return false, nil
+}
+
+// Info is for DDL information.
+type Info struct {
+	SchemaVer   int64
+	ReorgHandle kv.Key       // It's only used for DDL information.
+	Jobs        []*model.Job // It's the currently running jobs.
+}
+
+// GetDDLInfo returns DDL information.
+func GetDDLInfo(txn kv.Transaction) (*Info, error) {
+	var err error
+	info := &Info{}
+	t := meta.NewMeta(txn)
+
+	info.Jobs = make([]*model.Job, 0, 2)
+	job, err := t.GetDDLJobByIdx(0)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if job != nil {
+		info.Jobs = append(info.Jobs, job)
+	}
+	addIdxJob, err := t.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if addIdxJob != nil {
+		info.Jobs = append(info.Jobs, addIdxJob)
+	}
+
+	info.SchemaVer, err = t.GetSchemaVersion()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if addIdxJob == nil {
+		return info, nil
+	}
+
+	_, info.ReorgHandle, _, _, err = newReorgHandler(t).GetDDLReorgHandle(addIdxJob)
+	if err != nil {
+		if meta.ErrDDLReorgElementNotExist.Equal(err) {
+			return info, nil
+		}
+		return nil, errors.Trace(err)
+	}
+
+	return info, nil
+}
+
+// CancelJobs cancels the DDL jobs.
+func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	errs := make([]error, len(ids))
+	t := meta.NewMeta(txn)
+	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := append(generalJobs, addIdxJobs...)
+	jobsMap := make(map[int64]int)
+	for i, id := range ids {
+		jobsMap[id] = i
+	}
+	for j, job := range jobs {
+		i, ok := jobsMap[job.ID]
+		if !ok {
+			logutil.BgLogger().Debug("the job that needs to be canceled isn't equal to current job",
+				zap.Int64("need to canceled job ID", job.ID),
+				zap.Int64("current job ID", job.ID))
+			continue
+		}
+		delete(jobsMap, job.ID)
+		// These states can't be cancelled.
+		if job.IsDone() || job.IsSynced() {
+			errs[i] = dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
+		if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
+			continue
+		}
+		if !job.IsRollbackable() {
+			errs[i] = dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+
+		job.State = model.JobStateCancelling
+		// Make sure RawArgs isn't overwritten.
+		err := json.Unmarshal(job.RawArgs, &job.Args)
+		if err != nil {
+			errs[i] = errors.Trace(err)
+			continue
+		}
+		if j >= len(generalJobs) {
+			offset := int64(j - len(generalJobs))
+			err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
+		} else {
+			err = t.UpdateDDLJob(int64(j), job, true)
+		}
+		if err != nil {
+			errs[i] = errors.Trace(err)
+		}
+	}
+	for id, i := range jobsMap {
+		errs[i] = dbterror.ErrDDLJobNotFound.GenWithStackByArgs(id)
+	}
+	return errs, nil
+}
+
+func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
+	cnt, err := t.DDLJobQueueLen(jobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := make([]*model.Job, cnt)
+	for i := range jobs {
+		jobs[i], err = t.GetDDLJobByIdx(int64(i), jobListKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return jobs, nil
+}
+
+// GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
+func GetAllDDLJobs(t *meta.Meta) ([]*model.Job, error) {
+	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := append(generalJobs, addIdxJobs...)
+	sort.Sort(jobArray(jobs))
+	return jobs, nil
+}
+
+type jobArray []*model.Job
+
+func (v jobArray) Len() int {
+	return len(v)
+}
+
+func (v jobArray) Less(i, j int) bool {
+	return v[i].ID < v[j].ID
+}
+
+func (v jobArray) Swap(i, j int) {
+	v[i], v[j] = v[j], v[i]
+}
+
+// MaxHistoryJobs is exported for testing.
+const MaxHistoryJobs = 10
+
+// DefNumHistoryJobs is default value of the default number of history job
+const DefNumHistoryJobs = 10
+
+// GetHistoryDDLJobs returns the DDL history jobs and an error.
+// The maximum count of history jobs is num.
+func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
+	t := meta.NewMeta(txn)
+	jobs, err := t.GetLastNHistoryDDLJobs(maxNumJobs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return jobs, nil
+}
+
+// IterHistoryDDLJobs iterates history DDL jobs until the `finishFn` return true or error.
+func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+	txnMeta := meta.NewMeta(txn)
+	iter, err := txnMeta.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	cacheJobs := make([]*model.Job, 0, DefNumHistoryJobs)
+	for {
+		cacheJobs, err = iter.GetLastJobs(DefNumHistoryJobs, cacheJobs)
+		if err != nil || len(cacheJobs) == 0 {
+			return err
+		}
+		finish, err := finishFn(cacheJobs)
+		if err != nil || finish {
+			return err
+		}
+	}
+}
+
+// IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
+// then iterates history DDL jobs until the `finishFn` return true or error.
+func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+	jobs, err := GetAllDDLJobs(meta.NewMeta(txn))
+	if err != nil {
+		return err
+	}
+
+	finish, err := finishFn(jobs)
+	if err != nil || finish {
+		return err
+	}
+	return IterHistoryDDLJobs(txn, finishFn)
+}
+
+// GetAllHistoryDDLJobs get all the done DDL jobs.
+func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
+	return m.GetAllHistoryDDLJobs()
+}
+
+// GetHistoryJobByID return history DDL job by ID.
+func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
+	err := sessiontxn.NewTxn(context.Background(), sess)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		// we can ignore the commit error because this txn is readonly.
+		_ = sess.CommitTxn(context.Background())
+	}()
+	txn, err := sess.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	t := meta.NewMeta(txn)
+	job, err := t.GetHistoryDDLJob(id)
+	return job, errors.Trace(err)
+}
+
+// AddHistoryDDLJob adds DDL job to history table.
+func AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+	return t.AddHistoryDDLJob(job, updateRawArgs)
+}
+
+// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+func GetLastHistoryDDLJobsIterator(m *meta.Meta) (meta.LastJobIterator, error) {
+	return m.GetLastHistoryDDLJobsIterator()
 }

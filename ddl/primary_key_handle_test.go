@@ -40,7 +40,7 @@ import (
 func getTableMaxHandle(t *testing.T, d ddl.DDL, tbl table.Table, store kv.Storage) (kv.Handle, bool) {
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	maxHandle, emptyTable, err := d.GetTableMaxHandle(ver.Ver, tbl.(table.PhysicalTable))
+	maxHandle, emptyTable, err := d.GetTableMaxHandle(ddl.NewJobContext(), ver.Ver, tbl.(table.PhysicalTable))
 	require.NoError(t, err)
 	return maxHandle, emptyTable
 }

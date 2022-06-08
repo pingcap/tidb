@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"go.uber.org/zap"
@@ -152,7 +152,7 @@ type AbstractBackend interface {
 	// ImportEngine imports engine data to the backend. If it returns ErrDuplicateDetected,
 	// it means there is duplicate detected. For this situation, all data in the engine must be imported.
 	// It's safe to reset or cleanup this engine.
-	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize int64) error
+	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error
 
 	CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
 
@@ -315,7 +315,7 @@ func (be Backend) CheckDiskQuota(quota int64) (
 // into the target and then reset the engine to empty. This method will not
 // close the engine. Make sure the engine is flushed manually before calling
 // this method.
-func (be Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID, regionSplitSize int64) error {
+func (be Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	// DO NOT call be.abstract.CloseEngine()! The engine should still be writable after
 	// calling UnsafeImportAndReset().
 	closedEngine := ClosedEngine{
@@ -325,7 +325,7 @@ func (be Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID
 			uuid:    engineUUID,
 		},
 	}
-	if err := closedEngine.Import(ctx, regionSplitSize); err != nil {
+	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {
 		return err
 	}
 	return be.abstract.ResetEngine(ctx, engineUUID)
@@ -445,13 +445,13 @@ func (en engine) unsafeClose(ctx context.Context, cfg *EngineConfig) (*ClosedEng
 }
 
 // Import the data written to the engine into the target.
-func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize int64) error {
+func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionSplitKeys int64) error {
 	var err error
 
 	for i := 0; i < importMaxRetryTimes; i++ {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
-		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize)
-		if !utils.IsRetryableError(err) {
+		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
+		if !common.IsRetryableError(err) {
 			task.End(zap.ErrorLevel, err)
 			return err
 		}

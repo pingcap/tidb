@@ -120,7 +120,7 @@ func TestModelBasic(t *testing.T) {
 		FieldType:    *types.NewFieldType(0),
 		Hidden:       true,
 	}
-	column.Flag |= mysql.PriKeyFlag
+	column.AddFlag(mysql.PriKeyFlag)
 
 	index := &IndexInfo{
 		Name:  NewCIStr("key"),
@@ -194,7 +194,7 @@ func TestModelBasic(t *testing.T) {
 	require.False(t, table2.IsBaseTable())
 
 	// Corner cases
-	column.Flag ^= mysql.PriKeyFlag
+	column.ToggleFlag(mysql.PriKeyFlag)
 	pkName = table.GetPkName()
 	require.Equal(t, NewCIStr(""), pkName)
 	newColumn = table.GetPkColInfo()
@@ -211,9 +211,9 @@ func TestModelBasic(t *testing.T) {
 	require.Equal(t, false, no)
 
 	extraPK := NewExtraHandleColInfo()
-	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.Flag)
-	require.Equal(t, charset.CharsetBin, extraPK.Charset)
-	require.Equal(t, charset.CollationBin, extraPK.Collate)
+	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.GetFlag())
+	require.Equal(t, charset.CharsetBin, extraPK.GetCharset())
+	require.Equal(t, charset.CollationBin, extraPK.GetCollate())
 }
 
 func TestJobStartTime(t *testing.T) {
@@ -222,7 +222,7 @@ func TestJobStartTime(t *testing.T) {
 		BinlogInfo: &HistoryInfo{},
 	}
 	require.Equal(t, TSConvert2Time(job.StartTS), time.Unix(0, 0))
-	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:queueing, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0", time.Unix(0, 0)), job.String())
+	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0", time.Unix(0, 0)), job.String())
 }
 
 func TestJobCodec(t *testing.T) {
@@ -478,11 +478,11 @@ func TestDefaultValue(t *testing.T) {
 		err = json.Unmarshal(bytes, &newCol)
 		require.NoError(t, err, comment)
 		if isConsistent {
-			require.Equal(t, newCol.GetDefaultValue(), col.GetDefaultValue())
-			require.Equal(t, newCol.GetOriginDefaultValue(), col.GetOriginDefaultValue())
+			require.Equal(t, col.GetDefaultValue(), newCol.GetDefaultValue(), comment)
+			require.Equal(t, col.GetOriginDefaultValue(), newCol.GetOriginDefaultValue(), comment)
 		} else {
-			require.False(t, col.DefaultValue == newCol.DefaultValue, comment)
-			require.False(t, col.DefaultValue == newCol.DefaultValue, comment)
+			require.NotEqual(t, col.GetDefaultValue(), newCol.GetDefaultValue(), comment)
+			require.NotEqual(t, col.GetOriginDefaultValue(), newCol.GetOriginDefaultValue(), comment)
 		}
 	}
 }

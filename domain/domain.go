@@ -86,7 +86,7 @@ type Domain struct {
 	sysVarCache          sysVarCache // replaces GlobalVariableCache
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
-	wg                   sync.WaitGroup
+	wg                   util.WaitGroupWrapper
 	statsUpdating        atomicutil.Int32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
@@ -100,6 +100,16 @@ type Domain struct {
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
+}
+
+// InfoCache export for test.
+func (do *Domain) InfoCache() *infoschema.InfoCache {
+	return do.infoCache
+}
+
+// EtcdClient export for test.
+func (do *Domain) EtcdClient() *clientv3.Client {
+	return do.etcdClient
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -154,17 +164,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	bundles, err := infosync.GetAllRuleBundles(context.TODO())
-	if err != nil {
-		return nil, false, currentSchemaVersion, nil, err
-	}
-
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -287,6 +292,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		diffs = append(diffs, diff)
 	}
 	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -736,6 +742,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
+	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
 	return do
 }
 
@@ -811,7 +818,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		}
 	})
 
-	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
+	if config.GetGlobalConfig().EnableGlobalKill {
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
 			if err != nil {
@@ -902,12 +909,24 @@ func (p *sessionPool) Get() (resource pools.Resource, err error) {
 	default:
 		resource, err = p.factory()
 	}
+
+	// Put the internal session to the map of SessionManager
+	failpoint.Inject("mockSessionPoolReturnError", func() {
+		err = errors.New("mockSessionPoolReturnError")
+	})
+
+	if nil == err {
+		infosync.StoreInternalSession(resource)
+	}
+
 	return
 }
 
 func (p *sessionPool) Put(resource pools.Resource) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	// Delete the internal session to the map of SessionManager
+	infosync.DeleteInternalSession(resource)
 	if p.mu.closed {
 		resource.Close()
 		return
@@ -1251,7 +1270,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
 	if err != nil {
 		return err
 	}
@@ -1273,9 +1292,6 @@ func (do *Domain) SetStatsUpdating(val bool) {
 	}
 }
 
-// RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
-var RunAutoAnalyze = true
-
 // LoadAndUpdateStatsLoop loads and updates stats info.
 func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
 	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
@@ -1290,7 +1306,7 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
 	if err != nil {
 		return err
 	}
@@ -1298,8 +1314,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
-		do.wg.Add(1)
-		go do.loadStatsWorker()
+		do.wg.Run(do.loadStatsWorker)
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
@@ -1309,13 +1324,10 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	if do.statsLease <= 0 {
 		return nil
 	}
-	do.wg.Add(1)
 	do.SetStatsUpdating(true)
-	go do.updateStatsWorker(ctx, owner)
-	if RunAutoAnalyze {
-		do.wg.Add(1)
-		go do.autoAnalyzeWorker(owner)
-	}
+	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
+	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
+	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
 	return nil
 }
 
@@ -1354,7 +1366,6 @@ func (do *Domain) loadStatsWorker() {
 	loadTicker := time.NewTicker(lease)
 	defer func() {
 		loadTicker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 	statsHandle := do.StatsHandle()
@@ -1432,7 +1443,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
 		do.SetStatsUpdating(false)
-		do.wg.Done()
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
 	for {
@@ -1490,14 +1500,39 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
 	}()
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if owner.IsOwner() {
+			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
+	const gcInterval = time.Hour
+	statsHandle := do.StatsHandle()
+	gcTicker := time.NewTicker(gcInterval)
+	defer func() {
+		gcTicker.Stop()
+		logutil.BgLogger().Info("gcAnalyzeHistory exited.")
+	}()
+	for {
+		select {
+		case <-gcTicker.C:
+			if owner.IsOwner() {
+				const DaysToKeep = 7
+				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
+				err := statsHandle.DeleteAnalyzeJobs(updateTime)
+				if err != nil {
+					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
+				}
 			}
 		case <-do.exit:
 			return
@@ -1794,12 +1829,6 @@ func (do *Domain) serverIDKeeper() {
 			return
 		}
 	}
-}
-
-// MockInfoCacheAndLoadInfoSchema only used in unit test
-func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
-	do.infoCache = infoschema.NewCache(16)
-	do.infoCache.Insert(is, 0)
 }
 
 func init() {

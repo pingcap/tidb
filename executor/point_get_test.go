@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -414,6 +415,7 @@ func TestSelectCheckVisibility(t *testing.T) {
 	checkSelectResultError := func(sql string, expectErr *terror.Error) {
 		re, err := tk.Exec(sql)
 		require.NoError(t, err)
+		defer re.Close()
 		_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), re)
 		require.Error(t, err)
 		require.True(t, expectErr.Equal(err))
@@ -683,8 +685,6 @@ func TestPointGetWriteLock(t *testing.T) {
 }
 
 func TestPointGetLockExistKey(t *testing.T) {
-	var wg util.WaitGroupWrapper
-
 	testLock := func(rc bool, key string, tableName string) {
 		store, clean := testkit.CreateMockStore(t)
 		defer clean()
@@ -783,6 +783,7 @@ func TestPointGetLockExistKey(t *testing.T) {
 		))
 	}
 
+	var wg sync.WaitGroup
 	for i, one := range []struct {
 		rc  bool
 		key string
@@ -792,10 +793,12 @@ func TestPointGetLockExistKey(t *testing.T) {
 		{rc: true, key: "primary key"},
 		{rc: true, key: "unique key"},
 	} {
+		wg.Add(1)
 		tableName := fmt.Sprintf("t_%d", i)
-		wg.Run(func() {
-			testLock(one.rc, one.key, tableName)
-		})
+		go func(rc bool, key string, tableName string) {
+			defer wg.Done()
+			testLock(rc, key, tableName)
+		}(one.rc, one.key, tableName)
 	}
 	wg.Wait()
 }

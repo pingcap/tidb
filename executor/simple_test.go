@@ -585,6 +585,14 @@ func TestSetPwd(t *testing.T) {
 func TestKillStmt(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalKill = false
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	sm := &mockSessionManager{
@@ -595,10 +603,9 @@ func TestKillStmt(t *testing.T) {
 	result := tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
 
-	originCfg := config.GetGlobalConfig()
-	newCfg := *originCfg
-	newCfg.Experimental.EnableGlobalKill = true
-	config.StoreGlobalConfig(&newCfg)
+	newCfg2 := *originCfg
+	newCfg2.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg2)
 
 	// ZERO serverID, treated as truncated.
 	tk.MustExec("kill 1")
@@ -622,7 +629,6 @@ func TestKillStmt(t *testing.T) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
-	config.StoreGlobalConfig(originCfg)
 	// remote kill is tested in `tests/globalkilltest`
 }
 
@@ -726,6 +732,12 @@ partition by range (a) (
 
 	tk.MustExec("drop stats test_drop_gstats partition p0, p1, global")
 	checkPartitionStats("global")
+
+	tk.MustExec("analyze table test_drop_gstats")
+	checkPartitionStats("global", "p0", "p1", "global")
+
+	tk.MustExec("drop stats test_drop_gstats")
+	checkPartitionStats()
 }
 
 func TestDropStats(t *testing.T) {
@@ -759,37 +771,6 @@ func TestDropStats(t *testing.T) {
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo)
 	h.SetLease(0)
-}
-
-func TestDropStatsFromKV(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (c1 varchar(20), c2 varchar(20))")
-	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
-	tk.MustExec("insert into t select * from t")
-	tk.MustExec("insert into t select * from t")
-	tk.MustExec("analyze table t with 2 topn")
-	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
-	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
-		testkit.Rows("0 16"))
-	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
-		testkit.Rows("1", "2"))
-	ret := tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID)
-	require.True(t, len(ret.Rows()) > 0)
-	ret = tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID)
-	require.True(t, len(ret.Rows()) > 0)
-
-	tk.MustExec("drop stats t")
-	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
-		testkit.Rows("0 16"))
-	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
-		testkit.Rows())
-	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
-		testkit.Rows())
-	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
-		testkit.Rows())
 }
 
 func TestFlushTables(t *testing.T) {
@@ -1048,4 +1029,30 @@ func TestUserWithSetNames(t *testing.T) {
 	tk.MustExec("RENAME USER '\xd2\xbb'@'localhost' to '\xd2\xbb'")
 
 	tk.MustExec("drop user '\xd2\xbb';")
+}
+
+func TestStatementsCauseImplicitCommit(t *testing.T) {
+	// Test some of the implicit commit statements.
+	// See https://dev.mysql.com/doc/refman/5.7/en/implicit-commit.html
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table ic (id int primary key)")
+
+	cases := []string{
+		"create table xx (id int)",
+		"create user 'xx'@'127.0.0.1'",
+		"grant SELECT on test.ic to 'xx'@'127.0.0.1'",
+		"flush privileges",
+		"analyze table ic",
+	}
+	for i, sql := range cases {
+		tk.MustExec("begin")
+		tk.MustExec("insert into ic values (?)", i)
+		tk.MustExec(sql)
+		tk.MustQuery("select * from ic where id = ?", i).Check(testkit.Rows(strconv.FormatInt(int64(i), 10)))
+		// Clean up data
+		tk.MustExec("delete from ic")
+	}
 }

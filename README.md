@@ -14,33 +14,29 @@
 
 TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports Hybrid Transactional and Analytical Processing (HTAP) workloads. It is MySQL compatible and features horizontal scalability, strong consistency, and high availability.
 
-- __Horizontal Scalability__
-
-    TiDB expands both SQL processing and storage by simply adding new nodes. This makes infrastructure capacity planning both easier and more cost-effective than traditional relational databases which only scale vertically.
-
-- __MySQL Compatible Syntax__
-
-    TiDB acts like it is a MySQL 5.7 server to your applications. You can continue to use all of the existing MySQL client libraries, and in many cases, you will not need to change a single line of code in your application. Because TiDB is built from scratch, not a MySQL fork, please check out the list of [known compatibility differences](https://docs.pingcap.com/tidb/stable/mysql-compatibility).
-
-- __Distributed Transactions__
-
-    TiDB internally shards table into small range-based chunks that we refer to as "Regions". Each Region defaults to approximately 100 MiB in size, and TiDB uses an [optimized](https://pingcap.com/blog/async-commit-the-accelerator-for-transaction-commit-in-tidb-5.0) Two-phase commit to ensure that Regions are maintained in a transactionally consistent way.
-
-- __Cloud Native__
-
-    TiDB is designed to work in the cloud -- public, private, or hybrid -- making deployment, provisioning, operations, and maintenance simple.
-
-    The storage layer of TiDB, called TiKV, is a [Cloud Native Computing Foundation (CNCF) Graduated](https://www.cncf.io/announcements/2020/09/02/cloud-native-computing-foundation-announces-tikv-graduation/) project. The architecture of the TiDB platform also allows SQL processing and storage to be scaled independently of each other in a very cloud-friendly manner.
-
-- __Minimize ETL__
-
-    TiDB is designed to support both transaction processing (OLTP) and analytical processing (OLAP) workloads. This means that while you may have traditionally transacted on MySQL and then Extracted, Transformed and Loaded (ETL) data into a column store for analytical processing, this step is no longer required.
-
-- __High Availability__
-
-    TiDB uses the Raft consensus algorithm to ensure that data is highly available and safely replicated throughout storage in Raft groups. In the event of failure, a Raft group will automatically elect a new leader for the failed member, and self-heal the TiDB cluster without any required manual intervention. Failure and self-healing operations are also transparent to applications.
+- [Key features](https://docs.pingcap.com/tidb/stable/overview#key-features)
+- [Architecture](#architecture)
+- [MySQL Compatibility](https://docs.pingcap.com/tidb/stable/mysql-compatibility)
 
 For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
+
+## Quick start
+
+### Start with TiDB Cloud
+
+TiDB Cloud is the fully-managed service of TiDB, currently available on AWS and GCP.
+
+Quickly check out TiDB Cloud with [a free trial](https://tidbcloud.com/signup).
+
+See [TiDB Cloud Quick Start Guide](https://docs.pingcap.com/tidbcloud/tidb-cloud-quickstart).
+
+### Start with TiDB
+
+See [TiDB Quick Start Guide](https://docs.pingcap.com/tidb/stable/quick-start-with-tidb).
+
+### Start developing TiDB
+
+See [Get Started](https://pingcap.github.io/tidb-dev-guide/get-started/introduction.html) chapter of [TiDB Dev Guide](https://pingcap.github.io/tidb-dev-guide/index.html).
 
 ## Community
 
@@ -57,22 +53,6 @@ In addition, you may enjoy following:
 - The PingCAP Team [English Blog](https://en.pingcap.com/blog) and [Chinese Blog](https://pingcap.com/blog-cn/)
 
 For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
-
-## Quick start
-
-### To start using TiDB Cloud
-
-We provide TiDB Cloud - a fully-managed Database as a Service for you.
-
-See [TiDB Cloud Quick Start](https://docs.pingcap.com/tidbcloud/public-preview/tidb-cloud-quickstart).
-
-### To start using TiDB
-
-See [Quick Start Guide](https://docs.pingcap.com/tidb/stable/quick-start-with-tidb).
-
-### To start developing TiDB
-
-See [Get Started](https://pingcap.github.io/tidb-dev-guide/get-started/introduction.html) chapter of [TiDB Dev Guide](https://pingcap.github.io/tidb-dev-guide/index.html).
 
 ## Contributing
 

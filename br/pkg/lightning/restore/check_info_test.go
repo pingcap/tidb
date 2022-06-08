@@ -23,9 +23,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 const passed CheckType = "pass"
@@ -478,7 +478,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	// test auto retry retryable error
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
-		WillReturnError(mysql.NewErr(errno.ErrPDServerTimeout))
+		WillReturnError(&gmysql.MySQLError{Number: errno.ErrPDServerTimeout})
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").

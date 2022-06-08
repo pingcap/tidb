@@ -219,7 +219,7 @@ func ExprNotNull(expr Expression) bool {
 	}
 	// For ScalarFunction, the result would not be correct until we support maintaining
 	// NotNull flag for it.
-	return mysql.HasNotNullFlag(expr.GetType().Flag)
+	return mysql.HasNotNullFlag(expr.GetType().GetFlag())
 }
 
 // HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
@@ -465,7 +465,7 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 				var err error
 				sVal := buf.GetString(i)
 				if tp.Hybrid() {
-					switch tp.Tp {
+					switch tp.GetType() {
 					case mysql.TypeSet, mysql.TypeEnum:
 						fVal = float64(len(sVal))
 						if fVal == 0 {
@@ -473,7 +473,7 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 							// with 1. The index value of the empty string error value (distinguish from a "normal"
 							// empty string) is 0. Thus we need to check whether it's an empty string error value when
 							// `fVal==0`.
-							for idx, elem := range tp.Elems {
+							for idx, elem := range tp.GetElems() {
 								if elem == sVal {
 									fVal = float64(idx + 1)
 									break
@@ -837,7 +837,7 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 			find := false
 			for i, col := range tbl.Columns {
 				if idxCol.Name.L == col.Name.L {
-					if !mysql.HasNotNullFlag(col.Flag) {
+					if !mysql.HasNotNullFlag(col.GetFlag()) {
 						break
 					}
 					newKey = append(newKey, cols[i])
@@ -856,7 +856,7 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 	}
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				keys = append(keys, KeyInfo{cols[i]})
 				break
 			}
@@ -984,14 +984,14 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.JSONUnquote,
 
 		// date functions.
-		ast.Date, ast.Week /* ast.YearWeek */, ast.ToSeconds, ast.DateDiff,
+		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
 		/* ast.TimeDiff, ast.AddTime,  ast.SubTime, */
 		ast.MonthName, ast.MakeDate, ast.TimeToSec, ast.MakeTime,
 		ast.DateFormat,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
 		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
-		ast.Weekday, ast.WeekOfYear, ast.Year,
-		ast.FromDays, ast.ToDays,
+		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
+		ast.FromDays,                  /* ast.ToDays */
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
 		/* ast.LastDay */
 		ast.Sysdate,
@@ -1024,10 +1024,10 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 }
 
 func isValidTiFlashDecimalType(tp *types.FieldType) bool {
-	if tp.Tp != mysql.TypeNewDecimal {
+	if tp.GetType() != mysql.TypeNewDecimal {
 		return false
 	}
-	return tp.Flen > 0 && tp.Flen <= 65 && tp.Decimal >= 0 && tp.Decimal <= 30 && tp.Flen >= tp.Decimal
+	return tp.GetFlen() > 0 && tp.GetFlen() <= 65 && tp.GetDecimal() >= 0 && tp.GetDecimal() <= 30 && tp.GetFlen() >= tp.GetDecimal()
 }
 
 func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
@@ -1056,7 +1056,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Concat, ast.ConcatWS,
 		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter, ast.DayName, ast.MonthName,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.LastDay,
+		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.LastDay, ast.WeekOfYear, ast.ToSeconds,
+		ast.FromDays, ast.ToDays,
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
@@ -1092,11 +1093,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastTimeAsInt,
 			tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt, tipb.ScalarFuncSig_CastJsonAsInt*/ :
 			// TiFlash cast only support cast to Int64 or the source type is the same as the target type
-			return (sourceType.Tp == retType.Tp && mysql.HasUnsignedFlag(sourceType.Flag) == mysql.HasUnsignedFlag(retType.Flag)) || retType.Tp == mysql.TypeLonglong
+			return (sourceType.GetType() == retType.GetType() && mysql.HasUnsignedFlag(sourceType.GetFlag()) == mysql.HasUnsignedFlag(retType.GetFlag())) || retType.GetType() == mysql.TypeLonglong
 		case tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastTimeAsReal: /*, tipb.ScalarFuncSig_CastDecimalAsReal,
 			  tipb.ScalarFuncSig_CastDurationAsReal, tipb.ScalarFuncSig_CastJsonAsReal*/
 			// TiFlash cast only support cast to Float64 or the source type is the same as the target type
-			return sourceType.Tp == retType.Tp || retType.Tp == mysql.TypeDouble
+			return sourceType.GetType() == retType.GetType() || retType.GetType() == mysql.TypeDouble
 		case tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastTimeAsDecimal,
 			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
 			return isValidTiFlashDecimalType(function.RetType)
@@ -1106,7 +1107,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_CastDecimalAsTime, tipb.ScalarFuncSig_CastIntAsTime, tipb.ScalarFuncSig_CastRealAsTime, tipb.ScalarFuncSig_CastTimeAsTime,
 			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
 			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
-			return function.GetArgs()[0].GetType().Tp != mysql.TypeYear
+			return function.GetArgs()[0].GetType().GetType() != mysql.TypeYear
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
@@ -1277,13 +1278,13 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	if storeType == kv.TiFlash {
-		switch expr.GetType().Tp {
+		switch expr.GetType().GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
-			if expr.GetType().Tp == mysql.TypeEnum && canEnumPush {
+			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
 			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().Tp) + "'."))
+				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'."))
 			}
 			return false
 		}
@@ -1400,8 +1401,8 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 	switch evalType {
 	case types.ETReal:
 		expr := args[0]
-		oldFlen, oldDecimal := expr.GetType().Flen, expr.GetType().Decimal
-		newFlen, newDecimal := setDataTypeDouble(expr.GetType().Decimal)
+		oldFlen, oldDecimal := expr.GetType().GetFlen(), expr.GetType().GetDecimal()
+		newFlen, newDecimal := setDataTypeDouble(expr.GetType().GetDecimal())
 		// For float(M,D), double(M,D) or decimal(M,D), M must be >= D.
 		if newFlen < newDecimal {
 			newFlen = oldFlen - oldDecimal + newDecimal
@@ -1417,12 +1418,13 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
 				args[0] = newCol
 			}
-			if args[0].GetType().Tp == mysql.TypeNewDecimal {
+			if args[0].GetType().GetType() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {
 					newDecimal = mysql.MaxDecimalScale
 				}
 			}
-			args[0].GetType().Flen, args[0].GetType().Decimal = newFlen, newDecimal
+			args[0].GetType().SetFlen(newFlen)
+			args[0].GetType().SetDecimal(newDecimal)
 		}
 	}
 }
