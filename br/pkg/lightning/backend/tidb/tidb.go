@@ -432,7 +432,7 @@ func (be *tidbBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table
 	return nil
 }
 
-func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64) error {
+func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) error {
 	return nil
 }
 
@@ -446,7 +446,7 @@ rowLoop:
 			switch {
 			case err == nil:
 				continue rowLoop
-			case utils.IsRetryableError(err):
+			case common.IsRetryableError(err):
 				// retry next loop
 			case be.errorMgr.TypeErrorsRemain() > 0:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
@@ -562,7 +562,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 					return errors.Trace(err)
 				}
 				// Retry the non-batch insert here if this is not the last retry.
-				if utils.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
+				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
 					continue
 				}
 				firstRow := stmtTask.rows[0]
@@ -637,19 +637,20 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 			if strings.Contains(columnExtra, "auto_increment") {
 				flag |= mysql.AutoIncrementFlag
 			}
+
+			ft := types.FieldType{}
+			ft.SetFlag(flag)
 			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
-				Name:   model.NewCIStr(columnName),
-				Offset: curColOffset,
-				State:  model.StatePublic,
-				FieldType: types.FieldType{
-					Flag: flag,
-				},
+				Name:                model.NewCIStr(columnName),
+				Offset:              curColOffset,
+				State:               model.StatePublic,
+				FieldType:           ft,
 				GeneratedExprString: generationExpr,
 			})
 			curColOffset++
 		}
-		if rows.Err() != nil {
-			return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
 		}
 		// shard_row_id/auto random is only available after tidb v4.0.0
 		// `show table next_row_id` is also not available before tidb v4.0.0
@@ -669,9 +670,9 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 					if col.Name.O == info.Column {
 						switch info.Type {
 						case "AUTO_INCREMENT":
-							col.Flag |= mysql.AutoIncrementFlag
+							col.AddFlag(mysql.AutoIncrementFlag)
 						case "AUTO_RANDOM":
-							col.Flag |= mysql.PriKeyFlag
+							col.AddFlag(mysql.PriKeyFlag)
 							tbl.PKIsHandle = true
 							// set a stub here, since we don't really need the real value
 							tbl.AutoRandomBits = 1
@@ -776,8 +777,8 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 	if err := rows.Close(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if rows.Err() != nil {
-		return nil, errors.Trace(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, errors.Trace(err)
 	}
 	return autoIDInfos, nil
 }

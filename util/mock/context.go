@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -108,13 +108,9 @@ func (c *Context) ShowProcess() *util.ProcessInfo {
 	return &util.ProcessInfo{}
 }
 
-type mockDDLOwnerChecker struct{}
-
-func (c *mockDDLOwnerChecker) IsOwner() bool { return true }
-
-// DDLOwnerChecker returns owner.DDLOwnerChecker.
-func (c *Context) DDLOwnerChecker() owner.DDLOwnerChecker {
-	return &mockDDLOwnerChecker{}
+// IsDDLOwner checks whether this session is DDL owner.
+func (c *Context) IsDDLOwner() bool {
+	return true
 }
 
 // SetValue implements sessionctx.Context SetValue interface.
@@ -252,6 +248,23 @@ func (c *Context) RefreshVars(ctx context.Context) error {
 	return nil
 }
 
+// RollbackTxn indicates an expected call of RollbackTxn.
+func (c *Context) RollbackTxn(ctx context.Context) {
+	defer c.sessionVars.SetInTxn(false)
+	if c.txn.Valid() {
+		terror.Log(c.txn.Rollback())
+	}
+}
+
+// CommitTxn indicates an expected call of CommitTxn.
+func (c *Context) CommitTxn(ctx context.Context) error {
+	defer c.sessionVars.SetInTxn(false)
+	if c.txn.Valid() {
+		return c.txn.Commit(ctx)
+	}
+	return nil
+}
+
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
 func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	if c.txn.Valid() {
@@ -356,6 +369,21 @@ func (c *Context) PrepareTSFuture(ctx context.Context) {
 // GetStmtStats implements the sessionctx.Context interface.
 func (c *Context) GetStmtStats() *stmtstats.StatementStats {
 	return nil
+}
+
+// GetAdvisoryLock acquires an advisory lock
+func (c *Context) GetAdvisoryLock(lockName string, timeout int64) error {
+	return nil
+}
+
+// ReleaseAdvisoryLock releases an advisory lock
+func (c *Context) ReleaseAdvisoryLock(lockName string) bool {
+	return true
+}
+
+// ReleaseAllAdvisoryLocks releases all advisory locks
+func (c *Context) ReleaseAllAdvisoryLocks() int {
+	return 0
 }
 
 // Close implements the sessionctx.Context interface.

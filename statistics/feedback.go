@@ -22,7 +22,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -123,7 +123,7 @@ func (m *QueryFeedbackMap) append(k QueryFeedbackKey, qs []*QueryFeedback) bool 
 	if !ok || s == nil {
 		s = make([]*QueryFeedback, 0, 8)
 	}
-	l := mathutil.MinInt64(int64(len(qs)), remained)
+	l := mathutil.Min(int64(len(qs)), remained)
 	s = append(s, qs[:l]...)
 	m.Feedbacks[k] = s
 	m.Size = m.Size + int(l)
@@ -1018,7 +1018,7 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, t *TopN, ft *type
 	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 || len(pb.IndexPoints) > 0 {
 		decodeFeedbackForIndex(q, pb, c, t)
 	} else if len(pb.IntRanges) > 0 {
-		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))
+		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.GetFlag()))
 	} else {
 		err = decodeFeedbackForColumn(q, pb, ft)
 	}
@@ -1081,7 +1081,7 @@ func setNextValue(d *types.Datum) {
 
 // SupportColumnType checks if the type of the column can be updated by feedback.
 func SupportColumnType(ft *types.FieldType) bool {
-	switch ft.Tp {
+	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeFloat,
 		mysql.TypeDouble, mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeNewDecimal, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:

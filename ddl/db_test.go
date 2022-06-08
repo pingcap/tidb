@@ -17,32 +17,43 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"sort"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	parsertypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -345,7 +356,7 @@ func TestIssue23473(t *testing.T) {
 	tk.MustExec("alter table t_23473 change column k k bigint")
 
 	tbl := external.GetTableByName(t, tk, "test", "t_23473")
-	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].Flag))
+	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].GetFlag()))
 }
 
 func TestDropCheck(t *testing.T) {
@@ -558,14 +569,14 @@ func TestAutoConvertBlobTypeByLength(t *testing.T) {
 	tbl, exist := dom.InfoSchema().TableByID(tableID)
 	require.True(t, exist)
 
-	require.Equal(t, tbl.Cols()[0].Tp, mysql.TypeTinyBlob)
-	require.Equal(t, tbl.Cols()[0].Flen, 255)
-	require.Equal(t, tbl.Cols()[1].Tp, mysql.TypeBlob)
-	require.Equal(t, tbl.Cols()[1].Flen, 65535)
-	require.Equal(t, tbl.Cols()[2].Tp, mysql.TypeMediumBlob)
-	require.Equal(t, tbl.Cols()[2].Flen, 16777215)
-	require.Equal(t, tbl.Cols()[3].Tp, mysql.TypeLongBlob)
-	require.Equal(t, tbl.Cols()[3].Flen, 4294967295)
+	require.Equal(t, tbl.Cols()[0].GetType(), mysql.TypeTinyBlob)
+	require.Equal(t, tbl.Cols()[0].GetFlen(), 255)
+	require.Equal(t, tbl.Cols()[1].GetType(), mysql.TypeBlob)
+	require.Equal(t, tbl.Cols()[1].GetFlen(), 65535)
+	require.Equal(t, tbl.Cols()[2].GetType(), mysql.TypeMediumBlob)
+	require.Equal(t, tbl.Cols()[2].GetFlen(), 16777215)
+	require.Equal(t, tbl.Cols()[3].GetType(), mysql.TypeLongBlob)
+	require.Equal(t, tbl.Cols()[3].GetFlen(), 4294967295)
 }
 
 func TestAddExpressionIndexRollback(t *testing.T) {
@@ -626,7 +637,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows("2 2 2", "4 4 4", "5 80 80", "10 3 3", "20 20 20", "160 160 160"))
 
 	// Check whether the reorg information is cleaned up.
-	err := ctx.NewTxn(context.Background())
+	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -650,6 +661,96 @@ func TestDropTableOnTiKVDiskFull(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcTiKVAllowedOnAlmostFull"))
 	}()
 	tk.MustExec("drop table test_disk_full_drop_table;")
+}
+
+func TestComment(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ct, ct1")
+
+	validComment := strings.Repeat("a", 1024)
+	invalidComment := strings.Repeat("b", 1025)
+	validTableComment := strings.Repeat("a", 2048)
+	invalidTableComment := strings.Repeat("b", 2049)
+
+	// test table comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer) COMMENT = '" + validTableComment + "'")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustExec("ALTER TABLE t COMMENT = '" + validTableComment + "'")
+
+	// test column comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer NOT NULL COMMENT '" + validComment + "')")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustExec("ALTER TABLE t ADD COLUMN c1 integer COMMENT '" + validComment + "'")
+
+	// test index comment
+	tk.MustExec("create table ct (c int, d int, e int, key (c) comment '" + validComment + "')")
+	tk.MustExec("create index i on ct (d) comment '" + validComment + "'")
+	tk.MustExec("alter table ct add key (e) comment '" + validComment + "'")
+
+	// test table partition comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (0) COMMENT '" + validComment + "')")
+	tk.MustExec("ALTER TABLE t ADD PARTITION (PARTITION p1 VALUES LESS THAN (1000000) COMMENT '" + validComment + "')")
+
+	// test table comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustGetErrCode("CREATE TABLE t (c integer) COMMENT = '"+invalidTableComment+"'", errno.ErrTooLongTableComment)
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustGetErrCode("ALTER TABLE t COMMENT = '"+invalidTableComment+"'", errno.ErrTooLongTableComment)
+
+	// test column comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustGetErrCode("CREATE TABLE t (c integer NOT NULL COMMENT '"+invalidComment+"')", errno.ErrTooLongFieldComment)
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustGetErrCode("ALTER TABLE t ADD COLUMN c1 integer COMMENT '"+invalidComment+"'", errno.ErrTooLongFieldComment)
+
+	// test index comment
+	tk.MustGetErrCode("create table ct1 (c int, key (c) comment '"+invalidComment+"')", errno.ErrTooLongIndexComment)
+	tk.MustGetErrCode("create index i1 on ct (d) comment '"+invalidComment+"'", errno.ErrTooLongIndexComment)
+	tk.MustGetErrCode("alter table ct add key (e) comment '"+invalidComment+"'", errno.ErrTooLongIndexComment)
+
+	// test table partition comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustGetErrCode("CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (0) COMMENT '"+invalidComment+"')", errno.ErrTooLongTablePartitionComment)
+	tk.MustExec("CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (0) COMMENT '" + validComment + "')")
+	tk.MustGetErrCode("ALTER TABLE t ADD PARTITION (PARTITION p1 VALUES LESS THAN (1000000) COMMENT '"+invalidComment+"')", errno.ErrTooLongTablePartitionComment)
+
+	tk.MustExec("set @@sql_mode=''")
+
+	// test table comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer) COMMENT = '" + invalidTableComment + "'")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1628|Comment for table 't' is too long (max = 2048)"))
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustExec("ALTER TABLE t COMMENT = '" + invalidTableComment + "'")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1628|Comment for table 't' is too long (max = 2048)"))
+
+	// test column comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer NOT NULL COMMENT '" + invalidComment + "')")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1629|Comment for field 'c' is too long (max = 1024)"))
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustExec("ALTER TABLE t ADD COLUMN c1 integer COMMENT '" + invalidComment + "'")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1629|Comment for field 'c1' is too long (max = 1024)"))
+
+	// test index comment
+	tk.MustExec("create table ct1 (c int, d int, e int, key (c) comment '" + invalidComment + "')")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1688|Comment for index 'c' is too long (max = 1024)"))
+	tk.MustExec("create index i1 on ct1 (d) comment '" + invalidComment + "b" + "'")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1688|Comment for index 'i1' is too long (max = 1024)"))
+	tk.MustExec("alter table ct1 add key (e) comment '" + invalidComment + "'")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1688|Comment for index 'e' is too long (max = 1024)"))
+
+	tk.MustExec("drop table if exists ct, ct1")
 }
 
 func TestRebaseAutoID(t *testing.T) {
@@ -697,7 +798,7 @@ func TestProcessColumnFlags(t *testing.T) {
 		tbl := external.GetTableByName(t, tk, "test", "t")
 		for _, col := range tbl.Cols() {
 			if strings.EqualFold(col.Name.L, n) {
-				require.True(t, f(col.Flag))
+				require.True(t, f(col.GetFlag()))
 				break
 			}
 		}
@@ -836,7 +937,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 
 	tk.MustGetErrCode("rename table ddl_error_table to new_ddl_error_table", errno.ErrEntryTooLarge)
 
-	historyJob, err := getHistoryDDLJob(store, jobID)
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
 	require.NotNil(t, historyJob)
 	require.Equal(t, int64(1), historyJob.ErrorCount)
@@ -973,7 +1074,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 		for st := range endStatMap {
 			endStates = append(endStates, st)
 		}
-		sort.Slice(endStates, func(i, j int) bool { return endStates[i] < endStates[j] })
+		slices.Sort(endStates)
 		for _, endState := range endStates {
 			for _, curCase := range cases {
 				if endState < curCase.stateEnd {
@@ -992,10 +1093,10 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 				for _, DDLSQL := range curCase.tk2DDL {
 					tk2.MustExec(DDLSQL)
 				}
-				hook := &ddl.TestDDLCallback{}
+				hook := &ddl.TestDDLCallback{Do: dom}
 				prepared := false
 				committed := false
-				hook.OnJobUpdatedExported = func(job *model.Job) {
+				hook.OnJobRunBeforeExported = func(job *model.Job) {
 					if job.SchemaState == startState {
 						if !prepared {
 							tk.MustExec("begin pessimistic")
@@ -1004,7 +1105,10 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 							}
 							prepared = true
 						}
-					} else if job.SchemaState == endState {
+					}
+				}
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.SchemaState == endState {
 						if !committed {
 							if curCase.failCommit {
 								err := tk.ExecToErr("commit")
@@ -1108,6 +1212,35 @@ func TestCreateTableWithIntegerLengthWaring(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 }
+func TestShowCountWarningsOrErrors(t *testing.T) {
+	// Inject the strict-integer-display-width variable in parser directly.
+	parsertypes.TiDBStrictIntegerDisplayWidth = true
+	defer func() { parsertypes.TiDBStrictIntegerDisplayWidth = false }()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// test sql run work
+	tk.MustExec("show count(*) warnings")
+	tk.MustExec("show count(*) errors")
+
+	// test count warnings
+	tk.MustExec("drop table if exists t1,t2,t3")
+	// Warning: Integer display width is deprecated and will be removed in a future release.
+	tk.MustExec("create table t(a int8(2));" +
+		"create table t1(a int4(2));" +
+		"create table t2(a int4(2));")
+	tk.MustQuery("show count(*) warnings").Check(tk.MustQuery("select @@session.warning_count").Rows())
+
+	// test count errors
+	tk.MustExec("drop table if exists show_errors")
+	tk.MustExec("create table show_errors (a int)")
+	// Error: Table exist
+	_, _ = tk.Exec("create table show_errors (a int)")
+	tk.MustQuery("show count(*) errors").Check(tk.MustQuery("select @@session.error_count").Rows())
+
+}
 
 // Close issue #24172.
 // See https://github.com/pingcap/tidb/issues/24172
@@ -1124,7 +1257,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 
 	var cancelErr error
 	var rs []sqlexec.RecordSet
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	d := dom.DDL()
 	originalHook := d.GetHook()
 	d.SetHook(hook)
@@ -1157,4 +1290,407 @@ func TestCancelJobWriteConflict(t *testing.T) {
 	require.NoError(t, cancelErr)
 	result := tk2.ResultSetToResultWithCtx(context.Background(), rs[0], "cancel ddl job fails")
 	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+}
+
+func TestTxnSavepointWithDDL(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+
+	prepareFn := func() {
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1 (c1 int primary key, c2 int)")
+		tk.MustExec("create table t2 (c1 int primary key, c2 int)")
+	}
+	prepareFn()
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("rollback to s1")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("admin check table t1")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("rollback to s2")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustExec("admin check table t1, t2")
+
+	prepareFn()
+	tk.MustExec("truncate table t1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("rollback to s2")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	err := tk.ExecToErr("commit")
+	require.Error(t, err)
+	require.Regexp(t, ".*8028.*Information schema is changed during the execution of the statement.*", err.Error())
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("admin check table t1, t2")
+}
+
+func TestAmendTxnSavepointWithDDL(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+
+	prepareFn := func() {
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1 (c1 int primary key, c2 int)")
+		tk.MustExec("create table t2 (c1 int primary key, c2 int)")
+	}
+
+	prepareFn()
+	tk.MustExec("truncate table t1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("rollback to s2")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustExec("admin check table t1, t2")
+
+	prepareFn()
+	tk.MustExec("truncate table t1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("savepoint s1")
+	tk.MustExec("insert t1 values (1, 11)")
+	tk.MustExec("savepoint s2")
+	tk.MustExec("insert t2 values (1, 11)")
+	tk.MustExec("savepoint s3")
+	tk.MustExec("insert t2 values (2, 22)")
+	tk.MustExec("rollback to s3")
+	tk2.MustExec("alter table t1 add index idx2(c2)")
+	tk2.MustExec("alter table t2 add index idx2(c2)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 11"))
+	tk.MustExec("admin check table t1, t2")
+}
+
+func TestSnapshotVersion(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	dd := dom.DDL()
+	ddl.DisableTiFlashPoll(dd)
+	require.Equal(t, dbTestLease, dd.GetLease())
+
+	snapTS := oracle.GoTimeToTS(time.Now())
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("create table t(a int)")
+
+	is := dom.InfoSchema()
+	require.NotNil(t, is)
+
+	// For updating the self schema version.
+	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err := dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	cancel()
+	require.NoError(t, err)
+
+	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
+	require.NotNil(t, snapIs)
+	require.NoError(t, err)
+
+	// Make sure that the self schema version doesn't be changed.
+	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	cancel()
+	require.NoError(t, err)
+
+	// for GetSnapshotInfoSchema
+	currSnapTS := oracle.GoTimeToTS(time.Now())
+	currSnapIs, err := dom.GetSnapshotInfoSchema(currSnapTS)
+	require.NoError(t, err)
+	require.NotNil(t, currSnapTS)
+	require.Equal(t, is.SchemaMetaVersion(), currSnapIs.SchemaMetaVersion())
+
+	// for GetSnapshotMeta
+	dbInfo, ok := currSnapIs.SchemaByName(model.NewCIStr("test2"))
+	require.True(t, ok)
+
+	tbl, err := currSnapIs.TableByName(model.NewCIStr("test2"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
+	m, err := dom.GetSnapshotMeta(snapTS)
+	require.NoError(t, err)
+
+	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
+	require.True(t, meta.ErrDBNotExists.Equal(err))
+	require.Nil(t, tblInfo1)
+
+	m, err = dom.GetSnapshotMeta(currSnapTS)
+	require.NoError(t, err)
+
+	tblInfo2, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
+	require.NoError(t, err)
+	require.Equal(t, tblInfo2, tbl.Meta())
+}
+
+func TestSchemaValidator(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	dd := dom.DDL()
+	ddl.DisableTiFlashPoll(dd)
+	require.Equal(t, dbTestLease, dd.GetLease())
+
+	tk.MustExec("create table test.t(a int)")
+
+	err := dom.Reload()
+	require.NoError(t, err)
+	schemaVer := dom.InfoSchema().SchemaMetaVersion()
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+
+	ts := ver.Ver
+	_, res := dom.SchemaValidator.Check(ts, schemaVer, nil)
+	require.Equal(t, domain.ResultSucc, res)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`))
+
+	err = dom.Reload()
+	require.Error(t, err)
+	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	require.Equal(t, domain.ResultSucc, res)
+	time.Sleep(dbTestLease)
+
+	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	ts = ver.Ver
+	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	require.Equal(t, domain.ResultUnknown, res)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"))
+	err = dom.Reload()
+	require.NoError(t, err)
+
+	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	require.Equal(t, domain.ResultSucc, res)
+
+	// For schema check, it tests for getting the result of "ResultUnknown".
+	is := dom.InfoSchema()
+	schemaChecker := domain.NewSchemaChecker(dom, is.SchemaMetaVersion(), nil)
+	// Make sure it will retry one time and doesn't take a long time.
+	domain.SchemaOutOfDateRetryTimes.Store(1)
+	domain.SchemaOutOfDateRetryInterval.Store(time.Millisecond * 1)
+	dom.SchemaValidator.Stop()
+	_, err = schemaChecker.Check(uint64(123456))
+	require.EqualError(t, err, domain.ErrInfoSchemaExpired.Error())
+}
+
+func TestLogAndShowSlowLog(t *testing.T) {
+	_, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
+	// Collecting slow queries is asynchronous, wait a while to ensure it's done.
+	time.Sleep(5 * time.Millisecond)
+
+	result := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
+	require.Len(t, result, 2)
+	require.Equal(t, "bbb", result[0].SQL)
+	require.Equal(t, 3*time.Second, result[0].Duration)
+	require.Equal(t, "ccc", result[1].SQL)
+	require.Equal(t, 2*time.Second, result[1].Duration)
+
+	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
+	require.Len(t, result, 1)
+	require.Equal(t, "aaa", result[0].SQL)
+	require.Equal(t, time.Second, result[0].Duration)
+	require.True(t, result[0].Internal)
+
+	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 4, Kind: ast.ShowSlowKindAll})
+	require.Len(t, result, 3)
+	require.Equal(t, "bbb", result[0].SQL)
+	require.Equal(t, 3*time.Second, result[0].Duration)
+	require.Equal(t, "ccc", result[1].SQL)
+	require.Equal(t, 2*time.Second, result[1].Duration)
+	require.Equal(t, "aaa", result[2].SQL)
+	require.Equal(t, time.Second, result[2].Duration)
+	require.True(t, result[2].Internal)
+
+	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
+	require.Len(t, result, 2)
+	require.Equal(t, "ccc", result[0].SQL)
+	require.Equal(t, 2*time.Second, result[0].Duration)
+	require.Equal(t, "bbb", result[1].SQL)
+	require.Equal(t, 3*time.Second, result[1].Duration)
+}
+
+func TestReportingMinStartTimestamp(t *testing.T) {
+	_, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	infoSyncer := dom.InfoSyncer()
+	sm := &testkit.MockSessionManager{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	infoSyncer.SetSessionManager(sm)
+	beforeTS := oracle.GoTimeToTS(time.Now())
+	infoSyncer.ReportMinStartTS(dom.Store())
+	afterTS := oracle.GoTimeToTS(time.Now())
+	require.False(t, infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS)
+
+	now := time.Now()
+	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
+	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
+	sm.PS = []*util.ProcessInfo{
+		{CurTxnStartTS: 0},
+		{CurTxnStartTS: math.MaxUint64},
+		{CurTxnStartTS: lowerLimit},
+		{CurTxnStartTS: validTS},
+	}
+	infoSyncer.SetSessionManager(sm)
+	infoSyncer.ReportMinStartTS(dom.Store())
+	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
+}
+
+// for issue #34931
+func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
+
+	tt := []struct {
+		ColType           string
+		SpecifiedColLen   bool
+		SpecifiedIndexLen bool
+	}{
+		{
+			"text",
+			false,
+			true,
+		},
+		{
+			"blob",
+			false,
+			true,
+		},
+		{
+			"varchar",
+			true,
+			false,
+		},
+		{
+			"varbinary",
+			true,
+			false,
+		},
+	}
+
+	sqlTemplate := "create table %s (id int, name %s, age int, %s index(name%s%s)) charset=%s;"
+	// test character strings for varchar and text
+	for _, tc := range tt {
+
+		for _, cs := range charset.CharacterSetInfos {
+			tableName := fmt.Sprintf("t_%s", cs.Name)
+			tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+			tk.MustExec("set @@sql_mode=default")
+
+			// test in strict sql mode
+			maxLen := cs.Maxlen
+			if tc.ColType == "varbinary" || tc.ColType == "blob" {
+				maxLen = 1
+			}
+			expectKeyLength := maxIndexLength / maxLen
+			length := 2 * expectKeyLength
+
+			indexLen := ""
+			// specify index length for text type
+			if tc.SpecifiedIndexLen {
+				indexLen = fmt.Sprintf("(%d)", length)
+			}
+
+			col := tc.ColType
+			// specify column length for varchar type
+			if tc.SpecifiedColLen {
+				col += fmt.Sprintf("(%d)", length)
+			}
+			sql := fmt.Sprintf(sqlTemplate,
+				tableName, col, "", indexLen, "", cs.Name)
+			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+
+			tk.MustExec("set @@sql_mode=''")
+
+			err := tk.ExecToErr(sql)
+			require.NoErrorf(t, err, "exec sql '%s' failed", sql)
+
+			require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+
+			warnErr := tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err
+			tErr := errors.Cause(warnErr).(*terror.Error)
+			sqlErr := terror.ToSQLError(tErr)
+			require.Equal(t, errno.ErrTooLongKey, int(sqlErr.Code))
+
+			if cs.Name == charset.CharsetBin {
+				if tc.ColType == "varchar" || tc.ColType == "varbinary" {
+					col = fmt.Sprintf("varbinary(%d)", length)
+				} else {
+					col = "blob"
+				}
+			}
+			rows := fmt.Sprintf("%s CREATE TABLE `%s` (\n  `id` int(11) DEFAULT NULL,\n  `name` %s DEFAULT NULL,\n  `age` int(11) DEFAULT NULL,\n  KEY `name` (`name`(%d))\n) ENGINE=InnoDB DEFAULT CHARSET=%s",
+				tableName, tableName, col, expectKeyLength, cs.Name)
+			// add collation for binary charset
+			if cs.Name != charset.CharsetBin {
+				rows += fmt.Sprintf(" COLLATE=%s", cs.DefaultCollation)
+			}
+
+			tk.MustQuery(fmt.Sprintf("show create table %s", tableName)).Check(testkit.Rows(rows))
+
+			ukTable := fmt.Sprintf("t_%s_uk", cs.Name)
+			mkTable := fmt.Sprintf("t_%s_mk", cs.Name)
+			tk.MustExec(fmt.Sprintf("drop table if exists %s", ukTable))
+			tk.MustExec(fmt.Sprintf("drop table if exists %s", mkTable))
+
+			// For a unique index, an error occurs regardless of SQL mode because reducing
+			//the index length might enable insertion of non-unique entries that do not meet
+			//the specified uniqueness requirement.
+			sql = fmt.Sprintf(sqlTemplate, ukTable, col, "unique", indexLen, "", cs.Name)
+			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+
+			// The multiple column index in which the length sum exceeds the maximum size
+			// will return an error instead produce a warning in strict sql mode.
+			indexLen = fmt.Sprintf("(%d)", expectKeyLength)
+			sql = fmt.Sprintf(sqlTemplate, mkTable, col, "", indexLen, ", age", cs.Name)
+			tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+		}
+	}
 }

@@ -20,6 +20,7 @@ import (
 	"hash/fnv"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -83,6 +85,10 @@ type hashRowContainer struct {
 	hashTable baseHashTable
 
 	rowContainer *chunk.RowContainer
+	memTracker   *memory.Tracker
+
+	// chkBuf buffer the data reads from the disk if rowContainer is spilled.
+	chkBuf *chunk.Chunk
 }
 
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
@@ -94,7 +100,9 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 		stat:         new(hashStatistic),
 		hashTable:    newConcurrentMapHashTable(),
 		rowContainer: rc,
+		memTracker:   memory.NewTracker(memory.LabelForRowContainer, -1),
 	}
+	rc.GetMemTracker().AttachTo(c.GetMemTracker())
 	return c
 }
 
@@ -107,23 +115,24 @@ func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr) ([]chunk.Row, []chunk.RowPtr, error) {
+	var err error
 	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
-		return
+		return nil, nil, err
 	}
-	matched = make([]chunk.Row, 0, len(innerPtrs))
+	matched = matched[:0]
 	var matchedRow chunk.Row
-	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
+	matchedPtrs = matchedPtrs[:0]
 	for _, ptr := range innerPtrs {
-		matchedRow, err = c.rowContainer.GetRow(ptr)
+		matchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(ptr, c.chkBuf)
 		if err != nil {
-			return
+			return nil, nil, err
 		}
 		var ok bool
 		ok, err = c.matchJoinKey(matchedRow, probeRow, hCtx)
 		if err != nil {
-			return
+			return nil, nil, err
 		}
 		if !ok {
 			atomic.AddInt64(&c.stat.probeCollision, 1)
@@ -132,7 +141,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 		matched = append(matched, matchedRow)
 		matchedPtrs = append(matchedPtrs, ptr)
 	}
-	return
+	return matched, matchedPtrs, err
 }
 
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
@@ -186,6 +195,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
 		c.hashTable.Put(key, rowPtr)
 	}
+	c.GetMemTracker().Consume(c.hashTable.GetAndCleanMemoryDelta())
 	return nil
 }
 
@@ -215,11 +225,13 @@ func (c *hashRowContainer) Len() uint64 {
 }
 
 func (c *hashRowContainer) Close() error {
+	defer c.memTracker.Detach()
+	c.chkBuf = nil
 	return c.rowContainer.Close()
 }
 
 // GetMemTracker returns the underlying memory usage tracker in hashRowContainer.
-func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.rowContainer.GetMemTracker() }
+func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.memTracker }
 
 // GetDiskTracker returns the underlying disk usage tracker in hashRowContainer.
 func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.rowContainer.GetDiskTracker() }
@@ -251,7 +263,7 @@ func newEntryStore() *entryStore {
 	return es
 }
 
-func (es *entryStore) GetStore() (e *entry) {
+func (es *entryStore) GetStore() (e *entry, memDelta int64) {
 	sliceIdx := uint32(len(es.slices) - 1)
 	slice := es.slices[sliceIdx]
 	if es.cursor >= cap(slice) {
@@ -263,6 +275,7 @@ func (es *entryStore) GetStore() (e *entry) {
 		es.slices = append(es.slices, slice)
 		sliceIdx++
 		es.cursor = 0
+		memDelta = int64(unsafe.Sizeof(entry{})) * int64(size)
 	}
 	e = &es.slices[sliceIdx][es.cursor]
 	es.cursor++
@@ -273,6 +286,9 @@ type baseHashTable interface {
 	Put(hashKey uint64, rowPtr chunk.RowPtr)
 	Get(hashKey uint64) (rowPtrs []chunk.RowPtr)
 	Len() uint64
+	// GetAndCleanMemoryDelta gets and cleans the memDelta of the baseHashTable. Memory delta will be cleared after each fetch.
+	// It indicates the memory delta of the baseHashTable since the last calling GetAndCleanMemoryDelta().
+	GetAndCleanMemoryDelta() int64
 }
 
 // TODO (fangzhuhe) remove unsafeHashTable later if it not used anymore
@@ -283,6 +299,9 @@ type unsafeHashTable struct {
 	hashMap    map[uint64]*entry
 	entryStore *entryStore
 	length     uint64
+
+	bInMap   int64 // indicate there are 2^bInMap buckets in hashMap
+	memDelta int64 // the memory delta of the unsafeHashTable since the last calling GetAndCleanMemoryDelta()
 }
 
 // newUnsafeHashTable creates a new unsafeHashTable. estCount means the estimated size of the hashMap.
@@ -297,11 +316,16 @@ func newUnsafeHashTable(estCount int) *unsafeHashTable {
 // Put puts the key/rowPtr pairs to the unsafeHashTable, multiple rowPtrs are stored in a list.
 func (ht *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
 	oldEntry := ht.hashMap[hashKey]
-	newEntry := ht.entryStore.GetStore()
+	newEntry, memDelta := ht.entryStore.GetStore()
 	newEntry.ptr = rowPtr
 	newEntry.next = oldEntry
 	ht.hashMap[hashKey] = newEntry
+	if len(ht.hashMap) > (1<<ht.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		memDelta += hack.DefBucketMemoryUsageForMapIntToPtr * (1 << ht.bInMap)
+		ht.bInMap++
+	}
 	ht.length++
+	ht.memDelta += memDelta
 }
 
 // Get gets the values of the "key" and appends them to "values".
@@ -318,11 +342,19 @@ func (ht *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 // if the same key is put more than once.
 func (ht *unsafeHashTable) Len() uint64 { return ht.length }
 
+// GetAndCleanMemoryDelta gets and cleans the memDelta of the unsafeHashTable.
+func (ht *unsafeHashTable) GetAndCleanMemoryDelta() int64 {
+	memDelta := ht.memDelta
+	ht.memDelta = 0
+	return memDelta
+}
+
 // concurrentMapHashTable is a concurrent hash table built on concurrentMap
 type concurrentMapHashTable struct {
 	hashMap    concurrentMap
 	entryStore *entryStore
 	length     uint64
+	memDelta   int64 // the memory delta of the concurrentMapHashTable since the last calling GetAndCleanMemoryDelta()
 }
 
 // newConcurrentMapHashTable creates a concurrentMapHashTable
@@ -331,6 +363,7 @@ func newConcurrentMapHashTable() *concurrentMapHashTable {
 	ht.hashMap = newConcurrentMap()
 	ht.entryStore = newEntryStore()
 	ht.length = 0
+	ht.memDelta = hack.DefBucketMemoryUsageForMapIntToPtr + int64(unsafe.Sizeof(entry{}))*initialEntrySliceLen
 	return ht
 }
 
@@ -341,10 +374,13 @@ func (ht *concurrentMapHashTable) Len() uint64 {
 
 // Put puts the key/rowPtr pairs to the concurrentMapHashTable, multiple rowPtrs are stored in a list.
 func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
-	newEntry := ht.entryStore.GetStore()
+	newEntry, memDelta := ht.entryStore.GetStore()
 	newEntry.ptr = rowPtr
 	newEntry.next = nil
-	ht.hashMap.Insert(hashKey, newEntry)
+	memDelta += ht.hashMap.Insert(hashKey, newEntry)
+	if memDelta != 0 {
+		atomic.AddInt64(&ht.memDelta, memDelta)
+	}
 	atomic.AddUint64(&ht.length, 1)
 }
 
@@ -356,4 +392,16 @@ func (ht *concurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 		entryAddr = entryAddr.next
 	}
 	return
+}
+
+// GetAndCleanMemoryDelta gets and cleans the memDelta of the concurrentMapHashTable. Memory delta will be cleared after each fetch.
+func (ht *concurrentMapHashTable) GetAndCleanMemoryDelta() int64 {
+	var memDelta int64
+	for {
+		memDelta = atomic.LoadInt64(&ht.memDelta)
+		if atomic.CompareAndSwapInt64(&ht.memDelta, memDelta, 0) {
+			break
+		}
+	}
+	return memDelta
 }

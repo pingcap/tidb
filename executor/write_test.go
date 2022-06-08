@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -1869,7 +1870,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *t
 	origin := ld.IgnoreLines
 	for _, tt := range tests {
 		ld.IgnoreLines = origin
-		require.Nil(t, ctx.NewTxn(context.Background()))
+		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
@@ -2310,7 +2311,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','")
 	ctx := tk.Session().(sessionctx.Context)
 	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	require.Nil(t, ctx.NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 
 	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	require.NoError(t, err)
@@ -2668,7 +2669,7 @@ func TestRebaseIfNeeded(t *testing.T) {
 	ctx.Store = store
 	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	require.Nil(t, ctx.NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(ctx, types.MakeDatums(30001, 2))

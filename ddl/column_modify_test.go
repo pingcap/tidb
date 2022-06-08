@@ -34,12 +34,12 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -125,7 +125,7 @@ AddLoop:
 	tbl := external.GetTableByName(t, tk, "test", "t2")
 	i := 0
 	j := 0
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	defer func() {
 		if txn, err := tk.Session().Txn(true); err == nil {
 			require.NoError(t, txn.Rollback())
@@ -168,8 +168,8 @@ AddLoop:
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colC := tblInfo.Columns[2]
-	require.Equal(t, mysql.TypeTimestamp, colC.Tp)
-	require.False(t, mysql.HasNotNullFlag(colC.Flag))
+	require.Equal(t, mysql.TypeTimestamp, colC.GetType())
+	require.False(t, mysql.HasNotNullFlag(colC.GetFlag()))
 	// add datetime type column
 	tk.MustExec("create table test_on_update_d (c1 int, c2 datetime);")
 	tk.MustExec("alter table test_on_update_d add column c3 datetime on update current_timestamp;")
@@ -178,8 +178,8 @@ AddLoop:
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC = tblInfo.Columns[2]
-	require.Equal(t, mysql.TypeDatetime, colC.Tp)
-	require.False(t, mysql.HasNotNullFlag(colC.Flag))
+	require.Equal(t, mysql.TypeDatetime, colC.GetType())
+	require.False(t, mysql.HasNotNullFlag(colC.GetFlag()))
 
 	// add year type column
 	tk.MustExec("create table test_on_update_e (c1 int);")
@@ -316,7 +316,7 @@ func TestChangeColumn(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colD := tblInfo.Columns[2]
-	require.True(t, mysql.HasNoDefaultValueFlag(colD.Flag))
+	require.True(t, mysql.HasNoDefaultValueFlag(colD.GetFlag()))
 	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
 	tk.MustExec("alter table t3 change b b varchar(20) null default 'c' comment 'my comment'")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
@@ -325,7 +325,7 @@ func TestChangeColumn(t *testing.T) {
 	tblInfo = tbl.Meta()
 	colB := tblInfo.Columns[1]
 	require.Equal(t, "my comment", colB.Comment)
-	require.False(t, mysql.HasNotNullFlag(colB.Flag))
+	require.False(t, mysql.HasNotNullFlag(colB.GetFlag()))
 	tk.MustExec("insert into t3 set aa = 3, dd = 5")
 	tk.MustQuery("select b from t3").Check(testkit.Rows("a", "b", "c"))
 	// for timestamp
@@ -337,7 +337,7 @@ func TestChangeColumn(t *testing.T) {
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[3]
 	require.Equal(t, "col c comment", colC.Comment)
-	require.False(t, mysql.HasNotNullFlag(colC.Flag))
+	require.False(t, mysql.HasNotNullFlag(colC.GetFlag()))
 	// for enum
 	tk.MustExec("alter table t3 add column en enum('a', 'b', 'c') not null default 'a'")
 	// https://github.com/pingcap/tidb/issues/23488
@@ -438,199 +438,11 @@ func TestRenameColumn(t *testing.T) {
 
 	tk.MustExec("drop view test_rename_column_view")
 	tk.MustExec("drop table test_rename_column")
-}
 
-// TestCancelDropColumn tests cancel ddl job which type is drop column.
-func TestCancelDropColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table test_drop_column(c1 int, c2 int)")
-	defer tk.MustExec("drop table test_drop_column;")
-	testCases := []struct {
-		needAddColumn  bool
-		jobState       model.JobState
-		JobSchemaState model.SchemaState
-		cancelSucc     bool
-	}{
-		{true, model.JobStateQueueing, model.StateNone, true},
-		{false, model.JobStateRunning, model.StateWriteOnly, false},
-		{true, model.JobStateRunning, model.StateDeleteOnly, false},
-		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
-	}
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: dom}
-	var jobID int64
-	testCase := &testCases[0]
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionDropColumn && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-
-	originalHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(hook)
-	for i := range testCases {
-		testCase = &testCases[i]
-		if testCase.needAddColumn {
-			tk.MustExec("alter table test_drop_column add column c3 int")
-			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-		}
-
-		err := tk.ExecToErr("alter table test_drop_column drop column c3")
-		var col1 *table.Column
-		var idx1 table.Index
-		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")
-		for _, col := range tbl.Cols() {
-			if strings.EqualFold(col.Name.L, "c3") {
-				col1 = col
-				break
-			}
-		}
-		for _, idx := range tbl.Indices() {
-			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
-				idx1 = idx
-				break
-			}
-		}
-		if testCase.cancelSucc {
-			require.NoError(t, checkErr)
-			require.NotNil(t, col1)
-			require.Equal(t, "c3", col1.Name.L)
-			require.NotNil(t, idx1)
-			require.Equal(t, "idx_c3", idx1.Meta().Name.L)
-			require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
-		} else {
-			require.Nil(t, col1)
-			require.Nil(t, col1)
-			require.NoError(t, err)
-			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-		}
-	}
-	dom.DDL().SetHook(originalHook)
-	tk.MustExec("alter table test_drop_column add column c3 int")
-	tk.MustExec("alter table test_drop_column drop column c3")
-}
-
-// TestCancelDropColumns tests cancel ddl job which type is drop multi-columns.
-func TestCancelDropColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table test_drop_column(c1 int, c2 int)")
-	defer tk.MustExec("drop table test_drop_column;")
-	testCases := []struct {
-		needAddColumn  bool
-		jobState       model.JobState
-		JobSchemaState model.SchemaState
-		cancelSucc     bool
-	}{
-		{true, model.JobStateQueueing, model.StateNone, true},
-		{false, model.JobStateRunning, model.StateWriteOnly, false},
-		{true, model.JobStateRunning, model.StateDeleteOnly, false},
-		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
-	}
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: dom}
-	var jobID int64
-	testCase := &testCases[0]
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionDropColumns && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-
-	originalHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(hook)
-	for i := range testCases {
-		testCase = &testCases[i]
-		if testCase.needAddColumn {
-			tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")
-			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-		}
-		err := tk.ExecToErr("alter table test_drop_column drop column c3, drop column c4")
-		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")
-		col3 := table.FindCol(tbl.Cols(), "c3")
-		col4 := table.FindCol(tbl.Cols(), "c4")
-		var idx3 table.Index
-		for _, idx := range tbl.Indices() {
-			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
-				idx3 = idx
-				break
-			}
-		}
-		if testCase.cancelSucc {
-			require.NoError(t, checkErr)
-			require.NotNil(t, col3)
-			require.NotNil(t, col4)
-			require.NotNil(t, idx3)
-			require.Equal(t, "c3", col3.Name.L)
-			require.Equal(t, "c4", col4.Name.L)
-			require.Equal(t, "idx_c3", idx3.Meta().Name.L)
-			require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
-		} else {
-			require.Nil(t, col3)
-			require.Nil(t, col4)
-			require.Nil(t, idx3)
-			require.NoError(t, err)
-			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-		}
-	}
-	dom.DDL().SetHook(originalHook)
-	tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")
-	tk.MustExec("alter table test_drop_column drop column c3, drop column c4")
+	// Test rename a non-exists column. See https://github.com/pingcap/tidb/issues/34811.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustGetErrCode("alter table t rename column b to b;", errno.ErrBadField)
 }
 
 func TestVirtualColumnDDL(t *testing.T) {
@@ -822,13 +634,37 @@ func TestColumnModifyingDefinition(t *testing.T) {
 			c2 = col
 		}
 	}
-	require.True(t, mysql.HasNotNullFlag(c2.Flag))
+	require.True(t, mysql.HasNotNullFlag(c2.GetFlag()))
 
 	tk.MustExec("drop table if exists test2;")
 	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
 	tk.MustExec("insert into test2(c2) values (null);")
 	tk.MustGetErrMsg("alter table test2 change c2 a int not null", "[ddl:1265]Data truncated for column 'a' at row 1")
 	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", mysql.WarnDataTruncated)
+}
+
+func TestColumnModifyingDefaultValue(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int default 1);")
+	tk.MustExec("alter table t change a a int default 0.00;")
+	ret := tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '0'"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1.25);")
+	tk.MustExec("alter table t change a a int default 2.8;")
+	ret = tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '3'"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a float default 1.25);")
+	tk.MustExec("alter table t change a a float default '0012.32';")
+	ret = tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` float DEFAULT '12.32'"))
 }
 
 func TestTransactionWithWriteOnlyColumn(t *testing.T) {
@@ -1024,7 +860,7 @@ func TestCheckConvertToCharacter(t *testing.T) {
 	tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8 collate utf8_bin", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify column a varchar(10) charset latin1 collate latin1_bin", errno.ErrUnsupportedDDLOperation)
-	require.Equal(t, "binary", tbl.Cols()[0].Charset)
+	require.Equal(t, "binary", tbl.Cols()[0].GetCharset())
 }
 
 func TestAddMultiColumnsIndex(t *testing.T) {
@@ -1203,16 +1039,16 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Len(t, tbl.Meta().Columns, 4)
 	require.Equal(t, "c1", tbl.Meta().Columns[0].Name.O)
-	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[0].Tp)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[0].GetType())
 	require.Equal(t, 0, tbl.Meta().Columns[0].Offset)
 	require.Equal(t, "_col$_c1", tbl.Meta().Columns[1].Name.O)
-	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[1].Tp)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[1].GetType())
 	require.Equal(t, 1, tbl.Meta().Columns[1].Offset)
 	require.Equal(t, "_col$__col$_c1_0", tbl.Meta().Columns[2].Name.O)
-	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[2].Tp)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[2].GetType())
 	require.Equal(t, 2, tbl.Meta().Columns[2].Offset)
 	require.Equal(t, "_col$__col$__col$_c1_0_0", tbl.Meta().Columns[3].Name.O)
-	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[3].Tp)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[3].GetType())
 	require.Equal(t, 3, tbl.Meta().Columns[3].Offset)
 
 	tk.MustExec("drop table if exists t")
@@ -1243,16 +1079,17 @@ func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
 		}()
 		hook := &ddl.TestDDLCallback{Do: dom}
 		times := 0
-		hook.OnJobUpdatedExported = func(job *model.Job) {
-			if job.Type != model.ActionModifyColumn || checkErr != nil ||
-				(job.SchemaState != startColState && job.SchemaState != commitColState) {
+		hook.OnJobRunBeforeExported = func(job *model.Job) {
+			if job.Type != model.ActionModifyColumn || checkErr != nil || job.SchemaState != startColState {
 				return
 			}
 
-			if job.SchemaState == startColState {
-				tk1.MustExec("use test")
-				tk1.MustExec("begin pessimistic;")
-				tk1.MustExec("insert into t1 values(101, 102, 103)")
+			tk1.MustExec("use test")
+			tk1.MustExec("begin pessimistic;")
+			tk1.MustExec("insert into t1 values(101, 102, 103)")
+		}
+		hook.OnJobUpdatedExported = func(job *model.Job) {
+			if job.Type != model.ActionModifyColumn || checkErr != nil || job.SchemaState != commitColState {
 				return
 			}
 			if times == 0 {
