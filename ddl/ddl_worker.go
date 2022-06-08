@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -280,7 +281,12 @@ func (d *ddl) limitDDLJobs() {
 			for i := 0; i < jobLen; i++ {
 				tasks = append(tasks, <-d.limitJobCh)
 			}
-			d.addBatchDDLJobs(tasks)
+			if variable.EnableConcurrentDDL.Load() {
+				d.addConcurrencyDDLJobs(tasks)
+			} else {
+				d.addBatchDDLJobs(tasks)
+			}
+
 		case <-d.ctx.Done():
 			return
 		}
@@ -339,6 +345,60 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	}
+}
+
+// addConcurrencyDDLJobs gets global job IDs and puts the DDL jobs in the DDL job table.
+func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
+	startTime := time.Now()
+	var ids []int64
+	var err error
+	startTs := uint64(0)
+	err = kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ids, err = t.GenGlobalIDs(len(tasks))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		startTs = txn.StartTS()
+		return nil
+	})
+	if err == nil {
+		jobTasks := make([]*model.Job, len(tasks))
+		for i, task := range tasks {
+			job := task.job
+			job.Version = currentVersion
+			job.StartTS = startTs
+			job.ID = ids[i]
+			job.State = model.JobStateQueueing
+			jobTasks[i] = job
+			failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
+				if val.(bool) {
+					if len(job.Args) > 0 {
+						job.Args[0] = 1
+					}
+				}
+			})
+		}
+		err = d.addDDLJobs(jobTasks)
+		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.Errorf("mockAddBatchDDLJobsErr")
+			}
+		})
+	}
+	var jobs strings.Builder
+	for _, task := range tasks {
+		task.err <- err
+		jobs.WriteString(task.job.String())
+		jobs.WriteString("; ")
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
+			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs.String()), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs.String()))
 	}
 }
 
@@ -407,7 +467,13 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 			zap.String("job", job.String()))
 		updateRawArgs = false
 	}
-	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
+	var err error
+	if w.concurrentDDL {
+		err = updateConcurrencyDDLJob(w.sess, job, updateRawArgs)
+	} else {
+		err = t.UpdateDDLJob(0, job, updateRawArgs)
+	}
+	return errors.Trace(err)
 }
 
 func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
@@ -465,8 +531,11 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	_, err = t.DeQueueDDLJob()
+	if w.concurrentDDL {
+		err = w.deleteDDLJob(job)
+	} else {
+		_, err = t.DeQueueDDLJob()
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -481,7 +550,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 	w.writeDDLSeqNum(job)
 	w.removeJobCtx(job)
-	err = t.AddHistoryDDLJob(job, updateRawArgs)
+	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs, w.concurrentDDL)
 	return errors.Trace(err)
 }
 
@@ -950,10 +1019,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 	if job.IsFinished() {
+		logutil.Logger(w.logCtx).Debug("[ddl] finish DDL job", zap.String("job", job.String()))
 		return
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
+		logutil.Logger(w.logCtx).Debug("[ddl] cancel DDL job", zap.String("job", job.String()))
 		return convertJob2RollbackJob(w, d, t, job)
 	}
 

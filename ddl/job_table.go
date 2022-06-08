@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -116,7 +118,7 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
 		if job.Type == model.ActionDropSchema {
-			sql := fmt.Sprintf("select * from mysql.tidb_ddl_job where schema_id = %d and job_id < %d limit 1", job.SchemaID, job.ID)
+			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where schema_id = %d and job_id < %d limit 1", job.SchemaID, job.ID)
 			return d.checkJobIsRunnable(sess, sql)
 		}
 		return true, nil
@@ -130,7 +132,7 @@ func (d *ddl) checkJobIsRunnable(sess *session, sql string) (bool, error) {
 
 func (d *ddl) getReorgJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
-		sql := fmt.Sprintf("select * from mysql.tidb_ddl_job where schema_id = %d and is_drop_schema and job_id < %d limit 1", job.SchemaID, job.ID)
+		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where schema_id = %d and is_drop_schema and job_id < %d limit 1", job.SchemaID, job.ID)
 		return d.checkJobIsRunnable(sess, sql)
 	})
 }
@@ -220,6 +222,54 @@ func (d *ddl) doDDLJob(wk *worker, pool *workerPool, job *model.Job) {
 			logutil.BgLogger().Info("[ddl] handle ddl job failed", zap.Error(err), zap.String("job", job.String()))
 		}
 	})
+}
+
+const (
+	addDDLJobSQL               = "insert into mysql.tidb_ddl_job values"
+	updateConcurrencyDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
+)
+
+func (d *ddl) addDDLJobs(jobs []*model.Job) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+	var sql bytes.Buffer
+	sql.WriteString(addDDLJobSQL)
+	for i, job := range jobs {
+		b, err := job.Encode(true)
+		if err != nil {
+			return err
+		}
+		if i != 0 {
+			sql.WriteString(",")
+		}
+		sql.WriteString(fmt.Sprintf("(%d, %t, %d, %d, %s, %t)", job.ID, job.MayNeedReorg(), job.SchemaID, job.TableID, wrapKey2String(b), job.Type == model.ActionDropSchema))
+	}
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	defer d.sessPool.put(sess)
+	_, err = newSession(sess).execute(context.Background(), sql.String(), "insert_job")
+	logutil.BgLogger().Debug("[ddl] add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
+	return errors.Trace(err)
+}
+
+func (w *worker) deleteDDLJob(job *model.Job) error {
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
+	_, err := w.sess.execute(context.Background(), sql, "delete_job")
+	return errors.Trace(err)
+}
+
+func updateConcurrencyDDLJob(sctx *session, job *model.Job, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
+	if err != nil {
+		return err
+	}
+	sql := fmt.Sprintf(updateConcurrencyDDLJobSQL, wrapKey2String(b), job.ID)
+	_, err = sctx.execute(context.Background(), sql, "update_job")
+	return errors.Trace(err)
 }
 
 // getDDLReorgHandle get ddl reorg handle.

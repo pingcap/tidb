@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -472,7 +473,7 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 }
 
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
-func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
+func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, se sessionctx.Context, store kv.Storage, lastBackupTS, backupTS uint64) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
@@ -481,12 +482,12 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allJobs, err := ddl.GetAllDDLJobs(snapMeta)
+	allJobs, err := ddl.GetAllDDLJobs(se, snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
-	historyJobs, err := ddl.GetAllHistoryDDLJobs(snapMeta)
+	historyJobs, err := ddl.GetAllHistoryDDLJobs(se, snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}

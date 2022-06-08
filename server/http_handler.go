@@ -888,8 +888,7 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	fn := func(jobs []*model.Job) (bool, error) {
 		return executor.GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
 	}
-
-	err = ddl.IterAllDDLJobs(txn, fn)
+	err = ddl.IterAllDDLJobs(s, txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,
@@ -1264,8 +1263,14 @@ func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 	txnMeta := meta.NewMeta(txn)
+	se, err := session.CreateSession(h.Store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	se.GetSessionVars().InRestrictedSQL = true
+	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
-	jobs, err := ddl.GetAllHistoryDDLJobs(txnMeta)
+	jobs, err := ddl.GetAllHistoryDDLJobs(se, txnMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -24,6 +24,8 @@ import (
 	"flag"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -796,16 +798,30 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	if !RunWorker {
 		return
 	}
-	var worker *worker
-	if job.MayNeedReorg() {
-		worker = d.workers[addIdxWorker]
+	if variable.EnableConcurrentDDL.Load() {
+		key := ""
+		if job.MayNeedReorg() {
+			key = addingDDLJobReorg
+		} else {
+			key = addingDDLJobGeneral
+		}
+		if d.ownerManager.IsOwner() {
+			asyncNotify(d.ddlJobCh)
+		} else {
+			d.asyncNotifyByEtcd(key, job)
+		}
 	} else {
-		worker = d.workers[generalWorker]
-	}
-	if d.ownerManager.IsOwner() {
-		asyncNotify(worker.ddlJobCh)
-	} else {
-		d.asyncNotifyByEtcd(worker.addingDDLJobKey, job)
+		var worker *worker
+		if job.MayNeedReorg() {
+			worker = d.workers[addIdxWorker]
+		} else {
+			worker = d.workers[generalWorker]
+		}
+		if d.ownerManager.IsOwner() {
+			asyncNotify(worker.ddlJobCh)
+		} else {
+			d.asyncNotifyByEtcd(worker.addingDDLJobKey, job)
+		}
 	}
 }
 
@@ -874,6 +890,11 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer d.sessPool.put(sess)
 	for {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
 			_ = d.Stop()
@@ -888,8 +909,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Info("[ddl] DoDDLJob will quit because context done")
 			return context.Canceled
 		}
-
-		historyJob, err = d.getHistoryDDLJob(jobID)
+		historyJob, err = GetHistoryJobByID(sess, jobID)
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
@@ -1216,6 +1236,100 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	return errs, nil
 }
 
+// CancelConcurrencyJobs cancels the DDL jobs that are in the concurrent state.
+func CancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) {
+	failpoint.Inject("mockCancelConcurencyDDL", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mock commit error"))
+		}
+	})
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var getJobSQL string
+	var jobSet = make(map[int64]int) // jobID -> error index
+
+	sess := newSession(se)
+	err := sess.begin()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 1 {
+		getJobSQL = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id = %d order by job_id", ids[0])
+		jobSet[ids[0]] = 0
+	} else {
+		var idsStr []string
+		for idx, id := range ids {
+			jobSet[id] = idx
+			idsStr = append(idsStr, strconv.FormatInt(id, 10))
+		}
+		getJobSQL = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id in (%s) order by job_id", strings.Join(idsStr, ", "))
+	}
+	rows, err := sess.execute(context.Background(), getJobSQL, "cancel")
+	if err != nil {
+		sess.rollback()
+		return nil, err
+	}
+
+	errs := make([]error, len(ids))
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		job := &model.Job{}
+		err = job.Decode(jobBinary)
+		if err != nil {
+			sess.rollback()
+			return nil, err
+		}
+		i, ok := jobSet[job.ID]
+		if !ok {
+			continue
+		}
+		delete(jobSet, job.ID)
+		if job.IsDone() || job.IsSynced() {
+			errs[i] = dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
+		if job.IsCancelled() {
+			errs[i] = dbterror.ErrCancelledDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		if job.IsRollingback() || job.IsRollbackDone() {
+			continue
+		}
+		if !job.IsRollbackable() {
+			errs[i] = dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		job.State = model.JobStateCancelling
+		// Make sure RawArgs isn't overwritten.
+		err := json.Unmarshal(job.RawArgs, &job.Args)
+		if err != nil {
+			errs[i] = errors.Trace(err)
+			continue
+		}
+		err = updateConcurrencyDDLJob(sess, job, true)
+		if err != nil {
+			errs[i] = errors.Trace(err)
+		}
+	}
+	err = sess.commit()
+	if err != nil {
+		return nil, err
+	}
+	for id, idx := range jobSet {
+		errs[idx] = dbterror.ErrDDLJobNotFound.GenWithStackByArgs(id)
+	}
+	return errs, nil
+}
+
+// GetHistoryDDLJobs returns the DDL history jobs and an error.
+// The maximum count of history jobs is num.
+func GetHistoryDDLJobs(sess sessionctx.Context, txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
+	t := meta.NewMeta(txn)
+	return GetLastNHistoryDDLJobs(newSession(sess), t, maxNumJobs)
+}
+
 func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
 	cnt, err := t.DDLJobQueueLen(jobListKey)
 	if err != nil {
@@ -1232,7 +1346,16 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 }
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func GetAllDDLJobs(t *meta.Meta) ([]*model.Job, error) {
+func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
+	if variable.EnableConcurrentDDL.Load() {
+		return getJobsBySQL(newSession(sess), "tidb_ddl_job", "1 order by job_id")
+	}
+
+	return getDDLJobs(t)
+}
+
+// getDDLJobs get all DDL jobs and sorts jobs by job.ID.
+func getDDLJobs(t *meta.Meta) ([]*model.Job, error) {
 	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1266,21 +1389,10 @@ const MaxHistoryJobs = 10
 // DefNumHistoryJobs is default value of the default number of history job
 const DefNumHistoryJobs = 10
 
-// GetHistoryDDLJobs returns the DDL history jobs and an error.
-// The maximum count of history jobs is num.
-func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
-	t := meta.NewMeta(txn)
-	jobs, err := t.GetLastNHistoryDDLJobs(maxNumJobs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return jobs, nil
-}
-
 // IterHistoryDDLJobs iterates history DDL jobs until the `finishFn` return true or error.
-func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+func IterHistoryDDLJobs(sess sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
 	txnMeta := meta.NewMeta(txn)
-	iter, err := txnMeta.GetLastHistoryDDLJobsIterator()
+	iter, err := GetLastHistoryDDLJobsIterator(sess, txnMeta)
 	if err != nil {
 		return err
 	}
@@ -1299,8 +1411,8 @@ func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, e
 
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
 // then iterates history DDL jobs until the `finishFn` return true or error.
-func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
-	jobs, err := GetAllDDLJobs(meta.NewMeta(txn))
+func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+	jobs, err := GetAllDDLJobs(ctx, meta.NewMeta(txn))
 	if err != nil {
 		return err
 	}
@@ -1309,7 +1421,46 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 	if err != nil || finish {
 		return err
 	}
-	return IterHistoryDDLJobs(txn, finishFn)
+	return IterHistoryDDLJobs(ctx, txn, finishFn)
+}
+
+// GetLastNHistoryDDLJobs get last n history ddl jobs.
+func GetLastNHistoryDDLJobs(sess *session, m *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
+	if variable.EnableConcurrentDDL.Load() {
+		return getJobsBySQL(sess, "tidb_ddl_history", "1 order by job_id desc limit "+strconv.Itoa(maxNumJobs))
+	}
+	jobs, err := m.GetLastNHistoryDDLJobs(maxNumJobs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return jobs, nil
+}
+
+// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+func GetLastHistoryDDLJobsIterator(sess sessionctx.Context, m *meta.Meta) (meta.LastJobIterator, error) {
+	if variable.EnableConcurrentDDL.Load() {
+		return &ConcurrentDDLLastJobIterator{
+			sess:   newSession(sess),
+			offset: 0,
+		}, nil
+	}
+	return m.GetLastHistoryDDLJobsIterator()
+}
+
+// ConcurrentDDLLastJobIterator is the iterator for gets latest history.
+type ConcurrentDDLLastJobIterator struct {
+	sess   *session
+	offset uint64
+}
+
+// GetLastJobs iter latest num history ddl jobs.
+func (c *ConcurrentDDLLastJobIterator) GetLastJobs(num int, _ []*model.Job) ([]*model.Job, error) {
+	jobs, err := getJobsBySQL(c.sess, "tidb_ddl_history", fmt.Sprintf("1 order by job_id desc limit %d, %d", c.offset, num))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	c.offset += uint64(len(jobs))
+	return jobs, err
 }
 
 // session wraps sessionctx.Context for transaction usage.
@@ -1372,12 +1523,23 @@ func (s *session) session() sessionctx.Context {
 }
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.
-func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
+func GetAllHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta) ([]*model.Job, error) {
+	if variable.EnableConcurrentDDL.Load() {
+		return getJobsBySQL(newSession(sess), "tidb_ddl_history", "1")
+	}
+
 	return m.GetAllHistoryDDLJobs()
 }
 
 // GetHistoryJobByID return history DDL job by ID.
 func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
+	if variable.EnableConcurrentDDL.Load() {
+		jobs, err := getJobsBySQL(newSession(sess), "tidb_ddl_history", fmt.Sprintf("job_id = %d", id))
+		if err != nil || len(jobs) == 0 {
+			return nil, errors.Trace(err)
+		}
+		return jobs[0], nil
+	}
 	err := sessiontxn.NewTxn(context.Background(), sess)
 	if err != nil {
 		return nil, err
@@ -1396,11 +1558,19 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 }
 
 // AddHistoryDDLJob adds DDL job to history table.
-func AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+func AddHistoryDDLJob(sess *session, t *meta.Meta, job *model.Job, updateRawArgs bool, enableConcurrentDDL bool) error {
+	if enableConcurrentDDL {
+		return addHistoryDDLJob(sess, job, updateRawArgs)
+	}
+
 	return t.AddHistoryDDLJob(job, updateRawArgs)
 }
 
-// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
-func GetLastHistoryDDLJobsIterator(m *meta.Meta) (meta.LastJobIterator, error) {
-	return m.GetLastHistoryDDLJobsIterator()
+func addHistoryDDLJob(sess *session, job *model.Job, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
+	if err != nil {
+		return err
+	}
+	_, err = sess.execute(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_history(job_id, job_meta) values (%d, 0x%x)", job.ID, b), "insert_history")
+	return errors.Trace(err)
 }
