@@ -21,7 +21,7 @@
 
 This document describes the design of Concurrent DDL, which makes DDL in different table are executed concurrently and do not block each other.
 
-## Motivation or Background
+## Motivation and Background
 
 DDL (Data Definition Language) is a data definition language, commonly used to describe and manage database schema objects, including but not limited to tables, indexes, views, constraints, etc., and is one of the most commonly used database languages. The DDL change in TiDB relies on the two cluster-level queues to achieve lock-free management, solving the DDL conflict problem. However,  when a large number of DDLs are executed simultaneously, especially when the execution time of DDLs is long,  DDL queuing and blocking occurs, which affects the performance of TiDB and  degrades the user experience.
 
