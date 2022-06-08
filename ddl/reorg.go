@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"sync"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -725,51 +725,84 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	return &info, nil
 }
 
-func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
+func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err error) {
 	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
-
-	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		rh := newReorgHandler(meta.NewMeta(txn))
-		return errors.Trace(rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
-	})
+	se, err := pool.get()
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
-	return nil
+	defer pool.put(se)
+
+	sess := newSession(se)
+	err = sess.begin()
+	if err != nil {
+		return
+	}
+	txn, err := sess.txn()
+	if err != nil {
+		sess.rollback()
+		return err
+	}
+	rh := newReorgHandler(meta.NewMeta(txn), sess, variable.EnableConcurrentDDL.Load())
+	err = errors.Trace(rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
+	return sess.commit()
 }
 
 // reorgHandler is used to handle the reorg information duration reorganization DDL job.
 type reorgHandler struct {
 	m *meta.Meta
+	s *session
+
+	enableConcurrentDDL bool
 }
 
-func newReorgHandler(t *meta.Meta) *reorgHandler {
-	return &reorgHandler{m: t}
+// NewReorgHandlerForTest creates a new reorgHandler, only used in test.
+func NewReorgHandlerForTest(t *meta.Meta, sess sessionctx.Context) *reorgHandler {
+	return newReorgHandler(t, newSession(sess), variable.EnableConcurrentDDL.Load())
+}
+
+func newReorgHandler(t *meta.Meta, sess *session, enableConcurrentDDL bool) *reorgHandler {
+	return &reorgHandler{m: t, s: sess, enableConcurrentDDL: enableConcurrentDDL}
 }
 
 // UpdateDDLReorgStartHandle saves the job reorganization latest processed element and start handle for later resuming.
 func (r *reorgHandler) UpdateDDLReorgStartHandle(job *model.Job, element *meta.Element, startKey kv.Key) error {
+	if r.enableConcurrentDDL {
+		return updateDDLReorgStartHandle(r.s, job, element, startKey)
+	}
 	return r.m.UpdateDDLReorgStartHandle(job, element, startKey)
 }
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
 func (r *reorgHandler) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	if r.enableConcurrentDDL {
+		return updateDDLReorgHandle(r.s, job, startKey, endKey, physicalTableID, element)
+	}
 	return r.m.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
 }
 
 // RemoveReorgElement removes the element of the reorganization information.
 func (r *reorgHandler) RemoveReorgElement(job *model.Job) error {
+	if r.enableConcurrentDDL {
+		return removeReorgElement(r.s, job)
+	}
 	return r.m.RemoveReorgElement(job)
 }
 
 // RemoveDDLReorgHandle removes the job reorganization related handles.
 func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Element) error {
+	if variable.EnableConcurrentDDL.Load() {
+		return removeDDLReorgHandle(r.s, job, elements)
+	}
 	return r.m.RemoveDDLReorgHandle(job, elements)
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+	if r.enableConcurrentDDL {
+		return getDDLReorgHandle(r.s, job)
+	}
 	return r.m.GetDDLReorgHandle(job)
 }

@@ -1082,37 +1082,61 @@ type Info struct {
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
-// GetDDLInfo returns DDL information.
-func GetDDLInfo(txn kv.Transaction) (*Info, error) {
-	var err error
+// GetDDLInfo returns DDL information for new ddl framework.
+func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	info := &Info{}
-	t := meta.NewMeta(txn)
-
 	info.Jobs = make([]*model.Job, 0, 2)
-	job, err := t.GetDDLJobByIdx(0)
+	sess := newSession(s)
+	txn, err := sess.txn()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if job != nil {
-		info.Jobs = append(info.Jobs, job)
-	}
-	addIdxJob, err := t.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if addIdxJob != nil {
-		info.Jobs = append(info.Jobs, addIdxJob)
+	t := meta.NewMeta(txn)
+	var reorgJob *model.Job
+	enable := variable.EnableConcurrentDDL.Load()
+	if enable {
+		generalJobs, err := getJobsBySQL(sess, "tidb_ddl_job", "not reorg order by job_id limit 1")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if len(generalJobs) != 0 {
+			info.Jobs = append(info.Jobs, generalJobs[0])
+		}
+		reorgJobs, err := getJobsBySQL(sess, "tidb_ddl_job", "reorg order by job_id limit 1")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(reorgJobs) != 0 {
+			info.Jobs = append(info.Jobs, reorgJobs[0])
+			reorgJob = reorgJobs[0]
+		}
+	} else {
+		generalJob, err := t.GetDDLJobByIdx(0)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if generalJob != nil {
+			info.Jobs = append(info.Jobs, generalJob)
+		}
+		reorgJob, err = t.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if reorgJob != nil {
+			info.Jobs = append(info.Jobs, reorgJob)
+		}
 	}
 
 	info.SchemaVer, err = t.GetSchemaVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if addIdxJob == nil {
+	if reorgJob == nil {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = newReorgHandler(t).GetDDLReorgHandle(addIdxJob)
+	_, info.ReorgHandle, _, _, err = newReorgHandler(t, sess, enable).GetDDLReorgHandle(reorgJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil

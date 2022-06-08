@@ -601,13 +601,13 @@ func TestReorg(t *testing.T) {
 				return nil
 			}
 			mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: test.isCommonHandle, CommonHandleVersion: 1})
-			err = d.generalWorker().runReorgJob(newReorgHandler(m), rInfo, mockTbl.Meta(), d.lease, f)
+			err = d.generalWorker().runReorgJob(NewReorgHandlerForTest(m, nil), rInfo, mockTbl.Meta(), d.lease, f)
 			require.Error(t, err)
 
 			// The longest to wait for 5 seconds to make sure the function of f is returned.
 			for i := 0; i < 1000; i++ {
 				time.Sleep(5 * time.Millisecond)
-				err = d.generalWorker().runReorgJob(newReorgHandler(m), rInfo, mockTbl.Meta(), d.lease, f)
+				err = d.generalWorker().runReorgJob(NewReorgHandlerForTest(m, nil), rInfo, mockTbl.Meta(), d.lease, f)
 				if err == nil {
 					require.Equal(t, job.RowCount, rowCount)
 
@@ -618,7 +618,7 @@ func TestReorg(t *testing.T) {
 					require.NoError(t, err)
 
 					m = meta.NewMeta(txn)
-					info, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, newReorgHandler(m), job, mockTbl, nil)
+					info, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, NewReorgHandlerForTest(m, nil), job, mockTbl, nil)
 					require.NoError(t, err1)
 					require.Equal(t, info.StartKey, kv.Key(handle.Encoded()))
 					require.Equal(t, info.currElement, e)
@@ -647,18 +647,18 @@ func TestReorg(t *testing.T) {
 			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
 				var err1 error
-				_, err1 = getReorgInfo(NewJobContext(), d.ddlCtx, newReorgHandler(m), job, mockTbl, []*meta.Element{element})
+				_, err1 = getReorgInfo(NewJobContext(), d.ddlCtx, NewReorgHandlerForTest(m, nil), job, mockTbl, []*meta.Element{element})
 				require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err1))
 				require.Equal(t, job.SnapshotVer, uint64(0))
 				return nil
 			})
 			require.NoError(t, err)
 			job.SnapshotVer = uint64(1)
-			err = info.UpdateReorgMeta(info.StartKey)
+			err = info.UpdateReorgMeta(info.StartKey, nil)
 			require.NoError(t, err)
 			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
-				info1, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, newReorgHandler(m), job, mockTbl, []*meta.Element{element})
+				info1, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, NewReorgHandlerForTest(m, nil), job, mockTbl, []*meta.Element{element})
 				require.NoError(t, err1)
 				require.Equal(t, info1.currElement, info.currElement)
 				require.Equal(t, info1.StartKey, info.StartKey)
@@ -670,7 +670,7 @@ func TestReorg(t *testing.T) {
 
 			err = d.Stop()
 			require.NoError(t, err)
-			err = d.generalWorker().runReorgJob(newReorgHandler(m), rInfo, mockTbl.Meta(), d.lease, func() error {
+			err = d.generalWorker().runReorgJob(NewReorgHandlerForTest(m, nil), rInfo, mockTbl.Meta(), d.lease, func() error {
 				time.Sleep(4 * testLease)
 				return nil
 			})
@@ -681,55 +681,6 @@ func TestReorg(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-}
-
-func TestGetDDLInfo(t *testing.T) {
-	store, clean := newMockStore(t)
-	defer clean()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-
-	dbInfo2 := &model.DBInfo{
-		ID:    2,
-		Name:  model.NewCIStr("b"),
-		State: model.StateNone,
-	}
-	job := &model.Job{
-		SchemaID: dbInfo2.ID,
-		Type:     model.ActionCreateSchema,
-		RowCount: 0,
-	}
-	job1 := &model.Job{
-		SchemaID: dbInfo2.ID,
-		Type:     model.ActionAddIndex,
-		RowCount: 0,
-	}
-
-	err = m.EnQueueDDLJob(job)
-	require.NoError(t, err)
-
-	info, err := GetDDLInfo(txn)
-	require.NoError(t, err)
-	require.Len(t, info.Jobs, 1)
-	require.Equal(t, job, info.Jobs[0])
-	require.Nil(t, info.ReorgHandle)
-
-	// two jobs
-	m = meta.NewMeta(txn, meta.AddIndexJobListKey)
-	err = m.EnQueueDDLJob(job1)
-	require.NoError(t, err)
-
-	info, err = GetDDLInfo(txn)
-	require.NoError(t, err)
-	require.Len(t, info.Jobs, 2)
-	require.Equal(t, job, info.Jobs[0])
-	require.Equal(t, job1, info.Jobs[1])
-	require.Nil(t, info.ReorgHandle)
-
-	err = txn.Rollback()
-	require.NoError(t, err)
 }
 
 func TestGetDDLJobs(t *testing.T) {
