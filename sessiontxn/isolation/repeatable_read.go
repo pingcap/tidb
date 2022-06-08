@@ -38,7 +38,7 @@ type PessimisticRRTxnContextProvider struct {
 	forUpdateTS uint64
 	// It may decide whether to update forUpdateTs when calling provider's getForUpdateTs
 	// See more details in the comments of optimizeWithPlan
-	followingStmtIsPointGetForUpdate bool
+	followingOperatorIsPointGetForUpdate bool
 }
 
 // NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
@@ -68,7 +68,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 		return p.forUpdateTS, nil
 	}
 
-	if p.followingStmtIsPointGetForUpdate {
+	if p.followingOperatorIsPointGetForUpdate {
 		return p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS(), nil
 	}
 
@@ -125,7 +125,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error
 	}
 
 	p.forUpdateTS = 0
-	p.followingStmtIsPointGetForUpdate = false
+	p.followingOperatorIsPointGetForUpdate = false
 
 	return nil
 }
@@ -144,7 +144,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 		p.forUpdateTS = 0
 	}
 
-	p.followingStmtIsPointGetForUpdate = false
+	p.followingOperatorIsPointGetForUpdate = false
 
 	return nil
 }
@@ -171,10 +171,11 @@ func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType, val [
 	}
 }
 
-// optimizeWithPlan optimizes for-update-like point get execution. We set p.followingStmtIsPointGetForUpdate
-// to be true in these cases. And when p.getForUpdateTs is called, we do not acquire tso from PD immediately but return the value of
-// txnCtx.GetForUpdateTS() expecting that the values that the point get operation acquires have not been changed.
-// If these values that the point get operations acquires have been changed, we update ts in error handling.
+// optimizeWithPlan optimizes for update point get related execution.
+// Use case: In for update point get related operations, we do not fetch ts from PD but use the last ts we fetched.
+//     We expect that the data that the point get acquires has not been changed.
+// Benefit: Save the cost of acquiring ts from PD.
+// Drawbacks: If the data has been changed since the ts we used, we need to retry.
 func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
@@ -208,7 +209,7 @@ func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error
 		}
 	}
 
-	p.followingStmtIsPointGetForUpdate = mayOptimizeForPointGet
+	p.followingOperatorIsPointGetForUpdate = mayOptimizeForPointGet
 
 	return nil
 }

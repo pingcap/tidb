@@ -139,7 +139,11 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
 		case ast.ReadCommitted:
 			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
-		case ast.RepeatableRead:
+		case ast.Serializable:
+			// todo: Add pessimistic serializable transaction context provider
+			break
+		default:
+			// We use Repeatable read for all other cases.
 			return isolation.NewPessimisticRRTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
 		}
 	}
