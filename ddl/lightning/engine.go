@@ -199,13 +199,16 @@ func UnsafeImportEngineData(jobId int64, indexId int64) error {
 		log.L().Error(LERR_GET_ENGINE_FAILED, zap.String("Engine key:", engineKey))
 		return errors.New(LERR_GET_ENGINE_FAILED)
 	}
-	// Flush wirter cached data into local disk for engine first.
-	err := FlushEngine(engineKey, ei)
-	if err != nil {
-		return err
-	}
+
 	totalDiskSize := GlobalLightningEnv.LitMemRoot.TotalDiskUsage()
 	if GlobalLightningEnv.NeedImportEngineData(totalDiskSize) {
+		// ToDo it should be handle when do checkpoint solution.
+		// Flush wirter cached data into local disk for engine first.
+		err := FlushEngine(engineKey, ei)
+		if err != nil {
+			return err
+		}
+		
 		log.L().Info(LINFO_UNSAFE_IMPORT, zap.String("Engine key:", engineKey), zap.String("Current total used disk:", strconv.FormatInt(totalDiskSize, 10)))
 		err = ei.backCtx.Backend.UnsafeImportAndReset(ei.backCtx.Ctx, ei.uuid, int64(config.SplitRegionSize) * int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys))
 		if err != nil {
