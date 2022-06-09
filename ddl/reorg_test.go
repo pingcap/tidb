@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,9 @@ func TestReorgOwner(t *testing.T) {
 	require.NoError(t, err)
 
 	num := 10
+	ctx = testkit.NewTestKit(t, store).Session()
+	err = sessiontxn.NewTxn(context.Background(), ctx)
+	require.NoError(t, err)
 	for i := 0; i < num; i++ {
 		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
