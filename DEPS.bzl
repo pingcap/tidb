@@ -2241,6 +2241,14 @@ def go_deps():
         version = "v0.0.0-20181126055449-889f96f722a2",
     )
     go_repository(
+        name = "com_github_tidwall_btree",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/tidwall/btree",
+        sum = "h1:636+tdVDs8Hjcf35Di260W2xCW4KuoXOKyk9QWOvCpA=",
+        version = "v1.3.1",
+    )
+
+    go_repository(
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
