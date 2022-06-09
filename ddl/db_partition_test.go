@@ -1416,9 +1416,6 @@ func TestAlterTableTruncatePartitionByList(t *testing.T) {
 	);`)
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 
-	// TODO(tiancaiamao): remove this line after https://github.com/pingcap/tidb/issues/35242
-	tk.MustExec("set @@tidb_partition_prune_mode = static")
-
 	oldTbl := external.GetTableByName(t, tk, "test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
 	fmt.Println("===============")
@@ -1453,9 +1450,6 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	    partition p1 values in ((3,'a'),(4,'b')),
 	    partition p3 values in ((5,'a'),(null,null))
 	);`)
-
-	// TODO(tiancaiamao): remove this line after https://github.com/pingcap/tidb/issues/35242
-	tk.MustExec("set @@tidb_partition_prune_mode = static")
 
 	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
 	oldTbl := external.GetTableByName(t, tk, "test", "t")
