@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -736,6 +735,7 @@ enable-global-kill = true
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
+enable-load-fmsketch = true
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -822,6 +822,7 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
+	require.True(t, conf.Performance.EnableLoadFMSketch)
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
@@ -1059,8 +1060,6 @@ func TestDeprecatedConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
 	configFile := "config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)

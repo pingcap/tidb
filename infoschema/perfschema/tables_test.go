@@ -20,8 +20,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
-	"runtime"
 	"runtime/pprof"
 	"strings"
 	"testing"
@@ -65,7 +63,7 @@ func TestTiKVProfileCPU(t *testing.T) {
 	// mock tikv profile
 	copyHandler := func(filename string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
-			file, err := os.Open(filepath.Join(currentSourceDir(), filename))
+			file, err := os.Open(filename)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
@@ -146,7 +144,7 @@ func TestTiKVProfileCPU(t *testing.T) {
 	}
 
 	// mock PD profile
-	router.HandleFunc("/pd/api/v1/debug/pprof/profile", copyHandler("../../util/profile/testdata/test.pprof"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/profile", copyHandler("testdata/test.pprof"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/heap", handlerFactory("heap"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/mutex", handlerFactory("mutex"))
 	router.HandleFunc("/pd/api/v1/debug/pprof/allocs", handlerFactory("allocs"))
@@ -196,9 +194,4 @@ func newMockStore(t *testing.T) (store kv.Storage, clean func()) {
 	}
 
 	return
-}
-
-func currentSourceDir() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Dir(file)
 }
