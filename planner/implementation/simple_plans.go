@@ -53,7 +53,7 @@ type TiDBSelectionImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (sel *TiDBSelectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().CPUFactor + children[0].GetCost()
+	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().GetCPUFactor() + children[0].GetCost()
 	return sel.cost
 }
 
@@ -69,7 +69,7 @@ type TiKVSelectionImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (sel *TiKVSelectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().CopCPUFactor + children[0].GetCost()
+	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().GetCopCPUFactor() + children[0].GetCost()
 	return sel.cost
 }
 
@@ -183,7 +183,7 @@ func (impl *UnionAllImpl) CalcCost(outCount float64, children ...memo.Implementa
 			childMaxCost = childCost
 		}
 	}
-	selfCost := float64(1+len(children)) * impl.plan.SCtx().GetSessionVars().ConcurrencyFactor
+	selfCost := float64(1+len(children)) * impl.plan.SCtx().GetSessionVars().GetConcurrencyFactor()
 	// Children of UnionAll are executed in parallel.
 	impl.cost = selfCost + childMaxCost
 	return impl.cost
