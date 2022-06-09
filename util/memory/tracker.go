@@ -17,6 +17,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"sort"
 	"strconv"
 	"sync"
@@ -293,21 +294,7 @@ func (t *Tracker) remove(oldChild *Tracker) {
 	t.mu.Unlock()
 	if found {
 		oldChild.setParent(nil)
-		t.ClearChildTrack(oldChild)
-	}
-}
-
-func (t *Tracker) ClearChildTrack(oldChild *Tracker) {
-	t.Consume(-oldChild.BytesConsumed())
-	childBytesReleased := oldChild.BytesReleased()
-	for tracker := t; tracker != nil; tracker = tracker.getParent() {
-		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, -childBytesReleased)
-		//if tracker.label == LabelForGlobalAnalyzeMemory || tracker.label == LabelForAnalyzeMemory {
-		//	println("update released " + strconv.FormatInt(bytesReleased, 10))
-		//}
-		if label, ok := MetricsTypes[tracker.label]; ok {
-			metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(bytesReleased))
-		}
+		t.Consume(-oldChild.BytesConsumed())
 	}
 }
 
@@ -409,16 +396,44 @@ func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	}
 }
 
-func (t *Tracker) Release(bytes int64) {
+func (t *Tracker) RecordRelease(bytes int64, obj any) {
 	if bytes == 0 {
 		return
 	}
-	t.Consume(-bytes)
+	defer t.Consume(-bytes)
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.shouldRecordRelease() {
+			runtime.SetFinalizer(&obj, func(objRef any) {
+				tracker.release(bytes)
+			})
+			tracker.recordRelease(bytes)
+			return
+		}
+	}
+}
+
+func (t *Tracker) shouldRecordRelease() bool {
+	return t.label == LabelForGlobalAnalyzeMemory
+}
+
+func (t *Tracker) recordRelease(bytes int64) {
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, bytes)
-		//if tracker.label == LabelForGlobalAnalyzeMemory || tracker.label == LabelForAnalyzeMemory {
-		//	println("update released " + strconv.FormatInt(bytesReleased, 10))
-		//}
+		if tracker.label == LabelForGlobalAnalyzeMemory {
+			println("record release " + strconv.FormatInt(bytesReleased, 10))
+		}
+		if label, ok := MetricsTypes[tracker.label]; ok {
+			metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(bytesReleased))
+		}
+	}
+}
+
+func (t *Tracker) release(bytes int64) {
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, -bytes)
+		if tracker.label == LabelForGlobalAnalyzeMemory {
+			println("update release " + strconv.FormatInt(bytesReleased, 10))
+		}
 		if label, ok := MetricsTypes[tracker.label]; ok {
 			metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(bytesReleased))
 		}
@@ -577,7 +592,7 @@ func (t *Tracker) DetachFromGlobalTracker() {
 	if !parent.isGlobal {
 		panic("Detach from a non-GlobalTracker")
 	}
-	parent.ClearChildTrack(t)
+	parent.Consume(-t.BytesConsumed())
 	t.setParent(nil)
 }
 
