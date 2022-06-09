@@ -17,7 +17,6 @@ package cophandler
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"math"
 	"sort"
@@ -136,7 +135,6 @@ type tableScanExec struct {
 func (e *tableScanExec) SkipValue() bool { return false }
 
 func (e *tableScanExec) Process(key, value []byte) error {
-	// fmt.Println("process ...  last key ==", kv.Key(key))
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
@@ -156,7 +154,6 @@ func (e *tableScanExec) Process(key, value []byte) error {
 		select {
 		case e.result <- scanResult{chk: e.chk, lastProcessedKey: kv.Key(key), err: nil}:
 			e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
-			// fmt.Println("run here!!!!")
 		case <-e.done:
 			return dbreader.ErrScanBreak
 		}
@@ -220,8 +217,6 @@ func (e *tableScanExec) open() error {
 
 func (e *tableScanExec) next() (*chunk.Chunk, error) {
 	result := <-e.result
-
-	fmt.Println("run in table scan next()", e.paging)
 	// Update the range for coprocessor paging protocol.
 	if e.paging != nil && result.err == nil {
 		if e.desc {

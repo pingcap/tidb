@@ -17,7 +17,6 @@
 package testkit
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -47,9 +46,7 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) (*domain.Domain, func()) {
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
-	fmt.Println("before bootstrap session.....===========")
 	dom, err := session.BootstrapSession(store)
-	fmt.Println("after bootstrap session.....===========")
 	require.NoError(t, err)
 
 	dom.SetStatsUpdating(true)

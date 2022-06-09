@@ -82,22 +82,16 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option)
 	}
-
 	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
 		req.Paging = false
 	})
-
-	fmt.Println("Send() ... kv ranges ==", req.KeyRanges)
-
 	if req.StoreType == kv.TiDB {
-		// TiDB coprocessor doesn't support paging
+		// coprocessor on TiDB doesn't support paging
 		req.Paging = false
-		fmt.Println("set the xxxxxxx to false ... because store type ks tidb!!!!!")
 	}
 	if req.Tp != kv.ReqTypeDAG {
 		// coprocessor request but type is not DAG
 		req.Paging = false
-		fmt.Println("set the xxxxxxx to false ... because req type not dag!!!!!")
 	}
 	if req.Streaming && req.Paging {
 		return copErrorResponse{errors.New("streaming and paging are both on")}
@@ -109,11 +103,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	if err != nil {
 		return copErrorResponse{err}
 	}
-
-	for _, t := range tasks {
-		fmt.Println("tasks ====", t.ranges)
-	}
-
 	it := &copIterator{
 		store:           c.store,
 		req:             req,
@@ -943,12 +932,10 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		return nil, errors.New("lastRange in paging should not be nil")
 	}
 	// calculate next ranges and grow the paging size
-	fmt.Println("handle cop paging result ... paging range ==", pagingRange)
 	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
 	if task.ranges.Len() == 0 {
 		return nil, nil
 	}
-	fmt.Println("calculate remain ranges ==== ", task.ranges)
 	task.pagingSize = paging.GrowPagingSize(task.pagingSize)
 	return []*copTask{task}, nil
 }
@@ -1176,7 +1163,6 @@ func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *copro
 		left, _ := ranges.Split(split.Start)
 		return left
 	}
-	fmt.Println("calculate remain ...", split.End)
 	_, right := ranges.Split(split.End)
 	return right
 }

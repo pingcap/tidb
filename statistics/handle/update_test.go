@@ -1909,7 +1909,6 @@ func TestUnsignedFeedbackRanges(t *testing.T) {
 	for _, test := range tests {
 		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(test.tblName))
 		require.NoError(t, err)
-		fmt.Println("                sql ===", test.sql)
 		testKit.MustQuery(test.sql)
 		require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 		require.NoError(t, h.DumpStatsFeedbackToKV())

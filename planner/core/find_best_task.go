@@ -507,7 +507,6 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCoun
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
-
 	memTable := PhysicalMemTable{
 		DBName:         p.DBName,
 		Table:          p.TableInfo,

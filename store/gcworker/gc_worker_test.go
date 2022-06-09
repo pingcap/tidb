@@ -119,6 +119,7 @@ func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreTyp
 			return c
 		}),
 	}
+
 	s.oracle = &oracles.MockOracle{}
 	s.store, s.dom, clean = testkit.CreateMockStoreWithOracle(t, s.oracle, opts...)
 	s.tikvStore = s.store.(tikv.Storage)

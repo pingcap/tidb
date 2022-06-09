@@ -1415,12 +1415,9 @@ func TestAlterTableTruncatePartitionByList(t *testing.T) {
 	    partition p3 values in (5,null)
 	);`)
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
-
 	oldTbl := external.GetTableByName(t, tk, "test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
-	fmt.Println("===============")
 	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1", "5", "<nil>"))
-	fmt.Println("--------------")
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
@@ -1450,7 +1447,6 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	    partition p1 values in ((3,'a'),(4,'b')),
 	    partition p3 values in ((5,'a'),(null,null))
 	);`)
-
 	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
 	oldTbl := external.GetTableByName(t, tk, "test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
