@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 )
@@ -113,6 +114,13 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
+func (m *txnManager) Advise(tp sessiontxn.AdviceType) error {
+	if m.ctxProvider != nil {
+		return m.ctxProvider.Advise(tp)
+	}
+	return nil
+}
+
 func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) sessiontxn.TxnContextProvider {
 	if r.Provider != nil {
 		return r.Provider
@@ -125,6 +133,13 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 
 	if r.StaleReadTS > 0 {
 		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil)
+	}
+
+	if txnMode == ast.Pessimistic {
+		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
+		case ast.ReadCommitted:
+			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+		}
 	}
 
 	return &legacy.SimpleTxnContextProvider{

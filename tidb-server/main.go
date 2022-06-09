@@ -52,6 +52,7 @@ import (
 	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	uni_metrics "github.com/pingcap/tidb/store/mockstore/unistore/metrics"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
@@ -285,6 +286,9 @@ func registerStores() {
 
 func registerMetrics() {
 	metrics.RegisterMetrics()
+	if config.GetGlobalConfig().Store == "unistore" {
+		uni_metrics.RegisterMetrics()
+	}
 }
 
 func createStoreAndDomain() (kv.Storage, *domain.Domain) {
