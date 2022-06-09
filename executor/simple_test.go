@@ -1089,3 +1089,10 @@ func TestStatementsCauseImplicitCommit(t *testing.T) {
 		tk.MustExec("delete from ic")
 	}
 }
+
+func TestShowSessionStates(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session_states 'x'")
+}
