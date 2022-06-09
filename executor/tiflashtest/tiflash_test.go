@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package tiflashtest
 
 import (
 	"bytes"
@@ -115,6 +115,27 @@ func TestReadPartitionTable(t *testing.T) {
 	tk.MustExec("set tidb_allow_batch_cop=2")
 	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
 	tk.MustExec("commit")
+}
+
+func TestAggPushDownApplyAll(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("drop table if exists bar")
+	tk.MustExec("create table foo(a int, b int)")
+	tk.MustExec("create table bar(a double not null, b decimal(65,0) not null)")
+	tk.MustExec("alter table foo set tiflash replica 1")
+	tk.MustExec("alter table bar set tiflash replica 1")
+	tk.MustExec("insert into foo values(0, NULL)")
+	tk.MustExec("insert into bar values(0, 0)")
+
+	tk.MustExec("set @@session.tidb_allow_mpp=1")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+
+	tk.MustQuery("select * from foo where a=all(select a from bar where bar.b=foo.b)").Check(testkit.Rows("0 <nil>"))
 }
 
 func TestReadUnsigedPK(t *testing.T) {
