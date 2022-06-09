@@ -978,13 +978,19 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
+
+		kvRanges := task.ranges.ToPBRanges()
+		firstRangeStartKey := kvRanges[0].Start
+		lastRangeEndKey := kvRanges[len(kvRanges)-1].End
+
 		logutil.Logger(bo.GetCtx()).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.GetID()),
 			zap.Uint64("bucketsVer", task.bucketsVer),
 			zap.Uint64("latestBucketsVer", resp.pbResp.GetLatestBucketsVersion()),
 			zap.Int("rangeNums", task.ranges.Len()),
-			zap.String("start and end keys in ranges", task.ranges.String()),
+			zap.ByteString("firstRangeStartKey", firstRangeStartKey),
+			zap.ByteString("lastRangeEndKey", lastRangeEndKey),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
 		if strings.Contains(err.Error(), "write conflict") {
