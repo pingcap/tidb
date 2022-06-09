@@ -201,3 +201,42 @@ func TestLRUPutTooBig(t *testing.T) {
 	require.Equal(t, lru.Cost(), int64(0))
 	require.Equal(t, mockTable.MemoryUsage().TotalTrackingMemUsage(), int64(0))
 }
+
+func TestCacheLen(t *testing.T) {
+	capacity := int64(12)
+	stats := newStatsLruCache(capacity)
+	t1 := newMockStatisticsTable(2, 1)
+	stats.Put(int64(1), t1)
+	t2 := newMockStatisticsTable(1, 1)
+	// put t2, t1 should be evicted 2 items and still exists in the list
+	stats.Put(int64(2), t2)
+	require.Equal(t, stats.lru.cache.Len(), 3)
+	require.Equal(t, t1.MemoryUsage().TotalTrackingMemUsage(), int64(4))
+	require.Equal(t, stats.Len(), 2)
+
+	// put t3, t1/t2 should be evicted all items and disappeared from the list
+	t3 := newMockStatisticsTable(2, 1)
+	stats.Put(int64(3), t3)
+	require.Equal(t, stats.lru.cache.Len(), 3)
+	require.Equal(t, t1.MemoryUsage().TotalTrackingMemUsage(), int64(0))
+	require.Equal(t, t2.MemoryUsage().TotalTrackingMemUsage(), int64(0))
+	require.Equal(t, stats.Len(), 3)
+}
+
+func TestLRUMove(t *testing.T) {
+	capacity := int64(100)
+	s := newStatsLruCache(capacity)
+	t1 := newMockStatisticsTable(1, 1)
+	t1ID := int64(1)
+	t2 := newMockStatisticsTable(1, 1)
+	t2ID := int64(2)
+	s.Put(t1ID, t1)
+	s.Put(t2ID, t2)
+	// assert t2 element should be front element
+	front := s.lru.cache.Front().Value.(*lruCacheItem)
+	require.Equal(t, t2ID, front.tblID)
+	// assert t1 element should be front element after GetByQuery
+	s.GetByQuery(t1ID)
+	front = s.lru.cache.Front().Value.(*lruCacheItem)
+	require.Equal(t, t1ID, front.tblID)
+}
