@@ -1997,48 +1997,42 @@ func doDMLWorks(s Session) {
 		// Only global variables should be inserted.
 		if v.HasGlobalScope() {
 			vVal := v.Value
-			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
+			switch {
+			case v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv":
 				vVal = "pessimistic"
-			}
-			if v.Name == variable.TiDBRowFormatVersion {
+			case v.Name == variable.TiDBRowFormatVersion:
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
-			}
-			if v.Name == variable.TiDBPartitionPruneMode {
+			case v.Name == variable.TiDBPartitionPruneMode:
 				vVal = variable.DefTiDBPartitionPruneMode
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
 					// enable Dynamic Prune by default in test case.
 					vVal = string(variable.Dynamic)
 				}
-			}
-			if v.Name == variable.TiDBMemOOMAction {
+			case v.Name == variable.TiDBMemOOMAction:
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
 					// Change the OOM action to log for the test suite.
 					vVal = variable.OOMActionLog
 				}
-			}
-			if v.Name == variable.TiDBEnableChangeMultiSchema {
+			case v.Name == variable.TiDBEnableChangeMultiSchema:
 				vVal = variable.Off
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
 					// enable change multi schema in test case for compatibility with old cases.
 					vVal = variable.On
 				}
-			}
-			if v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv" {
+			case v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv":
 				vVal = variable.On
-			}
-			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
+			case v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv":
 				vVal = variable.On
-			}
-			if v.Name == variable.TiDBEnableMutationChecker {
+			case v.Name == variable.TiDBEnableMutationChecker:
 				vVal = variable.On
-			}
-			if v.Name == variable.TiDBEnableAutoAnalyze {
+			case v.Name == variable.TiDBEnableAutoAnalyze:
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
 					vVal = variable.Off
 				}
-			}
-			if v.Name == variable.TiDBTxnAssertionLevel {
+			case v.Name == variable.TiDBTxnAssertionLevel:
 				vVal = variable.AssertionFastStr
+			case v.Name == variable.TiDBEnablePaging:
+				vVal = variable.BoolToOnOff(variable.DefTiDBEnablePaging)
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
