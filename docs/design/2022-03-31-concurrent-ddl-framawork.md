@@ -276,6 +276,8 @@ be executed successfully by the other old TiDB instance.
 
 We will use [schrddl](https://github.com/PingCAP-QE/schrddl) test the concurrent DDL framework.
 
+`Schrddl` is a fuzz test tool that generate DDL and DML SQLs sends to TiDB. For more information, you can read this document
+
 ### Benchmark Tests
 
 
