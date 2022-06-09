@@ -675,6 +675,33 @@ type SessionVars struct {
 	// ConcurrencyFactor is the CPU cost of additional one goroutine.
 	ConcurrencyFactor float64
 
+	// factors for cost model v2
+	// cpuFactorV2 is the CPU factor for the Cost Model Ver2.
+	cpuFactorV2 float64
+	// copCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
+	copCPUFactorV2 float64
+	// tiflashCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
+	tiflashCPUFactorV2 float64
+	// networkFactorV2 is the network factor for the Cost Model Ver2.
+	networkFactorV2 float64
+	// scanFactorV2 is the scan factor for the Cost Model Ver2.
+	scanFactorV2 float64
+	// descScanFactorV2 is the desc-scan factor for the Cost Model Ver2.
+	descScanFactorV2 float64
+	// tiflashScanFactorV2 is the tiflash-scan factor for the Cost Model Ver2.
+	tiflashScanFactorV2 float64
+	// seekFactorV2 is the seek factor for the Cost Model Ver2.
+	seekFactorV2 float64
+	// memoryFactorV2 is the memory factor for the Cost Model Ver2.
+	memoryFactorV2 float64
+	// diskFactorV2 is the disk factor for the Cost Model Ver2.
+	diskFactorV2 float64
+	// concurrencyFactorV2 is the concurrency factor for the Cost Model Ver2.
+	concurrencyFactorV2 float64
+
+	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
+	CopTiFlashConcurrencyFactor float64
+
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues chunk.Row
@@ -1033,6 +1060,8 @@ type SessionVars struct {
 	IgnorePreparedCacheCloseStmt bool
 	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
 	EnableNewCostInterface bool
+	// CostModelVersion is a internal switch to indicates the Cost Model Version.
+	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
@@ -2347,6 +2376,54 @@ func (s *SessionVars) CleanupTxnReadTSIfUsed() {
 	}
 }
 
+<<<<<<< HEAD
+=======
+// GetCPUFactor returns the session variable cpuFactor
+func (s *SessionVars) GetCPUFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.cpuFactorV2
+	}
+	return s.cpuFactor
+}
+
+// GetCopCPUFactor returns the session variable copCPUFactor
+func (s *SessionVars) GetCopCPUFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.copCPUFactorV2
+	}
+	return s.copCPUFactor
+}
+
+// GetTiFlashCPUFactor returns the session
+func (s *SessionVars) GetTiFlashCPUFactor() float64 {
+	return s.tiflashCPUFactorV2
+}
+
+// GetMemoryFactor returns the session variable memoryFactor
+func (s *SessionVars) GetMemoryFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.memoryFactorV2
+	}
+	return s.memoryFactor
+}
+
+// GetDiskFactor returns the session variable diskFactor
+func (s *SessionVars) GetDiskFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.diskFactorV2
+	}
+	return s.diskFactor
+}
+
+// GetConcurrencyFactor returns the session variable concurrencyFactor
+func (s *SessionVars) GetConcurrencyFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.concurrencyFactorV2
+	}
+	return s.concurrencyFactor
+}
+
+>>>>>>> 017ac90e67... planner: introduce some new variables for the cost model version2 (#35241)
 // GetNetworkFactor returns the session variable networkFactor
 // returns 0 when tbl is a temporary table.
 func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
@@ -2354,6 +2431,9 @@ func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
+	}
+	if s.CostModelVersion == 2 {
+		return s.networkFactorV2
 	}
 	return s.networkFactor
 }
@@ -2366,6 +2446,9 @@ func (s *SessionVars) GetScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
+	if s.CostModelVersion == 2 {
+		return s.scanFactorV2
+	}
 	return s.scanFactor
 }
 
@@ -2377,7 +2460,15 @@ func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
+	if s.CostModelVersion == 2 {
+		return s.descScanFactorV2
+	}
 	return s.descScanFactor
+}
+
+// GetTiFlashScanFactor returns the session variable tiflashScanFactorV2
+func (s *SessionVars) GetTiFlashScanFactor() float64 {
+	return s.tiflashScanFactorV2
 }
 
 // GetSeekFactor returns the session variable seekFactor
@@ -2387,6 +2478,9 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
+	}
+	if s.CostModelVersion == 2 {
+		return s.seekFactorV2
 	}
 	return s.seekFactor
 }
