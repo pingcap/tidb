@@ -5696,7 +5696,7 @@
           "aliasColors": {},
           "dashLength": 10,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "How much time transactions spend on each state after it acquire a least one lock",
+          "description": "How much time transactions spend on each state after it acquire at least one lock",
           "fieldConfig": {
             "defaults": {
               "unit": "s"
