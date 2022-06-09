@@ -770,6 +770,20 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			config.StoreGlobalConfig(cfg)
 			txninfo.Recorder.ResizeSummaries(uint(capacity))
 		}
+		if transactionIdDigestMinDuration := req.Form.Get("transaction_id_digest_min_duration"); transactionIdDigestMinDuration != "" {
+			duration, err := strconv.Atoi(transactionIdDigestMinDuration)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			} else if duration < 0 || duration > 2147483647 {
+				writeError(w, errors.New("transaction_id_digest_min_duration out of range, should be in 0 to 2147483647"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.TrxSummary.TransactionIdDigestMinDuration = uint(duration)
+			config.StoreGlobalConfig(cfg)
+			txninfo.Recorder.SetMinDuration(time.Duration(duration) * time.Millisecond)
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
