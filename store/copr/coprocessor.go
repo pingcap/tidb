@@ -979,9 +979,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
 
-		kvRanges := task.ranges.ToPBRanges()
-		firstRangeStartKey := kvRanges[0].Start
-		lastRangeEndKey := kvRanges[len(kvRanges)-1].End
+		firstRangeStartKey := task.ranges.At(0).StartKey
+		lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
 
 		logutil.Logger(bo.GetCtx()).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
