@@ -141,6 +141,9 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 			return false
 		}
+		if dbLowerName == util.InformationSchemaName.L {
+			return true
+		}
 		// PROCESS is the same with SELECT for metrics_schema.
 		if priv == mysql.SelectPriv && dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table) {
 			priv |= mysql.ProcessPriv
