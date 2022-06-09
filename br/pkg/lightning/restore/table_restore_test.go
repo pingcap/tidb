@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	restoremock "github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
@@ -912,19 +913,33 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 
 	cpDB := checkpoints.NewNullCheckpointsDB()
 	g := mock.NewMockGlue(controller)
+	dbMetas := []*mydump.MDDatabaseMeta{
+		{
+			Name:   s.tableInfo.DB,
+			Tables: []*mydump.MDTableMeta{s.tableMeta},
+		},
+	}
+	ioWorkers := worker.NewPool(ctx, 5, "io")
+	targetInfoGetter := &TargetInfoGetterImpl{
+		cfg:          cfg,
+		targetDBGlue: g,
+	}
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:              cfg,
+		dbMetas:          dbMetas,
+		targetInfoGetter: targetInfoGetter,
+		srcStorage:       s.store,
+		ioWorkers:        ioWorkers,
+	}
+	preInfoGetter.Init()
+	preInfoGetter.dbInfos = map[string]*checkpoints.TidbDBInfo{
+		s.tableInfo.DB: s.dbInfo,
+	}
 	rc := &Controller{
-		cfg: cfg,
-		dbMetas: []*mydump.MDDatabaseMeta{
-			{
-				Name:   s.tableInfo.DB,
-				Tables: []*mydump.MDTableMeta{s.tableMeta},
-			},
-		},
-		dbInfos: map[string]*checkpoints.TidbDBInfo{
-			s.tableInfo.DB: s.dbInfo,
-		},
+		cfg:               cfg,
+		dbMetas:           dbMetas,
 		tableWorkers:      worker.NewPool(ctx, 6, "table"),
-		ioWorkers:         worker.NewPool(ctx, 5, "io"),
+		ioWorkers:         ioWorkers,
 		indexWorkers:      worker.NewPool(ctx, 2, "index"),
 		regionWorkers:     worker.NewPool(ctx, 10, "region"),
 		checksumWorks:     worker.NewPool(ctx, 2, "region"),
@@ -940,6 +955,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		metaMgrBuilder:    noopMetaMgrBuilder{},
 		errorMgr:          errormanager.New(nil, cfg),
 		taskMgr:           noopTaskMetaMgr{},
+		preInfoGetter:     preInfoGetter,
 	}
 	go func() {
 		for scp := range chptCh {
@@ -1100,7 +1116,22 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 
 		url := strings.TrimPrefix(server.URL, "https://")
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
-		rc := &Controller{cfg: cfg, tls: tls, store: mockStore, checkTemplate: template}
+		targetInfoGetter := &TargetInfoGetterImpl{
+			cfg: cfg,
+			tls: tls,
+		}
+		preInfoGetter := &PreRestoreInfoGetterImpl{
+			cfg:              cfg,
+			targetInfoGetter: targetInfoGetter,
+			srcStorage:       mockStore,
+		}
+		rc := &Controller{
+			cfg:           cfg,
+			tls:           tls,
+			store:         mockStore,
+			checkTemplate: template,
+			preInfoGetter: preInfoGetter,
+		}
 		var sourceSize int64
 		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 			sourceSize += size
@@ -1227,7 +1258,24 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 
 		url := strings.TrimPrefix(server.URL, "https://")
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
-		rc := &Controller{cfg: cfg, tls: tls, taskMgr: mockTaskMetaMgr{}, checkTemplate: template}
+
+		targetInfoGetter := &TargetInfoGetterImpl{
+			cfg: cfg,
+			tls: tls,
+		}
+		preInfoGetter := &PreRestoreInfoGetterImpl{
+			cfg:              cfg,
+			targetInfoGetter: targetInfoGetter,
+			dbMetas:          []*mydump.MDDatabaseMeta{},
+			dbInfos:          make(map[string]*checkpoints.TidbDBInfo),
+		}
+		rc := &Controller{
+			cfg:           cfg,
+			tls:           tls,
+			taskMgr:       mockTaskMetaMgr{},
+			checkTemplate: template,
+			preInfoGetter: preInfoGetter,
+		}
 
 		err := rc.checkClusterRegion(context.Background())
 		require.NoError(s.T(), err)
@@ -1336,32 +1384,46 @@ func (s *tableRestoreSuite) TestEstimate() {
 	s.cfg.TikvImporter.Backend = config.BackendLocal
 
 	template := NewSimpleTemplate()
+	dbMetas := []*mydump.MDDatabaseMeta{
+		{
+			Name:   "db1",
+			Tables: []*mydump.MDTableMeta{s.tableMeta},
+		},
+	}
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
+		"db1": s.dbInfo,
+	}
+	ioWorkers := worker.NewPool(context.Background(), 1, "io")
+	mockTarget := restoremock.NewMockTargetInfo()
+
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:              s.cfg,
+		srcStorage:       s.store,
+		kvEncBuilder:     importer,
+		ioWorkers:        ioWorkers,
+		dbMetas:          dbMetas,
+		targetInfoGetter: mockTarget,
+	}
+	preInfoGetter.Init()
+	preInfoGetter.dbInfos = dbInfos
 	rc := &Controller{
 		cfg:           s.cfg,
 		checkTemplate: template,
 		store:         s.store,
 		backend:       importer,
-		dbMetas: []*mydump.MDDatabaseMeta{
-			{
-				Name:   "db1",
-				Tables: []*mydump.MDTableMeta{s.tableMeta},
-			},
-		},
-		dbInfos: map[string]*checkpoints.TidbDBInfo{
-			"db1": s.dbInfo,
-		},
-		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
+		ioWorkers:     ioWorkers,
+		preInfoGetter: preInfoGetter,
 	}
-	source, err := rc.estimateSourceData(ctx)
+	source, _, _, err := rc.estimateSourceData(ctx)
 	// Because this file is small than region split size so we does not sample it.
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), s.tableMeta.TotalSize, source)
 	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
-	source, err = rc.estimateSourceData(ctx)
+	source, _, _, err = rc.estimateSourceData(ctx)
 	require.NoError(s.T(), err)
 	require.Greater(s.T(), source, s.tableMeta.TotalSize)
 	rc.cfg.TikvImporter.Backend = config.BackendTiDB
-	source, err = rc.estimateSourceData(ctx)
+	source, _, _, err = rc.estimateSourceData(ctx)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), s.tableMeta.TotalSize, source)
 }
@@ -1761,12 +1823,19 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 				IgnoreColumns: ca.ignoreColumns,
 			},
 		}
+		ioWorkers := worker.NewPool(context.Background(), 1, "io")
+		preInfoGetter := &PreRestoreInfoGetterImpl{
+			cfg:        cfg,
+			srcStorage: mockStore,
+			ioWorkers:  ioWorkers,
+			dbInfos:    ca.dbInfos,
+		}
 		rc := &Controller{
 			cfg:           cfg,
 			checkTemplate: template,
 			store:         mockStore,
-			dbInfos:       ca.dbInfos,
-			ioWorkers:     worker.NewPool(context.Background(), 1, "io"),
+			ioWorkers:     ioWorkers,
+			preInfoGetter: preInfoGetter,
 		}
 		msgs, err := rc.SchemaIsValid(ctx, ca.tableMeta)
 		require.NoError(s.T(), err)
@@ -1807,35 +1876,43 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	err = mockStore.WriteFile(ctx, csvFile, []byte(csvContent))
 	require.NoError(s.T(), err)
 
-	rc := &Controller{
-		cfg:           cfg,
-		checkTemplate: NewSimpleTemplate(),
-		store:         mockStore,
-		dbInfos: map[string]*checkpoints.TidbDBInfo{
-			"db1": {
-				Name: "db1",
-				Tables: map[string]*checkpoints.TidbTableInfo{
-					"gbk_table": {
-						ID:   1,
-						DB:   "db1",
-						Name: "gbk_table",
-						Core: &model.TableInfo{
-							Columns: []*model.ColumnInfo{
-								{
-									Name:      model.NewCIStr("colA"),
-									FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
-								},
-								{
-									Name:      model.NewCIStr("colB"),
-									FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
-								},
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
+		"db1": {
+			Name: "db1",
+			Tables: map[string]*checkpoints.TidbTableInfo{
+				"gbk_table": {
+					ID:   1,
+					DB:   "db1",
+					Name: "gbk_table",
+					Core: &model.TableInfo{
+						Columns: []*model.ColumnInfo{
+							{
+								Name:      model.NewCIStr("colA"),
+								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
+							},
+							{
+								Name:      model.NewCIStr("colB"),
+								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 							},
 						},
 					},
 				},
 			},
 		},
-		ioWorkers: worker.NewPool(ctx, 1, "io"),
+	}
+	ioWorkers := worker.NewPool(ctx, 1, "io")
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:        cfg,
+		srcStorage: mockStore,
+		ioWorkers:  ioWorkers,
+		dbInfos:    dbInfos,
+	}
+	rc := &Controller{
+		cfg:           cfg,
+		checkTemplate: NewSimpleTemplate(),
+		store:         mockStore,
+		ioWorkers:     ioWorkers,
+		preInfoGetter: preInfoGetter,
 	}
 	msgs, err := rc.SchemaIsValid(ctx, &mydump.MDTableMeta{
 		DB:   "db1",

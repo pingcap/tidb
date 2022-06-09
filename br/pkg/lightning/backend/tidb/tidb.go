@@ -90,10 +90,154 @@ type tidbEncoder struct {
 	columnCnt int
 }
 
+type kvEncodingBuilder struct{}
+
+// NewKVEncodingBuilder creates an KVEncodingBuilder with TiDB backend implementation.
+func NewKVEncodingBuilder() backend.KVEncodingBuilder {
+	return new(kvEncodingBuilder)
+}
+
+// NewEncoder creates a KV encoder.
+// It implements the `backend.KVEncodingBuilder` interface.
+func (b *kvEncodingBuilder) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+	se := kv.NewSession(options)
+	if options.SQLMode.HasStrictMode() {
+		se.GetSessionVars().SkipUTF8Check = false
+		se.GetSessionVars().SkipASCIICheck = false
+	}
+
+	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}, nil
+}
+
+// NewEncoder creates an empty KV rows.
+// It implements the `backend.KVEncodingBuilder` interface.
+func (b *kvEncodingBuilder) MakeEmptyRows() kv.Rows {
+	return tidbRows(nil)
+}
+
+type targetInfoGetter struct {
+	db *sql.DB
+}
+
+// NewTargetInfoGetter creates an TargetInfoGetter with TiDB backend implementation.
+func NewTargetInfoGetter(db *sql.DB) backend.TargetInfoGetter {
+	return &targetInfoGetter{
+		db: db,
+	}
+}
+
+// NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
+func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+	var err error
+	tables := []*model.TableInfo{}
+	s := common.SQLWithRetry{
+		DB:     b.db,
+		Logger: log.L(),
+	}
+
+	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
+		var versionStr string
+		if versionStr, err = version.FetchVersion(ctx, tx); err != nil {
+			return err
+		}
+		serverInfo := version.ParseServerInfo(versionStr)
+
+		rows, e := tx.Query(`
+			SELECT table_name, column_name, column_type, generation_expression, extra
+			FROM information_schema.columns
+			WHERE table_schema = ?
+			ORDER BY table_name, ordinal_position;
+		`, schemaName)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+
+		var (
+			curTableName string
+			curColOffset int
+			curTable     *model.TableInfo
+		)
+		for rows.Next() {
+			var tableName, columnName, columnType, generationExpr, columnExtra string
+			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
+				return e
+			}
+			if tableName != curTableName {
+				curTable = &model.TableInfo{
+					Name:       model.NewCIStr(tableName),
+					State:      model.StatePublic,
+					PKIsHandle: true,
+				}
+				tables = append(tables, curTable)
+				curTableName = tableName
+				curColOffset = 0
+			}
+
+			// see: https://github.com/pingcap/parser/blob/3b2fb4b41d73710bc6c4e1f4e8679d8be6a4863e/types/field_type.go#L185-L191
+			var flag uint
+			if strings.HasSuffix(columnType, "unsigned") {
+				flag |= mysql.UnsignedFlag
+			}
+			if strings.Contains(columnExtra, "auto_increment") {
+				flag |= mysql.AutoIncrementFlag
+			}
+
+			ft := types.FieldType{}
+			ft.SetFlag(flag)
+			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
+				Name:                model.NewCIStr(columnName),
+				Offset:              curColOffset,
+				State:               model.StatePublic,
+				FieldType:           ft,
+				GeneratedExprString: generationExpr,
+			})
+			curColOffset++
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		// shard_row_id/auto random is only available after tidb v4.0.0
+		// `show table next_row_id` is also not available before tidb v4.0.0
+		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
+			return nil
+		}
+
+		// init auto id column for each table
+		for _, tbl := range tables {
+			tblName := common.UniqueTable(schemaName, tbl.Name.O)
+			autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for _, info := range autoIDInfos {
+				for _, col := range tbl.Columns {
+					if col.Name.O == info.Column {
+						switch info.Type {
+						case "AUTO_INCREMENT":
+							col.AddFlag(mysql.AutoIncrementFlag)
+						case "AUTO_RANDOM":
+							col.AddFlag(mysql.PriKeyFlag)
+							tbl.PKIsHandle = true
+							// set a stub here, since we don't really need the real value
+							tbl.AutoRandomBits = 1
+						}
+					}
+				}
+			}
+
+		}
+		return nil
+	})
+	return tables, err
+}
+
 type tidbBackend struct {
-	db          *sql.DB
-	onDuplicate string
-	errorMgr    *errormanager.ErrorManager
+	db               *sql.DB
+	onDuplicate      string
+	errorMgr         *errormanager.ErrorManager
+	kvEncBuilder     backend.KVEncodingBuilder
+	targetInfoGetter backend.TargetInfoGetter
 }
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
@@ -107,7 +251,13 @@ func NewTiDBBackend(db *sql.DB, onDuplicate string, errorMgr *errormanager.Error
 		log.L().Warn("unsupported action on duplicate, overwrite with `replace`")
 		onDuplicate = config.ReplaceOnDup
 	}
-	return backend.MakeBackend(&tidbBackend{db: db, onDuplicate: onDuplicate, errorMgr: errorMgr})
+	return backend.MakeBackend(&tidbBackend{
+		db:               db,
+		onDuplicate:      onDuplicate,
+		errorMgr:         errorMgr,
+		kvEncBuilder:     NewKVEncodingBuilder(),
+		targetInfoGetter: NewTargetInfoGetter(db),
+	})
 }
 
 func (row tidbRow) Size() uint64 {
@@ -375,7 +525,7 @@ func (be *tidbBackend) Close() {
 }
 
 func (be *tidbBackend) MakeEmptyRows() kv.Rows {
-	return tidbRows(nil)
+	return be.kvEncBuilder.MakeEmptyRows()
 }
 
 func (be *tidbBackend) RetryImportDelay() time.Duration {
@@ -399,13 +549,7 @@ func (be *tidbBackend) CheckRequirements(ctx context.Context, _ *backend.CheckCt
 }
 
 func (be *tidbBackend) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	se := kv.NewSession(options)
-	if options.SQLMode.HasStrictMode() {
-		se.GetSessionVars().SkipUTF8Check = false
-		se.GetSessionVars().SkipASCIICheck = false
-	}
-
-	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}, nil
+	return be.kvEncBuilder.NewEncoder(tbl, options)
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
@@ -583,108 +727,9 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 	return nil
 }
 
-//nolint:nakedret // TODO: refactor
-func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) (tables []*model.TableInfo, err error) {
-	s := common.SQLWithRetry{
-		DB:     be.db,
-		Logger: log.L(),
-	}
-
-	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
-		var versionStr string
-		if versionStr, err = version.FetchVersion(ctx, tx); err != nil {
-			return err
-		}
-		serverInfo := version.ParseServerInfo(versionStr)
-
-		rows, e := tx.Query(`
-			SELECT table_name, column_name, column_type, generation_expression, extra
-			FROM information_schema.columns
-			WHERE table_schema = ?
-			ORDER BY table_name, ordinal_position;
-		`, schemaName)
-		if e != nil {
-			return e
-		}
-		defer rows.Close()
-
-		var (
-			curTableName string
-			curColOffset int
-			curTable     *model.TableInfo
-		)
-		for rows.Next() {
-			var tableName, columnName, columnType, generationExpr, columnExtra string
-			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
-				return e
-			}
-			if tableName != curTableName {
-				curTable = &model.TableInfo{
-					Name:       model.NewCIStr(tableName),
-					State:      model.StatePublic,
-					PKIsHandle: true,
-				}
-				tables = append(tables, curTable)
-				curTableName = tableName
-				curColOffset = 0
-			}
-
-			// see: https://github.com/pingcap/parser/blob/3b2fb4b41d73710bc6c4e1f4e8679d8be6a4863e/types/field_type.go#L185-L191
-			var flag uint
-			if strings.HasSuffix(columnType, "unsigned") {
-				flag |= mysql.UnsignedFlag
-			}
-			if strings.Contains(columnExtra, "auto_increment") {
-				flag |= mysql.AutoIncrementFlag
-			}
-
-			ft := types.FieldType{}
-			ft.SetFlag(flag)
-			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
-				Name:                model.NewCIStr(columnName),
-				Offset:              curColOffset,
-				State:               model.StatePublic,
-				FieldType:           ft,
-				GeneratedExprString: generationExpr,
-			})
-			curColOffset++
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		// shard_row_id/auto random is only available after tidb v4.0.0
-		// `show table next_row_id` is also not available before tidb v4.0.0
-		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
-			return nil
-		}
-
-		// init auto id column for each table
-		for _, tbl := range tables {
-			tblName := common.UniqueTable(schemaName, tbl.Name.O)
-			autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			for _, info := range autoIDInfos {
-				for _, col := range tbl.Columns {
-					if col.Name.O == info.Column {
-						switch info.Type {
-						case "AUTO_INCREMENT":
-							col.AddFlag(mysql.AutoIncrementFlag)
-						case "AUTO_RANDOM":
-							col.AddFlag(mysql.PriKeyFlag)
-							tbl.PKIsHandle = true
-							// set a stub here, since we don't really need the real value
-							tbl.AutoRandomBits = 1
-						}
-					}
-				}
-			}
-
-		}
-		return nil
-	})
-	return
+// TODO: refactor
+func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+	return be.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
 
 func (be *tidbBackend) EngineFileSizes() []backend.EngineFileSize {

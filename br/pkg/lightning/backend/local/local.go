@@ -201,6 +201,48 @@ type Range struct {
 	end   []byte
 }
 
+type kvEncodingBuilder struct {
+	metrics *metric.Metrics
+}
+
+// NewKVEncodingBuilder creates an KVEncodingBuilder with local backend implementation.
+func NewKVEncodingBuilder(ctx context.Context) backend.KVEncodingBuilder {
+	result := new(kvEncodingBuilder)
+	if m, ok := metric.FromContext(ctx); ok {
+		result.metrics = m
+	}
+	return result
+}
+
+// NewEncoder creates a KV encoder.
+// It implements the `backend.KVEncodingBuilder` interface.
+func (b *kvEncodingBuilder) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+	return kv.NewTableKVEncoder(tbl, options, b.metrics)
+}
+
+// NewEncoder creates an empty KV rows.
+// It implements the `backend.KVEncodingBuilder` interface.
+func (b *kvEncodingBuilder) MakeEmptyRows() kv.Rows {
+	return kv.MakeRowsFromKvPairs(nil)
+}
+
+type targetInfoGetter struct {
+	tls *common.TLS
+}
+
+// NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
+func NewTargetInfoGetter(tls *common.TLS) backend.TargetInfoGetter {
+	return &targetInfoGetter{
+		tls: tls,
+	}
+}
+
+// FetchRemoteTableModels fetches the remote table models.
+// It implements the TargetInfoGetter interface.
+func (g *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+	return tikv.FetchRemoteTableModelsFromTLS(ctx, g.tls, schemaName)
+}
+
 type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
@@ -234,6 +276,9 @@ type local struct {
 
 	bufferPool *membuf.Pool
 	metrics    *metric.Metrics
+
+	kvEncBuilder     backend.KVEncodingBuilder
+	targetInfoGetter backend.TargetInfoGetter
 }
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
@@ -334,6 +379,8 @@ func NewLocalBackend(
 		errorMgr:                errorMgr,
 		importClientFactory:     importClientFactory,
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
+		kvEncBuilder:            NewKVEncodingBuilder(ctx),
+		targetInfoGetter:        NewTargetInfoGetter(tls),
 	}
 	if m, ok := metric.FromContext(ctx); ok {
 		local.metrics = m
@@ -1683,15 +1730,15 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 }
 
 func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return tikv.FetchRemoteTableModelsFromTLS(ctx, local.tls, schemaName)
+	return local.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
 
 func (local *local) MakeEmptyRows() kv.Rows {
-	return kv.MakeRowsFromKvPairs(nil)
+	return local.kvEncBuilder.MakeEmptyRows()
 }
 
 func (local *local) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return kv.NewTableKVEncoder(tbl, options, local.metrics)
+	return local.kvEncBuilder.NewEncoder(tbl, options)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
