@@ -3336,6 +3336,34 @@ func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertEvictIndex"))
 }
 
+func TestEvictedColumnLoadedStatus(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10))")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsLoaded())
+	}
+
+	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
+	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.False(t, col.IsLoaded())
+	}
+}
+
 func TestAnalyzeTableLRUPut(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
