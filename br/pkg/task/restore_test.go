@@ -11,6 +11,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -20,6 +21,8 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
+	"google.golang.org/grpc/keepalive"
 )
 
 func TestRestoreConfigAdjust(t *testing.T) {
@@ -32,7 +35,15 @@ func TestRestoreConfigAdjust(t *testing.T) {
 	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes)
 }
 
-func TestconfigureRestoreClient(t *testing.T) {
+type mockPDClient struct {
+	pd.Client
+}
+
+func (m mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	return []*metapb.Store{}, nil
+}
+
+func TestConfigureRestoreClient(t *testing.T) {
 	cfg := Config{
 		Concurrency: 1024,
 	}
@@ -44,13 +55,12 @@ func TestconfigureRestoreClient(t *testing.T) {
 		RestoreCommonConfig: restoreComCfg,
 		DdlBatchSize:        128,
 	}
-	client := &restore.Client{}
-
+	client := restore.NewRestoreClient(mockPDClient{}, nil, keepalive.ClientParameters{}, false)
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
-	require.Equal(t, client.GetBatchDdlSize(), 128)
-	require.True(t, true, client.IsOnline())
+	require.Equal(t, uint(128), client.GetBatchDdlSize())
+	require.True(t, client.IsOnline())
 }
 
 func TestCheckRestoreDBAndTable(t *testing.T) {
