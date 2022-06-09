@@ -34,11 +34,11 @@ type MemAwareMap[K comparable, V any] struct {
 // EstimateMapSize returns the estimated size of the map. It doesn't include the dynamic part, e.g. objects pointed to by pointers in the map.
 // len(map) <= load_factor * 2^bInMap. bInMap = ceil(log2(len(map)/load_factor)).
 // memory = bucketSize * 2^bInMap
-func EstimateMapSize(len int, bucketSize uint64) uint64 {
-	if len == 0 {
+func EstimateMapSize(length int, bucketSize uint64) uint64 {
+	if length == 0 {
 		return 0
 	}
-	bInMap := uint64(math.Ceil(math.Log2(float64(len) * hack.LoadFactorDen / hack.LoadFactorNum)))
+	bInMap := uint64(math.Ceil(math.Log2(float64(length) * hack.LoadFactorDen / hack.LoadFactorNum)))
 	return bucketSize * uint64(1<<bInMap)
 }
 
