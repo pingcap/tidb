@@ -3310,8 +3310,9 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
 			zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
-			zap.String("current_db", vars.CurrentDB),
-			zap.String("txn_mode", vars.GetReadableTxnMode()),
+			zap.String("currentDB", vars.CurrentDB),
+			zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
+			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
 			zap.String("sql", query))
 	}
 }
