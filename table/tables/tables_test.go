@@ -956,3 +956,13 @@ func TestTxnAssertion(t *testing.T) {
 	testUntouchedIndexImpl("OFF", false)
 	testUntouchedIndexImpl("OFF", true)
 }
+
+func TestInsertIgnoreBitWithIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_mutation_checker=1")
+	tk.MustExec("create table t1(a bit not null, key i1(a));")
+	tk.MustExec("insert ignore into t1 values (), (), ();")
+}

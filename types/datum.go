@@ -301,7 +301,8 @@ func (d *Datum) SetMinNotNull() {
 func (d *Datum) GetBinaryLiteral4Cmp() BinaryLiteral {
 	bitLen := len(d.b)
 	if bitLen == 0 {
-		return d.b
+		// For a binary type, []byte{0} should be equal to []byte{}. So return []byte{0} for an empty binary.
+		return []byte{0}
 	}
 	for i := 0; i < bitLen; i++ {
 		// Remove the prefix 0 in the bit array.
