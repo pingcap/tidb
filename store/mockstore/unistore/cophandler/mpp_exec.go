@@ -177,7 +177,7 @@ func (e *tableScanExec) open() error {
 		}
 	}
 	e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
-	e.result = make(chan scanResult, 0)
+	e.result = make(chan scanResult, 1)
 	e.done = make(chan struct{})
 	e.wg.Run(func() {
 		// close the channel when done scanning, so that next() will got nil chunk
