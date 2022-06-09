@@ -830,6 +830,10 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	for i := 1; i < 4; i++ {
 		tk.MustExec("insert into t values (?)", i)
 	}
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	tk.MustQuery("select @@tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t with 0 topn;")

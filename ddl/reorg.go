@@ -62,18 +62,16 @@ type reorgCtx struct {
 	// 0: job is not canceled.
 	// 1: job is canceled.
 	notifyCancelReorgJob int32
-	// doneHandle is used to simulate the handle that has been processed.
-
+	// doneKey is used to record the key that has been processed.
 	doneKey atomic.Value // nullable kv.Key
 
 	// element is used to record the current element in the reorg process, it can be
 	// accessed by reorg-worker and daemon-worker concurrently.
 	element atomic.Value
 
-	// warnings is used to store the warnings when doing the reorg job under
-	// a certain SQL Mode.
 	mu struct {
 		sync.Mutex
+		// warnings are used to store the warnings when doing the reorg job under certain SQL modes.
 		warnings      map[errors.ErrorID]*terror.Error
 		warningsCount map[errors.ErrorID]int64
 	}
@@ -241,7 +239,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
-		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
@@ -356,7 +353,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 
 func (dc *ddlCtx) isReorgRunnable(job *model.Job) error {
 	if isChanClosed(dc.ctx.Done()) {
-		// Worker is closed. So it can't do the reorganizational job.
+		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
