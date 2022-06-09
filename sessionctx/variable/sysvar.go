@@ -1604,7 +1604,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCostModelVersion, Value: strconv.Itoa(1), Hidden: false, Type: TypeInt, MinValue: 1, MaxValue: 2,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCostModelVersion, Value: strconv.Itoa(1), Hidden: true, Type: TypeInt, MinValue: 1, MaxValue: 2,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.CostModelVersion = int(TidbOptInt64(s, 1))
 			return nil
