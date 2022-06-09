@@ -215,6 +215,7 @@ func TestShow(t *testing.T) {
 		"RESTRICTED_REPLICA_WRITER_ADMIN Server Admin ",
 	))
 	require.Len(t, tk.MustQuery("show table status").Rows(), 1)
+	tk.MustQuery("show session_states").Check(testkit.Rows())
 }
 
 func TestSelectWithoutFrom(t *testing.T) {
