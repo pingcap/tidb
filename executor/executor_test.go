@@ -4400,12 +4400,16 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	// See PR: 11561.
 	job.BinlogInfo = nil
 	job.SchemaName = ""
-	err = sessiontxn.NewTxnInStmt(context.Background(), tk.Session())
+	b, err := job.Encode(true)
 	require.NoError(t, err)
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
-	err = ddl.AddHistoryDDLJob(meta.NewMeta(txn), job, true)
-	require.NoError(t, err)
+	if variable.EnableConcurrentDDL.Load() {
+		tk.MustExec(fmt.Sprintf("update mysql.tidb_ddl_history set job_meta = 0x%x where job_id = %d", b, job.ID))
+	} else {
+		txn, err := tk.Session().Txn(true)
+		require.NoError(t, err)
+		err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
+		require.NoError(t, err)
+	}
 
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
@@ -5591,10 +5595,8 @@ func TestIssue10435(t *testing.T) {
 }
 
 func TestAdmin(t *testing.T) {
-	var cluster testutils.Cluster
 	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
-		cluster = c
 	}))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

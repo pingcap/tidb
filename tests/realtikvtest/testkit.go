@@ -46,7 +46,7 @@ var WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with re
 func RunTestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
-	session.SetSchemaLease(20 * time.Millisecond)
+	session.SetSchemaLease(5 * time.Second)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0

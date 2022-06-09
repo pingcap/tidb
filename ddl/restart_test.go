@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -115,6 +116,9 @@ func testRunInterruptedJob(t *testing.T, d *ddl, job *model.Job) {
 }
 
 func TestSchemaResume(t *testing.T) {
+	if variable.EnableConcurrentDDL.Load() {
+		t.Skip("skip")
+	}
 	store := createMockStore(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -153,6 +157,9 @@ func TestSchemaResume(t *testing.T) {
 }
 
 func TestStat(t *testing.T) {
+	if variable.EnableConcurrentDDL.Load() {
+		t.Skip("skip")
+	}
 	store := createMockStore(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -209,6 +216,9 @@ LOOP:
 }
 
 func TestTableResume(t *testing.T) {
+	if variable.EnableConcurrentDDL.Load() {
+		t.Skip("skip")
+	}
 	store := createMockStore(t)
 	defer func() {
 		require.NoError(t, store.Close())

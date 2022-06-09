@@ -419,18 +419,6 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 	}
 }
 
-// getHistoryDDLJob gets a DDL job with job's ID from history queue.
-func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
-	se, err := d.sessPool.get()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer d.sessPool.put(se)
-	job, err := GetHistoryJobByID(se, id)
-
-	return job, errors.Trace(err)
-}
-
 func injectFailPointForGetJob(job *model.Job) {
 	if job == nil {
 		return

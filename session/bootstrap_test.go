@@ -443,8 +443,7 @@ func TestOldPasswordUpgrade(t *testing.T) {
 }
 
 func TestBootstrapInitExpensiveQueryHandle(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
+	store, _ := createStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()

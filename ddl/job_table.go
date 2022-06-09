@@ -181,6 +181,8 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Second)
 				continue
 			}
+		case <-d.ctx.Done():
+			return
 		}
 		d.runDDLJob(sess, d.generalDDLWorkerPool, d.getGeneralJob)
 		d.runDDLJob(sess, d.reorgWorkerPool, d.getReorgJob)
@@ -339,12 +341,7 @@ func removeDDLReorgHandle(sess *session, job *model.Job, elements []*meta.Elemen
 	if len(elements) == 0 {
 		return nil
 	}
-	eids := make([]string, 0, len(elements))
-	for _, e := range elements {
-		eids = append(eids, strconv.FormatInt(e.ID, 10))
-	}
-
-	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d and ele_id in (%s)", job.ID, strings.Join(eids, ","))
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	_, err := sess.execute(context.Background(), sql, "remove_handle")
 	return err
 }

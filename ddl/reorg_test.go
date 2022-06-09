@@ -49,7 +49,9 @@ func TestReorgOwner(t *testing.T) {
 	)
 
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
-		return testkit.NewTestKit(t, store).Session(), nil
+		session := testkit.NewTestKit(t, store).Session()
+		session.GetSessionVars().CommonGlobalLoaded = true
+		return session, nil
 	}, 20, 20, 5))
 	require.NoError(t, err)
 
@@ -68,6 +70,9 @@ func TestReorgOwner(t *testing.T) {
 	tbl, err := testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 
+	ctx := testkit.NewTestKit(t, store).Session()
+	err = sessiontxn.NewTxn(context.Background(), ctx)
+	require.NoError(t, err)
 	num := 10
 	sctx = testkit.NewTestKit(t, store).Session()
 	err = sessiontxn.NewTxn(context.Background(), sctx)
@@ -90,8 +95,7 @@ func TestReorgOwner(t *testing.T) {
 
 	testDropSchema(t, sctx, d1, dbInfo)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		db, err1 := m.GetDatabase(dbInfo.ID)
 		require.NoError(t, err1)

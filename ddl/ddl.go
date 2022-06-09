@@ -958,7 +958,9 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	i := 0
 	for {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
-			_ = d.Stop()
+			go func() {
+				_ = d.Stop()
+			}()
 		})
 
 		select {
@@ -1671,6 +1673,11 @@ func getHistoryJobByID(sess sessionctx.Context, id int64, fromTable bool) (*mode
 	t := meta.NewMeta(txn)
 	job, err := t.GetHistoryDDLJob(id)
 	return job, errors.Trace(err)
+}
+
+// AddHistoryDDLJobForTest used for test.
+func AddHistoryDDLJobForTest(sess sessionctx.Context, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+	return AddHistoryDDLJob(newSession(sess), t, job, updateRawArgs, variable.EnableConcurrentDDL.Load())
 }
 
 // AddHistoryDDLJob adds DDL job to history table.

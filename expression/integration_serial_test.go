@@ -3826,12 +3826,12 @@ func TestSetVariables(t *testing.T) {
 	require.Error(t, err)
 	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
 
-	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("1"))
-	require.True(t, variable.EnableConcurrentDDL.Load())
-	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=0")
-	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
-	require.False(t, variable.EnableConcurrentDDL.Load())
-	testkit.NewTestKit(t, store).MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
+	//tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("1"))
+	//require.True(t, variable.EnableConcurrentDDL.Load())
+	//tk.MustExec("set @@global.tidb_enable_concurrent_ddl=0")
+	//tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
+	//require.False(t, variable.EnableConcurrentDDL.Load())
+	//testkit.NewTestKit(t, store).MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
 }
 
 func TestPreparePlanCache(t *testing.T) {
