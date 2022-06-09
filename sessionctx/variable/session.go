@@ -2511,16 +2511,25 @@ func (s *SessionVars) GetTiFlashCPUFactor() float64 {
 
 // GetMemoryFactor returns the session variable memoryFactor
 func (s *SessionVars) GetMemoryFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.memoryFactorV2
+	}
 	return s.memoryFactor
 }
 
 // GetDiskFactor returns the session variable diskFactor
 func (s *SessionVars) GetDiskFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.diskFactorV2
+	}
 	return s.diskFactor
 }
 
 // GetConcurrencyFactor returns the session variable concurrencyFactor
 func (s *SessionVars) GetConcurrencyFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.concurrencyFactorV2
+	}
 	return s.concurrencyFactor
 }
 
