@@ -1490,6 +1490,8 @@ func TestTiDBTrxSummary(t *testing.T) {
 	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
 	_, commitDigest := parser.NormalizeDigest("commit")
 	txninfo.Recorder.Clean()
+	txninfo.Recorder.SetMinDuration(500)
+	defer txninfo.Recorder.SetMinDuration(2147483647)
 	tk.MustExec("begin")
 	tk.MustExec("update test_tidb_trx set i = i + 1")
 	time.Sleep(1 * time.Second)

@@ -699,6 +699,7 @@ func setGlobalVars() {
 	parsertypes.TiDBStrictIntegerDisplayWidth = cfg.DeprecateIntegerDisplayWidth
 	deadlockhistory.GlobalDeadlockHistory.Resize(cfg.PessimisticTxn.DeadlockHistoryCapacity)
 	txninfo.Recorder.ResizeSummaries(cfg.TrxSummary.TransactionSummaryCapacity)
+	txninfo.Recorder.SetMinDuration(time.Duration(cfg.TrxSummary.TransactionIdDigestMinDuration) * time.Millisecond)
 }
 
 func setupLog() {

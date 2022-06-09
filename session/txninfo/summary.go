@@ -44,9 +44,8 @@ type trxSummaryEntry struct {
 
 type trxSummaries struct {
 	capacity uint
-	size     uint
 
-	// digest -> trxSummaryEntry
+	// lru cache for digest -> trxSummaryEntry
 	elements map[uint64]*list.Element
 	cache    *list.List
 }
@@ -54,7 +53,6 @@ type trxSummaries struct {
 func newTrxSummaries(capacity uint) trxSummaries {
 	return trxSummaries{
 		capacity: capacity,
-		size:     0,
 		cache:    list.New(),
 		elements: make(map[uint64]*list.Element),
 	}
@@ -72,12 +70,10 @@ func (s *trxSummaries) onTrxEnd(digests []string) {
 		digests:   digests,
 	}
 	s.elements[key] = s.cache.PushFront(e)
-	if s.size == s.capacity {
+	if uint(s.cache.Len()) > s.capacity {
 		last := s.cache.Back()
 		delete(s.elements, last.Value.(trxSummaryEntry).trxDigest)
 		s.cache.Remove(last)
-	} else {
-		s.size++
 	}
 }
 
@@ -103,9 +99,11 @@ func (s *trxSummaries) dumpTrxSummary() [][]types.Datum {
 
 func (s *trxSummaries) resize(capacity uint) {
 	s.capacity = capacity
-	s.size = 0
-	s.cache = list.New()
-	s.elements = make(map[uint64]*list.Element)
+	for uint(s.cache.Len()) > s.capacity {
+		last := s.cache.Back()
+		delete(s.elements, last.Value.(trxSummaryEntry).trxDigest)
+		s.cache.Remove(last)
+	}
 }
 
 // TrxHistoryRecorder is a history recorder for transaction.
@@ -143,7 +141,7 @@ func new(summariesCap uint) TrxHistoryRecorder {
 
 // Clean clears the history recorder. For test only.
 func (recorder *TrxHistoryRecorder) Clean() {
-	recorder.summaries.size = 0
+	recorder.summaries.cache = list.New()
 }
 
 // SetMinDuration sets the minimum duration for a transaction to be recorded.

@@ -741,6 +741,7 @@ func DefaultPessimisticTxn() PessimisticTxn {
 }
 
 func DefaultTrxSummary() TrxSummary {
+	// TrxSummary is not enabled by default before GA
 	return TrxSummary{
 		TransactionSummaryCapacity:     500,
 		TransactionIdDigestMinDuration: 2147483647,
