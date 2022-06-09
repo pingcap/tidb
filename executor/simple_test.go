@@ -773,16 +773,6 @@ func TestDropStats(t *testing.T) {
 	h.SetLease(0)
 }
 
-func TestFlushTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("FLUSH TABLES")
-	err := tk.ExecToErr("FLUSH TABLES WITH READ LOCK")
-	require.Error(t, err)
-}
-
 func TestUseDB(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
