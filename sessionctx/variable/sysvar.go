@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -1585,6 +1586,11 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBSimplifiedMetrics, Value: BoolToOnOff(DefTiDBSimplifiedMetrics), Type: TypeBool,
+		SetGlobal: func(vars *SessionVars, s string) error {
+			metrics.ToggleSimplifiedMode(TiDBOptOn(s))
+			return nil
+		}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
