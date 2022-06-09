@@ -647,6 +647,9 @@ const (
 	// When set to false, a non-transactional DML returns when it meets the first error.
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
 	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
+
+	// TiDBSimplifiedMetrics controls whether to unregister some unused metrics.
+	TiDBSimplifiedMetrics = "tidb_simplified_metrics"
 )
 
 // TiDB vars that have only global scope
@@ -704,6 +707,8 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
+	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
+	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
 )
 
 // TiDB intentional limits
@@ -892,6 +897,8 @@ const (
 	DefTiDBEnablePrepPlanCache                   = true
 	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
+	DefTiDBEnableConcurrentDDL                   = true
+	DefTiDBSimplifiedMetrics                     = false
 )
 
 // Process global variables.
@@ -919,6 +926,8 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
+	EnablePointGetCache                   = atomic.NewBool(DefTiDBPointGetCache)
+	EnableChangeMultiSchema               = atomic.NewBool(DefTiDBChangeMultiSchema)
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
@@ -937,6 +946,7 @@ var (
 	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
 	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
+	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 )
 
 var (

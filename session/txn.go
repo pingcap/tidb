@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
@@ -508,20 +508,9 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	oracleStore := s.store.GetOracle()
-	var tsFuture oracle.Future
-	if s.sessionVars.LowResolutionTSO {
-		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
-	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
-	}
-	ret := &txnFuture{future: tsFuture, store: s.store, txnScope: s.sessionVars.CheckAndGetTxnScope()}
+	scope := s.sessionVars.CheckAndGetTxnScope()
+	future := sessiontxn.NewOracleFuture(ctx, s, scope)
+	ret := &txnFuture{future: future, store: s.store, txnScope: scope}
 	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
 		ret.future = txnFailFuture{}
 	})
