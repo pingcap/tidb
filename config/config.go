@@ -727,10 +727,10 @@ type TrxSummary struct {
 	// how many transaction summary in `transaction_summary` each TiDB node should keep.
 	TransactionSummaryCapacity uint `toml:"transaction-summary-capacity" json:"transaction-summary-capacity"`
 	// how long a transaction should be executed to make it be recorded in `transaction_id_digest`.
-	TransactionIdDigestMinDuration uint `toml:"transaction-id-digest-min-duration" json:"transaction-id-digest-min-duration"`
+	TransactionIDDigestMinDuration uint `toml:"transaction-id-digest-min-duration" json:"transaction-id-digest-min-duration"`
 }
 
-// Validate TrxSummary configs
+// Valid Validatse TrxSummary configs
 func (config *TrxSummary) Valid() error {
 	if config.TransactionSummaryCapacity > 5000 {
 		return errors.New("transaction-summary.transaction-summary-capacity should not be larger than 5000")
@@ -748,11 +748,12 @@ func DefaultPessimisticTxn() PessimisticTxn {
 	}
 }
 
+// DefaultTrxSummary returns the default configuration for TrxSummary collector
 func DefaultTrxSummary() TrxSummary {
 	// TrxSummary is not enabled by default before GA
 	return TrxSummary{
 		TransactionSummaryCapacity:     500,
-		TransactionIdDigestMinDuration: 2147483647,
+		TransactionIDDigestMinDuration: 2147483647,
 	}
 }
 
