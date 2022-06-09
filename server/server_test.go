@@ -872,6 +872,8 @@ func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *Serv
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
 		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
 		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (k,id,c,dt,vv,ts)", path))
 		rows := db.MustQuery("select * from t66")
@@ -908,6 +910,7 @@ func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *Serv
 		config.Params["sql_mode"] = "''"
 	}, "LoadData", func(db *testkit.DBTestKit) {
 		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
 		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
 		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (k,id,c)", path))
 		rows := db.MustQuery("select * from t66")
@@ -938,6 +941,43 @@ func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *Serv
 		columnsAsExpected(t, columns, strings.Split("1,4,a,,,", ","))
 	})
 
+	// Also test for case-insensitivity
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+		// We modify the upper case and lower case in the column list to test the case-insensitivity
+		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (K,Id,c,dT,Vv,Ts)", path))
+		rows := db.MustQuery("select * from t66")
+		var (
+			id sql.NullString
+			k  sql.NullString
+			c  sql.NullString
+			dt sql.NullString
+			vv sql.NullString
+			ts sql.NullString
+		)
+		columns := []*sql.NullString{&k, &id, &c, &dt, &vv, &ts}
+		require.Truef(t, rows.Next(), "unexpected data")
+		err := rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,1,,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,2,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,3,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,4,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+	})
 }
 
 func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []string) {

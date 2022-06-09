@@ -146,11 +146,11 @@ func (e *LoadDataInfo) reorderColumns(columnNames []string) error {
 
 	mapping := make(map[string]int)
 	for idx, colName := range columnNames {
-		mapping[colName] = idx
+		mapping[strings.ToLower(colName)] = idx
 	}
 
 	for _, col := range cols {
-		idx := mapping[col.Name.O]
+		idx := mapping[col.Name.L]
 		reorderedColumns[idx] = col
 	}
 
