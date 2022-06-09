@@ -261,6 +261,10 @@ func (p *PhysicalIndexLookUpReader) calSelfCost(taskType property.TaskType, cost
 }
 
 func (p *PhysicalIndexLookUpReader) estNumDoubleReadTasks(costFlag uint64) float64 {
+	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
+		// TODO: use the actual task number
+	}
+
 	lookupRows := p.indexPlan.StatsCount()
 	// TODO: estimate numLookupTasks more precisely, for example, consider back-off strategy
 	//   on Executor and correlation between this index and PK
