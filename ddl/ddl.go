@@ -933,7 +933,9 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	defer d.sessPool.put(sess)
 	for {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
-			_ = d.Stop()
+			go func() {
+				_ = d.Stop()
+			}()
 		})
 
 		select {
@@ -1078,8 +1080,6 @@ func (d *ddl) watchConcurrentDDLSwitch() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
-		var err error
-
 		for {
 			select {
 			case <-d.ctx.Done():
@@ -1088,22 +1088,23 @@ func (d *ddl) watchConcurrentDDLSwitch() {
 				d.concurrentDDL.active(true)
 				return
 			case <-ticker.C:
-				err = nil
 				v := variable.EnableConcurrentDDL.Load()
 				if original != v {
-					original = v
+					var err error
 					if v {
 						err = d.MigrateExistingDDLs()
 					} else {
 						err = d.BackOffDDLs()
 					}
-					logutil.BgLogger().Info("migrate DDL", zap.Error(err))
 					if err != nil {
 						// set back if meet error.
+						logutil.BgLogger().Info("migrate DDL fail")
 						variable.EnableConcurrentDDL.Store(original)
 						continue
 					}
+					original = v
 					d.setWorkerActivity()
+					logutil.BgLogger().Info("migrate DDL success", zap.Bool("EnableConcurrentDDL", variable.EnableConcurrentDDL.Load()))
 				}
 			}
 		}
@@ -1184,6 +1185,18 @@ type Info struct {
 	SchemaVer   int64
 	ReorgHandle kv.Key       // It's only used for DDL information.
 	Jobs        []*model.Job // It's the currently running jobs.
+}
+
+// GetDDLInfoFromSession get DDL info from brand-new session.
+func GetDDLInfoFromSession(sess sessionctx.Context) (*Info, error) {
+	s := newSession(sess)
+	err := s.begin()
+	if err != nil {
+		return nil, err
+	}
+	info, err := GetDDLInfo(sess)
+	_ = s.commit()
+	return info, err
 }
 
 // GetDDLInfo returns DDL information for new ddl framework.
@@ -1641,6 +1654,11 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 	t := meta.NewMeta(txn)
 	job, err := t.GetHistoryDDLJob(id)
 	return job, errors.Trace(err)
+}
+
+// AddHistoryDDLJobForTest used for test.
+func AddHistoryDDLJobForTest(sess sessionctx.Context, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+	return AddHistoryDDLJob(newSession(sess), t, job, updateRawArgs, variable.EnableConcurrentDDL.Load())
 }
 
 // AddHistoryDDLJob adds DDL job to history table.

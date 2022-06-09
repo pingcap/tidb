@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -327,6 +328,9 @@ func TestBuildJobDependence(t *testing.T) {
 }
 
 func TestNotifyDDLJob(t *testing.T) {
+	if variable.EnableConcurrentDDL.Load() {
+		t.Skip("skip")
+	}
 	store := createMockStore(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -513,6 +517,9 @@ func (k testCtxKeyType) String() string {
 const testCtxKey testCtxKeyType = 0
 
 func TestReorg(t *testing.T) {
+	if variable.EnableConcurrentDDL.Load() {
+		t.Skip("skip")
+	}
 	tests := []struct {
 		isCommonHandle bool
 		handle         kv.Handle
@@ -683,89 +690,10 @@ func TestReorg(t *testing.T) {
 	}
 }
 
-func TestGetDDLJobs(t *testing.T) {
-	store, clean := newMockStore(t)
-	defer clean()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	m := meta.NewMeta(txn)
-	cnt := 10
-	jobs := make([]*model.Job, cnt)
-	var currJobs2 []*model.Job
-	for i := 0; i < cnt; i++ {
-		jobs[i] = &model.Job{
-			ID:       int64(i),
-			SchemaID: 1,
-			Type:     model.ActionCreateTable,
-		}
-		err = m.EnQueueDDLJob(jobs[i])
-		require.NoError(t, err)
-
-		currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
-		require.NoError(t, err)
-		require.Len(t, currJobs, i+1)
-
-		currJobs2 = currJobs2[:0]
-		err = IterAllDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
-			for _, job := range jobs {
-				if job.NotStarted() {
-					currJobs2 = append(currJobs2, job)
-				} else {
-					return true, nil
-				}
-			}
-			return false, nil
-		})
-		require.NoError(t, err)
-		require.Len(t, currJobs2, i+1)
-	}
-
-	currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
-	require.NoError(t, err)
-
-	for i, job := range jobs {
-		require.Equal(t, currJobs[i].ID, job.ID)
-		require.Equal(t, int64(1), job.SchemaID)
-		require.Equal(t, model.ActionCreateTable, job.Type)
-	}
-	require.Equal(t, currJobs2, currJobs)
-
-	err = txn.Rollback()
-	require.NoError(t, err)
-}
-
-func TestGetDDLJobsIsSort(t *testing.T) {
-	store, clean := newMockStore(t)
-	defer clean()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	// insert 5 drop table jobs to DefaultJobListKey queue
-	m := meta.NewMeta(txn)
-	enQueueDDLJobs(t, m, model.ActionDropTable, 10, 15)
-
-	// insert 5 create table jobs to DefaultJobListKey queue
-	enQueueDDLJobs(t, m, model.ActionCreateTable, 0, 5)
-
-	// insert add index jobs to AddIndexJobListKey queue
-	m = meta.NewMeta(txn, meta.AddIndexJobListKey)
-	enQueueDDLJobs(t, m, model.ActionAddIndex, 5, 10)
-
-	currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
-	require.NoError(t, err)
-	require.Len(t, currJobs, 15)
-
-	isSort := isJobsSorted(currJobs)
-	require.True(t, isSort)
-
-	err = txn.Rollback()
-	require.NoError(t, err)
-}
-
 func TestCancelJobs(t *testing.T) {
+	if variable.EnableConcurrentDDL.Load() {
+		t.Skip("this test case is for old ddl")
+	}
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -878,64 +806,6 @@ func TestCancelJobs(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestGetHistoryDDLJobs(t *testing.T) {
-	store, clean := newMockStore(t)
-	defer clean()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	m := meta.NewMeta(txn)
-	cnt := 11
-	jobs := make([]*model.Job, cnt)
-	for i := 0; i < cnt; i++ {
-		jobs[i] = &model.Job{
-			ID:       int64(i),
-			SchemaID: 1,
-			Type:     model.ActionCreateTable,
-		}
-		err = AddHistoryDDLJob(m, jobs[i], true)
-		require.NoError(t, err)
-
-		historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
-		require.NoError(t, err)
-
-		if i+1 > MaxHistoryJobs {
-			require.Len(t, historyJobs, MaxHistoryJobs)
-		} else {
-			require.Len(t, historyJobs, i+1)
-		}
-	}
-
-	delta := cnt - MaxHistoryJobs
-	historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
-	require.NoError(t, err)
-	require.Len(t, historyJobs, MaxHistoryJobs)
-
-	l := len(historyJobs) - 1
-	for i, job := range historyJobs {
-		require.Equal(t, jobs[delta+l-i].ID, job.ID)
-		require.Equal(t, int64(1), job.SchemaID)
-		require.Equal(t, model.ActionCreateTable, job.Type)
-	}
-
-	var historyJobs2 []*model.Job
-	err = IterHistoryDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
-		for _, job := range jobs {
-			historyJobs2 = append(historyJobs2, job)
-			if len(historyJobs2) == DefNumHistoryJobs {
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, historyJobs, historyJobs2)
-
-	err = txn.Rollback()
-	require.NoError(t, err)
-}
-
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		dbterror.ErrDDLJobNotFound,
@@ -960,28 +830,4 @@ func newMockStore(t *testing.T) (store kv.Storage, clean func()) {
 	}
 
 	return
-}
-
-func isJobsSorted(jobs []*model.Job) bool {
-	if len(jobs) <= 1 {
-		return true
-	}
-	for i := 1; i < len(jobs); i++ {
-		if jobs[i].ID <= jobs[i-1].ID {
-			return false
-		}
-	}
-	return true
-}
-
-func enQueueDDLJobs(t *testing.T, m *meta.Meta, jobType model.ActionType, start, end int) {
-	for i := start; i < end; i++ {
-		job := &model.Job{
-			ID:       int64(i),
-			SchemaID: 1,
-			Type:     jobType,
-		}
-		err := m.EnQueueDDLJob(job)
-		require.NoError(t, err)
-	}
 }

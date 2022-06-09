@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -54,7 +55,7 @@ func (d *ddl) deleteRunningDDLJobMap(id int64) {
 func (d *ddl) getRunningDDLJobIDs() string {
 	d.resetRunningIDs()
 	d.runningJobs.RLock()
-	d.runningJobs.RUnlock()
+	defer d.runningJobs.RUnlock()
 	for id := range d.runningJobs.runningJobMap {
 		d.runningOrBlockedIDs = append(d.runningOrBlockedIDs, strconv.Itoa(int(id)))
 	}
@@ -180,6 +181,8 @@ func (d *ddl) startDispatchLoop() {
 				time.Sleep(time.Duration(1) * time.Second)
 				continue
 			}
+		case <-d.ctx.Done():
+			return
 		}
 		d.runDDLJob(sess, d.generalDDLWorkerPool, d.getGeneralJob)
 		d.runDDLJob(sess, d.reorgWorkerPool, d.getReorgJob)
@@ -234,6 +237,11 @@ const (
 )
 
 func (d *ddl) addDDLJobs(jobs []*model.Job) error {
+	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
+		}
+	})
 	if len(jobs) == 0 {
 		return nil
 	}
@@ -346,12 +354,7 @@ func removeDDLReorgHandle(sess *session, job *model.Job, elements []*meta.Elemen
 	if len(elements) == 0 {
 		return nil
 	}
-	eids := make([]string, 0, len(elements))
-	for _, e := range elements {
-		eids = append(eids, strconv.FormatInt(e.ID, 10))
-	}
-
-	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d and ele_id in (%s)", job.ID, strings.Join(eids, ","))
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	_, err := sess.execute(context.Background(), sql, "remove_handle")
 	return err
 }
@@ -476,10 +479,7 @@ func (d *ddl) MigrateExistingDDLs() (err error) {
 	if err = t.ClearALLDDLReorgHandle(); err != nil {
 		return
 	}
-	if err = t.ClearALLHistoryJob(); err != nil {
-		return err
-	}
-	return nil
+	return t.ClearALLHistoryJob()
 }
 
 func (d *ddl) BackOffDDLs() (err error) {

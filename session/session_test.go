@@ -44,8 +44,8 @@ func TestInitMetaTable(t *testing.T) {
 		metaInMySQL := external.GetTableByName(t, tk, "mysql", tbl).Meta()
 		metaInTest := external.GetTableByName(t, tk, "test", tbl).Meta()
 
-		require.Greater(t, metaInMySQL.ID, 0)
-		require.Greater(t, metaInMySQL.UpdateTS, 0)
+		require.Greater(t, metaInMySQL.ID, int64(0))
+		require.Greater(t, metaInMySQL.UpdateTS, uint64(0))
 
 		metaInTest.ID = metaInMySQL.ID
 		metaInMySQL.UpdateTS = metaInTest.UpdateTS
