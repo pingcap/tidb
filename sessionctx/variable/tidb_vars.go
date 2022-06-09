@@ -647,6 +647,9 @@ const (
 	// When set to false, a non-transactional DML returns when it meets the first error.
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
 	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
+
+	// TiDBSimplifiedMetrics controls whether to unregister some unused metrics.
+	TiDBSimplifiedMetrics = "tidb_simplified_metrics"
 )
 
 // TiDB vars that have only global scope
@@ -895,6 +898,7 @@ const (
 	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 	DefTiDBEnableConcurrentDDL                   = true
+	DefTiDBSimplifiedMetrics                     = false
 )
 
 // Process global variables.

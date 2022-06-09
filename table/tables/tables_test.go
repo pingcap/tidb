@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/rand"
 	"strconv"
 	"testing"
 	"time"
@@ -956,18 +955,4 @@ func TestTxnAssertion(t *testing.T) {
 	testUntouchedIndexImpl("STRICT", true)
 	testUntouchedIndexImpl("OFF", false)
 	testUntouchedIndexImpl("OFF", true)
-}
-
-func TestReuseColumnMapsInMutationChecker(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int, c int, primary key(a))")
-	tk.MustExec("create table t_2 (a int, b int, c int, primary key(a))")
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d, %d)", i, rand.Int()%10000, rand.Int()%10000))
-	}
-	tk.MustExec("set @@tidb_enable_mutation_checker=1")
-	tk.MustExec("insert into t_2 select * from t")
 }
