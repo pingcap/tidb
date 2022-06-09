@@ -135,7 +135,7 @@ func (e *LoadDataInfo) reorderColumns(columnNames []string) error {
 	cols := e.insertColumns
 
 	if len(cols) != len(columnNames) {
-		return errors.New("LOAD DATA: columns unmatched")
+		return ErrColumnsNotMatched
 	}
 
 	reorderedColumns := make([]*table.Column, len(cols))
