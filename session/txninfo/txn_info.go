@@ -42,12 +42,16 @@ const (
 )
 
 // StateLabel is used to translate TxnRunningState to its prometheus label name.
-var StateLabel map[TxnRunningState]string = map[TxnRunningState]string{
+var stateLabel map[TxnRunningState]string = map[TxnRunningState]string{
 	TxnIdle:        "idle",
 	TxnRunning:     "executing_sql",
 	TxnLockWaiting: "waiting_for_lock",
 	TxnCommitting:  "committing",
 	TxnRollingBack: "rolling_back",
+}
+
+func StateLabel(state TxnRunningState) string {
+	return stateLabel[state]
 }
 
 const (
