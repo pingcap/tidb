@@ -24,7 +24,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/tidwall/btree"
 	"go.uber.org/zap"
 )
 
@@ -243,8 +243,8 @@ func newBtreeListColumnSearchItem(key string) *btreeListColumnItem {
 	}
 }
 
-func (item *btreeListColumnItem) Less(other btree.Item) bool {
-	return item.key < other.(*btreeListColumnItem).key
+func less(item *btreeListColumnItem, other *btreeListColumnItem) bool {
+	return item.key < other.key
 }
 
 // ForListColumnPruning is used for list columns partition pruning.
@@ -252,7 +252,7 @@ type ForListColumnPruning struct {
 	ExprCol  *expression.Column
 	valueTp  *types.FieldType
 	valueMap map[string]ListPartitionLocation
-	sorted   *btree.BTree
+	sorted   *btree.Generic[*btreeListColumnItem]
 
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	// The following fields are used to delay building valueMap.
@@ -677,7 +677,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 			ExprCol:  columns[idx],
 			valueTp:  &colInfo.FieldType,
 			valueMap: make(map[string]ListPartitionLocation),
-			sorted:   btree.New(btreeDegree),
+			sorted:   btree.NewGeneric[*btreeListColumnItem](less),
 		}
 		err := colPrune.buildPartitionValueMapAndSorted(p)
 		if err != nil {
@@ -778,7 +778,7 @@ func (lp *ForListColumnPruning) buildPartitionValueMapAndSorted(p *parser.Parser
 // RebuildPartitionValueMapAndSorted rebuilds list columns partition value map for the specified column.
 func (lp *ForListColumnPruning) RebuildPartitionValueMapAndSorted(p *parser.Parser) error {
 	lp.valueMap = make(map[string]ListPartitionLocation, len(lp.valueMap))
-	lp.sorted.Clear(false)
+	lp.sorted = btree.NewGeneric[*btreeListColumnItem](less)
 	return lp.buildListPartitionValueMapAndSorted(p)
 }
 
@@ -805,7 +805,7 @@ func (lp *ForListColumnPruning) buildListPartitionValueMapAndSorted(p *parser.Pa
 				GroupIdxs: []int{groupIdx},
 			})
 			lp.valueMap[key] = location
-			lp.sorted.ReplaceOrInsert(newBtreeListColumnItem(key, location))
+			lp.sorted.Set(newBtreeListColumnItem(key, location))
 		}
 	}
 	return nil
@@ -891,9 +891,13 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	}
 
 	locations := make([]ListPartitionLocation, 0, lp.sorted.Len())
-	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(hack.String(lowKey))), newBtreeListColumnSearchItem(string(hack.String(highKey))), func(item btree.Item) bool {
-		locations = append(locations, item.(*btreeListColumnItem).location)
-		return true
+	high := newBtreeListColumnSearchItem(string(hack.String(highKey)))
+	lp.sorted.Ascend(newBtreeListColumnSearchItem(string(hack.String(lowKey))), func(item *btreeListColumnItem) bool {
+		if item.key < high.key {
+			locations = append(locations, item.location)
+			return true
+		}
+		return false
 	})
 	return locations, nil
 }

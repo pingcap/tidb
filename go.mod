@@ -10,6 +10,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/Shopify/sarama v1.29.0
+	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/aws/aws-sdk-go v1.35.3
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
 	github.com/carlmjohnson/flagext v0.21.0
@@ -62,6 +63,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.2-0.20220504104629-106ec21d14df
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+	github.com/tidwall/btree v1.3.1
 	github.com/tikv/client-go/v2 v2.0.1-0.20220531081749-2807409d4968
 	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
 	github.com/twmb/murmur3 v1.1.3
@@ -94,8 +96,6 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-require github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 
 require (
 	cloud.google.com/go v0.100.2 // indirect
