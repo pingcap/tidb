@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/sqlexec"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -115,12 +116,8 @@ func (g Glue) GetVersion() string {
 }
 
 // Execute implements glue.Session.
-func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
-	return gs.ExecuteInternal(ctx, sql)
-}
-
-func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
-	rs, err := gs.se.ExecuteInternal(ctx, sql, args...)
+func (gs *tidbSession) Execute(ctx context.Context, sql string, args ...interface{}) error {
+	rs, err := gs.ExecuteInternal(ctx, sql, args)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -137,6 +134,10 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 		}
 	}
 	return nil
+}
+
+func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+	return gs.se.ExecuteInternal(ctx, sql, args)
 }
 
 // CreateDatabase implements glue.Session.

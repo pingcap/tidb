@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -74,6 +75,10 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 	return &DB{
 		se: se,
 	}, supportPolicy, nil
+}
+
+func (db *DB) QueryContext(ctx context.Context, query string, args ...interface{}) (sqlexec.RecordSet, error) {
+	return db.se.ExecuteInternal(ctx, query, args)
 }
 
 // ExecDDL executes the query of a ddl job.
@@ -134,7 +139,7 @@ func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint
 	statsMetaTbl := "stats_meta"
 
 	// set restoreTS to snapshot and version which is used to update stats_meta
-	err := db.se.ExecuteInternal(
+	err := db.se.Execute(
 		ctx,
 		"update %n.%n set snapshot = %?, version = %?, count = %? where table_id = %?",
 		sysDB,

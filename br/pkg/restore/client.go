@@ -42,9 +42,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
@@ -145,6 +148,9 @@ type Client struct {
 	currentTS uint64
 
 	storage storage.ExternalStorage
+
+	// see comments in RestoreConfig.FullClusterRestore
+	fullClusterRestore bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -481,6 +487,14 @@ func (rc *Client) GetDatabases() []*utils.Database {
 // GetDatabase returns a database by name.
 func (rc *Client) GetDatabase(name string) *utils.Database {
 	return rc.databases[name]
+}
+
+// HasBackedUpSysDB whether we have backed up system tables
+// br backs system tables up since 5.1.0
+func (rc *Client) HasBackedUpSysDB() bool {
+	temporaryDB := utils.TemporaryDBName(mysql.SystemDB)
+	_, backedUp := rc.databases[temporaryDB.O]
+	return backedUp
 }
 
 // GetPlacementPolicies returns policies.
@@ -821,6 +835,117 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 		})
 	}
 	return eg.Wait()
+}
+
+// CheckTargetClusterFresh check whether the target cluster is fresh or not
+// if there's no user dbs or tables, we take it as a fresh cluster, although
+// user may have created some users or made other changes.
+func (rc *Client) CheckTargetClusterFresh(ctx context.Context) error {
+	querySchemaOrTables := func(query string) ([]string, error) {
+		rs, err := rc.db.QueryContext(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		schemas := make([]string, 0)
+		defer rs.Close()
+		req := rs.NewChunk(nil)
+		it := chunk.NewIterator4Chunk(req)
+		err = rs.Next(ctx, req)
+		for err == nil && req.NumRows() != 0 {
+			for row := it.Begin(); row != it.End(); row = it.Next() {
+				schema := row.GetString(0)
+				schemas = append(schemas, schema)
+			}
+			err = rs.Next(ctx, req)
+		}
+		return schemas, err
+	}
+
+	log.Info("checking whether target cluster is fresh")
+
+	schemas, err := querySchemaOrTables("select SCHEMA_NAME from INFORMATION_SCHEMA.SCHEMATA")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	userDbList := make([]string, 0)
+	for _, schema := range schemas {
+		// tidb create test db on fresh cluster
+		if !util.IsMemOrSysDB(schema) && schema != "test" {
+			userDbList = append(userDbList, schema)
+		}
+	}
+	if len(userDbList) > 0 {
+		dbNames := utils.TruncSliceForPrint(userDbList, 10)
+		log.Error("not fresh cluster", zap.Strings("user dbs", dbNames))
+		return errors.Annotatef(berrors.ErrRestoreNotFreshCluster, "user dbs: "+strings.Join(dbNames, ", "))
+	}
+
+	// user may create table in mysql database, so we need to check mysql db too,
+	// but checking mysql db will add extra maintenance burden since tidb may add new
+	// system tables in new version.
+	tables, err := querySchemaOrTables("select concat(TABLE_SCHEMA, '.', TABLE_NAME) " +
+		"from INFORMATION_SCHEMA.TABLES where TABLE_SCHEMA in ('mysql', 'test')")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	userTableList := make([]string, 0)
+	for _, tbl := range tables {
+		if _, ok := allSystemTableSet[tbl]; !ok {
+			userTableList = append(userTableList, tbl)
+		}
+	}
+	if len(userTableList) > 0 {
+		tableNames := utils.TruncSliceForPrint(userTableList, 10)
+		log.Error("not fresh cluster", zap.Strings("user tables", tableNames))
+		return errors.Annotate(berrors.ErrRestoreNotFreshCluster, "user tables: "+strings.Join(tableNames, ", "))
+	}
+
+	return nil
+}
+
+func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) error {
+	log.Info("checking target cluster system table compatibility with backed up data")
+	privilegeTablesInBackup := make([]*metautil.Table, 0)
+	for _, table := range tables {
+		if utils.IsSysDB(table.DB.Name.L) && sysPrivilegeTableSet[table.Info.Name.L] {
+			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
+		}
+	}
+	sysDB := model.NewCIStr(mysql.SystemDB)
+	for _, table := range privilegeTablesInBackup {
+		ti, err := rc.GetTableSchema(dom, sysDB, table.Info.Name)
+		if err != nil {
+			log.Error("missing table on target cluster", zap.Stringer("table", table.Info.Name))
+			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
+		}
+		backupTi := table.Info
+		if len(ti.Columns) != len(backupTi.Columns) {
+			log.Error("column count mismatch",
+				zap.Stringer("table", table.Info.Name),
+				zap.Int("col in cluster", len(ti.Columns)),
+				zap.Int("col in backup", len(backupTi.Columns)))
+			return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+				"column count mismatch: %s, col in cluster: %d, col in backup: %d",
+				table.Info.Name.O, len(ti.Columns), len(backupTi.Columns))
+		}
+		// order should be the same and type be compatible
+		for i := range ti.Columns {
+			backupCol := backupTi.Columns[i]
+			col := ti.Columns[i]
+			if col.Name != backupCol.Name || !utils.IsTypeCompatible(backupCol.FieldType, col.FieldType) {
+				log.Error("incompatible column",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col in cluster", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())),
+					zap.String("col in backup", fmt.Sprintf("%s %s", backupCol.Name, backupCol.FieldType.String())))
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"incompatible column: %s, col in cluster: %s %s, col in backup: %s %s",
+					table.Info.Name.O,
+					col.Name, col.FieldType.String(),
+					backupCol.Name, backupCol.FieldType.String())
+			}
+		}
+	}
+	return nil
 }
 
 // ExecDDLs executes the queries of the ddl jobs.
@@ -2015,6 +2140,10 @@ func (rc *Client) SaveSchemas(
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (rc *Client) SetFullClusterRestore(fullCluster bool) {
+	rc.fullClusterRestore = fullCluster
 }
 
 // MockClient create a fake client used to test.

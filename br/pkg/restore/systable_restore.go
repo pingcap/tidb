@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -33,16 +32,7 @@ var unRecoverableTable = map[string]struct{}{
 	"tidb":             {},
 	"global_variables": {},
 
-	// all user related tables cannot be recovered for now.
 	"column_stats_usage":               {},
-	"columns_priv":                     {},
-	"db":                               {},
-	"default_roles":                    {},
-	"global_grants":                    {},
-	"global_priv":                      {},
-	"role_edges":                       {},
-	"tables_priv":                      {},
-	"user":                             {},
 	"capture_plan_baselines_blacklist": {},
 	// gc info don't need to recover.
 	"gc_delete_range":      {},
@@ -50,6 +40,56 @@ var unRecoverableTable = map[string]struct{}{
 
 	// schema_index_usage has table id need to be rewrite.
 	"schema_index_usage": {},
+}
+
+// system table is defined in session/bootstrap.go, but tidb didn't define them
+// as defined constant, so we list them here.
+// todo: tidb may add new system table later, and we have to maintain this list,
+// maybe maintain this set in tidb side and br refer it in later pr.
+var allSystemTableSet = map[string]bool{
+	"mysql.user":                             true,
+	"mysql.global_priv":                      true,
+	"mysql.db":                               true,
+	"mysql.tables_priv":                      true,
+	"mysql.columns_priv":                     true,
+	"mysql.GLOBAL_VARIABLES":                 true,
+	"mysql.tidb":                             true,
+	"mysql.help_topic":                       true,
+	"mysql.stats_meta":                       true,
+	"mysql.stats_histograms":                 true,
+	"mysql.stats_buckets":                    true,
+	"mysql.gc_delete_range":                  true,
+	"mysql.gc_delete_range_done":             true,
+	"mysql.stats_feedback":                   true,
+	"mysql.bind_info":                        true,
+	"mysql.role_edges":                       true,
+	"mysql.default_roles":                    true,
+	"mysql.stats_top_n":                      true,
+	"mysql.stats_fm_sketch":                  true,
+	"mysql.expr_pushdown_blacklist":          true,
+	"mysql.opt_rule_blacklist":               true,
+	"mysql.stats_extended":                   true,
+	"mysql.schema_index_usage":               true,
+	"mysql.global_grants":                    true,
+	"mysql.capture_plan_baselines_blacklist": true,
+	"mysql.column_stats_usage":               true,
+	"mysql.table_cache_meta":                 true,
+	"mysql.analyze_options":                  true,
+	"mysql.stats_history":                    true,
+	"mysql.stats_meta_history":               true,
+	"mysql.analyze_jobs":                     true,
+	"mysql.advisory_locks":                   true,
+}
+
+var sysPrivilegeTableSet = map[string]bool{
+	"user":          true, // since v1.0.0
+	"db":            true, // since v1.0.0
+	"tables_priv":   true, // since v1.0.0
+	"columns_priv":  true, // since v1.0.0
+	"default_roles": true, // since v3.0.0
+	"role_edges":    true, // since v3.0.0
+	"global_priv":   true, // since v3.0.8
+	"global_grants": true, // since v5.0.3
 }
 
 func isUnrecoverableTable(tableName string) bool {
@@ -139,11 +179,7 @@ func (rc *Client) afterSystemTablesReplaced(tables []string) error {
 	for _, table := range tables {
 		switch {
 		case table == "user":
-			// We cannot execute `rc.dom.NotifyUpdatePrivilege` here, because there isn't
-			// sessionctx.Context provided by the glue.
-			// TODO: update the glue type and allow we retrieve a session context from it.
-			err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
-				"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
+			log.Info("privilege system table restored, please reconnect to make it effective")
 		}
 	}
 	return err
@@ -188,7 +224,15 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, tableName
 	}
 
 	if db.ExistingTables[tableName] != nil {
-		log.Info("table existing, using replace into for restore",
+		if rc.fullClusterRestore && sysPrivilegeTableSet[tableName] {
+			log.Info("full cluster restore, delete existing data",
+				zap.String("table", tableName), zap.Stringer("schema", db.Name))
+			replaceIntoSQL := fmt.Sprintf("DELETE FROM %s;", utils.EncloseDBAndTable(db.Name.L, tableName))
+			if err := execSQL(replaceIntoSQL); err != nil {
+				return err
+			}
+		}
+		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
 		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s SELECT * FROM %s;",
