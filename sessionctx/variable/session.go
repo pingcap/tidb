@@ -760,27 +760,27 @@ type SessionVars struct {
 	concurrencyFactor float64
 
 	// factors for cost model v2
-	// cpuFactor is the CPU cost of processing one expression for one row.
+	// cpuFactorV2 is the CPU factor for the Cost Model Ver2.
 	cpuFactorV2 float64
-	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
+	// copCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
 	copCPUFactorV2 float64
-	// tiflashCPUFactor ...
+	// tiflashCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
 	tiflashCPUFactorV2 float64
-	// networkFactor is the network cost of transferring 1 byte data.
+	// networkFactorV2 is the network factor for the Cost Model Ver2.
 	networkFactorV2 float64
-	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
+	// scanFactorV2 is the scan factor for the Cost Model Ver2.
 	scanFactorV2 float64
-	// descScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
+	// descScanFactorV2 is the desc-scan factor for the Cost Model Ver2.
 	descScanFactorV2 float64
-	// tiflashScanFactor ...
+	// tiflashScanFactorV2 is the tiflash-scan factor for the Cost Model Ver2.
 	tiflashScanFactorV2 float64
-	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	// seekFactorV2 is the seek factor for the Cost Model Ver2.
 	seekFactorV2 float64
-	// memoryFactor is the memory cost of storing one tuple.
+	// memoryFactorV2 is the memory factor for the Cost Model Ver2.
 	memoryFactorV2 float64
-	// diskFactor is the IO cost of reading/writing one byte to temporary disk.
+	// diskFactorV2 is the disk factor for the Cost Model Ver2.
 	diskFactorV2 float64
-	// concurrencyFactor is the CPU cost of additional one goroutine.
+	// concurrencyFactorV2 is the concurrency factor for the Cost Model Ver2.
 	concurrencyFactorV2 float64
 
 	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
@@ -1141,7 +1141,7 @@ type SessionVars struct {
 	IgnorePreparedCacheCloseStmt bool
 	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
 	EnableNewCostInterface bool
-	// CostModelVersion ...
+	// CostModelVersion is a internal switch to indicates the Cost Model Version.
 	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
@@ -2504,7 +2504,7 @@ func (s *SessionVars) GetCopCPUFactor() float64 {
 	return s.copCPUFactor
 }
 
-// GetTiFlashCPUFactor ...
+// GetTiFlashCPUFactor returns the session
 func (s *SessionVars) GetTiFlashCPUFactor() float64 {
 	return s.tiflashCPUFactorV2
 }
@@ -2566,7 +2566,7 @@ func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
 	return s.descScanFactor
 }
 
-// GetTiFlashScanFactor ...
+// GetTiFlashScanFactor returns the session variable tiflashScanFactorV2
 func (s *SessionVars) GetTiFlashScanFactor() float64 {
 	return s.tiflashScanFactorV2
 }
