@@ -870,7 +870,7 @@ func (rc *Client) CheckTargetClusterFresh(ctx context.Context) error {
 	userDbList := make([]string, 0)
 	for _, schema := range schemas {
 		// tidb create test db on fresh cluster
-		if !util.IsMemOrSysDB(schema) && schema != "test" {
+		if !util.IsMemOrSysDB(strings.ToLower(schema)) && schema != "test" {
 			userDbList = append(userDbList, schema)
 		}
 	}
