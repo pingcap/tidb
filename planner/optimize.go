@@ -17,6 +17,8 @@ package planner
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessiontxn"
 	"math"
 	"math/rand"
 	"runtime/trace"
@@ -121,8 +123,16 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			fp = plannercore.TryFastPlan(sctx, node)
 		}
 		if fp != nil {
+			if !useMaxTS(sctx, fp) {
+				if err := sessiontxn.WarmUpTxn(sctx); err != nil {
+					return nil, nil, err
+				}
+			}
 			return fp, fp.OutputNames(), nil
 		}
+	}
+	if err := sessiontxn.WarmUpTxn(sctx); err != nil {
+		return nil, nil, err
 	}
 
 	useBinding := sessVars.UsePlanBaselines
@@ -474,6 +484,29 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
+}
+
+// useMaxTS returns true when meets following conditions:
+//  1. ctx is auto commit tagged.
+//  2. plan is point get by pk.
+//  3. not a cache table.
+func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
+	if !plannercore.IsAutoCommitTxn(ctx) {
+		return false
+	}
+	v, ok := p.(*plannercore.PointGetPlan)
+	if !ok {
+		return false
+	}
+	noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+	if !noSecondRead {
+		return false
+	}
+
+	if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
+		return false
+	}
+	return true
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
