@@ -248,13 +248,8 @@ func (p *PhysicalIndexLookUpReader) calSelfCost(taskType property.TaskType, cost
 		selfCost += getCardinality(p.tablePlan, costFlag) * tblRowSize * netFactor
 
 		// double-read seek cost: numLookupTasks * seek-factor
-		lookupRows := p.indexPlan.StatsCount()
-		// TODO: estimate numLookupTasks more precisely, for example, consider back-off strategy
-		//   on Executor and correlation between this index and PK
-		batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
-		magicDistRatio := 40.0 // indicate how many requests will be sent in lookup-read corresponding to a batch
-		numLookupTasks := (lookupRows / batchSize) * magicDistRatio
-		selfCost += numLookupTasks * p.ctx.GetSessionVars().GetSeekFactor(nil)
+		numDoubleReadTasks := p.estNumDoubleReadTasks(costFlag)
+		selfCost += numDoubleReadTasks * p.ctx.GetSessionVars().GetSeekFactor(nil)
 
 		// consider concurrency
 		selfCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
@@ -263,6 +258,15 @@ func (p *PhysicalIndexLookUpReader) calSelfCost(taskType property.TaskType, cost
 		selfCost += p.GetCost(costFlag)
 	}
 	return selfCost, nil
+}
+
+func (p *PhysicalIndexLookUpReader) estNumDoubleReadTasks(costFlag uint64) float64 {
+	lookupRows := p.indexPlan.StatsCount()
+	// TODO: estimate numLookupTasks more precisely, for example, consider back-off strategy
+	//   on Executor and correlation between this index and PK
+	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
+	magicDistRatio := 40.0 // indicate how many requests will be sent in lookup-read corresponding to a batch
+	return (lookupRows / batchSize) * magicDistRatio
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
