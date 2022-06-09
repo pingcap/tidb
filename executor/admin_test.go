@@ -1316,6 +1316,12 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, txn.Commit(tk.ctx))
 
 		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
+
+		// TODO(tiancaiamao): admin check doesn't support the chunk protocol.
+		// Remove this after https://github.com/pingcap/tidb/issues/35156
+		_, err = tk.Exec(ctx, "set @@tidb_enable_chunk_rpc = off")
+		require.NoError(t, err)
+
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, `[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 282574488403969, index-values:"handle: 282574488403969, values: [KindInt64 282578800083201 KindInt64 282574488403969]" != record-values:""`, err.Error())
