@@ -31,11 +31,6 @@ type MemAwareMap[K comparable, V any] struct {
 	bucketMemoryUsage uint64
 }
 
-// EstimateBucketMemoryUsage returns the estimated memory usage of a bucket in a map.
-func EstimateBucketMemoryUsage(sizeofKeyAndValue uint64) uint64 {
-	return 8*(1+sizeofKeyAndValue) + 16
-}
-
 // EstimateMapSize returns the estimated size of the map. It doesn't include the dynamic part, e.g. objects pointed to by pointers in the map.
 // len(map) <= load_factor * 2^bInMap. bInMap = ceil(log2(len(map)/load_factor)).
 // memory = bucketSize * 2^bInMap
@@ -52,7 +47,7 @@ func NewMemAwareMap[K comparable, V any]() MemAwareMap[K, V] {
 	return MemAwareMap[K, V]{
 		M:                 make(map[K]V),
 		bInMap:            0,
-		bucketMemoryUsage: EstimateBucketMemoryUsage(uint64(unsafe.Sizeof(*new(K)) + unsafe.Sizeof(*new(V)))),
+		bucketMemoryUsage: hack.EstimateBucketMemoryUsage(uint64(unsafe.Sizeof(*new(K)) + unsafe.Sizeof(*new(V)))),
 	}
 }
 

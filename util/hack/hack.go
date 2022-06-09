@@ -76,3 +76,8 @@ const (
 	// DefBucketMemoryUsageForSetInt64 = bucketSize*(1+unsafe.Sizeof(int64) + unsafe.Sizeof(struct{}))+2*ptrSize
 	DefBucketMemoryUsageForSetInt64 = (8*(1+8+0) + 16) / 2 * 3
 )
+
+// EstimateBucketMemoryUsage returns the estimated memory usage of a bucket in a map.
+func EstimateBucketMemoryUsage(sizeofKeyAndValue uint64) uint64 {
+	return (8*(1+sizeofKeyAndValue) + 16) / 2 * 3
+}
