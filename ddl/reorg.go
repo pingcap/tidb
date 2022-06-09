@@ -257,7 +257,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		case model.ActionModifyColumn:
 			metrics.GetBackfillProgressByLabel(metrics.GenerateReorgLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String())).Set(0)
 		}
-		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+		if err1 := RemoveDDLReorgHandle(w.sessPool, job, reorgInfo.elements); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 			return errors.Trace(err1)
 		}
@@ -792,11 +792,34 @@ func (r *reorgHandler) RemoveReorgElement(job *model.Job) error {
 }
 
 // RemoveDDLReorgHandle removes the job reorganization related handles.
-func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Element) error {
-	if variable.EnableConcurrentDDL.Load() {
-		return removeDDLReorgHandle(r.s, job, elements)
+func RemoveDDLReorgHandle(pool *sessionPool, job *model.Job, elements []*meta.Element) error {
+	se, err := pool.get()
+	if err != nil {
+		return err
 	}
-	return r.m.RemoveDDLReorgHandle(job, elements)
+	defer pool.put(se)
+
+	sess := newSession(se)
+	err = sess.begin()
+	if err != nil {
+		return err
+	}
+	txn, err := sess.txn()
+	if err != nil {
+		sess.rollback()
+		return err
+	}
+	if variable.EnableConcurrentDDL.Load() {
+		err = removeDDLReorgHandle(sess, job, elements)
+	} else {
+		err = meta.NewMeta(txn).RemoveDDLReorgHandle(job, elements)
+	}
+	if err != nil {
+		sess.rollback()
+		return err
+	}
+
+	return sess.commit()
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.

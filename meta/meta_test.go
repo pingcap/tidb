@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
@@ -442,6 +443,9 @@ func TestElement(t *testing.T) {
 }
 
 func TestDDL(t *testing.T) {
+	if variable.EnableConcurrentDDL.Load() {
+		t.Skip("skip test on allow concurrent DDL")
+	}
 	testCases := []struct {
 		desc        string
 		startHandle kv.Handle

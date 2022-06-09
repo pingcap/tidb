@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -336,6 +337,9 @@ func TestTableStorageStats(t *testing.T) {
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
 	result := 32
+	if variable.EnableConcurrentDDL.Load() {
+		result = result + 3 // tidb_ddl_job and tidb_ddl_reorg
+	}
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

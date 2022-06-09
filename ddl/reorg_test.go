@@ -50,7 +50,7 @@ func TestReorgOwner(t *testing.T) {
 
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		return testkit.NewTestKit(t, store).Session(), nil
-	}, 2, 2, 5))
+	}, 20, 20, 5))
 	require.NoError(t, err)
 
 	defer func() {
@@ -68,6 +68,9 @@ func TestReorgOwner(t *testing.T) {
 	tbl, err := testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 
+	ctx = testkit.NewTestKit(t, store).Session()
+	err = sessiontxn.NewTxn(context.Background(), ctx)
+	require.NoError(t, err)
 	num := 10
 	ctx = testkit.NewTestKit(t, store).Session()
 	err = sessiontxn.NewTxn(context.Background(), ctx)

@@ -364,7 +364,13 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		return nil
 	}
 
-	ddlInfo, err := ddl.GetDDLInfo(e.ctx)
+	session, err := e.getSysSession()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	ddlInfo, err := ddl.GetDDLInfoFromSession(session)
+	e.releaseSysSession(session)
 	if err != nil {
 		b.err = err
 		return nil

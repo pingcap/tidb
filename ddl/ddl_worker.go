@@ -381,11 +381,6 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 			})
 		}
 		err = d.addDDLJobs(jobTasks)
-		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
-			if val.(bool) {
-				err = errors.Errorf("mockAddBatchDDLJobsErr")
-			}
-		})
 	}
 	var jobs strings.Builder
 	for _, task := range tasks {
@@ -400,18 +395,6 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 	} else {
 		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs.String()))
 	}
-}
-
-// getHistoryDDLJob gets a DDL job with job's ID from history queue.
-func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
-	se, err := d.sessPool.get()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer d.sessPool.put(se)
-	job, err := GetHistoryJobByID(se, id)
-
-	return job, errors.Trace(err)
 }
 
 func injectFailPointForGetJob(job *model.Job) {
