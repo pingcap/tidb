@@ -18,5 +18,6 @@ go_test(
     name = "watcher_test",
     srcs = ["watcher_test.go"],
     embed = [":watcher"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )
