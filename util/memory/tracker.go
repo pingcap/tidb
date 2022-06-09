@@ -396,14 +396,14 @@ func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	}
 }
 
-func (t *Tracker) RecordRelease(bytes int64, obj any) {
+func (t *Tracker) RecordRelease(bytes int64, objRef any) {
 	if bytes == 0 {
 		return
 	}
 	defer t.Consume(-bytes)
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if tracker.shouldRecordRelease() {
-			runtime.SetFinalizer(&obj, func(objRef any) {
+			runtime.SetFinalizer(objRef, func(objRef any) {
 				tracker.release(bytes)
 			})
 			tracker.recordRelease(bytes)
