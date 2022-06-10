@@ -1700,7 +1700,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	// Return the first error if all members' requests fail.
 	if len(errs) == len(members) {
-		return nil, errors.Trace(err)
+		return nil, errors.Trace(errs[0])
 	}
 	return servers, nil
 }
