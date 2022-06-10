@@ -1630,7 +1630,7 @@
       "    └─TableFullScan 10000.00 cop[tikv] table:te keep order:false, stats:pseudo"
     ],
     "Warning": null
-  }
+  },
   {
     "SQL": "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
     "Plan": [
