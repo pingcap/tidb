@@ -1654,7 +1654,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	// TODO: maybe we should unify the PD API request interface.
 	var (
 		servers = make([]ServerInfo, 0, len(members))
 		errs    = make([]error, 0, len(members))
