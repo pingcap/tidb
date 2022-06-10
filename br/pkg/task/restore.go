@@ -256,9 +256,14 @@ func (cfg *RestoreConfig) InitFullClusterRestore(flags *pflag.FlagSet, cmdName s
 	explicitFilter := flags.Changed(flagFilter)
 	if cmdName == FullRestoreCmd {
 		cfg.FullClusterRestore = !explicitFilter
-		return
+	} else {
+		cfg.FullClusterRestore = !explicitFilter && len(cfg.FullBackupStorage) > 0
 	}
-	cfg.FullClusterRestore = !explicitFilter && len(cfg.FullBackupStorage) > 0
+
+	if cfg.FullClusterRestore {
+		// have to skip grant table, in order to NotifyUpdatePrivilege
+		config.GetGlobalConfig().Security.SkipGrantTable = true
+	}
 }
 
 // adjustRestoreConfig is use for BR(binary) and BR in TiDB.

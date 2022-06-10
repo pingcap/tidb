@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -179,7 +180,16 @@ func (rc *Client) afterSystemTablesReplaced(tables []string) error {
 	for _, table := range tables {
 		switch {
 		case table == "user":
-			log.Info("privilege system table restored, please reconnect to make it effective")
+			if rc.fullClusterRestore {
+				log.Info("privilege system table restored, please reconnect to make it effective")
+				err = rc.dom.NotifyUpdatePrivilege()
+			} else {
+				// to make it compatible with older version
+				// todo: should we allow restore system table in non-fresh cluster in later br version?
+				// if we don't, we can check it at first place.
+				err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
+					"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
+			}
 		}
 	}
 	return err
