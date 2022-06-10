@@ -446,11 +446,15 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
+	if err = injectMutationError(t, txn, sh); err != nil {
+		return err
+	}
 	if sessVars.EnableMutationChecker {
 		if err = CheckDataConsistency(txn, sessVars, t, newData, oldData, memBuffer, sh); err != nil {
 			return errors.Trace(err)
 		}
 	}
+
 	memBuffer.Release(sh)
 	if shouldWriteBinlog(sctx, t.meta) {
 		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
@@ -886,6 +890,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		return h, err
 	}
 
+	if err = injectMutationError(t, txn, sh); err != nil {
+		return nil, err
+	}
 	if sessVars.EnableMutationChecker {
 		if err = CheckDataConsistency(txn, sessVars, t, r, nil, memBuffer, sh); err != nil {
 			return nil, errors.Trace(err)
@@ -1146,6 +1153,9 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 
 	sessVars := ctx.GetSessionVars()
 	sc := sessVars.StmtCtx
+	if err = injectMutationError(t, txn, sh); err != nil {
+		return err
+	}
 	if sessVars.EnableMutationChecker {
 		if err = CheckDataConsistency(txn, sessVars, t, nil, r, memBuffer, sh); err != nil {
 			return errors.Trace(err)
@@ -1446,9 +1456,6 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.GetFlag()) {
 		return colVal, errors.New("Miss column")
 	}
-	if col.State != model.StatePublic {
-		return colVal, nil
-	}
 	if defaultVals[col.Offset].IsNull() {
 		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 		if err != nil {
@@ -1556,6 +1563,11 @@ func (t *TableCommon) Type() table.Type {
 }
 
 func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
+	failpoint.Inject("forceWriteBinlog", func() {
+		// Just to cover binlog related code in this package, since the `BinlogClient` is
+		// still nil, mutations won't be written to pump on commit.
+		failpoint.Return(true)
+	})
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}

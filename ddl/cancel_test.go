@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
 )
@@ -32,10 +33,39 @@ import (
 type testCancelJob struct {
 	sql         string
 	ok          bool
-	cancelState model.SchemaState
+	cancelState interface{} // model.SchemaState | []model.SchemaState
 	onJobBefore bool
 	onJobUpdate bool
 	prepareSQL  []string
+}
+
+type subStates = []model.SchemaState
+
+func testMatchCancelState(t *testing.T, job *model.Job, cancelState interface{}, sql string) bool {
+	switch v := cancelState.(type) {
+	case model.SchemaState:
+		if job.Type == model.ActionMultiSchemaChange {
+			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s)", sql, v)
+			assert.Failf(t, msg, "use []model.SchemaState as cancel states instead")
+			return false
+		}
+		return job.SchemaState == v
+	case subStates: // For multi-schema change sub-jobs.
+		if job.MultiSchemaInfo == nil {
+			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v)", sql, v)
+			assert.Failf(t, msg, "use model.SchemaState as the cancel state instead")
+			return false
+		}
+		assert.Equal(t, len(job.MultiSchemaInfo.SubJobs), len(v), sql)
+		for i, subJobSchemaState := range v {
+			if job.MultiSchemaInfo.SubJobs[i].SchemaState != subJobSchemaState {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 var allTestCase = []testCancelJob{
@@ -246,7 +276,7 @@ func TestCancel(t *testing.T) {
 	cancelWhenReorgNotStart := false
 
 	hookFunc := func(job *model.Job) {
-		if job.SchemaState == allTestCase[i.Load()].cancelState && !cancel {
+		if testMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel {
 			if !cancelWhenReorgNotStart && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
