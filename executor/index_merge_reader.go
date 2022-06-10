@@ -820,6 +820,9 @@ func (w *partialIndexWorker) fetchHandles(
 			return count, err
 		}
 		if len(handles) == 0 {
+			if basicStats != nil {
+				basicStats.Record(time.Since(start), chk.NumRows())
+			}
 			return count, nil
 		}
 		count += int64(len(handles))
