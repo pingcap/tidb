@@ -4170,8 +4170,11 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				lp.MergeHints.preferMerge = cte.isInline
 				saveCte := b.outerCTEs[i:]
 				b.outerCTEs = b.outerCTEs[:i]
+				o := b.buildingCTE
+				b.buildingCTE = false
 				defer func() {
 					b.outerCTEs = append(b.outerCTEs, saveCte...)
+					b.buildingCTE = o
 				}()
 				return b.buildDataSourceFromCTEMerge(ctx, cte.def)
 			}
