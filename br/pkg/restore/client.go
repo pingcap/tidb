@@ -907,7 +907,8 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	log.Info("checking target cluster system table compatibility with backed up data")
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
-		if utils.IsSysDB(table.DB.Name.L) && sysPrivilegeTableSet[table.Info.Name.L] {
+		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
+		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableSet[table.Info.Name.L] {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
@@ -925,7 +926,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 				zap.Int("col in cluster", len(ti.Columns)),
 				zap.Int("col in backup", len(backupTi.Columns)))
 			return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-				"column count mismatch: %s, col in cluster: %d, col in backup: %d",
+				"column count mismatch, table: %s, col in cluster: %d, col in backup: %d",
 				table.Info.Name.O, len(ti.Columns), len(backupTi.Columns))
 		}
 		// order should be the same and type be compatible
@@ -938,7 +939,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 					zap.String("col in cluster", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())),
 					zap.String("col in backup", fmt.Sprintf("%s %s", backupCol.Name, backupCol.FieldType.String())))
 				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-					"incompatible column: %s, col in cluster: %s %s, col in backup: %s %s",
+					"incompatible column, table: %s, col in cluster: %s %s, col in backup: %s %s",
 					table.Info.Name.O,
 					col.Name, col.FieldType.String(),
 					backupCol.Name, backupCol.FieldType.String())

@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
@@ -181,6 +182,8 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	dbSchema, isExist := info.SchemaByName(model.NewCIStr(mysql.SystemDB))
 	require.True(t, isExist)
+	tmpSysDB := dbSchema.Clone()
+	tmpSysDB.Name = utils.TemporaryDBName(mysql.SystemDB)
 	sysDB := model.NewCIStr(mysql.SystemDB)
 	userTI, err := client.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("user"))
 	require.NoError(t, err)
@@ -189,7 +192,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	mockedUserTI := userTI.Clone()
 	mockedUserTI.Columns = mockedUserTI.Columns[:len(mockedUserTI.Columns)-1]
 	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
-		DB:   dbSchema,
+		DB:   tmpSysDB,
 		Info: mockedUserTI,
 	}})
 	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
@@ -198,7 +201,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	mockedUserTI = userTI.Clone()
 	mockedUserTI.Columns[4], mockedUserTI.Columns[5] = mockedUserTI.Columns[5], mockedUserTI.Columns[4]
 	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
-		DB:   dbSchema,
+		DB:   tmpSysDB,
 		Info: mockedUserTI,
 	}})
 	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
@@ -207,7 +210,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	mockedUserTI = userTI.Clone()
 	mockedUserTI.Columns[0].FieldType.SetFlen(2000) // Columns[0] is `Host` char(255)
 	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
-		DB:   dbSchema,
+		DB:   tmpSysDB,
 		Info: mockedUserTI,
 	}})
 	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
@@ -215,7 +218,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	// compatible
 	mockedUserTI = userTI.Clone()
 	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
-		DB:   dbSchema,
+		DB:   tmpSysDB,
 		Info: mockedUserTI,
 	}})
 	require.NoError(t, err)
