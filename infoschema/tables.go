@@ -1654,18 +1654,25 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var servers = make([]ServerInfo, 0, len(members))
+
+	var (
+		servers = make([]ServerInfo, 0, len(members))
+		errs    = make([]error, 0, len(members))
+	)
+	// Try on each member until one succeeds or all fail.
 	for _, addr := range members {
 		// Get PD version, git_hash
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			errs = append(errs, err)
+			continue
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			errs = append(errs, err)
+			continue
 		}
 		var content = struct {
 			Version        string `json:"version"`
@@ -1675,7 +1682,8 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		err = json.NewDecoder(resp.Body).Decode(&content)
 		terror.Log(resp.Body.Close())
 		if err != nil {
-			return nil, errors.Trace(err)
+			errs = append(errs, err)
+			continue
 		}
 		if len(content.Version) > 0 && content.Version[0] == 'v' {
 			content.Version = content.Version[1:]
@@ -1689,6 +1697,10 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			GitHash:        content.GitHash,
 			StartTimestamp: content.StartTimestamp,
 		})
+	}
+	// Return the first error if all members' requests fail.
+	if len(errs) == len(members) {
+		return nil, errors.Trace(err)
 	}
 	return servers, nil
 }
