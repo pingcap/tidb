@@ -9713,7 +9713,7 @@ SetStmt:
 	}
 |	"SET" "SESSION_STATES" stringLit
 	{
-		$$ = &ast.SetSessionStatesStmt{SessionStates:$3}
+		$$ = &ast.SetSessionStatesStmt{SessionStates: $3}
 	}
 
 SetRoleStmt:

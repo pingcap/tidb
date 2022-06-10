@@ -1042,6 +1042,8 @@ AAAAAAAAAAAA5gm5Mg==
 		{"SHOW SESSION_STATES", true, "SHOW SESSION_STATES"},
 		{"SET SESSION_STATES 'x'", true, "SET SESSION_STATES 'x'"},
 		{"SET SESSION_STATES", false, ""},
+		{"SET SESSION_STATES 1", false, ""},
+		{"SET SESSION_STATES now()", false, ""},
 	}
 	RunTest(t, table, false)
 }

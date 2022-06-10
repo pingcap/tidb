@@ -215,7 +215,6 @@ func TestShow(t *testing.T) {
 		"RESTRICTED_REPLICA_WRITER_ADMIN Server Admin ",
 	))
 	require.Len(t, tk.MustQuery("show table status").Rows(), 1)
-	tk.MustQuery("show session_states").Check(testkit.Rows())
 }
 
 func TestSelectWithoutFrom(t *testing.T) {
@@ -6106,4 +6105,13 @@ func TestIsFastPlan(t *testing.T) {
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
 	}
+}
+
+func TestShowSessionStates(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show session_states").Check(testkit.Rows())
+	tk.MustExec("set session_states 'x'")
+	tk.MustGetErrCode("set session_states 1", errno.ErrParse)
 }
