@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -99,6 +100,125 @@ func TestIsOnline(t *testing.T) {
 	require.False(t, client.IsOnline())
 	client.EnableOnline()
 	require.True(t, client.IsOnline())
+}
+
+func getStartedMockedCluster(t *testing.T) *mock.Cluster {
+	t.Helper()
+	cluster, err := mock.NewCluster()
+	require.NoError(t, err)
+	err = cluster.Start()
+	require.NoError(t, err)
+	return cluster
+}
+
+func TestCheckTargetClusterFresh(t *testing.T) {
+	// cannot use shared `mc`, other parallel case may change it.
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(cluster.PDClient, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, cluster.Storage)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, client.CheckTargetClusterFresh(ctx))
+
+	require.NoError(t, client.CreateDatabase(ctx, &model.DBInfo{Name: model.NewCIStr("user_db")}))
+	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
+}
+
+func TestCheckTargetClusterFreshWithTable(t *testing.T) {
+	testFunc := func(targetDBName string) {
+		// cannot use shared `mc`, other parallel case may change it.
+		cluster := getStartedMockedCluster(t)
+		defer cluster.Stop()
+
+		g := gluetidb.New()
+		client := restore.NewRestoreClient(cluster.PDClient, nil, defaultKeepaliveCfg, false)
+		err := client.Init(g, cluster.Storage)
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+		require.NoError(t, err)
+		dbSchema, isExist := info.SchemaByName(model.NewCIStr(targetDBName))
+		require.True(t, isExist)
+		intField := types.NewFieldType(mysql.TypeLong)
+		intField.SetCharset("binary")
+		table := &metautil.Table{
+			DB: dbSchema,
+			Info: &model.TableInfo{
+				ID:   int64(1),
+				Name: model.NewCIStr("t"),
+				Columns: []*model.ColumnInfo{{
+					ID:        1,
+					Name:      model.NewCIStr("id"),
+					FieldType: *intField,
+					State:     model.StatePublic,
+				}},
+				Charset: "utf8mb4",
+				Collate: "utf8mb4_bin",
+			},
+		}
+		_, _, err = client.CreateTables(cluster.Domain, []*metautil.Table{table}, 0)
+		require.NoError(t, err)
+
+		require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
+	}
+	testFunc("test")
+	testFunc(mysql.SystemDB)
+}
+
+func TestCheckSysTableCompatibility(t *testing.T) {
+	cluster := mc
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(cluster.PDClient, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, cluster.Storage)
+	require.NoError(t, err)
+
+	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+	require.NoError(t, err)
+	dbSchema, isExist := info.SchemaByName(model.NewCIStr(mysql.SystemDB))
+	require.True(t, isExist)
+	sysDB := model.NewCIStr(mysql.SystemDB)
+	userTI, err := client.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("user"))
+	require.NoError(t, err)
+
+	// column count mismatch
+	mockedUserTI := userTI.Clone()
+	mockedUserTI.Columns = mockedUserTI.Columns[:len(mockedUserTI.Columns)-1]
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   dbSchema,
+		Info: mockedUserTI,
+	}})
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// column order mismatch
+	mockedUserTI = userTI.Clone()
+	mockedUserTI.Columns[4], mockedUserTI.Columns[5] = mockedUserTI.Columns[5], mockedUserTI.Columns[4]
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   dbSchema,
+		Info: mockedUserTI,
+	}})
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// incompatible column type
+	mockedUserTI = userTI.Clone()
+	mockedUserTI.Columns[0].FieldType.SetFlen(2000) // Columns[0] is `Host` char(255)
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   dbSchema,
+		Info: mockedUserTI,
+	}})
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// compatible
+	mockedUserTI = userTI.Clone()
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   dbSchema,
+		Info: mockedUserTI,
+	}})
+	require.NoError(t, err)
 }
 
 func TestPreCheckTableClusterIndex(t *testing.T) {
