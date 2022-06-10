@@ -50,180 +50,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func analyzeColumnsPushdownWithRetry(e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
-	analyzeResult := analyzeColumnsPushdown(e)
-	// do not retry if succeed / not oom error / not auto-analyze / not v2 / samplerate not set
-	if analyzeResult.Err == nil || analyzeResult.Err != errAnalyzeOOM ||
-		!e.ctx.GetSessionVars().InRestrictedSQL || e.StatsVersion != statistics.Version2 ||
-		e.analyzePB.ColReq == nil || *e.analyzePB.ColReq.SampleRate <= 0 {
-		return analyzeResult
-	}
-	finishJobWithLog(e.ctx, analyzeResult.Job, analyzeResult.Err)
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	if statsHandle == nil {
-		return analyzeResult
-	}
-	var statsTbl *statistics.Table
-	tid := e.tableID.GetStatisticsID()
-	if tid == e.tableInfo.ID {
-		statsTbl = statsHandle.GetTableStats(e.tableInfo)
-	} else {
-		statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
-	}
-	if statsTbl == nil || statsTbl.Count <= 0 {
-		return analyzeResult
-	}
-	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.Count))
-	if newSampleRate >= *e.analyzePB.ColReq.SampleRate {
-		return analyzeResult
-	}
-	*e.analyzePB.ColReq.SampleRate = newSampleRate
-	prepareV2AnalyzeJobInfo(e, true)
-	AddNewAnalyzeJob(e.ctx, e.job)
-	StartAnalyzeJob(e.ctx, e.job)
-	return analyzeColumnsPushdown(e)
-}
-
-func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResults {
-	var ranges []*ranger.Range
-	if hc := colExec.handleCols; hc != nil {
-		if hc.IsInt() {
-			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.GetFlag()))
-		} else {
-			ranges = ranger.FullNotNullRange()
-		}
-	} else {
-		ranges = ranger.FullIntRange(false)
-	}
-	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
-	if colExec.StatsVersion == statistics.Version2 {
-		specialIndexes := make([]*model.IndexInfo, 0, len(colExec.indexes))
-		specialIndexesOffsets := make([]int, 0, len(colExec.indexes))
-		for i, idx := range colExec.indexes {
-			isSpecial := false
-			for _, col := range idx.Columns {
-				colInfo := colExec.colsInfo[col.Offset]
-				isVirtualCol := colInfo.IsGenerated() && !colInfo.GeneratedStored
-				isPrefixCol := col.Length != types.UnspecifiedLength
-				if isVirtualCol || isPrefixCol {
-					isSpecial = true
-					break
-				}
-			}
-			if isSpecial {
-				specialIndexesOffsets = append(specialIndexesOffsets, i)
-				specialIndexes = append(specialIndexes, idx)
-			}
-		}
-		idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
-		// subIndexWorkerWg is better to be initialized in handleNDVForSpecialIndexes, however if we do so, golang would
-		// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
-		// case with `-race` flag now.
-		var wg util.WaitGroupWrapper
-		wg.Run(func() {
-			colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
-		})
-		defer wg.Wait()
-		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
-		if err != nil {
-			colExec.memTracker.Consume(-colExec.memTracker.BytesConsumed())
-			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
-		}
-		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
-		colGroupResult := &statistics.AnalyzeResult{
-			Hist:    hists[cLen:],
-			TopNs:   topns[cLen:],
-			Fms:     fmSketches[cLen:],
-			IsIndex: 1,
-		}
-		// Discard stats of _tidb_rowid.
-		// Because the process of analyzing will keep the order of results be the same as the colsInfo in the analyze task,
-		// and in `buildAnalyzeFullSamplingTask` we always place the _tidb_rowid at the last of colsInfo, so if there are
-		// stats for _tidb_rowid, it must be at the end of the column stats.
-		// Virtual column has no histogram yet. So we check nil here.
-		if hists[cLen-1] != nil && hists[cLen-1].ID == -1 {
-			cLen -= 1
-		}
-		colResult := &statistics.AnalyzeResult{
-			Hist:  hists[:cLen],
-			TopNs: topns[:cLen],
-			Fms:   fmSketches[:cLen],
-		}
-		return &statistics.AnalyzeResults{
-			TableID:       colExec.tableID,
-			Ars:           []*statistics.AnalyzeResult{colResult, colGroupResult},
-			Job:           colExec.job,
-			StatsVer:      colExec.StatsVersion,
-			Count:         count,
-			Snapshot:      colExec.snapshot,
-			ExtStats:      extStats,
-			BaseCount:     colExec.baseCount,
-			BaseModifyCnt: colExec.baseModifyCnt,
-		}
-	}
-	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, collExtStats)
-	if err != nil {
-		return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
-	}
-
-	if hasPkHist(colExec.handleCols) {
-		PKresult := &statistics.AnalyzeResult{
-			Hist:  hists[:1],
-			Cms:   cms[:1],
-			TopNs: topNs[:1],
-			Fms:   fms[:1],
-		}
-		restResult := &statistics.AnalyzeResult{
-			Hist:  hists[1:],
-			Cms:   cms[1:],
-			TopNs: topNs[1:],
-			Fms:   fms[1:],
-		}
-		return &statistics.AnalyzeResults{
-			TableID:  colExec.tableID,
-			Ars:      []*statistics.AnalyzeResult{PKresult, restResult},
-			ExtStats: extStats,
-			Job:      colExec.job,
-			StatsVer: colExec.StatsVersion,
-			Count:    int64(PKresult.Hist[0].TotalRowCount()),
-			Snapshot: colExec.snapshot,
-		}
-	}
-	var ars []*statistics.AnalyzeResult
-	if colExec.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
-		ars = append(ars, &statistics.AnalyzeResult{
-			Hist:    []*statistics.Histogram{hists[0]},
-			Cms:     []*statistics.CMSketch{cms[0]},
-			TopNs:   []*statistics.TopN{topNs[0]},
-			Fms:     []*statistics.FMSketch{nil},
-			IsIndex: 1,
-		})
-		hists = hists[1:]
-		cms = cms[1:]
-		topNs = topNs[1:]
-	}
-	colResult := &statistics.AnalyzeResult{
-		Hist:  hists,
-		Cms:   cms,
-		TopNs: topNs,
-		Fms:   fms,
-	}
-	ars = append(ars, colResult)
-	cnt := int64(hists[0].TotalRowCount())
-	if colExec.StatsVersion >= statistics.Version2 {
-		cnt += int64(topNs[0].TotalCount())
-	}
-	return &statistics.AnalyzeResults{
-		TableID:  colExec.tableID,
-		Ars:      ars,
-		Job:      colExec.job,
-		StatsVer: colExec.StatsVersion,
-		ExtStats: extStats,
-		Count:    cnt,
-		Snapshot: colExec.snapshot,
-	}
-}
-
 // AnalyzeColumnsExec represents Analyze columns push down executor.
 type AnalyzeColumnsExec struct {
 	baseAnalyzeExec
@@ -244,6 +70,25 @@ type AnalyzeColumnsExec struct {
 	baseModifyCnt           int64
 
 	memTracker *memory.Tracker
+}
+
+func analyzeColumnsPushDownEntry(e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
+	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
+		return e.toV2().analyzeColumnsPushDownWithRetryV2()
+	}
+	return e.toV1().analyzeColumnsPushDownV1()
+}
+
+func (e *AnalyzeColumnsExec) toV1() *AnalyzeColumnsExecV1 {
+	return &AnalyzeColumnsExecV1{
+		AnalyzeColumnsExec: e,
+	}
+}
+
+func (e *AnalyzeColumnsExec) toV2() *AnalyzeColumnsExecV2 {
+	return &AnalyzeColumnsExecV2{
+		AnalyzeColumnsExec: e,
+	}
 }
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
@@ -293,9 +138,367 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	return result, nil
 }
 
+func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
+	if err = e.open(ranges); err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	defer func() {
+		if err1 := e.resultHandler.Close(); err1 != nil {
+			hists = nil
+			cms = nil
+			extStats = nil
+			err = err1
+		}
+	}()
+	var handleHist *statistics.Histogram
+	var handleCms *statistics.CMSketch
+	var handleFms *statistics.FMSketch
+	var handleTopn *statistics.TopN
+	statsVer := statistics.Version1
+	if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
+		handleHist = &statistics.Histogram{}
+		handleCms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
+		handleTopn = statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
+		handleFms = statistics.NewFMSketch(maxSketchSize)
+		if e.analyzePB.IdxReq.Version != nil {
+			statsVer = int(*e.analyzePB.IdxReq.Version)
+		}
+	}
+	pkHist := &statistics.Histogram{}
+	collectors := make([]*statistics.SampleCollector, len(e.colsInfo))
+	for i := range collectors {
+		collectors[i] = &statistics.SampleCollector{
+			IsMerger:      true,
+			FMSketch:      statistics.NewFMSketch(maxSketchSize),
+			MaxSampleSize: int64(e.opts[ast.AnalyzeOptNumSamples]),
+			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
+		}
+	}
+	for {
+		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
+			dom := domain.GetDomain(e.ctx)
+			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+		})
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			return nil, nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+		}
+		failpoint.Inject("mockSlowAnalyzeV1", func() {
+			time.Sleep(1000 * time.Second)
+		})
+		data, err1 := e.resultHandler.nextRaw(context.TODO())
+		if err1 != nil {
+			return nil, nil, nil, nil, nil, err1
+		}
+		if data == nil {
+			break
+		}
+		var colResp *tipb.AnalyzeColumnsResp
+		if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
+			resp := &tipb.AnalyzeMixedResp{}
+			err = resp.Unmarshal(data)
+			if err != nil {
+				return nil, nil, nil, nil, nil, err
+			}
+			colResp = resp.ColumnsResp
+			handleHist, handleCms, handleFms, handleTopn, err = updateIndexResult(e.ctx, resp.IndexResp, nil, handleHist,
+				handleCms, handleFms, handleTopn, e.commonHandle, int(e.opts[ast.AnalyzeOptNumBuckets]),
+				int(e.opts[ast.AnalyzeOptNumTopN]), statsVer)
+
+			if err != nil {
+				return nil, nil, nil, nil, nil, err
+			}
+		} else {
+			colResp = &tipb.AnalyzeColumnsResp{}
+			err = colResp.Unmarshal(data)
+		}
+		sc := e.ctx.GetSessionVars().StmtCtx
+		rowCount := int64(0)
+		if hasPkHist(e.handleCols) {
+			respHist := statistics.HistogramFromProto(colResp.PkHist)
+			rowCount = int64(respHist.TotalRowCount())
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
+			if err != nil {
+				return nil, nil, nil, nil, nil, err
+			}
+		}
+		for i, rc := range colResp.Collectors {
+			respSample := statistics.SampleCollectorFromProto(rc)
+			rowCount = respSample.Count + respSample.NullCount
+			collectors[i].MergeSampleCollector(sc, respSample)
+		}
+		UpdateAnalyzeJob(e.ctx, e.job, rowCount)
+	}
+	timeZone := e.ctx.GetSessionVars().Location()
+	if hasPkHist(e.handleCols) {
+		pkInfo := e.handleCols.GetCol(0)
+		pkHist.ID = pkInfo.ID
+		err = pkHist.DecodeTo(pkInfo.RetType, timeZone)
+		if err != nil {
+			return nil, nil, nil, nil, nil, err
+		}
+		hists = append(hists, pkHist)
+		cms = append(cms, nil)
+		topNs = append(topNs, nil)
+		fms = append(fms, nil)
+	}
+	for i, col := range e.colsInfo {
+		if e.StatsVersion < 2 {
+			// In analyze version 2, we don't collect TopN this way. We will collect TopN from samples in `BuildColumnHistAndTopN()` below.
+			err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
+			if err != nil {
+				return nil, nil, nil, nil, nil, err
+			}
+			topNs = append(topNs, collectors[i].TopN)
+		}
+		for j, s := range collectors[i].Samples {
+			collectors[i].Samples[j].Ordinal = j
+			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
+			if err != nil {
+				return nil, nil, nil, nil, nil, err
+			}
+			// When collation is enabled, we store the Key representation of the sampling data. So we set it to kind `Bytes` here
+			// to avoid to convert it to its Key representation once more.
+			if collectors[i].Samples[j].Value.Kind() == types.KindString {
+				collectors[i].Samples[j].Value.SetBytes(collectors[i].Samples[j].Value.GetBytes())
+			}
+		}
+		var hg *statistics.Histogram
+		var err error
+		var topn *statistics.TopN
+		if e.StatsVersion < 2 {
+			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
+		} else {
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true)
+			topNs = append(topNs, topn)
+		}
+		if err != nil {
+			return nil, nil, nil, nil, nil, err
+		}
+		hists = append(hists, hg)
+		collectors[i].CMSketch.CalcDefaultValForAnalyze(uint64(hg.NDV))
+		cms = append(cms, collectors[i].CMSketch)
+		fms = append(fms, collectors[i].FMSketch)
+	}
+	if needExtStats {
+		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+		extStats, err = statsHandle.BuildExtendedStats(e.TableID.GetStatisticsID(), e.colsInfo, collectors)
+		if err != nil {
+			return nil, nil, nil, nil, nil, err
+		}
+	}
+	if handleHist != nil {
+		handleHist.ID = e.commonHandle.ID
+		if handleTopn != nil && handleTopn.TotalCount() > 0 {
+			handleHist.RemoveVals(handleTopn.TopN)
+		}
+		if handleCms != nil {
+			handleCms.CalcDefaultValForAnalyze(uint64(handleHist.NDV))
+		}
+		hists = append([]*statistics.Histogram{handleHist}, hists...)
+		cms = append([]*statistics.CMSketch{handleCms}, cms...)
+		fms = append([]*statistics.FMSketch{handleFms}, fms...)
+		topNs = append([]*statistics.TopN{handleTopn}, topNs...)
+	}
+	return hists, cms, topNs, fms, extStats, nil
+}
+
+type AnalyzeColumnsExecV1 struct {
+	*AnalyzeColumnsExec
+}
+
+func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeResults {
+	var ranges []*ranger.Range
+	if hc := e.handleCols; hc != nil {
+		if hc.IsInt() {
+			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.GetFlag()))
+		} else {
+			ranges = ranger.FullNotNullRange()
+		}
+	} else {
+		ranges = ranger.FullIntRange(false)
+	}
+	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
+	hists, cms, topNs, fms, extStats, err := e.buildStats(ranges, collExtStats)
+	if err != nil {
+		return &statistics.AnalyzeResults{Err: err, Job: e.job}
+	}
+
+	if hasPkHist(e.handleCols) {
+		PKresult := &statistics.AnalyzeResult{
+			Hist:  hists[:1],
+			Cms:   cms[:1],
+			TopNs: topNs[:1],
+			Fms:   fms[:1],
+		}
+		restResult := &statistics.AnalyzeResult{
+			Hist:  hists[1:],
+			Cms:   cms[1:],
+			TopNs: topNs[1:],
+			Fms:   fms[1:],
+		}
+		return &statistics.AnalyzeResults{
+			TableID:  e.tableID,
+			Ars:      []*statistics.AnalyzeResult{PKresult, restResult},
+			ExtStats: extStats,
+			Job:      e.job,
+			StatsVer: e.StatsVersion,
+			Count:    int64(PKresult.Hist[0].TotalRowCount()),
+			Snapshot: e.snapshot,
+		}
+	}
+	var ars []*statistics.AnalyzeResult
+	if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
+		ars = append(ars, &statistics.AnalyzeResult{
+			Hist:    []*statistics.Histogram{hists[0]},
+			Cms:     []*statistics.CMSketch{cms[0]},
+			TopNs:   []*statistics.TopN{topNs[0]},
+			Fms:     []*statistics.FMSketch{nil},
+			IsIndex: 1,
+		})
+		hists = hists[1:]
+		cms = cms[1:]
+		topNs = topNs[1:]
+	}
+	colResult := &statistics.AnalyzeResult{
+		Hist:  hists,
+		Cms:   cms,
+		TopNs: topNs,
+		Fms:   fms,
+	}
+	ars = append(ars, colResult)
+	cnt := int64(hists[0].TotalRowCount())
+	if e.StatsVersion >= statistics.Version2 {
+		cnt += int64(topNs[0].TotalCount())
+	}
+	return &statistics.AnalyzeResults{
+		TableID:  e.tableID,
+		Ars:      ars,
+		Job:      e.job,
+		StatsVer: e.StatsVersion,
+		ExtStats: extStats,
+		Count:    cnt,
+		Snapshot: e.snapshot,
+	}
+}
+
+type AnalyzeColumnsExecV2 struct {
+	*AnalyzeColumnsExec
+}
+
+func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.AnalyzeResults {
+	analyzeResult := e.analyzeColumnsPushDownV2()
+	// do not retry if succeed / not oom error / not auto-analyze / samplerate not set
+	if analyzeResult.Err == nil || analyzeResult.Err != errAnalyzeOOM ||
+		!e.ctx.GetSessionVars().InRestrictedSQL ||
+		e.analyzePB.ColReq == nil || *e.analyzePB.ColReq.SampleRate <= 0 {
+		return analyzeResult
+	}
+	finishJobWithLog(e.ctx, analyzeResult.Job, analyzeResult.Err)
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	if statsHandle == nil {
+		return analyzeResult
+	}
+	var statsTbl *statistics.Table
+	tid := e.tableID.GetStatisticsID()
+	if tid == e.tableInfo.ID {
+		statsTbl = statsHandle.GetTableStats(e.tableInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
+	}
+	if statsTbl == nil || statsTbl.Count <= 0 {
+		return analyzeResult
+	}
+	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.Count))
+	if newSampleRate >= *e.analyzePB.ColReq.SampleRate {
+		return analyzeResult
+	}
+	*e.analyzePB.ColReq.SampleRate = newSampleRate
+	prepareV2AnalyzeJobInfo(e.AnalyzeColumnsExec, true)
+	AddNewAnalyzeJob(e.ctx, e.job)
+	StartAnalyzeJob(e.ctx, e.job)
+	return e.analyzeColumnsPushDownV2()
+}
+
+func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeResults {
+	var ranges []*ranger.Range
+	if hc := e.handleCols; hc != nil {
+		if hc.IsInt() {
+			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.GetFlag()))
+		} else {
+			ranges = ranger.FullNotNullRange()
+		}
+	} else {
+		ranges = ranger.FullIntRange(false)
+	}
+	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
+	specialIndexes := make([]*model.IndexInfo, 0, len(e.indexes))
+	specialIndexesOffsets := make([]int, 0, len(e.indexes))
+	for i, idx := range e.indexes {
+		isSpecial := false
+		for _, col := range idx.Columns {
+			colInfo := e.colsInfo[col.Offset]
+			isVirtualCol := colInfo.IsGenerated() && !colInfo.GeneratedStored
+			isPrefixCol := col.Length != types.UnspecifiedLength
+			if isVirtualCol || isPrefixCol {
+				isSpecial = true
+				break
+			}
+		}
+		if isSpecial {
+			specialIndexesOffsets = append(specialIndexesOffsets, i)
+			specialIndexes = append(specialIndexes, idx)
+		}
+	}
+	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
+	// subIndexWorkerWg is better to be initialized in handleNDVForSpecialIndexes, however if we do so, golang would
+	// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
+	// case with `-race` flag now.
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
+		e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
+	})
+	defer wg.Wait()
+	count, hists, topns, fmSketches, extStats, err := e.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
+	if err != nil {
+		e.memTracker.Consume(-e.memTracker.BytesConsumed())
+		return &statistics.AnalyzeResults{Err: err, Job: e.job}
+	}
+	cLen := len(e.analyzePB.ColReq.ColumnsInfo)
+	colGroupResult := &statistics.AnalyzeResult{
+		Hist:    hists[cLen:],
+		TopNs:   topns[cLen:],
+		Fms:     fmSketches[cLen:],
+		IsIndex: 1,
+	}
+	// Discard stats of _tidb_rowid.
+	// Because the process of analyzing will keep the order of results be the same as the colsInfo in the analyze task,
+	// and in `buildAnalyzeFullSamplingTask` we always place the _tidb_rowid at the last of colsInfo, so if there are
+	// stats for _tidb_rowid, it must be at the end of the column stats.
+	// Virtual column has no histogram yet. So we check nil here.
+	if hists[cLen-1] != nil && hists[cLen-1].ID == -1 {
+		cLen -= 1
+	}
+	colResult := &statistics.AnalyzeResult{
+		Hist:  hists[:cLen],
+		TopNs: topns[:cLen],
+		Fms:   fmSketches[:cLen],
+	}
+	return &statistics.AnalyzeResults{
+		TableID:       e.tableID,
+		Ars:           []*statistics.AnalyzeResult{colResult, colGroupResult},
+		Job:           e.job,
+		StatsVer:      e.StatsVersion,
+		Count:         count,
+		Snapshot:      e.snapshot,
+		ExtStats:      extStats,
+		BaseCount:     e.baseCount,
+		BaseModifyCnt: e.baseModifyCnt,
+	}
+}
+
 // decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the deocded normal columns.
 // If it failed, it would return false to trigger normal decoding way without the virtual column.
-func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
+func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 	collector statistics.RowSampleCollector,
 	fieldTps []*types.FieldType,
 	virtualColIdx []int,
@@ -330,7 +533,7 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildSamplingStats(
+func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	ranges []*ranger.Range,
 	needExtStats bool,
 	indexesWithVirtualColOffsets []int,
@@ -521,7 +724,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 }
 
 // handleNDVForSpecialIndexes deals with the logic to analyze the index containing the virtual column when the mode is full sampling.
-func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult) {
+func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze ndv for special index panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -577,7 +780,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 }
 
 // subIndexWorker receive the task for each index and return the result for them.
-func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
+func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	defer func() {
 		if r := recover(); r != nil {
@@ -610,7 +813,7 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resu
 
 // buildSubIndexJobForSpecialIndex builds sub index pushed down task to calculate the NDV information for indexes containing virtual column.
 // This is because we cannot push the calculation of the virtual column down to the tikv side.
-func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model.IndexInfo) []*analyzeTask {
+func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*model.IndexInfo) []*analyzeTask {
 	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
 	sc := e.ctx.GetSessionVars().StmtCtx
@@ -672,7 +875,7 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model
 	return tasks
 }
 
-func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, isClosedChanThread bool) {
+func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, isClosedChanThread bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -725,7 +928,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
 
-func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
+func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -868,170 +1071,6 @@ workLoop:
 			return
 		}
 	}
-}
-
-func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
-	if err = e.open(ranges); err != nil {
-		return nil, nil, nil, nil, nil, err
-	}
-	defer func() {
-		if err1 := e.resultHandler.Close(); err1 != nil {
-			hists = nil
-			cms = nil
-			extStats = nil
-			err = err1
-		}
-	}()
-	var handleHist *statistics.Histogram
-	var handleCms *statistics.CMSketch
-	var handleFms *statistics.FMSketch
-	var handleTopn *statistics.TopN
-	statsVer := statistics.Version1
-	if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
-		handleHist = &statistics.Histogram{}
-		handleCms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
-		handleTopn = statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
-		handleFms = statistics.NewFMSketch(maxSketchSize)
-		if e.analyzePB.IdxReq.Version != nil {
-			statsVer = int(*e.analyzePB.IdxReq.Version)
-		}
-	}
-	pkHist := &statistics.Histogram{}
-	collectors := make([]*statistics.SampleCollector, len(e.colsInfo))
-	for i := range collectors {
-		collectors[i] = &statistics.SampleCollector{
-			IsMerger:      true,
-			FMSketch:      statistics.NewFMSketch(maxSketchSize),
-			MaxSampleSize: int64(e.opts[ast.AnalyzeOptNumSamples]),
-			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
-		}
-	}
-	for {
-		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
-			dom := domain.GetDomain(e.ctx)
-			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
-		})
-		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			return nil, nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
-		}
-		failpoint.Inject("mockSlowAnalyzeV1", func() {
-			time.Sleep(1000 * time.Second)
-		})
-		data, err1 := e.resultHandler.nextRaw(context.TODO())
-		if err1 != nil {
-			return nil, nil, nil, nil, nil, err1
-		}
-		if data == nil {
-			break
-		}
-		var colResp *tipb.AnalyzeColumnsResp
-		if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
-			resp := &tipb.AnalyzeMixedResp{}
-			err = resp.Unmarshal(data)
-			if err != nil {
-				return nil, nil, nil, nil, nil, err
-			}
-			colResp = resp.ColumnsResp
-			handleHist, handleCms, handleFms, handleTopn, err = updateIndexResult(e.ctx, resp.IndexResp, nil, handleHist,
-				handleCms, handleFms, handleTopn, e.commonHandle, int(e.opts[ast.AnalyzeOptNumBuckets]),
-				int(e.opts[ast.AnalyzeOptNumTopN]), statsVer)
-
-			if err != nil {
-				return nil, nil, nil, nil, nil, err
-			}
-		} else {
-			colResp = &tipb.AnalyzeColumnsResp{}
-			err = colResp.Unmarshal(data)
-		}
-		sc := e.ctx.GetSessionVars().StmtCtx
-		rowCount := int64(0)
-		if hasPkHist(e.handleCols) {
-			respHist := statistics.HistogramFromProto(colResp.PkHist)
-			rowCount = int64(respHist.TotalRowCount())
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
-			if err != nil {
-				return nil, nil, nil, nil, nil, err
-			}
-		}
-		for i, rc := range colResp.Collectors {
-			respSample := statistics.SampleCollectorFromProto(rc)
-			rowCount = respSample.Count + respSample.NullCount
-			collectors[i].MergeSampleCollector(sc, respSample)
-		}
-		UpdateAnalyzeJob(e.ctx, e.job, rowCount)
-	}
-	timeZone := e.ctx.GetSessionVars().Location()
-	if hasPkHist(e.handleCols) {
-		pkInfo := e.handleCols.GetCol(0)
-		pkHist.ID = pkInfo.ID
-		err = pkHist.DecodeTo(pkInfo.RetType, timeZone)
-		if err != nil {
-			return nil, nil, nil, nil, nil, err
-		}
-		hists = append(hists, pkHist)
-		cms = append(cms, nil)
-		topNs = append(topNs, nil)
-		fms = append(fms, nil)
-	}
-	for i, col := range e.colsInfo {
-		if e.StatsVersion < 2 {
-			// In analyze version 2, we don't collect TopN this way. We will collect TopN from samples in `BuildColumnHistAndTopN()` below.
-			err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
-			if err != nil {
-				return nil, nil, nil, nil, nil, err
-			}
-			topNs = append(topNs, collectors[i].TopN)
-		}
-		for j, s := range collectors[i].Samples {
-			collectors[i].Samples[j].Ordinal = j
-			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
-			if err != nil {
-				return nil, nil, nil, nil, nil, err
-			}
-			// When collation is enabled, we store the Key representation of the sampling data. So we set it to kind `Bytes` here
-			// to avoid to convert it to its Key representation once more.
-			if collectors[i].Samples[j].Value.Kind() == types.KindString {
-				collectors[i].Samples[j].Value.SetBytes(collectors[i].Samples[j].Value.GetBytes())
-			}
-		}
-		var hg *statistics.Histogram
-		var err error
-		var topn *statistics.TopN
-		if e.StatsVersion < 2 {
-			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
-		} else {
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true)
-			topNs = append(topNs, topn)
-		}
-		if err != nil {
-			return nil, nil, nil, nil, nil, err
-		}
-		hists = append(hists, hg)
-		collectors[i].CMSketch.CalcDefaultValForAnalyze(uint64(hg.NDV))
-		cms = append(cms, collectors[i].CMSketch)
-		fms = append(fms, collectors[i].FMSketch)
-	}
-	if needExtStats {
-		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-		extStats, err = statsHandle.BuildExtendedStats(e.TableID.GetStatisticsID(), e.colsInfo, collectors)
-		if err != nil {
-			return nil, nil, nil, nil, nil, err
-		}
-	}
-	if handleHist != nil {
-		handleHist.ID = e.commonHandle.ID
-		if handleTopn != nil && handleTopn.TotalCount() > 0 {
-			handleHist.RemoveVals(handleTopn.TopN)
-		}
-		if handleCms != nil {
-			handleCms.CalcDefaultValForAnalyze(uint64(handleHist.NDV))
-		}
-		hists = append([]*statistics.Histogram{handleHist}, hists...)
-		cms = append([]*statistics.CMSketch{handleCms}, cms...)
-		fms = append([]*statistics.FMSketch{handleFms}, fms...)
-		topNs = append([]*statistics.TopN{handleTopn}, topNs...)
-	}
-	return hists, cms, topNs, fms, extStats, nil
 }
 
 type analyzeIndexNDVTotalResult struct {
