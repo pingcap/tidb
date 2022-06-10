@@ -77,7 +77,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 		return 0, err
 	}
 
-	txnCxt := p.sctx.GetSessionVars().TxnCtx
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	futureTS := sessiontxn.NewOracleFuture(p.ctx, p.sctx, txnCxt.TxnScope)
 
 	if ts, err = futureTS.Wait(); err != nil {
