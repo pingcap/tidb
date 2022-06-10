@@ -75,7 +75,7 @@ type IndexMergeReaderExecutor struct {
 	startTS      uint64
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
-	columns        []*model.ColumnInfo
+	columns []*model.ColumnInfo
 	*dataReaderBuilder
 
 	// fields about accessing partition tables
