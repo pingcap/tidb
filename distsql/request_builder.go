@@ -264,12 +264,9 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = replicaReadType
 	builder.SetResourceGroupTagger(sv.StmtCtx.GetResourceGroupTagger())
-	return builder
-}
-
-// SetStreaming sets "Streaming" flag for "kv.Request".
-func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
-	builder.Request.Streaming = streaming
+	if sv.EnablePaging {
+		builder.SetPaging(true)
+	}
 	return builder
 }
 

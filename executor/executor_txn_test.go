@@ -308,13 +308,13 @@ func TestTxnSavepoint0(t *testing.T) {
 		{"savepoint s1", []string{"s1"}, ""},
 		{"savepoint s2", []string{"s1", "s2"}, ""},
 		{"savepoint s3", []string{"s1", "s2", "s3"}, ""},
-		{"release savepoint s2", []string{"s1", "s3"}, ""},
-		{"rollback to S2", []string{"s1", "s3"}, "[executor:1305]SAVEPOINT S2 does not exist"},
-		{"release savepoint s3", []string{"s1"}, ""},
+		{"release savepoint s2", []string{"s1"}, ""},
+		{"rollback to S2", []string{"s1"}, "[executor:1305]SAVEPOINT S2 does not exist"},
+		{"release savepoint s3", []string{"s1"}, "[executor:1305]SAVEPOINT s3 does not exist"},
 		{"savepoint s2", []string{"s1", "s2"}, ""},
-		{"release savepoint s1", []string{"s2"}, ""},
-		{"release savepoint s1", []string{"s2"}, "[executor:1305]SAVEPOINT s1 does not exist"},
-		{"release savepoint S2", nil, ""},
+		{"release savepoint s1", nil, ""},
+		{"release savepoint s1", nil, "[executor:1305]SAVEPOINT s1 does not exist"},
+		{"release savepoint S2", nil, "[executor:1305]SAVEPOINT S2 does not exist"},
 		{"commit", nil, ""},
 	}
 
@@ -366,7 +366,7 @@ func TestTxnSavepoint1(t *testing.T) {
 		{sql: "savepoint s4"},
 		{sql: "release savepoint s1"},
 		{sql: "rollback to s1", err: "[executor:1305]SAVEPOINT s1 does not exist"},
-		{sql: "rollback to s2"},
+		{sql: "rollback to s2", err: "[executor:1305]SAVEPOINT s2 does not exist"},
 		{sql: "rollback to s3", err: "[executor:1305]SAVEPOINT s3 does not exist"},
 		{sql: "rollback to savepoint s4", err: "[executor:1305]SAVEPOINT s4 does not exist"},
 		{sql: "rollback"},
@@ -435,6 +435,19 @@ func TestTxnSavepoint1(t *testing.T) {
 		{sql: "commit"},
 		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
 		{sql: "delete from t"},
+
+		// Test for release savepoint
+		{sql: "begin;"},
+		{sql: "insert into t values (1, 1)"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (2, 2)"},
+		{sql: "savepoint s2"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "release savepoint s1;"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "rollback to s2", err: "[executor:1305]SAVEPOINT s2 does not exist"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "rollback"},
 	}
 	txnModes := []string{"optimistic", "pessimistic", ""}
 	for _, txnMode := range txnModes {

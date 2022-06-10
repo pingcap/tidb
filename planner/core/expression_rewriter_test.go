@@ -409,6 +409,10 @@ func TestMultiColInExpression(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
 	expressionRewriterSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
