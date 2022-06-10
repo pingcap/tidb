@@ -41,6 +41,8 @@ go_test(
         "main_test.go",
         "privileges_test.go",
     ],
+    flaky = True,
+    shard_count = 50,
     deps = [
         ":privileges",
         "//config",
