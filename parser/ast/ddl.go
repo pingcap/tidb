@@ -3668,6 +3668,14 @@ func (n *PartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type PartitionInterval struct {
+	IntervalExpr  ExprNode
+	FirstRangeEnd *ExprNode
+	LastRangeEnd  *ExprNode
+	MaxValPart    bool
+	NullPart      bool
+}
+
 // PartitionMethod describes how partitions or subpartitions are constructed.
 type PartitionMethod struct {
 	// Tp is the type of the partition function
@@ -3691,6 +3699,8 @@ type PartitionMethod struct {
 
 	// KeyAlgorithm is the optional hash algorithm type for `PARTITION BY [LINEAR] KEY` syntax.
 	KeyAlgorithm *PartitionKeyAlgorithm
+
+	Interval *PartitionInterval
 }
 
 type PartitionKeyAlgorithm struct {

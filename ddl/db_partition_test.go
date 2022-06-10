@@ -3655,3 +3655,14 @@ func TestDuplicatePartitionNames(t *testing.T) {
 		"(PARTITION `p2` VALUES IN (2),\n" +
 		" PARTITION `p3` VALUES IN (3))"))
 }
+
+func TestCreateIntervalPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database IntervalPartition")
+	defer tk.MustExec("drop database IntervalPartition")
+	tk.MustExec("use IntervalPartition")
+	tk.MustExec("create table ipt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (1000000000) FIRST PARTITION LESS THAN (1000000000) LAST PARTITION LESS THAN (9000000000) MAXVALUE PARTITION")
+}

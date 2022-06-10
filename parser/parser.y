@@ -3890,14 +3890,15 @@ PartitionKeyAlgorithmOpt:
 
 PartitionMethod:
 	SubPartitionMethod
-|	"RANGE" '(' BitExpr ')'
+|	"RANGE" '(' BitExpr ')' PartitionIntervalOpt
 	{
 		$$ = &ast.PartitionMethod{
-			Tp:   model.PartitionTypeRange,
-			Expr: $3.(ast.ExprNode),
+			Tp:       model.PartitionTypeRange,
+			Expr:     $3.(ast.ExprNode),
+			Interval: $5,
 		}
 	}
-|	"RANGE" FieldsOrColumns '(' ColumnNameList ')'
+|	"RANGE" FieldsOrColumns '(' ColumnNameList ')' PartitionIntervalOpt
 	{
 		$$ = &ast.PartitionMethod{
 			Tp:          model.PartitionTypeRange,
@@ -3937,6 +3938,65 @@ PartitionMethod:
 	{
 		$$ = &ast.PartitionMethod{
 			Tp: model.PartitionTypeSystemTime,
+		}
+	}
+
+PartitionIntervalOpt:
+	{
+		$$ = nil
+	}
+|	"INTERVAL" '(' IntervalExpr ')' FirstAndLastPartOpt NullPartOpt MaxValOpt
+	{
+		$$ = &ast.PartitionInterval{
+			IntervalExpr:  $3,
+			FirstRangeEnd: $5.(PartitionInterval).FirstRangeEnd,
+			FirstRangeEnd: $5.(PartitionInterval).LastRangeEnd,
+			NullPart:      $6,
+			MaxValPart:    $7,
+		}
+	}
+
+IntervalExpr:
+	Expression
+	{
+		$$ = &[]ast.ExprNode{$1}
+	}
+|	Expression TimeUnit
+	{
+		$$ = &[]ast.ExprNode{$1, &ast.TimeUnitExp{Unit: $2.(ast.TimeUnitType)}}
+	}
+|	"INTERVAL" Expression TimeUnit
+	{
+		$$ = &[]ast.ExprNode{$2, &ast.TimeUnitExp{Unit: $3.(ast.TimeUnitType)}}
+	}
+
+NullPartOpt:
+	{
+		$$ = false
+	}
+|	"NULL" "PARTITION"
+	{
+		$$ = true
+	}
+
+MaxValOpt:
+	{
+		$$ = false
+	}
+|	"MAXVALUE" "PARTITION"
+	{
+		$$ = true
+	}
+
+FirstAndLastPartOpt:
+	{
+		$$ = &ast.PartitionInterval{} // First/LastRangeEnd defaults to nil
+	}
+|	"FIRST" "PARTITION" "LESS" "THAN" '(' Expr ')' "LAST" "PARTITION" "LESS" "THAN" '(' Expr ')'
+	{
+		$$ = &ast.PartitionInterval{
+			FirstRangeEnd: $6,
+			LastRangeEnd:  $13,
 		}
 	}
 

@@ -419,7 +419,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	var enable bool
 	switch s.Tp {
 	case model.PartitionTypeRange:
-		// When tidb_enable_table_partition is 'on' or 'auto'.
 		if s.Sub == nil {
 			// Partition by range expression is enabled by default.
 			if s.ColumnNames == nil {
@@ -472,6 +471,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 	}
 
+	err := generatePartitionDefinitionsFromInterval(ctx, s, tbInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	defs, err := buildPartitionDefinitionsInfo(ctx, s.Definitions, tbInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -479,6 +483,23 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 
 	tbInfo.Partition.Definitions = defs
 	return nil
+}
+
+func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, s *ast.PartitionOptions, tbInfo *model.TableInfo) error {
+	if s.Interval == nil {
+		return nil
+	}
+	if tbInfo.Partition.Type != model.PartitionTypeRange {
+		// Hijacked error from below...
+		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only allowed on RANGE partitioning")
+	}
+	if len(s.Definitions) > 0 {
+		// Suggested syntax does not allow partition definitions for INTERVAL range partitioning
+		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning does not allow partition definitions")
+	}
+	if s.FirstRangeEnd == nil || s.LastRangeEnd == nil {
+		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning currently requires FIRST and LAST partitions to be defined")
+	}
 }
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
