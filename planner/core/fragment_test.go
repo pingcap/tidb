@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 

@@ -16,9 +16,11 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -74,17 +76,34 @@ func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *Physic
 	if frags, err = g.generateMPPTasks(sender); err != nil {
 		return
 	}
+	setupEnableFineGrainedShuffleFlag(frags)
+	return
+}
+
+// 1. Disable if there is any fragment which is disabled(So fine grained shuffle is query level).
+// 2. Disable if there is only one fragment.
+func setupEnableFineGrainedShuffleFlag(frags []*Fragment) {
 	enable := true
-	for _, frag := range frags {
-		if !frag.EnableFineGrainedShuffle {
-			enable = false
-			break
+	if len(frags) == 1 {
+		enable = false
+	} else {
+		for _, frag := range frags {
+			if !frag.EnableFineGrainedShuffle {
+				enable = false
+				break
+			}
+		}
+		for _, frag := range frags {
+			frag.EnableFineGrainedShuffle = enable
 		}
 	}
-	for _, frag := range frags {
-		frag.EnableFineGrainedShuffle = enable
-	}
-	return
+	failpoint.Inject("testEnableFineGrainedShuffle", func(val failpoint.Value) {
+		expected := val.(bool)
+		if expected != enable {
+			// panic(fmt.Sprintf("fine grained shuffle switch is wrong, expected: %v, got: %v", expected, enable))
+			logutil.BgLogger().Error(fmt.Sprintf("gjt fine grained shuffle switch is wrong, expected: %v, got: %v", expected, enable))
+		}
+	})
 }
 
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
@@ -157,7 +176,8 @@ func (f *Fragment) init(p PhysicalPlan) error {
 	return nil
 }
 
-func checkEnableFineGrainedShuffle(hasValidWindow bool, hasInvalidWindow bool, hasTableScan bool) bool {
+// Core logic to decide whether to enable fine grained shuffle.
+func checkEnableFineGrainedShuffleForFragment(hasValidWindow bool, hasInvalidWindow bool, hasTableScan bool) bool {
 	if hasInvalidWindow {
 		return false
 	}
@@ -168,9 +188,12 @@ func checkEnableFineGrainedShuffle(hasValidWindow bool, hasInvalidWindow bool, h
 }
 
 func (f *Fragment) initFineGrainedShuffleFlag(s *PhysicalExchangeSender) {
-	f.EnableFineGrainedShuffle = checkEnableFineGrainedShuffle(traverseFragmentForFineGrainedShuffle(s))
+	f.EnableFineGrainedShuffle = checkEnableFineGrainedShuffleForFragment(traverseFragmentForFineGrainedShuffle(s))
 }
 
+// Valid window for fine grained shuffle:
+// 1. has partition key
+// 2. its child must be: window, sort or exchange receiver.
 func traverseFragmentForFineGrainedShuffle(p PhysicalPlan) (hasValidWindow bool, hasInvalidWindow bool, hasTableScan bool) {
 	switch x := p.(type) {
 	case *PhysicalWindow:
@@ -193,10 +216,12 @@ func traverseFragmentForFineGrainedShuffle(p PhysicalPlan) (hasValidWindow bool,
 		}
 	case *PhysicalTableScan:
 		hasTableScan = true
+	case *PhysicalExchangeReceiver:
+		break
 	default:
 		for _, child := range p.Children() {
 			hasValidWindow, hasInvalidWindow, hasTableScan = traverseFragmentForFineGrainedShuffle(child)
-			if !checkEnableFineGrainedShuffle(hasValidWindow, hasInvalidWindow, hasTableScan) {
+			if !checkEnableFineGrainedShuffleForFragment(hasValidWindow, hasInvalidWindow, hasTableScan) {
 				break
 			}
 		}
