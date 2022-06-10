@@ -84,7 +84,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 		return 0, err
 	}
 
-	txnCxt.SetForUpdateTS(ts)
+	txnCtx.SetForUpdateTS(ts)
 	txn.SetOption(kv.SnapshotTS, ts)
 
 	p.forUpdateTS = ts
