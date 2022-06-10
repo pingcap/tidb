@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/util/promutil"
 )
 
 type GlobalLightning struct {
@@ -73,9 +72,6 @@ type GlobalConfig struct {
 	PostRestore  GlobalPostRestore `toml:"post-restore" json:"post-restore"`
 	Security     Security          `toml:"security" json:"security"`
 
-	PromFactory  promutil.Factory  `toml:"-" json:"-"`
-	PromRegistry promutil.Registry `toml:"-" json:"-"`
-
 	ConfigFileContent []byte
 }
 
@@ -113,8 +109,6 @@ func NewGlobalConfig() *GlobalConfig {
 			Checksum: OpLevelRequired,
 			Analyze:  OpLevelOptional,
 		},
-		PromFactory:  promutil.NewDefaultFactory(),
-		PromRegistry: promutil.NewDefaultRegistry(),
 	}
 }
 

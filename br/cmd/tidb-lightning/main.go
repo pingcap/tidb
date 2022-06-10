@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -74,9 +73,6 @@ func main() {
 		}
 	}
 
-	if gatherer, ok := globalCfg.PromRegistry.(prometheus.Gatherer); ok {
-		prometheus.DefaultGatherer = gatherer
-	}
 	err := app.GoServe()
 	if err != nil {
 		logger.Error("failed to start HTTP server", zap.Error(err))

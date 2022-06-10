@@ -52,6 +52,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/promutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
@@ -69,7 +71,9 @@ type Lightning struct {
 	serverAddr net.Addr
 	serverLock sync.Mutex
 	status     restore.LightningStatus
-	metrics    *metric.Metrics
+
+	promFactory  promutil.Factory
+	promRegistry promutil.Registry
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -96,16 +100,19 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 
 	redact.InitRedact(globalCfg.Security.RedactInfoLog)
 
-	metrics := metric.NewMetrics(globalCfg.PromFactory)
-	metrics.RegisterTo(globalCfg.PromRegistry)
-	ctx := metric.NewContext(context.Background(), metrics)
-	ctx, shutdown := context.WithCancel(ctx)
+	promFactory := promutil.NewDefaultFactory()
+	promRegistry := promutil.NewDefaultRegistry()
+	if gatherer, ok := promRegistry.(prometheus.Gatherer); ok {
+		prometheus.DefaultGatherer = gatherer
+	}
+	ctx, shutdown := context.WithCancel(context.Background())
 	return &Lightning{
-		globalCfg: globalCfg,
-		globalTLS: tls,
-		ctx:       ctx,
-		shutdown:  shutdown,
-		metrics:   metrics,
+		globalCfg:    globalCfg,
+		globalTLS:    tls,
+		ctx:          ctx,
+		shutdown:     shutdown,
+		promFactory:  promFactory,
+		promRegistry: promRegistry,
 	}
 }
 
@@ -248,8 +255,12 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
 	})
-
-	return l.run(taskCtx, taskCfg, &options{glue: glue})
+	o := &options{
+		glue:         glue,
+		promFactory:  l.promFactory,
+		promRegistry: l.promRegistry,
+	}
+	return l.run(taskCtx, taskCfg, o)
 }
 
 func (l *Lightning) RunServer() error {
@@ -266,7 +277,10 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
-		o := &options{}
+		o := &options{
+			promFactory:  l.promFactory,
+			promRegistry: l.promRegistry,
+		}
 		err = l.run(context.Background(), task, o)
 		if err != nil && !common.IsContextCanceledError(err) {
 			restore.DeliverPauser.Pause() // force pause the progress on error
@@ -286,7 +300,10 @@ func (l *Lightning) RunServer() error {
 //   - WithCheckpointStorage: caller has opened an external storage for lightning and want to save checkpoint
 //     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
 func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
-	o := &options{}
+	o := &options{
+		promFactory:  l.promFactory,
+		promRegistry: l.promRegistry,
+	}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -337,7 +354,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	utils.LogEnvVariables()
 
-	ctx := metric.NewContext(taskCtx, l.metrics)
+	metrics := metric.NewMetrics(o.promFactory)
+	metrics.RegisterTo(o.promRegistry)
+	defer func() {
+		metrics.UnregisterFrom(o.promRegistry)
+	}()
+
+	ctx := metric.NewContext(taskCtx, metrics)
 	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
@@ -482,7 +505,6 @@ func (l *Lightning) Stop() {
 		log.L().Warn("failed to shutdown HTTP server", log.ShortError(err))
 	}
 	l.shutdown()
-	l.metrics.UnregisterFrom(l.globalCfg.PromRegistry)
 }
 
 // Status return the sum size of file which has been imported to TiKV and the total size of source file.
