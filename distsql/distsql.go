@@ -75,7 +75,6 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
-	kvReq.Streaming = false
 	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
 	originalSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 	eventCb := func(event trxevents.TransactionEvent) {
@@ -111,20 +110,8 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}
 
 	// kvReq.MemTracker is used to trace and control memory usage in DistSQL layer;
-	// for streamResult, since it is a pipeline which has no buffer, it's not necessary to trace it;
 	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
 	// instead of creating a new one for simplification.
-	if kvReq.Streaming {
-		return &streamResult{
-			label:      "dag-stream",
-			sqlType:    label,
-			resp:       resp,
-			rowLen:     len(fieldTypes),
-			fieldTypes: fieldTypes,
-			ctx:        sctx,
-			feedback:   fb,
-		}, nil
-	}
 	return &selectResult{
 		label:      "dag",
 		resp:       resp,
