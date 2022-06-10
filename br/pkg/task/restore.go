@@ -426,15 +426,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	// Init DB connection sessions
 	err = client.Init(g, mgr.GetStorage())
-	defer func() {
-		// Reset speed-limit. Do we really need to reset the speed-limit?
-		resetErr := client.ResetSpeedLimit(ctx)
-		// How should this error be handled? Even if reset speed-limit fails, restore may still succeed. TODO
-		if resetErr != nil {
-			log.Error("reset speed limit failed", zap.Error(resetErr))
-		}
-		client.Close()
-	}()
+	defer client.Close()
 
 	if err != nil {
 		return errors.Trace(err)
@@ -621,6 +613,15 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// when user skip checksum, just collect tables, and drop them.
 		finish = dropToBlackhole(ctx, afterRestoreStream, errCh, updateCh)
 	}
+
+	defer func() {
+		// Reset speed-limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
+		resetErr := client.ResetSpeedLimit(ctx)
+		// How should this error be handled? Even if reset speed-limit fails, restore may still succeed. TODO
+		if resetErr != nil {
+			log.Error("reset speed limit failed", zap.Error(resetErr))
+		}
+	}()
 
 	select {
 	case err = <-errCh:
