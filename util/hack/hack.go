@@ -78,6 +78,6 @@ const (
 )
 
 // EstimateBucketMemoryUsage returns the estimated memory usage of a bucket in a map.
-func EstimateBucketMemoryUsage(sizeofKeyAndValue uint64) uint64 {
-	return (8*(1+sizeofKeyAndValue) + 16) / 2 * 3
+func EstimateBucketMemoryUsage[K comparable, V any]() uint64 {
+	return (8*(1+uint64(unsafe.Sizeof(*new(K))+unsafe.Sizeof(*new(V)))) + 16) / 2 * 3
 }

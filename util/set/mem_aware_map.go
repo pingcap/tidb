@@ -16,7 +16,6 @@ package set
 
 import (
 	"math"
-	"unsafe"
 
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -47,7 +46,7 @@ func NewMemAwareMap[K comparable, V any]() MemAwareMap[K, V] {
 	return MemAwareMap[K, V]{
 		M:                 make(map[K]V),
 		bInMap:            0,
-		bucketMemoryUsage: hack.EstimateBucketMemoryUsage(uint64(unsafe.Sizeof(*new(K)) + unsafe.Sizeof(*new(V)))),
+		bucketMemoryUsage: hack.EstimateBucketMemoryUsage[K, V](),
 	}
 }
 

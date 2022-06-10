@@ -193,8 +193,11 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		// Update row
 		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
+			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
-			memDelta += int64(handle.ExtraMemSize())
+			if !exist {
+				memDelta += int64(handle.ExtraMemSize())
+			}
 			e.memTracker.Consume(memDelta)
 			continue
 		}
@@ -431,7 +434,7 @@ func (e *UpdateExec) Close() error {
 			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
-	e.memTracker.ReplaceBytesUsed(0)
+	defer e.memTracker.ReplaceBytesUsed(0)
 	return e.children[0].Close()
 }
 

@@ -246,7 +246,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
-	e.memTracker.ReplaceBytesUsed(0)
+	defer e.memTracker.ReplaceBytesUsed(0)
 	return e.children[0].Close()
 }
 

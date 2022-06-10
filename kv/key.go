@@ -368,6 +368,7 @@ func (ch *CommonHandle) String() string {
 
 // MemUsage implements the Handle interface.
 func (ch *CommonHandle) MemUsage() uint64 {
+	// 48 is used by the 2 slice fields.
 	return 48 + ch.ExtraMemSize()
 }
 
@@ -552,5 +553,5 @@ func (ph PartitionHandle) MemUsage() uint64 {
 
 // ExtraMemUsage implements the Handle interface.
 func (ph PartitionHandle) ExtraMemUsage() uint64 {
-	return ph.Handle.ExtraMemSize() + 8
+	return ph.Handle.ExtraMemSize()
 }
