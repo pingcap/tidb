@@ -4508,11 +4508,19 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 
 	head := v.Children()[0]
 	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
+	stubs := make([]*plannercore.PhysicalShuffleReceiverStub, 0, len(v.DataSources))
+	for _, dataSource := range v.DataSources {
+		stub := plannercore.PhysicalShuffleReceiverStub{
+			DataSource: dataSource,
+		}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
+		stub.SetSchema(dataSource.Schema())
+		stubs = append(stubs, stub)
+	}
 	for i := range shuffle.workers {
 		receivers := make([]*shuffleReceiver, len(v.DataSources))
 		for j, dataSource := range v.DataSources {
 			receivers[j] = &shuffleReceiver{
-				baseExecutor: newBaseExecutor(b.ctx, dataSource.Schema(), dataSource.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, dataSource.Schema(), stubs[j].ID()),
 			}
 		}
 
@@ -4520,12 +4528,9 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 			receivers: receivers,
 		}
 
-		for j, dataSource := range v.DataSources {
-			stub := plannercore.PhysicalShuffleReceiverStub{
-				Receiver:   (unsafe.Pointer)(receivers[j]),
-				DataSource: dataSource,
-			}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
-			stub.SetSchema(dataSource.Schema())
+		for j := range v.DataSources {
+			stub := stubs[j]
+			stub.Receiver = (unsafe.Pointer)(receivers[j])
 			v.Tails[j].SetChildren(stub)
 		}
 
