@@ -2988,20 +2988,21 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	// This time, the cache will be hit.
-	_, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
-	require.Nil(t, err)
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.NoError(t, err)
+	require.NoError(t, rs.Close())
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk1.MustExec("execute s")
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// Change infoSchema version which will make the plan cache invalid in the next execute
 	tk2.MustExec("alter table t1 drop column c")
-
 	tk1.MustExec("execute s")
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	// Now the plan cache will be valid
-	_, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
-	require.Nil(t, err)
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.NoError(t, err)
+	require.NoError(t, rs.Close())
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
