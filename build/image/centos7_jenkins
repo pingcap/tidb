@@ -43,6 +43,6 @@ RUN curl https://setup.ius.io | sh || true && \
 
 USER jenkins
 WORKDIR /home/jenkins
-RUN git clone  https://github.com/pingcap/tidb.git && cd tidb && make bazel_coverage_test && cd ~ && rm -rf tidb \
+RUN git clone  https://github.com/pingcap/tidb.git && cd tidb && make bazel_coverage_test && cd ~ && rm -rf tidb && \
     go install github.com/hawkingrei/bazel_collect@latest && \
     go install github.com/bazelbuild/bazel-gazelle/cmd/gazelle@latest
