@@ -1658,52 +1658,52 @@
       "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
       "  └─Selection 0.80 root  lt(Column#3, 100)",
       "    └─CTETable 1.00 root  Scan on CTE"
-            ],
-    "Warning": null
-  },
-  {
-    "SQL": "with cte1 as (select * from tc), cte2 as (with cte3 as (select /*+ MERGE() */ * from te) ,cte4 as (select * from tc) select * from cte3,cte4) select * from cte2;",
-    "Plan": [
-      "CTEFullScan 49.00 root CTE:cte2 data:CTE",
-      "CTE 49.00 root  Non-Recursive CTE",
-      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
-      "  ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE",
-      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo",
-      "CTE 7.00 root  Non-Recursive CTE",
-      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
-    ],
-    "Warning": null
-  },
-  {
-    "SQL": "with cte2 as (with cte4 as (select * from tc) select * from te, cte4) select * from cte2;",
-    "Plan": [
-      "CTEFullScan 49.00 root CTE:cte2 data:CTE",
-      "CTE 49.00 root  Non-Recursive CTE",
-      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
-      "  ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE",
-      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo",
-      "CTE 7.00 root  Non-Recursive CTE",
-      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
-    ],
-    "Warning": null
-  },
-  {
-    "SQL": "with cte2 as (with cte4 as (select /*+ merge() */  * from tc) select * from te, cte4) select * from cte2;",
-    "Plan": [
-      "CTEFullScan 49.00 root CTE:cte2 data:CTE",
-      "CTE 49.00 root  Non-Recursive CTE",
-      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
-      "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
-      "  │ └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo",
-      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo"
     ],
     "Warning": null
   }
+//  {
+//    "SQL": "with cte1 as (select * from tc), cte2 as (with cte3 as (select /*+ MERGE() */ * from te) ,cte4 as (select * from tc) select * from cte3,cte4) select * from cte2;",
+//    "Plan": [
+//      "CTEFullScan 49.00 root CTE:cte2 data:CTE",
+//      "CTE 49.00 root  Non-Recursive CTE",
+//      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+//      "  ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE",
+//      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+//      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo",
+//      "CTE 7.00 root  Non-Recursive CTE",
+//      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
+//      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
+//    ],
+//    "Warning": null
+//  },
+//  {
+//    "SQL": "with cte2 as (with cte4 as (select * from tc) select * from te, cte4) select * from cte2;",
+//    "Plan": [
+//      "CTEFullScan 49.00 root CTE:cte2 data:CTE",
+//      "CTE 49.00 root  Non-Recursive CTE",
+//      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+//      "  ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE",
+//      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+//      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo",
+//      "CTE 7.00 root  Non-Recursive CTE",
+//      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
+//      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
+//    ],
+//    "Warning": null
+//  },
+//  {
+//    "SQL": "with cte2 as (with cte4 as (select /*+ merge() */  * from tc) select * from te, cte4) select * from cte2;",
+//    "Plan": [
+//      "CTEFullScan 49.00 root CTE:cte2 data:CTE",
+//      "CTE 49.00 root  Non-Recursive CTE",
+//      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+//      "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
+//      "  │ └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo",
+//      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+//      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo"
+//    ],
+//    "Warning": null
+//  }
     ]
   },
   {
