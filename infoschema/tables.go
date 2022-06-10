@@ -1656,8 +1656,9 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	// TODO: maybe we should unify the PD API request interface.
 	var (
-		servers = make([]ServerInfo, 0, len(members))
-		errs    = make([]error, 0, len(members))
+		memberNum = len(members)
+		servers   = make([]ServerInfo, 0, memberNum)
+		errs      = make([]error, 0, memberNum)
 	)
 	// Try on each member until one succeeds or all fail.
 	for _, addr := range members {
@@ -1698,9 +1699,16 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			StartTimestamp: content.StartTimestamp,
 		})
 	}
-	// Return the first error if all members' requests fail.
-	if len(errs) == len(members) {
-		return nil, errors.Trace(errs[0])
+	// Return the errors if all members' requests fail.
+	if len(errs) == memberNum {
+		errorMsg := ""
+		for idx, err := range errs {
+			errorMsg += err.Error()
+			if idx < memberNum-1 {
+				errorMsg += "; "
+			}
+		}
+		return nil, errors.Trace(fmt.Errorf("%s", errorMsg))
 	}
 	return servers, nil
 }
