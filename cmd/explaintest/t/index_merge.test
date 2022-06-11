@@ -1,0 +1,238 @@
+--echo ///// SUBQUERY
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
+insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
+drop table if exists t2;
+create table t2(c1 int, c2 int, c3 int, key(c1), key(c2));
+insert into t2 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
+
+--echo // IN
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 in (select c3 from t1) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 in (select c3 from t1) order by 1;
+
+--echo // NOT IN
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 not in (select c3 from t1) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 not in (select c3 from t1) order by 1;
+
+--echo // MAX
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select max(c3) from t1) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select max(c3) from t1) order by 1;
+
+--echo // EXISTS
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
+
+--echo // EXISTS
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and NOT EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and NOT EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
+
+--echo // Non-Correlated
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select count(1) from t2) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select count(1) from t2) order by 1;
+
+--echo // ANY
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ANY(select count(1) from t2) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ANY(select count(1) from t2) order by 1;
+
+--echo // SOME
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > SOME(select count(1) from t2) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > SOME(select count(1) from t2) order by 1;
+
+--echo // ALL
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
+
+--echo // SELECT FIELD
+explain select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
+select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
+
+--echo // MULTIPLE LEVEL
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 IN (select c1 from t2 where c2 in (select c3 from t2)) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 IN (select c1 from t2 where c2 in (select c3 from t2)) order by 1;
+
+--echo ///// Generated Column
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int as (c1 + c2), key(c1), key(c2));
+insert into t1(c1, c2) values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = c1 + c2 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = c1 + c2 order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and substring(c3, c2) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and substring(c3, c2) order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 order by 1;
+
+--echo ///// SQL Binding
+create global binding for 
+	select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1
+using
+	select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+explain select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+select * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+
+--echo ///// CREATE TABLE/VIEW
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
+insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
+
+drop view if exists v2;
+create view v2 as select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10;
+show create view v2;
+select * from v2 order by 1;
+
+--echo ///// DROP/ALTER INDEX
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
+insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
+
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+
+drop index c1 on t1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+
+alter table t1 add index c1(c1);
+
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+
+--echo ///// DELETE
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
+insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
+explain delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
+delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
+select * from t1;
+
+--echo ///// UPDATE
+explain update t1 set c1 = 100, c2 = 100, c3 = 100 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10);
+update t1 set c1 = 100, c2 = 100, c3 = 100 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10);
+select * from t1;
+
+--echo ///// FOR UPDATE
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1 for update; 
+
+--echo ///// TEMPORARY Table. Not support for now.
+drop table if exists t1;
+create temporary table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
+insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
+explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
+
+--echo ///// MEMORY Table
+explain select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
+show warnings;
+select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
+
+--echo ///// Limit
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
+insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 order by 1 limit 1 offset 2;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 order by 1 limit 1 offset 2;
+
+--echo ///// GROUP BY
+explain select /*+ use_index_merge(t1) */ sum(c1) from t1 where (c1 < 10 or c2 < 10) and c3 < 10 group by c1 order by 1;
+select /*+ use_index_merge(t1) */ sum(c1) from t1 where (c1 < 10 or c2 < 10) and c3 < 10 group by c1 order by 1;
+
+--echo ///// Apply
+drop table if exists t2;
+create table t2(c1 int, c2 int, c3 int, key(c1), key(c2));
+insert into t2 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
+
+explain select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select avg(t2.c1) from t2 where t1.c1 = t2.c1 group by t2.c1) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select avg(t2.c1) from t2 where t1.c1 = t2.c1 group by t2.c1) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select /*+ use_index_merge(t2) */ avg(t2.c1) from t2 where t1.c1 = t2.c1 and t2.c1 < 10 or t2.c2 < 10 group by t2.c1 order by c1 limit 1 offset 2) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select /*+ use_index_merge(t2) */ avg(t2.c1) from t2 where t1.c1 = t2.c1 and t2.c1 < 10 or t2.c2 < 10 group by t2.c1 order by c1 limit 1 offset 2) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
+
+--echo ///// Nested filters
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, c4 int, c5 int, key(c1), key(c2), key(c3), key(c4));
+insert into t1 values(1, 1, 1, 1, 1), (2, 2, 2, 2, 2), (3, 3, 3, 3, 3), (4, 4, 4, 4, 4), (5, 5, 5, 5, 5);
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c3 < 10 or c4 < 10) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c3 < 10 or c4 < 10) order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 and c2 < 10) or (c3 < 10 and c4 < 10) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 and c2 < 10) or (c3 < 10 and c4 < 10) order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 and c2 < 10) or (c3 < 10 and c4 < 10) and c5 < 10 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 and c2 < 10) or (c3 < 10 and c4 < 10) and c4 < 10 order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where ((c1 < 10 and c4 < 10) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where ((c1 < 10 and c4 < 10) or c2 < 10) and (c3 < 10 or c4 < 10) order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (((c1 < 10 or c3 < 10) and (c1 < 10 or c4 < 10)) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
+show warnings;
+select /*+ use_index_merge(t1) */ * from t1 where (((c1 < 10 or c3 < 10) and (c1 < 10 or c4 < 10)) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (((c1 < 10 or c3 < 10) and c1 < 10) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (((c1 < 10 or c3 < 10) and c1 < 10) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
+
+--echo ///// All kinds of expressions
+--echo // common functions
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and coalesce(c1, c2, c4) = 1 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and coalesce(c1, c2, c4) = 1 order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and greatest(c1, c2, c4) = 1 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and greatest(c1, c2, c4) = 1 order by 1;
+
+--echo // math functions
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and abs(c1) = 1 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and abs(c1) = 1 order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and pi() order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and pi() order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and ceil(c1) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and ceil(c1) order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and truncate(c1, 1) = 1 order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and truncate(c1, 1) = 1 order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and sqrt(-1) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and sqrt(-1) order by 1;
+
+--echo // string functions
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and substring(c3, 1, 1) = '1' order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and substring(c3, 1, 1) = '1' order by 1;
+
+--echo // control functions
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and ifnull(c1, c2) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and ifnull(c1, c2) order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and if(c1, c2, c3) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and if(c1, c2, c3) order by 1;
+
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c1 between 1 and 2) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c1 between 1 and 2) order by 1;
+
+--echo // mixed usage
+set @a = 1;
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and length(substring(sqrt(c3), @a, 1)) = char_length(if(c1, c2, c3)) order by 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and length(substring(sqrt(c3), @a, 1)) = char_length(if(c1, c2, c3)) order by 1;
+
+--echo ///// CTE
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, c4 int, c5 int, key(c1), key(c2), key(c3), key(c4));
+insert into t1 values(1, 1, 1, 1, 1), (2, 2, 2, 2, 2), (3, 3, 3, 3, 3), (4, 4, 4, 4, 4), (5, 5, 5, 5, 5);
+
+explain with cte1 as (select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
+with cte1 as (select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
+
+explain with recursive cte1 as (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10 UNION ALL select c1 + 100 from cte1 where c1 < 10) select * from cte1 order by 1;
+with recursive cte1 as (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10 UNION ALL select c1 + 100 from cte1 where c1 < 10) select * from cte1 order by 1;
+
+explain with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
+show warnings;
+with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -45,9 +46,9 @@ import (
 		select json_extract('{"a": "b", "c": [1, "2"]}', '$.*') -> ["b", [1, "2"]]
 */
 
-// [a-zA-Z_][a-zA-Z0-9_]* matches any identifier;
+// ([\$]*[a-zA-Z_][a-zA-Z0-9_]*)+ matches any identifier, may start with $ and appear multiple times;
 // "[^"\\]*(\\.[^"\\]*)*" matches any string literal which can carry escaped quotes;
-var jsonPathExprLegRe = regexp.MustCompile(`(\.\s*([a-zA-Z_][a-zA-Z0-9_]*|\*|"[^"\\]*(\\.[^"\\]*)*")|(\[\s*([0-9]+|\*)\s*\])|\*\*)`)
+var jsonPathExprLegRe = regexp.MustCompile(`(\.\s*(([\$]*[a-zA-Z_][a-zA-Z0-9_]*)+|\*|"[^"\\]*(\\.[^"\\]*)*")|(\[\s*([0-9]+|\*)\s*\])|\*\*)`)
 
 type pathLegType byte
 

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,41 +16,16 @@ package core
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testIndexMergeSuite{})
-
-type testIndexMergeSuite struct {
-	*parser.Parser
-
-	is  infoschema.InfoSchema
-	ctx sessionctx.Context
-
-	testdata testutil.TestData
-}
-
-func (s *testIndexMergeSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
-	s.ctx = MockContext()
-	s.Parser = parser.New()
-	var err error
-	s.testdata, err = testutil.LoadTestSuiteData("testdata", "index_merge_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testIndexMergeSuite) TearDownSuite(c *C) {
-	c.Assert(s.testdata.GenerateOutputIfNeeded(), IsNil)
-}
 
 func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 	if len(paths) == startIndex {
@@ -81,30 +57,33 @@ func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 	return idxMergeDisgest
 }
 
-func (s *testIndexMergeSuite) TestIndexMergePathGeneration(c *C) {
-	defer testleak.AfterTest(c)()
+func TestIndexMergePathGeneration(t *testing.T) {
 	var input, output []string
-	s.testdata.GetTestCases(c, &input, &output)
+	indexMergeSuiteData.GetTestCases(t, &input, &output)
 	ctx := context.TODO()
+	sctx := MockContext()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
+
+	parser := parser.New()
+
 	for i, tc := range input {
-		comment := Commentf("case:%v sql:%s", i, tc)
-		stmt, err := s.ParseOneStmt(tc, "", "")
-		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		stmt, err := parser.ParseOneStmt(tc, "", "")
+		require.NoErrorf(t, err, "case:%v sql:%s", i, tc)
+		err = Preprocess(sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
+		require.NoError(t, err)
+		builder, _ := NewPlanBuilder().Init(MockContext(), is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
-			s.testdata.OnRecord(func() {
+			testdata.OnRecord(func() {
 				output[i] = err.Error()
 			})
-			c.Assert(err.Error(), Equals, output[i], comment)
+			require.Equal(t, output[i], err.Error(), "case:%v sql:%s", i, tc)
 			continue
 		}
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		lp := p.(LogicalPlan)
-		c.Assert(err, IsNil)
 		var ds *DataSource
 		for ds == nil {
 			switch v := lp.(type) {
@@ -117,11 +96,11 @@ func (s *testIndexMergeSuite) TestIndexMergePathGeneration(c *C) {
 		ds.ctx.GetSessionVars().SetEnableIndexMerge(true)
 		idxMergeStartIndex := len(ds.possibleAccessPaths)
 		_, err = lp.recursiveDeriveStats(nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		result := getIndexMergePathDigest(ds.possibleAccessPaths, idxMergeStartIndex)
-		s.testdata.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i] = result
 		})
-		c.Assert(result, Equals, output[i], comment)
+		require.Equalf(t, output[i], result, "case:%v sql:%s", i, tc)
 	}
 }

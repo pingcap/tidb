@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -187,6 +189,7 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 			continue
 		}
 		memDelta += p.valSet.Insert(decStr)
+		memDelta += int64(len(decStr))
 	}
 
 	return memDelta, nil
@@ -267,7 +270,7 @@ func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(sctx sessionc
 
 func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctString)(pr)
-	collator := collate.GetCollator(e.args[0].GetType().Collate)
+	collator := collate.GetCollator(e.args[0].GetType().GetCollate())
 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
@@ -284,6 +287,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 		}
 		input = stringutil.Copy(input)
 		memDelta += p.valSet.Insert(input)
+		memDelta += int64(len(input))
 	}
 
 	return memDelta, nil
@@ -319,7 +323,11 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 	p := (*partialResult4CountWithDistinct)(pr)
 
 	encodedBytes := make([]byte, 0)
-	// Decimal struct is the biggest type we will use.
+	collators := make([]collate.Collator, 0, len(e.args))
+	for _, arg := range e.args {
+		collators = append(collators, collate.GetCollator(arg.GetType().GetCollate()))
+	}
+	// decimal struct is the biggest type we will use.
 	buf := make([]byte, types.MyDecimalStructSize)
 
 	for _, row := range rowsInGroup {
@@ -328,7 +336,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 		encodedBytes = encodedBytes[:0]
 
 		for i := 0; i < len(e.args) && !hasNull; i++ {
-			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
+			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], collators[i], row, buf, encodedBytes)
 			if err != nil {
 				return memDelta, err
 			}
@@ -342,6 +350,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 			continue
 		}
 		memDelta += p.valSet.Insert(encodedString)
+		memDelta += int64(len(encodedString))
 	}
 
 	return memDelta, nil
@@ -349,7 +358,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 
 // evalAndEncode eval one row with an expression and encode value to bytes.
 func evalAndEncode(
-	sctx sessionctx.Context, arg expression.Expression,
+	sctx sessionctx.Context, arg expression.Expression, collator collate.Collator,
 	row chunk.Row, buf, encodedBytes []byte,
 ) (_ []byte, isNull bool, err error) {
 	switch tp := arg.GetType().EvalType(); tp {
@@ -401,7 +410,7 @@ func evalAndEncode(
 		if err != nil || isNull {
 			break
 		}
-		encodedBytes = codec.EncodeCompactBytes(encodedBytes, hack.Slice(val))
+		encodedBytes = codec.EncodeCompactBytes(encodedBytes, collator.Key(val))
 	default:
 		return nil, false, errors.Errorf("unsupported column type for encode %d", tp)
 	}
@@ -535,14 +544,6 @@ func (p *partialResult4ApproxCountDistinct) reset() {
 	p.alloc(uniquesHashSetInitialSizeDegree)
 }
 
-func max(a, b uint8) uint8 {
-	if a > b {
-		return a
-	}
-
-	return b
-}
-
 func (p *partialResult4ApproxCountDistinct) bufSize() uint32 {
 	return uint32(1) << p.sizeDegree
 }
@@ -596,7 +597,7 @@ func (p *partialResult4ApproxCountDistinct) readAndMerge(rb []byte) error {
 	}
 
 	if p.bufSize() < uint32(rhsSize) {
-		newSizeDegree := max(uniquesHashSetInitialSizeDegree, uint8(math.Log2(float64(rhsSize-1)))+2)
+		newSizeDegree := mathutil.Max(uniquesHashSetInitialSizeDegree, uint8(math.Log2(float64(rhsSize-1)))+2)
 		p.resize(newSizeDegree)
 	}
 
@@ -782,8 +783,12 @@ type approxCountDistinctOriginal struct {
 func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4ApproxCountDistinct)(pr)
 	encodedBytes := make([]byte, 0)
-	// Decimal struct is the biggest type we will use.
+	// decimal struct is the biggest type we will use.
 	buf := make([]byte, types.MyDecimalStructSize)
+	collators := make([]collate.Collator, 0, len(e.args))
+	for _, arg := range e.args {
+		collators = append(collators, collate.GetCollator(arg.GetType().GetCollate()))
+	}
 
 	for _, row := range rowsInGroup {
 		var err error
@@ -791,7 +796,7 @@ func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Contex
 		encodedBytes = encodedBytes[:0]
 
 		for i := 0; i < len(e.args) && !hasNull; i++ {
-			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
+			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], collators[i], row, buf, encodedBytes)
 			if err != nil {
 				return memDelta, err
 			}

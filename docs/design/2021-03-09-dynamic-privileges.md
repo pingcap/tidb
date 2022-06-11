@@ -1,7 +1,7 @@
 # Proposal:
 
 - Author(s):     [morgo](https://github.com/morgo)
-- Last updated:  March 09, 2021
+- Last updated:  June 16, 2021
 - Discussion at: N/A
 
 ## Table of Contents
@@ -233,16 +233,18 @@ No change
 | `SYSTEM_VARIABLES_ADMIN` | Allows changing any GLOBAL system variable. | Currently this required `SUPER`. It will now require `SYSTEM_VARIABLES_ADMIN` or `SUPER`. |
 | `ROLE_ADMIN` | Allows granting and revoking roles. | Won’t allow revoking on restricted_users (see below). |
 | `CONNECTION_ADMIN` | Allows killing connections. | Like `PROCESS` static privilege, but slightly more restrictive (no show processlist). |
+| `SYSTEM_USER` | The user can't be altered or dropped by only the `CREATE USER` privilege. | Helps prevent security escalations. |
 
 #### TiDB Extensions
 
 | Privilege Name | Description | Notes |
 | --------------- | --------------- | --------------- |
-| `RESTRICTED_SYSTEM_VARIABLES_ADMIN` | Allows changing a restricted `GLOBAL` system variable. | Currently in SEM all high risk variables are unloaded. TBD, it might be required in future that they are only visible/settable to those with this privilege and not SUPER. |
-| `RESTRICTED_STATUS_VARIABLES_ADMIN` | Allows observing restricted status variables. | i.e. `SHOW GLOBAL STATUS` by default hides some statistics when `SEM` is enabled. |
-| `RESTRICTED_CONNECTION_ADMIN` | A special privilege to say that their connections, etc. can’t be killed by SUPER users AND they can kill connections by all other users. Affects `KILL`, `KILL TIDB` commands. | It is intended for the CloudAdmin user in DBaaS. |
-| `RESTRICTED_USER` | A special privilege to say that their access can’t be changed by `SUPER` users. Statements `DROP USER`, `SET PASSWORD`, `ALTER USER`, `REVOKE` are all limited. | It is intended for the CloudAdmin user in DbaaS. |
-| `RESTRICTED_TABLES` | A special privilege which means that the SEM hidden table semantic doesn’t apply. | It is intended for the CloudAdmin user in DbaaS. | 
+| `RESTORE_ADMIN` | Restoring should require more permissions than backup because it is a higher risk operation. | It is inspired by MySQL's BACKUP_ADMIN/CLONE_ADMIN but not applicable to MySQL due to no online restore. |
+| `RESTRICTED_VARIABLES_ADMIN` | Allows changing a restricted `GLOBAL` system variable. | Currently in SEM all high risk variables are unloaded. TBD, it might be required in future that they are only visible/settable to those with this privilege and not SUPER. |
+| `RESTRICTED_STATUS_ADMIN` | Allows observing restricted status variables. | i.e. `SHOW GLOBAL STATUS` by default hides some statistics when `SEM` is enabled. |
+| `RESTRICTED_CONNECTION_ADMIN` | Killing connections that belong to your own user is always permitted. Killing connections that belong to other users requires `CONNECTION_ADMIN` or `SUPER`; but there is an exception for `RESTRICTED_USER_ADMIN` users. To kill these connections also requires `RESTRICTED_CONNECTION_ADMIN`. This affects `KILL`, `KILL TIDB` commands. | It is intended for the CloudAdmin user in DBaaS. |
+| `RESTRICTED_USER_ADMIN` | A special privilege to say that their access can’t be changed by `SUPER` users. Statements `DROP USER`, `SET PASSWORD`, `ALTER USER`, `REVOKE` are all limited. | It is intended for the CloudAdmin user in DbaaS. |
+| `RESTRICTED_TABLES_ADMIN` | A special privilege which means that the SEM hidden table semantic doesn’t apply. | It is intended for the CloudAdmin user in DbaaS. | 
 
 ### Parser Changes
 

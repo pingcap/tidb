@@ -8,27 +8,25 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package kv
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-var _ = Suite(testVersionSuite{})
-
-type testVersionSuite struct{}
-
-func (s testVersionSuite) TestVersion(c *C) {
+func TestVersion(t *testing.T) {
 	le := NewVersion(42).Cmp(NewVersion(43))
 	gt := NewVersion(42).Cmp(NewVersion(41))
 	eq := NewVersion(42).Cmp(NewVersion(42))
 
-	c.Assert(le < 0, IsTrue)
-	c.Assert(gt > 0, IsTrue)
-	c.Assert(eq == 0, IsTrue)
-
-	c.Check(MinVersion.Cmp(MaxVersion) < 0, IsTrue)
+	assert.True(t, le < 0)
+	assert.True(t, gt > 0)
+	assert.True(t, eq == 0)
+	assert.True(t, MinVersion.Cmp(MaxVersion) < 0)
 }

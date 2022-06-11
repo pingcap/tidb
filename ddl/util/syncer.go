@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,14 +26,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/terror"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
-	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -115,6 +115,7 @@ type schemaVersionSyncer struct {
 	notifyCleanExpiredPathsCh chan struct{}
 	ctx                       context.Context
 	cancel                    context.CancelFunc
+	cleanGroup                sync.WaitGroup
 }
 
 // NewSchemaSyncer creates a new SchemaSyncer.
@@ -133,7 +134,7 @@ func NewSchemaSyncer(ctx context.Context, etcdCli *clientv3.Client, id string, o
 // PutKVToEtcd puts key value to etcd.
 // etcdCli is client of etcd.
 // retryCnt is retry time when an error occurs.
-// opts is configures of etcd Operations.
+// opts are configures of etcd Operations.
 func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
 	opts ...clientv3.OpOption) error {
 	var err error
@@ -170,7 +171,7 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
-	session, err := owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionDefaultRetryCnt, SyncerSessionTTL)
+	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -215,7 +216,7 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 
 	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
 	// NewSession's context will affect the exit of the session.
-	session, err := owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionRetryUnlimited, SyncerSessionTTL)
+	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionRetryUnlimited, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -424,6 +425,8 @@ var NeededCleanTTL = int64(-60)
 
 func (s *schemaVersionSyncer) StartCleanWork() {
 	defer tidbutil.Recover(metrics.LabelDDLSyncer, "StartCleanWorker", nil, false)
+	s.cleanGroup.Add(1)
+	defer s.cleanGroup.Done()
 
 	for {
 		select {
@@ -454,6 +457,7 @@ func (s *schemaVersionSyncer) StartCleanWork() {
 
 func (s *schemaVersionSyncer) Close() {
 	s.cancel()
+	s.cleanGroup.Wait()
 
 	err := s.removeSelfVersionPath()
 	if err != nil {

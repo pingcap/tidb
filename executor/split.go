@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,21 +22,21 @@ import (
 	"math"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -49,7 +50,6 @@ type SplitIndexRegionExec struct {
 	lower          []types.Datum
 	upper          []types.Datum
 	num            int
-	handleCols     core.HandleCols
 	valueLists     [][]types.Datum
 	splitIdxKeys   [][]byte
 
@@ -538,7 +538,7 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 	isUnsigned := false
 	if e.tableInfo.PKIsHandle {
 		if pkCol := e.tableInfo.GetPkColInfo(); pkCol != nil {
-			isUnsigned = mysql.HasUnsignedFlag(pkCol.Flag)
+			isUnsigned = mysql.HasUnsignedFlag(pkCol.GetFlag())
 		}
 	}
 	if isUnsigned {
@@ -561,7 +561,7 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 		lowerValue = lowerRecordID
 	}
 	if step < minRegionStepValue {
-		errMsg := fmt.Sprintf("the region size is too small, expected at least %d, but got %d", step, minRegionStepValue)
+		errMsg := fmt.Sprintf("the region size is too small, expected at least %d, but got %d", minRegionStepValue, step)
 		return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	return lowerValue, step, nil
@@ -616,8 +616,8 @@ type regionMeta struct {
 	start           string
 	end             string
 	scattering      bool
-	writtenBytes    int64
-	readBytes       int64
+	writtenBytes    uint64
+	readBytes       uint64
 	approximateSize int64
 	approximateKeys int64
 }
@@ -629,7 +629,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	// This is used to decode the int handle properly.
 	var hasUnsignedIntHandle bool
 	if pkInfo := tableInfo.GetPkColInfo(); pkInfo != nil {
-		hasUnsignedIntHandle = mysql.HasUnsignedFlag(pkInfo.Flag)
+		hasUnsignedIntHandle = mysql.HasUnsignedFlag(pkInfo.GetFlag())
 	}
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalTableID)

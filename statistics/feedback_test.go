@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,19 +16,15 @@ package statistics
 
 import (
 	"bytes"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
-
-var _ = Suite(&testFeedbackSuite{})
-
-type testFeedbackSuite struct {
-}
 
 func newFeedback(lower, upper, count, ndv int64) Feedback {
 	low, upp := types.NewIntDatum(lower), types.NewIntDatum(upper)
@@ -57,7 +54,7 @@ func genHistogram() *Histogram {
 	return h
 }
 
-func (s *testFeedbackSuite) TestUpdateHistogram(c *C) {
+func TestUpdateHistogram(t *testing.T) {
 	feedbacks := []Feedback{
 		newFeedback(0, 1, 10000, 1),
 		newFeedback(1, 2, 1, 1),
@@ -70,20 +67,18 @@ func (s *testFeedbackSuite) TestUpdateHistogram(c *C) {
 
 	q := NewQueryFeedback(0, genHistogram(), 0, false)
 	q.Feedback = feedbacks
-	originBucketCount := defaultBucketCount
-	defaultBucketCount = 7
-	defer func() { defaultBucketCount = originBucketCount }()
-	c.Assert(UpdateHistogram(q.Hist, q, Version2).ToString(0), Equals,
+	require.Equal(t,
 		"column:0 ndv:10053 totColSize:0\n"+
 			"num: 10001 lower_bound: 0 upper_bound: 2 repeats: 0 ndv: 2\n"+
 			"num: 7 lower_bound: 2 upper_bound: 5 repeats: 0 ndv: 2\n"+
 			"num: 4 lower_bound: 5 upper_bound: 7 repeats: 0 ndv: 1\n"+
 			"num: 11 lower_bound: 10 upper_bound: 20 repeats: 0 ndv: 11\n"+
 			"num: 19 lower_bound: 30 upper_bound: 49 repeats: 0 ndv: 19\n"+
-			"num: 11 lower_bound: 50 upper_bound: 60 repeats: 0 ndv: 11")
+			"num: 11 lower_bound: 50 upper_bound: 60 repeats: 0 ndv: 11",
+		UpdateHistogramWithBucketCount(q.Hist, q, Version2, 7).ToString(0))
 }
 
-func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
+func TestSplitBuckets(t *testing.T) {
 	// test bucket split
 	feedbacks := []Feedback{newFeedback(0, 1, 1, 1)}
 	for i := 0; i < 100; i++ {
@@ -100,22 +95,23 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 		oldNdvs[i] = q.Hist.Buckets[i].NDV
 	}
 	log.Warn("in test", zap.Int64s("ndvs", oldNdvs), zap.Int64s("cnts", oldCnts))
-	buckets, isNewBuckets, totalCount := splitBuckets(q.Hist, q)
+	buckets, isNewBuckets, totalCount := splitBuckets(q.Hist, q, defaultBucketCount)
 	ndvs := make([]int64, len(buckets))
 	for i := range buckets {
 		ndvs[i] = buckets[i].Ndv
 	}
 	log.Warn("in test", zap.Int64s("ndvs", ndvs))
-	c.Assert(buildNewHistogram(q.Hist, buckets).ToString(0), Equals,
+	require.Equal(t,
 		"column:0 ndv:0 totColSize:0\n"+
 			"num: 1 lower_bound: 0 upper_bound: 1 repeats: 0 ndv: 1\n"+
 			"num: 0 lower_bound: 2 upper_bound: 3 repeats: 0 ndv: 0\n"+
 			"num: 0 lower_bound: 5 upper_bound: 7 repeats: 0 ndv: 0\n"+
 			"num: 5 lower_bound: 10 upper_bound: 15 repeats: 0 ndv: 5\n"+
 			"num: 0 lower_bound: 16 upper_bound: 20 repeats: 0 ndv: 0\n"+
-			"num: 0 lower_bound: 30 upper_bound: 50 repeats: 0 ndv: 0")
-	c.Assert(isNewBuckets, DeepEquals, []bool{false, false, false, true, true, false})
-	c.Assert(totalCount, Equals, int64(6))
+			"num: 0 lower_bound: 30 upper_bound: 50 repeats: 0 ndv: 0",
+		buildNewHistogram(q.Hist, buckets).ToString(0))
+	require.Equal(t, []bool{false, false, false, true, true, false}, isNewBuckets)
+	require.Equal(t, int64(6), totalCount)
 
 	// test do not split if the bucket count is too small
 	feedbacks = []Feedback{newFeedback(0, 1, 100000, 1)}
@@ -124,17 +120,18 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	}
 	q = NewQueryFeedback(0, genHistogram(), 0, false)
 	q.Feedback = feedbacks
-	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q)
-	c.Assert(buildNewHistogram(q.Hist, buckets).ToString(0), Equals,
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q, defaultBucketCount)
+	require.Equal(t,
 		"column:0 ndv:0 totColSize:0\n"+
 			"num: 100000 lower_bound: 0 upper_bound: 1 repeats: 0 ndv: 1\n"+
 			"num: 0 lower_bound: 2 upper_bound: 3 repeats: 0 ndv: 0\n"+
 			"num: 0 lower_bound: 5 upper_bound: 7 repeats: 0 ndv: 0\n"+
 			"num: 1 lower_bound: 10 upper_bound: 15 repeats: 0 ndv: 1\n"+
 			"num: 0 lower_bound: 16 upper_bound: 20 repeats: 0 ndv: 0\n"+
-			"num: 0 lower_bound: 30 upper_bound: 50 repeats: 0 ndv: 0")
-	c.Assert(isNewBuckets, DeepEquals, []bool{false, false, false, true, true, false})
-	c.Assert(totalCount, Equals, int64(100001))
+			"num: 0 lower_bound: 30 upper_bound: 50 repeats: 0 ndv: 0",
+		buildNewHistogram(q.Hist, buckets).ToString(0))
+	require.Equal(t, []bool{false, false, false, true, true, false}, isNewBuckets)
+	require.Equal(t, int64(100001), totalCount)
 
 	// test do not split if the result bucket count is too small
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
@@ -147,12 +144,13 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	}
 	q = NewQueryFeedback(0, h, 0, false)
 	q.Feedback = feedbacks
-	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q)
-	c.Assert(buildNewHistogram(q.Hist, buckets).ToString(0), Equals,
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q, defaultBucketCount)
+	require.Equal(t,
 		"column:0 ndv:0 totColSize:0\n"+
-			"num: 1000000 lower_bound: 0 upper_bound: 1000000 repeats: 0 ndv: 1000000")
-	c.Assert(isNewBuckets, DeepEquals, []bool{false})
-	c.Assert(totalCount, Equals, int64(1000000))
+			"num: 1000000 lower_bound: 0 upper_bound: 1000000 repeats: 0 ndv: 1000000",
+		buildNewHistogram(q.Hist, buckets).ToString(0))
+	require.Equal(t, []bool{false}, isNewBuckets)
+	require.Equal(t, int64(1000000), totalCount)
 
 	// test split even if the feedback range is too small
 	h = NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
@@ -163,13 +161,14 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	}
 	q = NewQueryFeedback(0, h, 0, false)
 	q.Feedback = feedbacks
-	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q)
-	c.Assert(buildNewHistogram(q.Hist, buckets).ToString(0), Equals,
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q, defaultBucketCount)
+	require.Equal(t,
 		"column:0 ndv:0 totColSize:0\n"+
 			"num: 1 lower_bound: 0 upper_bound: 10 repeats: 0 ndv: 1\n"+
-			"num: 0 lower_bound: 11 upper_bound: 1000000 repeats: 0 ndv: 0")
-	c.Assert(isNewBuckets, DeepEquals, []bool{true, true})
-	c.Assert(totalCount, Equals, int64(1))
+			"num: 0 lower_bound: 11 upper_bound: 1000000 repeats: 0 ndv: 0",
+		buildNewHistogram(q.Hist, buckets).ToString(0))
+	require.Equal(t, []bool{true, true}, isNewBuckets)
+	require.Equal(t, int64(1), totalCount)
 
 	// test merge the non-overlapped feedbacks.
 	h = NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
@@ -179,17 +178,16 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	feedbacks = append(feedbacks, newFeedback(4001, 9999, 1000, 1000))
 	q = NewQueryFeedback(0, h, 0, false)
 	q.Feedback = feedbacks
-	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q)
-	c.Assert(buildNewHistogram(q.Hist, buckets).ToString(0), Equals,
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q, defaultBucketCount)
+	require.Equal(t,
 		"column:0 ndv:0 totColSize:0\n"+
-			"num: 5001 lower_bound: 0 upper_bound: 10000 repeats: 0 ndv: 5001")
-	c.Assert(isNewBuckets, DeepEquals, []bool{false})
-	c.Assert(totalCount, Equals, int64(5001))
+			"num: 5001 lower_bound: 0 upper_bound: 10000 repeats: 0 ndv: 5001",
+		buildNewHistogram(q.Hist, buckets).ToString(0))
+	require.Equal(t, []bool{false}, isNewBuckets)
+	require.Equal(t, int64(5001), totalCount)
 }
 
-func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
-	originBucketCount := defaultBucketCount
-	defer func() { defaultBucketCount = originBucketCount }()
+func TestMergeBuckets(t *testing.T) {
 	tests := []struct {
 		points       []int64
 		counts       []int64
@@ -229,21 +227,18 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 				"num: 100000 lower_bound: 4 upper_bound: 5 repeats: 0 ndv: 1",
 		},
 	}
-	for _, t := range tests {
-		if len(t.counts) != len(t.ndvs) {
-			c.Assert(false, IsTrue)
-		}
-		bkts := make([]bucket, 0, len(t.counts))
+	for _, tt := range tests {
+		require.Equal(t, len(tt.ndvs), len(tt.counts))
+		bkts := make([]bucket, 0, len(tt.counts))
 		totalCount := int64(0)
-		for i := 0; i < len(t.counts); i++ {
-			lower, upper := types.NewIntDatum(t.points[2*i]), types.NewIntDatum(t.points[2*i+1])
-			bkts = append(bkts, bucket{&lower, &upper, t.counts[i], 0, t.ndvs[i]})
-			totalCount += t.counts[i]
+		for i := 0; i < len(tt.counts); i++ {
+			lower, upper := types.NewIntDatum(tt.points[2*i]), types.NewIntDatum(tt.points[2*i+1])
+			bkts = append(bkts, bucket{&lower, &upper, tt.counts[i], 0, tt.ndvs[i]})
+			totalCount += tt.counts[i]
 		}
-		defaultBucketCount = t.bucketCount
-		bkts = mergeBuckets(bkts, t.isNewBuckets, float64(totalCount))
+		bkts = mergeBuckets(bkts, tt.isNewBuckets, tt.bucketCount, float64(totalCount))
 		result := buildNewHistogram(&Histogram{Tp: types.NewFieldType(mysql.TypeLong)}, bkts).ToString(0)
-		c.Assert(result, Equals, t.result)
+		require.Equal(t, tt.result, result)
 	}
 }
 
@@ -253,33 +248,33 @@ func encodeInt(v int64) *types.Datum {
 	return &d
 }
 
-func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
+func TestFeedbackEncoding(t *testing.T) {
 	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 0, 0)
 	q := &QueryFeedback{Hist: hist, Tp: PkType}
 	q.Feedback = append(q.Feedback, Feedback{encodeInt(0), encodeInt(3), 1, 0, 1})
 	q.Feedback = append(q.Feedback, Feedback{encodeInt(0), encodeInt(5), 1, 0, 1})
 	val, err := EncodeFeedback(q)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rq := &QueryFeedback{}
-	c.Assert(DecodeFeedback(val, rq, nil, nil, hist.Tp), IsNil)
+	require.NoError(t, DecodeFeedback(val, rq, nil, nil, hist.Tp))
 	for _, fb := range rq.Feedback {
 		fb.Lower.SetBytes(codec.EncodeInt(nil, fb.Lower.GetInt64()))
 		fb.Upper.SetBytes(codec.EncodeInt(nil, fb.Upper.GetInt64()))
 	}
-	c.Assert(q.Equal(rq), IsTrue)
+	require.True(t, q.Equal(rq))
 
 	hist.Tp = types.NewFieldType(mysql.TypeBlob)
 	q = &QueryFeedback{Hist: hist}
 	q.Feedback = append(q.Feedback, Feedback{encodeInt(0), encodeInt(3), 1, 0, 1})
 	q.Feedback = append(q.Feedback, Feedback{encodeInt(0), encodeInt(1), 1, 0, 1})
 	val, err = EncodeFeedback(q)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rq = &QueryFeedback{}
 	cms := NewCMSketch(4, 4)
-	c.Assert(DecodeFeedback(val, rq, cms, nil, hist.Tp), IsNil)
-	c.Assert(cms.QueryBytes(codec.EncodeInt(nil, 0)), Equals, uint64(1))
+	require.NoError(t, DecodeFeedback(val, rq, cms, nil, hist.Tp))
+	require.Equal(t, uint64(1), cms.QueryBytes(codec.EncodeInt(nil, 0)))
 	q.Feedback = q.Feedback[:1]
-	c.Assert(q.Equal(rq), IsTrue)
+	require.True(t, q.Equal(rq))
 }
 
 // Equal tests if two query feedback equal, it is only used in test.

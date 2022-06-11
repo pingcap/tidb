@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,59 +16,15 @@ package types_test
 
 import (
 	"context"
-	"flag"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testMySQLConstSuite{})
-
-type testMySQLConstSuite struct {
-	cluster cluster.Cluster
-	store   kv.Storage
-	dom     *domain.Domain
-	*parser.Parser
-}
-
-var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
-
-func (s *testMySQLConstSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
-	flag.Lookup("mockTikv")
-	useMockTikv := *mockTikv
-	if useMockTikv {
-		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
-				mockstore.BootstrapWithSingleStore(c)
-				s.cluster = c
-			}),
-		)
-		c.Assert(err, IsNil)
-		s.store = store
-		session.SetSchemaLease(0)
-		session.DisableStats4Test()
-	}
-	var err error
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testMySQLConstSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
-}
-
-func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
+func TestGetSQLMode(t *testing.T) {
 	positiveCases := []struct {
 		arg string
 	}{
@@ -79,9 +36,9 @@ func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 		{","},
 	}
 
-	for _, t := range positiveCases {
-		_, err := mysql.GetSQLMode(mysql.FormatSQLModeStr(t.arg))
-		c.Assert(err, IsNil)
+	for _, test := range positiveCases {
+		_, err := mysql.GetSQLMode(mysql.FormatSQLModeStr(test.arg))
+		require.NoError(t, err)
 	}
 
 	negativeCases := []struct {
@@ -93,13 +50,13 @@ func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 		{" ,"},
 	}
 
-	for _, t := range negativeCases {
-		_, err := mysql.GetSQLMode(mysql.FormatSQLModeStr(t.arg))
-		c.Assert(err, NotNil)
+	for _, test := range negativeCases {
+		_, err := mysql.GetSQLMode(mysql.FormatSQLModeStr(test.arg))
+		require.Error(t, err)
 	}
 }
 
-func (s *testMySQLConstSuite) TestSQLMode(c *C) {
+func TestSQLMode(t *testing.T) {
 	tests := []struct {
 		arg                           string
 		hasNoZeroDateMode             bool
@@ -117,86 +74,99 @@ func (s *testMySQLConstSuite) TestSQLMode(c *C) {
 		{"", false, false, false},
 	}
 
-	for _, t := range tests {
-		sqlMode, _ := mysql.GetSQLMode(t.arg)
-		c.Assert(sqlMode.HasNoZeroDateMode(), Equals, t.hasNoZeroDateMode)
-		c.Assert(sqlMode.HasNoZeroInDateMode(), Equals, t.hasNoZeroInDateMode)
-		c.Assert(sqlMode.HasErrorForDivisionByZeroMode(), Equals, t.hasErrorForDivisionByZeroMode)
+	for _, test := range tests {
+		sqlMode, _ := mysql.GetSQLMode(test.arg)
+		require.Equal(t, test.hasNoZeroDateMode, sqlMode.HasNoZeroDateMode())
+		require.Equal(t, test.hasNoZeroInDateMode, sqlMode.HasNoZeroInDateMode())
+		require.Equal(t, test.hasErrorForDivisionByZeroMode, sqlMode.HasErrorForDivisionByZeroMode())
 	}
 }
 
-func (s *testMySQLConstSuite) TestRealAsFloatMode(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestRealAsFloatMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a real);")
 	result := tk.MustQuery("desc t")
-	c.Check(result.Rows(), HasLen, 1)
+	require.Len(t, result.Rows(), 1)
 	row := result.Rows()[0]
-	c.Assert(row[1], Equals, "double")
+	require.Equal(t, "double", row[1])
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set sql_mode='REAL_AS_FLOAT'")
 	tk.MustExec("create table t (a real)")
 	result = tk.MustQuery("desc t")
-	c.Check(result.Rows(), HasLen, 1)
+	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	c.Assert(row[1], Equals, "float")
+	require.Equal(t, "float", row[1])
 }
 
-func (s *testMySQLConstSuite) TestPipesAsConcatMode(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPipesAsConcatMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("SET sql_mode='PIPES_AS_CONCAT';")
 	r := tk.MustQuery(`SELECT 'hello' || 'world';`)
 	r.Check(testkit.Rows("helloworld"))
 }
 
-func (s *testMySQLConstSuite) TestIssue22387(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue22387(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode=''")
 	err := tk.QueryToErr("select 12 - cast(15 as unsigned);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(12 - 15)'")
+	require.EqualError(t, err, "[types:1690]BIGINT UNSIGNED value is out of range in '(12 - 15)'")
 
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION';")
 	tk.MustQuery("select 12 - cast(15 as unsigned);").Check(testkit.Rows("-3"))
 }
 
-func (s *testMySQLConstSuite) TestIssue22389(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue22389(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION';")
 	tk.MustExec("DROP TABLE IF EXISTS tb5")
 	tk.MustExec("create table tb5(a bigint, b bigint);")
 	tk.MustExec("insert into tb5 values (10, -9223372036854775808);")
 	err := tk.QueryToErr("select a - b from tb5;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
 	tk.MustExec("set sql_mode=''")
 	err = tk.QueryToErr("select a - b from tb5;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
 }
 
-func (s *testMySQLConstSuite) TestIssue22390(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue22390(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='';")
 	tk.MustExec("DROP TABLE IF EXISTS tb5")
 	tk.MustExec("create table tb5(a bigint, b bigint);")
 	tk.MustExec("insert into tb5 values (10, -9223372036854775808);")
 	err := tk.QueryToErr("select a - b from tb5;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
 
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION';")
 	err = tk.QueryToErr("select a - b from tb5;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
 }
 
-func (s *testMySQLConstSuite) TestIssue22442(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue22442(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode='';")
 	tk.MustQuery("select cast(-1 as unsigned) - cast(-1 as unsigned);").Check(testkit.Rows("0"))
 
@@ -204,8 +174,11 @@ func (s *testMySQLConstSuite) TestIssue22442(c *C) {
 	tk.MustQuery("select cast(-1 as unsigned) - cast(-1 as unsigned);").Check(testkit.Rows("0"))
 }
 
-func (s *testMySQLConstSuite) TestIssue22444(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue22444(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
 	tk.MustQuery("select cast(-1 as unsigned) - cast(-10000 as unsigned); ").Check(testkit.Rows("9999"))
 
@@ -213,19 +186,24 @@ func (s *testMySQLConstSuite) TestIssue22444(c *C) {
 	tk.MustQuery("select cast(-1 as unsigned) - cast(-10000 as unsigned); ").Check(testkit.Rows("9999"))
 }
 
-func (s *testMySQLConstSuite) TestIssue22445(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue22445(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
 	tk.MustQuery("select cast(-12 as unsigned) - cast(-1 as unsigned);").Check(testkit.Rows("-11"))
 
 	tk.MustExec("set sql_mode='';")
 	err := tk.QueryToErr("select cast(-12 as unsigned) - cast(-1 as unsigned);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(18446744073709551604 - 18446744073709551615)'")
+	require.EqualError(t, err, "[types:1690]BIGINT UNSIGNED value is out of range in '(18446744073709551604 - 18446744073709551615)'")
 }
 
-func (s *testMySQLConstSuite) TestIssue22446(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue22446(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
 	tk.MustQuery("select cast(-1 as unsigned) - 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
 
@@ -233,19 +211,25 @@ func (s *testMySQLConstSuite) TestIssue22446(c *C) {
 	tk.MustQuery("select cast(-1 as unsigned) - 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
 }
 
-func (s *testMySQLConstSuite) TestIssue22447(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue22447(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
 	tk.MustQuery("select 9223372036854775808 - cast(-1 as unsigned)").Check(testkit.Rows("-9223372036854775807"))
 
 	tk.MustExec("set sql_mode='';")
 	err := tk.QueryToErr("select 9223372036854775808 - cast(-1 as unsigned)")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(9223372036854775808 - 18446744073709551615)'")
+	require.Error(t, err)
+	require.EqualError(t, err, "[types:1690]BIGINT UNSIGNED value is out of range in '(9223372036854775808 - 18446744073709551615)'")
 }
 
-func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestNoUnsignedSubtractionMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'")
 	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
@@ -253,12 +237,10 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 
 	// 1. minusFUU
 	err := tk.QueryToErr("SELECT CAST(-1 as UNSIGNED) - cast(9223372036854775807 as unsigned);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(18446744073709551615 - 9223372036854775807)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(18446744073709551615 - 9223372036854775807)'")
 
 	err = tk.QueryToErr("SELECT CAST(0 as UNSIGNED) - cast(9223372036854775809 as unsigned);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(0 - 9223372036854775809)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(0 - 9223372036854775809)'")
 
 	tk.MustQuery("SELECT CAST(0 as UNSIGNED) - cast(9223372036854775808 as unsigned);").Check(testkit.Rows("-9223372036854775808"))
 	tk.MustQuery("SELECT CAST(-1 as UNSIGNED) - cast(-9223372036854775808 as unsigned);").Check(testkit.Rows("9223372036854775807"))
@@ -266,84 +248,74 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 
 	// 2. minusSS
 	err = tk.QueryToErr("SELECT -9223372036854775808 - (1);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-9223372036854775808 - 1)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(-9223372036854775808 - 1)'")
 
 	err = tk.QueryToErr("SELECT 1 - (-9223372036854775808);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775808)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775808)'")
 
 	err = tk.QueryToErr("SELECT 1 - (-9223372036854775807);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775807)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775807)'")
 
 	// 3. minusFUS
 	err = tk.QueryToErr("SELECT CAST(-12 as UNSIGNED) - (-1);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(18446744073709551604 - -1)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(18446744073709551604 - -1)'")
 
 	err = tk.QueryToErr("SELECT CAST(9223372036854775808 as UNSIGNED) - (0);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(9223372036854775808 - 0)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(9223372036854775808 - 0)'")
 
 	err = tk.QueryToErr("SELECT CAST(-1 as UNSIGNED) - (9223372036854775807);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(18446744073709551615 - 9223372036854775807)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(18446744073709551615 - 9223372036854775807)'")
 
 	err = tk.QueryToErr("SELECT CAST(9223372036854775808 as UNSIGNED) - 0;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(9223372036854775808 - 0)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(9223372036854775808 - 0)'")
 
 	tk.MustQuery("SELECT CAST(-1 as UNSIGNED) - (9223372036854775808);").Check(testkit.Rows("9223372036854775807"))
 
 	err = tk.QueryToErr("SELECT CAST(1 as UNSIGNED) - (-9223372036854775808);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775808)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775808)'")
 
 	err = tk.QueryToErr("SELECT CAST(1 as UNSIGNED) - (-9223372036854775807);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775807)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775807)'")
 
 	tk.MustQuery("SELECT CAST(1 as UNSIGNED) - (-9223372036854775806)").Check(testkit.Rows("9223372036854775807"))
 	tk.MustQuery("select cast(0 as unsigned) - 9223372036854775807").Check(testkit.Rows("-9223372036854775807"))
 
 	// 4. minusFSU
 	err = tk.QueryToErr("SELECT CAST(1 as SIGNED) - cast(9223372036854775810 as unsigned);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - 9223372036854775810)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(1 - 9223372036854775810)'")
 
 	err = tk.QueryToErr("SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-1 - 9223372036854775808)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(-1 - 9223372036854775808)'")
 
 	err = tk.QueryToErr("SELECT CAST(-9223372036854775807 as SIGNED) - cast(-1 as unsigned);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-9223372036854775807 - 18446744073709551615)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(-9223372036854775807 - 18446744073709551615)'")
 
 	err = tk.QueryToErr("SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-1 - 9223372036854775808)'")
+	require.EqualError(t, err, "[types:1690]BIGINT value is out of range in '(-1 - 9223372036854775808)'")
 
 	tk.MustQuery("select 0 - cast(9223372036854775807 as unsigned)").Check(testkit.Rows("-9223372036854775807"))
 	tk.MustQuery("SELECT CAST(1 as SIGNED) - cast(9223372036854775809 as unsigned)").Check(testkit.Rows("-9223372036854775808"))
 	tk.MustQuery("SELECT CAST(-1 as SIGNED) - cast(9223372036854775807 as unsigned)").Check(testkit.Rows("-9223372036854775808"))
 
 	rs, _ := tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
-	_, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(err, NotNil)
-	c.Assert(rs.Close(), IsNil)
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	require.NoError(t, rs.Close())
 	rs, _ = tk.Exec("SELECT CAST(-1 as UNSIGNED) - 1")
-	_, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(err, NotNil)
-	c.Assert(rs.Close(), IsNil)
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	require.NoError(t, rs.Close())
 	rs, _ = tk.Exec("SELECT CAST(9223372036854775808 as UNSIGNED) - 1")
-	_, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(err, IsNil)
-	c.Assert(rs.Close(), IsNil)
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.NoError(t, err)
+	require.NoError(t, rs.Close())
 }
 
-func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestHighNotPrecedenceMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int);")
@@ -359,8 +331,11 @@ func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
 	r.Check(testkit.Rows("1"))
 }
 
-func (s *testMySQLConstSuite) TestIgnoreSpaceMode(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIgnoreSpaceMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("CREATE TABLE COUNT (a bigint);")
@@ -368,7 +343,7 @@ func (s *testMySQLConstSuite) TestIgnoreSpaceMode(c *C) {
 	tk.MustExec("CREATE TABLE `COUNT` (a bigint);")
 	tk.MustExec("DROP TABLE COUNT;")
 	_, err := tk.Exec("CREATE TABLE COUNT(a bigint);")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("CREATE TABLE test.COUNT(a bigint);")
 	tk.MustExec("DROP TABLE COUNT;")
 
@@ -377,7 +352,7 @@ func (s *testMySQLConstSuite) TestIgnoreSpaceMode(c *C) {
 	tk.MustExec("CREATE TABLE `BIT_AND` (a bigint);")
 	tk.MustExec("DROP TABLE BIT_AND;")
 	_, err = tk.Exec("CREATE TABLE BIT_AND(a bigint);")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("CREATE TABLE test.BIT_AND(a bigint);")
 	tk.MustExec("DROP TABLE BIT_AND;")
 
@@ -386,42 +361,45 @@ func (s *testMySQLConstSuite) TestIgnoreSpaceMode(c *C) {
 	tk.MustExec("CREATE TABLE `NOW` (a bigint);")
 	tk.MustExec("DROP TABLE NOW;")
 	_, err = tk.Exec("CREATE TABLE NOW(a bigint);")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("CREATE TABLE test.NOW(a bigint);")
 	tk.MustExec("DROP TABLE NOW;")
 
 	tk.MustExec("set sql_mode='IGNORE_SPACE'")
 	_, err = tk.Exec("CREATE TABLE COUNT (a bigint);")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("CREATE TABLE `COUNT` (a bigint);")
 	tk.MustExec("DROP TABLE COUNT;")
 	_, err = tk.Exec("CREATE TABLE COUNT(a bigint);")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("CREATE TABLE test.COUNT(a bigint);")
 	tk.MustExec("DROP TABLE COUNT;")
 
 	_, err = tk.Exec("CREATE TABLE BIT_AND (a bigint);")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("CREATE TABLE `BIT_AND` (a bigint);")
 	tk.MustExec("DROP TABLE BIT_AND;")
 	_, err = tk.Exec("CREATE TABLE BIT_AND(a bigint);")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("CREATE TABLE test.BIT_AND(a bigint);")
 	tk.MustExec("DROP TABLE BIT_AND;")
 
 	_, err = tk.Exec("CREATE TABLE NOW (a bigint);")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("CREATE TABLE `NOW` (a bigint);")
 	tk.MustExec("DROP TABLE NOW;")
 	_, err = tk.Exec("CREATE TABLE NOW(a bigint);")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("CREATE TABLE test.NOW(a bigint);")
 	tk.MustExec("DROP TABLE NOW;")
 
 }
 
-func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestNoBackslashEscapesMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode=''")
 	r := tk.MustQuery("SELECT '\\\\'")
 	r.Check(testkit.Rows("\\"))
@@ -430,7 +408,7 @@ func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
 	r.Check(testkit.Rows("\\\\"))
 }
 
-func (s *testMySQLConstSuite) TestServerStatus(c *C) {
+func TestServerStatus(t *testing.T) {
 	tests := []struct {
 		arg            uint16
 		IsCursorExists bool
@@ -441,8 +419,7 @@ func (s *testMySQLConstSuite) TestServerStatus(c *C) {
 		{mysql.ServerStatusCursorExists | mysql.ServerStatusLastRowSend, true},
 	}
 
-	for _, t := range tests {
-		ret := mysql.HasCursorExistsFlag(t.arg)
-		c.Assert(ret, Equals, t.IsCursorExists)
+	for _, test := range tests {
+		require.Equal(t, test.IsCursorExists, mysql.HasCursorExistsFlag(test.arg))
 	}
 }

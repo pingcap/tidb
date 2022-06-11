@@ -1,5 +1,118 @@
 [
   {
+    "Name": "TestCBOWithoutAnalyze",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t1, t2 where t1.a = t2.a",
+        "Plan": [
+          "HashJoin 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 5.99 root  data:Selection",
+          "│ └─Selection 5.99 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan 6.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 5.99 root  data:Selection",
+          "  └─Selection 5.99 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'hint' select * from t1, t2 where t1.a = t2.a",
+        "Plan": [
+          "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTableDual",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where 1 = 0",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where 1 = 1 limit 0",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestEstimation",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from t group by a",
+        "Plan": [
+          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
+          "└─TableReader 2.00 root  data:HashAgg",
+          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
+          "    └─TableFullScan 8.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestOutdatedAnalyze",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "EnablePseudoForOutdatedStats": true,
+        "RatioOfPseudoEstimate": 10,
+        "Plan": [
+          "TableReader 28.80 root  data:Selection",
+          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "EnablePseudoForOutdatedStats": true,
+        "RatioOfPseudoEstimate": 0.7,
+        "Plan": [
+          "TableReader 8.84 root  data:Selection",
+          "└─Selection 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "EnablePseudoForOutdatedStats": false,
+        "RatioOfPseudoEstimate": 10,
+        "Plan": [
+          "TableReader 28.80 root  data:Selection",
+          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "EnablePseudoForOutdatedStats": false,
+        "RatioOfPseudoEstimate": 0.7,
+        "Plan": [
+          "TableReader 28.80 root  data:Selection",
+          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestInconsistentEstimation",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5",
+        "Plan": [
+          "IndexLookUp 10.00 root  ",
+          "├─IndexRangeScan(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
+          "└─Selection(Probe) 10.00 cop[tikv]  eq(test.t.c, 5)",
+          "  └─TableRowIDScan 12.50 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestLimitCrossEstimation",
     "Cases": [
       {
@@ -344,14 +457,14 @@
   {
     "Name": "TestAnalyze",
     "Cases": [
-      "Analyze{Index(a),Table(a, b)}",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
       "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
       "IndexReader(Index(t.b)[[-inf,2)])",
       "TableReader(Table(t)->Sel([eq(test.t.a, 1) le(test.t.b, 2)]))",
       "TableReader(Table(t1)->Sel([le(test.t1.a, 2)]))",
       "IndexLookUp(Index(t1.a)[[1,1]], Table(t1)->Sel([le(test.t1.b, 2)]))",
       "TableReader(Table(t2)->Sel([le(test.t2.a, 2)]))",
-      "Analyze{Index(a),Index(b)}",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
       "PartitionUnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
       "PartitionUnionAll{IndexReader(Index(t4.b)[[-inf,2)])->IndexReader(Index(t4.b)[[-inf,2)])}",
       "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))"
@@ -363,18 +476,18 @@
       {
         "SQL": "explain format = 'brief' select * from t where a = 7639902",
         "Plan": [
-          "IndexReader 6.68 root  index:IndexRangeScan",
-          "└─IndexRangeScan 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "IndexReader 5.95 root  index:IndexRangeScan",
+          "└─IndexRangeScan 5.95 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select c, b from t where a = 7639902 order by b asc limit 6",
         "Plan": [
-          "Projection 6.00 root  test.t.c, test.t.b",
-          "└─TopN 6.00 root  test.t.b, offset:0, count:6",
-          "  └─IndexReader 6.00 root  index:TopN",
-          "    └─TopN 6.00 cop[tikv]  test.t.b, offset:0, count:6",
-          "      └─IndexRangeScan 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "Projection 5.95 root  test.t.c, test.t.b",
+          "└─TopN 5.95 root  test.t.b, offset:0, count:6",
+          "  └─IndexReader 5.95 root  index:TopN",
+          "    └─TopN 5.95 cop[tikv]  test.t.b, offset:0, count:6",
+          "      └─IndexRangeScan 5.95 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
         ]
       }
     ]

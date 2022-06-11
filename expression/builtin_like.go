@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,7 @@ import (
 	"regexp"
 	"sync"
 
-	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -49,7 +50,7 @@ func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	sig := &builtinLikeSig{bf, nil, false, sync.Once{}}
 	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
 	return sig, nil
@@ -120,7 +121,7 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	var sig builtinFunc
 	if bf.collation == charset.CollationBin {
 		sig = newBuiltinRegexpSig(bf)

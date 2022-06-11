@@ -1,0 +1,1 @@
+../../naughty_strings/data/naughty_strings.escape.sql

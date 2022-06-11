@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,6 +23,7 @@ import (
 var (
 	errInvalidTableID            = dbterror.ClassAutoid.NewStd(mysql.ErrInvalidTableID)
 	errInvalidIncrementAndOffset = dbterror.ClassAutoid.NewStd(mysql.ErrInvalidIncrementAndOffset)
+	errNotImplemented            = dbterror.ClassAutoid.NewStd(mysql.ErrNotImplemented)
 	ErrAutoincReadFailed         = dbterror.ClassAutoid.NewStd(mysql.ErrAutoincReadFailed)
 	ErrWrongAutoKey              = dbterror.ClassAutoid.NewStd(mysql.ErrWrongAutoKey)
 	ErrInvalidAllocatorType      = dbterror.ClassAutoid.NewStd(mysql.ErrUnknownAllocatorType)
@@ -57,4 +59,8 @@ const (
 	AutoRandomRebaseOverflow = "alter auto_random_base to %d overflows the incremental bits, max allowed base is %d"
 	// AutoRandomAlterAddColumn is reported when adding an auto_random column.
 	AutoRandomAlterAddColumn = "unsupported add column '%s' constraint AUTO_RANDOM when altering '%s.%s'"
+	// AutoRandomAlterChangeFromAutoInc is reported when the column is changing from a non-auto_increment or a non-primary key.
+	AutoRandomAlterChangeFromAutoInc = "auto_random can only be converted from auto_increment clustered primary key"
+	// AutoRandomAllocatorNotFound is reported when auto_random ID allocator not found during changing from auto_inc to auto_random.
+	AutoRandomAllocatorNotFound = "auto_random ID allocator not found in table '%s.%s'"
 )

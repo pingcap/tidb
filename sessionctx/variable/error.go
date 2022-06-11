@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,6 +16,7 @@ package variable
 
 import (
 	mysql "github.com/pingcap/tidb/errno"
+	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -32,4 +34,13 @@ var (
 	ErrTruncatedWrongValue         = dbterror.ClassVariable.NewStd(mysql.ErrTruncatedWrongValue)
 	ErrMaxPreparedStmtCountReached = dbterror.ClassVariable.NewStd(mysql.ErrMaxPreparedStmtCountReached)
 	ErrUnsupportedIsolationLevel   = dbterror.ClassVariable.NewStd(mysql.ErrUnsupportedIsolationLevel)
+	errUnknownSystemVariable       = dbterror.ClassVariable.NewStd(mysql.ErrUnknownSystemVariable)
+	errGlobalVariable              = dbterror.ClassVariable.NewStd(mysql.ErrGlobalVariable)
+	errLocalVariable               = dbterror.ClassVariable.NewStd(mysql.ErrLocalVariable)
+	errValueNotSupportedWhen       = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("%s = OFF is not supported when %s = ON", nil))
+	// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
+	// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.
+	// It needs to be public for tests.
+	ErrFunctionsNoopImpl         = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
+	ErrVariableNoLongerSupported = dbterror.ClassVariable.NewStd(mysql.ErrVariableNoLongerSupported)
 )

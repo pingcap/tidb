@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/admin"
 )
 
 var (
@@ -49,11 +49,11 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
-	var ddlInfo *admin.DDLInfo
+	var ddlInfo *Info
 
 	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
-		ddlInfo, err1 = admin.GetDDLInfo(txn)
+		ddlInfo, err1 = GetDDLInfo(txn)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -656,6 +657,7 @@ const (
 	ErrBinlogUnsafeLimit                                     = 1668
 	ErrBinlogUnsafeInsertDelayed                             = 1669
 	ErrBinlogUnsafeAutoincColumns                            = 1671
+	ErrBinlogUnsafeSystemFunction                            = 1674
 	ErrBinlogUnsafeNontransAfterTrans                        = 1675
 	ErrMessageAndStatement                                   = 1676
 	ErrInsideTransactionPreventsSwitchBinlogFormat           = 1679
@@ -824,6 +826,8 @@ const (
 	ErrInvalidFieldSize                                      = 3013
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029
+	ErrUserLockWrongName                                     = 3057
+	ErrUserLockDeadlock                                      = 3058
 	ErrIncorrectType                                         = 3064
 	ErrFieldInOrderNotSelect                                 = 3065
 	ErrAggregateInOrderNotSelect                             = 3066
@@ -840,6 +844,7 @@ const (
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140
 	ErrInvalidJSONPath                                       = 3143
+	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146
 	ErrInvalidJSONPathWildcard                               = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
@@ -852,8 +857,14 @@ const (
 	ErrInvalidEncryptionOption                               = 3184
 	ErrTooLongValueForType                                   = 3505
 	ErrPKIndexCantBeInvisible                                = 3522
+	ErrGrantRole                                             = 3523
 	ErrRoleNotGranted                                        = 3530
 	ErrLockAcquireFailAndNoWaitSet                           = 3572
+	ErrCTERecursiveRequiresUnion                             = 3573
+	ErrCTERecursiveRequiresNonRecursiveFirst                 = 3574
+	ErrCTERecursiveForbidsAggregation                        = 3575
+	ErrCTERecursiveForbiddenJoinOrder                        = 3576
+	ErrInvalidRequiresSingleReference                        = 3577
 	ErrWindowNoSuchWindow                                    = 3579
 	ErrWindowCircularityInWindowGraph                        = 3580
 	ErrWindowNoChildPartitioning                             = 3581
@@ -875,6 +886,8 @@ const (
 	ErrWindowNoGroupOrderUnused                              = 3597
 	ErrWindowExplainJSON                                     = 3598
 	ErrWindowFunctionIgnoresFrame                            = 3599
+	ErrIllegalPrivilegeLevel                                 = 3619
+	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
 	ErrDataTruncatedFunctionalIndex                          = 3751
 	ErrDataOutOfRangeFunctionalIndex                         = 3752
@@ -882,20 +895,23 @@ const (
 	ErrFunctionalIndexRefAutoIncrement                       = 3754
 	ErrCannotDropColumnFunctionalIndex                       = 3755
 	ErrFunctionalIndexPrimaryKey                             = 3756
-	ErrFunctionalIndexOnLob                                  = 3757
+	ErrFunctionalIndexOnBlob                                 = 3757
 	ErrFunctionalIndexFunctionIsNotAllowed                   = 3758
 	ErrFulltextFunctionalIndex                               = 3759
 	ErrSpatialFunctionalIndex                                = 3760
 	ErrWrongKeyColumnFunctionalIndex                         = 3761
 	ErrFunctionalIndexOnField                                = 3762
 	ErrGeneratedColumnRowValueIsNotAllowed                   = 3764
+	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
+	ErrCannotConvertString                                   = 3854
 	ErrInvalidJSONValueForFuncIndex                          = 3903
 	ErrJSONValueOutOfRangeForFuncIndex                       = 3904
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
+	ErrDynamicPrivilegeNotRegistered                         = 3929
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
@@ -913,6 +929,8 @@ const (
 	ErrAdminCheckTable                     = 8003
 	ErrTxnTooLarge                         = 8004
 	ErrWriteConflictInTiDB                 = 8005
+	ErrOptOnTemporaryTable                 = 8006
+	ErrDropTableOnTemporaryTable           = 8007
 	ErrUnsupportedReloadPlugin             = 8018
 	ErrUnsupportedReloadPluginVar          = 8019
 	ErrTableLocked                         = 8020
@@ -992,6 +1010,18 @@ const (
 	ErrJSONObjectKeyTooLong                = 8129
 	ErrMultiStatementDisabled              = 8130
 	ErrPartitionStatsMissing               = 8131
+	ErrNotSupportedWithSem                 = 8132
+	ErrDataInconsistentMismatchCount       = 8133
+	ErrDataInconsistentMismatchIndex       = 8134
+	ErrAsOf                                = 8135
+	ErrVariableNoLongerSupported           = 8136
+	ErrAnalyzeMissColumn                   = 8137
+	ErrInconsistentRowValue                = 8138
+	ErrInconsistentHandle                  = 8139
+	ErrInconsistentIndexedValue            = 8140
+	ErrAssertionFailed                     = 8141
+	ErrInstanceScope                       = 8142
+	ErrNonTransactionalJobFailure          = 8143
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1017,7 +1047,7 @@ const (
 	ErrWriteOnSnapshot                    = 8220
 	ErrInvalidKey                         = 8221
 	ErrInvalidIndexKey                    = 8222
-	ErrDataInConsistent                   = 8223
+	ErrDataInconsistent                   = 8223
 	ErrDDLJobNotFound                     = 8224
 	ErrCancelFinishedDDLJob               = 8225
 	ErrCannotCancelDDLJob                 = 8226
@@ -1028,10 +1058,16 @@ const (
 	ErrUnsupportedConstraintCheck         = 8231
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
-	ErrInvalidPlacementSpec               = 8234
 	ErrDDLReorgElementNotExist            = 8235
 	ErrPlacementPolicyCheck               = 8236
-
+	ErrInvalidAttributesSpec              = 8237
+	ErrPlacementPolicyExists              = 8238
+	ErrPlacementPolicyNotExists           = 8239
+	ErrPlacementPolicyWithDirectOption    = 8240
+	ErrPlacementPolicyInUse               = 8241
+	ErrOptOnCacheTable                    = 8242
+	ErrHTTPServiceError                   = 8243
+	ErrPartitionColumnStatsMissing        = 8244
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

@@ -8,14 +8,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -37,8 +38,13 @@ func init() {
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
-	// keep the original coercibility values after folding
+	// keep the original coercibility, charset, collation and repertoire values after folding
 	e.SetCoercibility(expr.Coercibility())
+
+	charset, collate := expr.GetType().GetCharset(), expr.GetType().GetCollate()
+	e.GetType().SetCharset(charset)
+	e.GetType().SetCollate(collate)
+	e.SetRepertoire(expr.Repertoire())
 	return e
 }
 
@@ -59,7 +65,7 @@ func isNullHandler(expr *ScalarFunction) (Expression, bool) {
 		}
 		return &Constant{Value: value, RetType: expr.RetType}, false
 	}
-	if mysql.HasNotNullFlag(arg0.GetType().Flag) {
+	if mysql.HasNotNullFlag(arg0.GetType().GetFlag()) {
 		return NewZero(), false
 	}
 	return expr, false
@@ -120,7 +126,7 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 				foldedExpr, isDeferred := foldConstant(args[i+1])
 				isDeferredConst = isDeferredConst || isDeferred
 				if _, isConst := foldedExpr.(*Constant); isConst {
-					foldedExpr.GetType().Decimal = expr.GetType().Decimal
+					foldedExpr.GetType().SetDecimal(expr.GetType().GetDecimal())
 					return foldedExpr, isDeferredConst
 				}
 				return foldedExpr, isDeferredConst
@@ -137,10 +143,10 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 		foldedExpr, isDeferred := foldConstant(args[l-1])
 		isDeferredConst = isDeferredConst || isDeferred
 		if _, isConst := foldedExpr.(*Constant); isConst {
-			foldedExpr.GetType().Decimal = expr.GetType().Decimal
+			foldedExpr.GetType().SetDecimal(expr.GetType().GetDecimal())
 			return foldedExpr, isDeferredConst
 		}
-		return BuildCastFunction(expr.GetCtx(), foldedExpr, foldedExpr.GetType()), isDeferredConst
+		return foldedExpr, isDeferredConst
 	}
 	return expr, isDeferredConst
 }
@@ -151,7 +157,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil {
+		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(x.GetCtx(), []Expression{expr}) {
 			return function(x)
 		}
 
@@ -213,9 +219,9 @@ func foldConstant(expr Expression) (Expression, bool) {
 			// set right not null flag for constant value
 			switch value.Kind() {
 			case types.KindNull:
-				retType.Flag &= ^mysql.NotNullFlag
+				retType.DelFlag(mysql.NotNullFlag)
 			default:
-				retType.Flag |= mysql.NotNullFlag
+				retType.AddFlag(mysql.NotNullFlag)
 			}
 		}
 		if err != nil {

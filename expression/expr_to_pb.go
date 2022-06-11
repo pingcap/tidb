@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,15 +18,14 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
+	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -37,15 +37,14 @@ func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, clien
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).
-				GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
 		}
 		pbExpr = append(pbExpr, v)
 	}
 	return
 }
 
-// PbConverter supplys methods to convert TiDB expressions to TiPB.
+// PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
 	sc     *stmtctx.StatementContext
@@ -110,6 +109,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindString, types.KindBinaryLiteral:
 		tp = tipb.ExprType_String
 		val = d.GetBytes()
+	case types.KindMysqlBit:
+		tp = tipb.ExprType_MysqlBit
+		val = d.GetBytes()
 	case types.KindBytes:
 		tp = tipb.ExprType_Bytes
 		val = d.GetBytes()
@@ -133,7 +135,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.Tp, nil)
+			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.GetType(), nil)
 			if err != nil {
 				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
@@ -141,6 +143,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 			return tp, val, true
 		}
 		return tp, nil, false
+	case types.KindMysqlEnum:
+		tp = tipb.ExprType_MysqlEnum
+		val = codec.EncodeUint(nil, d.GetUint64())
 	default:
 		return tp, nil, false
 	}
@@ -150,62 +155,38 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 // ToPBFieldType converts *types.FieldType to *tipb.FieldType.
 func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	return &tipb.FieldType{
-		Tp:      int32(ft.Tp),
-		Flag:    uint32(ft.Flag),
-		Flen:    int32(ft.Flen),
-		Decimal: int32(ft.Decimal),
-		Charset: ft.Charset,
-		Collate: collationToProto(ft.Collate),
+		Tp:      int32(ft.GetType()),
+		Flag:    uint32(ft.GetFlag()),
+		Flen:    int32(ft.GetFlen()),
+		Decimal: int32(ft.GetDecimal()),
+		Charset: ft.GetCharset(),
+		Collate: collate.CollationToProto(ft.GetCollate()),
+		Elems:   ft.GetElems(),
 	}
 }
 
 // FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
 func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
-	return &types.FieldType{
-		Tp:      byte(ft.Tp),
-		Flag:    uint(ft.Flag),
-		Flen:    int(ft.Flen),
-		Decimal: int(ft.Decimal),
-		Charset: ft.Charset,
-		Collate: protoToCollation(ft.Collate),
-	}
-}
-
-func collationToProto(c string) int32 {
-	if coll, err := charset.GetCollationByName(c); err == nil {
-		return collate.RewriteNewCollationIDIfNeeded(int32(coll.ID))
-	}
-	v := collate.RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
-	logutil.BgLogger().Warn(
-		"Unable to get collation ID by name, use ID of the default collation instead",
-		zap.String("name", c),
-		zap.Int32("default collation ID", v),
-		zap.String("default collation", mysql.DefaultCollationName),
-	)
-	return v
-}
-
-func protoToCollation(c int32) string {
-	coll, err := charset.GetCollationByID(int(collate.RestoreCollationIDIfNeeded(c)))
-	if err == nil {
-		return coll.Name
-	}
-	logutil.BgLogger().Warn(
-		"Unable to get collation name from ID, use name of the default collation instead",
-		zap.Int32("id", c),
-		zap.Int("default collation ID", mysql.DefaultCollationID),
-		zap.String("default collation", mysql.DefaultCollationName),
-	)
-	return mysql.DefaultCollationName
+	ft1 := types.NewFieldTypeBuilder().SetType(byte(ft.Tp)).SetFlag(uint(ft.Flag)).SetFlen(int(ft.Flen)).SetDecimal(int(ft.Decimal)).SetCharset(ft.Charset).SetCollate(collate.ProtoToCollation(ft.Collate)).BuildP()
+	ft1.SetElems(ft.Elems)
+	return ft1
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
-	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeUnspecified:
+	switch column.GetType().GetType() {
+	case mysql.TypeBit:
+		if !IsPushDownEnabled(ast.TypeStr(column.GetType().GetType()), kv.TiKV) {
+			return nil
+		}
+	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 		return nil
+	case mysql.TypeEnum:
+		if !IsPushDownEnabled("enum", kv.UnSpecified) {
+			return nil
+		}
 	}
 
 	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
@@ -264,7 +245,8 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	// put collation information into the RetType enforcedly and push it down to TiKV/MockTiKV
 	tp := *expr.RetType
 	if collate.NewCollationEnabled() {
-		_, tp.Collate = expr.CharsetAndCollation(expr.GetCtx())
+		_, str1 := expr.CharsetAndCollation()
+		tp.SetCollate(str1)
 	}
 
 	// Construct expression ProtoBuf.

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,15 +25,18 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/config"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -131,7 +135,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
 		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
-	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
+	pdCli = util.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -154,7 +158,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 	}
 
 	pdClient := tikv.CodecPDClient{Client: pdCli}
-	s, err := tikv.NewKVStore(uuid, &pdClient, spkv, tikv.NewRPCClient(d.security))
+	s, err := tikv.NewKVStore(uuid, &pdClient, spkv, tikv.NewRPCClient(tikv.WithSecurity(d.security)))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -172,7 +176,6 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		etcdAddrs: etcdAddrs,
 		tlsConfig: tlsConfig,
 		memCache:  kv.NewCacheDB(),
-		pdClient:  &pdClient,
 		enableGC:  !disableGC,
 		coprStore: coprStore,
 	}
@@ -186,7 +189,6 @@ type tikvStore struct {
 	etcdAddrs []string
 	tlsConfig *tls.Config
 	memCache  kv.MemManager // this is used to query from memory
-	pdClient  pd.Client
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
 	coprStore *copr.Store
@@ -202,9 +204,9 @@ func (s *tikvStore) Describe() string {
 	return "TiKV is a distributed transactional key-value database"
 }
 
-var (
-	ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
-)
+var ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
+
+const getAllMembersBackoff = 5000
 
 // EtcdAddrs returns etcd server addresses.
 func (s *tikvStore) EtcdAddrs() ([]string, error) {
@@ -220,7 +222,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	}
 
 	ctx := context.Background()
-	bo := tikv.NewBackoffer(ctx, tikv.GetAllMembersBackoff)
+	bo := tikv.NewBackoffer(ctx, getAllMembersBackoff)
 	etcdAddrs := make([]string, 0)
 	pdClient := s.GetPDClient()
 	if pdClient == nil {
@@ -229,7 +231,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	for {
 		members, err := pdClient.GetAllMembers(ctx)
 		if err != nil {
-			err := bo.Backoff(tikv.BoRegionMiss, err)
+			err := bo.Backoff(tikv.BoRegionMiss(), err)
 			if err != nil {
 				return nil, err
 			}
@@ -260,9 +262,9 @@ func (s *tikvStore) StartGCWorker() error {
 		return nil
 	}
 
-	gcWorker, err := gcworker.NewGCWorker(s, s.pdClient)
+	gcWorker, err := gcworker.NewGCWorker(s, s.GetPDClient())
 	if err != nil {
-		return errors.Trace(err)
+		return derr.ToTiDBErr(err)
 	}
 	gcWorker.Start()
 	s.gcWorker = gcWorker
@@ -286,7 +288,8 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 	s.coprStore.Close()
-	return s.KVStore.Close()
+	err := s.KVStore.Close()
+	return derr.ToTiDBErr(err)
 }
 
 // GetMemCache return memory manager of the storage
@@ -295,44 +298,47 @@ func (s *tikvStore) GetMemCache() kv.MemManager {
 }
 
 // Begin a global transaction.
-func (s *tikvStore) Begin() (kv.Transaction, error) {
-	txn, err := s.KVStore.Begin()
+func (s *tikvStore) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) {
+	txn, err := s.KVStore.Begin(opts...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, derr.ToTiDBErr(err)
 	}
-	return txn_driver.NewTiKVTxn(txn), err
-}
-
-// BeginWithOption begins a transaction with given option
-func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
-	txnScope := option.TxnScope
-	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
-	}
-	var txn *tikv.KVTxn
-	var err error
-	if option.StartTS != nil {
-		txn, err = s.BeginWithStartTS(txnScope, *option.StartTS)
-	} else if option.PrevSec != nil {
-		txn, err = s.BeginWithExactStaleness(txnScope, *option.PrevSec)
-	} else {
-		txn, err = s.BeginWithTxnScope(txnScope)
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	return txn_driver.NewTiKVTxn(txn), err
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 // if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
-	return s.KVStore.GetSnapshot(ver.Ver)
+	return txn_driver.NewSnapshot(s.KVStore.GetSnapshot(ver.Ver))
 }
 
 // CurrentVersion returns current max committed version with the given txnScope (local or global).
 func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
-	return kv.NewVersion(ver), err
+	return kv.NewVersion(ver), derr.ToTiDBErr(err)
+}
+
+// ShowStatus returns the specified status of the storage
+func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, kv.ErrNotImplemented
+}
+
+// GetLockWaits get return lock waits info
+func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+	stores := s.GetRegionCache().GetStoresByType(tikvrpc.TiKV)
+	var result []*deadlockpb.WaitForEntry
+	for _, store := range stores {
+		resp, err := s.GetTiKVClient().SendRequest(context.TODO(), store.GetAddr(), tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}), time.Second*30)
+		if err != nil {
+			logutil.BgLogger().Warn("query lock wait info failed", zap.Error(err))
+			continue
+		}
+		if resp.Resp == nil {
+			logutil.BgLogger().Warn("lock wait info from store is nil")
+			continue
+		}
+		entries := resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries
+		result = append(result, entries...)
+	}
+	return result, nil
 }

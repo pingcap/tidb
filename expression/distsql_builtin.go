@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,27 +21,24 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // PbTypeToFieldType converts tipb.FieldType to FieldType
 func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
-	return &types.FieldType{
-		Tp:      byte(tp.Tp),
-		Flag:    uint(tp.Flag),
-		Flen:    int(tp.Flen),
-		Decimal: int(tp.Decimal),
-		Charset: tp.Charset,
-		Collate: protoToCollation(tp.Collate),
-	}
+	ftb := types.NewFieldTypeBuilder()
+	ft := ftb.SetType(byte(tp.Tp)).SetFlag(uint(tp.Flag)).SetFlen(int(tp.Flen)).SetDecimal(int(tp.Decimal)).SetCharset(tp.Charset).SetCollate(collate.ProtoToCollation(tp.Collate)).BuildP()
+	ft.SetElems(tp.Elems)
+	return ft
 }
 
 func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
@@ -219,7 +217,15 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_GreatestString:
 		f = &builtinGreatestStringSig{base}
 	case tipb.ScalarFuncSig_GreatestTime:
-		f = &builtinGreatestTimeSig{base}
+		f = &builtinGreatestTimeSig{base, false}
+	case tipb.ScalarFuncSig_GreatestDate:
+		f = &builtinGreatestTimeSig{base, true}
+	case tipb.ScalarFuncSig_GreatestCmpStringAsTime:
+		f = &builtinGreatestCmpStringAsTimeSig{base, false}
+	case tipb.ScalarFuncSig_GreatestCmpStringAsDate:
+		f = &builtinGreatestCmpStringAsTimeSig{base, true}
+	case tipb.ScalarFuncSig_GreatestDuration:
+		f = &builtinGreatestDurationSig{base}
 	case tipb.ScalarFuncSig_LeastInt:
 		f = &builtinLeastIntSig{base}
 	case tipb.ScalarFuncSig_LeastReal:
@@ -229,7 +235,15 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_LeastString:
 		f = &builtinLeastStringSig{base}
 	case tipb.ScalarFuncSig_LeastTime:
-		f = &builtinLeastTimeSig{base}
+		f = &builtinLeastTimeSig{base, false}
+	case tipb.ScalarFuncSig_LeastDate:
+		f = &builtinLeastTimeSig{base, true}
+	case tipb.ScalarFuncSig_LeastCmpStringAsTime:
+		f = &builtinLeastCmpStringAsTimeSig{base, false}
+	case tipb.ScalarFuncSig_LeastCmpStringAsDate:
+		f = &builtinLeastCmpStringAsTimeSig{base, true}
+	case tipb.ScalarFuncSig_LeastDuration:
+		f = &builtinLeastDurationSig{base}
 	case tipb.ScalarFuncSig_IntervalInt:
 		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
 	case tipb.ScalarFuncSig_IntervalReal:
@@ -320,8 +334,14 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinArithmeticModRealSig{base}
 	case tipb.ScalarFuncSig_ModDecimal:
 		f = &builtinArithmeticModDecimalSig{base}
-	case tipb.ScalarFuncSig_ModInt:
-		f = &builtinArithmeticModIntSig{base}
+	case tipb.ScalarFuncSig_ModIntUnsignedUnsigned:
+		f = &builtinArithmeticModIntUnsignedUnsignedSig{base}
+	case tipb.ScalarFuncSig_ModIntUnsignedSigned:
+		f = &builtinArithmeticModIntUnsignedSignedSig{base}
+	case tipb.ScalarFuncSig_ModIntSignedUnsigned:
+		f = &builtinArithmeticModIntSignedUnsignedSig{base}
+	case tipb.ScalarFuncSig_ModIntSignedSigned:
+		f = &builtinArithmeticModIntSignedSignedSig{base}
 	case tipb.ScalarFuncSig_MultiplyIntUnsigned:
 		f = &builtinArithmeticMultiplyIntUnsignedSig{base}
 	case tipb.ScalarFuncSig_AbsInt:
@@ -415,6 +435,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinTruncateRealSig{base}
 	case tipb.ScalarFuncSig_TruncateDecimal:
 		f = &builtinTruncateDecimalSig{base}
+	case tipb.ScalarFuncSig_TruncateUint:
+		f = &builtinTruncateUintSig{base}
 	case tipb.ScalarFuncSig_LogicalAnd:
 		f = &builtinLogicAndSig{base}
 	case tipb.ScalarFuncSig_LogicalOr:
@@ -641,10 +663,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{base, nil, false, sync.Once{}}
-	// case tipb.ScalarFuncSig_RegexpSig:
-	// 	f = &builtinRegexpSig{base}
-	// case tipb.ScalarFuncSig_RegexpUTF8Sig:
-	// 	f = &builtinRegexpUTF8Sig{base}
+	case tipb.ScalarFuncSig_RegexpSig:
+		f = newBuiltinRegexpSig(base)
+	case tipb.ScalarFuncSig_RegexpUTF8Sig:
+		f = newBuiltinRegexpUTF8Sig(base)
 	case tipb.ScalarFuncSig_JsonExtractSig:
 		f = &builtinJSONExtractSig{base}
 	case tipb.ScalarFuncSig_JsonUnquoteSig:
@@ -925,6 +947,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinCharSig{base}
 	case tipb.ScalarFuncSig_CharLengthUTF8:
 		f = &builtinCharLengthUTF8Sig{base}
+	case tipb.ScalarFuncSig_CharLength:
+		f = &builtinCharLengthBinarySig{base}
 	case tipb.ScalarFuncSig_Concat:
 		f = &builtinConcatSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_ConcatWS:
@@ -983,6 +1007,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinLocate3ArgsSig{base}
 	case tipb.ScalarFuncSig_Lower:
 		f = &builtinLowerSig{base}
+	case tipb.ScalarFuncSig_LowerUTF8:
+		f = &builtinLowerUTF8Sig{base}
 	case tipb.ScalarFuncSig_LpadUTF8:
 		f = &builtinLpadUTF8Sig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Lpad:
@@ -1041,6 +1067,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUnHexSig{base}
 	case tipb.ScalarFuncSig_Upper:
 		f = &builtinUpperSig{base}
+	case tipb.ScalarFuncSig_UpperUTF8:
+		f = &builtinUpperUTF8Sig{base}
+	case tipb.ScalarFuncSig_ToBinary:
+		f = &builtinInternalToBinarySig{base}
+	case tipb.ScalarFuncSig_FromBinary:
+		f = &builtinInternalFromBinarySig{base}
 
 	default:
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
@@ -1099,6 +1131,8 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		return convertString(expr.Val, expr.FieldType)
 	case tipb.ExprType_Bytes:
 		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
+	case tipb.ExprType_MysqlBit:
+		return &Constant{Value: types.NewMysqlBitDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
 	case tipb.ExprType_Float32:
 		return convertFloat(expr.Val, true)
 	case tipb.ExprType_Float64:
@@ -1111,6 +1145,8 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		return convertTime(expr.Val, expr.FieldType, sc.TimeZone)
 	case tipb.ExprType_MysqlJson:
 		return convertJSON(expr.Val)
+	case tipb.ExprType_MysqlEnum:
+		return convertEnum(expr.Val, expr.FieldType)
 	}
 	if expr.Tp != tipb.ExprType_ScalarFunc {
 		panic("should be a tipb.ExprType_ScalarFunc")
@@ -1150,13 +1186,13 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 		return nil, err
 	}
 	var t types.Time
-	t.SetType(ft.Tp)
-	t.SetFsp(int8(ft.Decimal))
+	t.SetType(ft.GetType())
+	t.SetFsp(ft.GetDecimal())
 	err = t.FromPackedUint(v)
 	if err != nil {
 		return nil, err
 	}
-	if ft.Tp == mysql.TypeTimestamp && tz != time.UTC {
+	if ft.GetType() == mysql.TypeTimestamp && tz != time.UTC {
 		err = t.ConvertTimeZone(time.UTC, tz)
 		if err != nil {
 			return nil, err
@@ -1197,12 +1233,14 @@ func convertUint(val []byte) (*Constant, error) {
 		return nil, errors.Errorf("invalid uint % x", val)
 	}
 	d.SetUint64(u)
-	return &Constant{Value: d, RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, nil
+	ftp := types.NewFieldTypeBuilder()
+	ftp.SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag)
+	return &Constant{Value: d, RetType: ftp.BuildP()}, nil
 }
 
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
-	d.SetBytesAsString(val, protoToCollation(tp.Collate), uint32(tp.Flen))
+	d.SetBytesAsString(val, collate.ProtoToCollation(tp.Collate), uint32(tp.Flen))
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
 }
 
@@ -1252,4 +1290,21 @@ func convertJSON(val []byte) (*Constant, error) {
 		return nil, errors.Errorf("invalid Datum.Kind() %d", d.Kind())
 	}
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeJSON)}, nil
+}
+
+func convertEnum(val []byte, tp *tipb.FieldType) (*Constant, error) {
+	_, uVal, err := codec.DecodeUint(val)
+	if err != nil {
+		return nil, errors.Errorf("invalid enum % x", val)
+	}
+	// If uVal is 0, it should return Enum{}
+	var e = types.Enum{}
+	if uVal != 0 {
+		e, err = types.ParseEnumValue(tp.Elems, uVal)
+		if err != nil {
+			return nil, err
+		}
+	}
+	d := types.NewMysqlEnumDatum(e)
+	return &Constant{Value: d, RetType: FieldTypeFromPB(tp)}, nil
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,7 +16,6 @@ package expensivequery
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -65,7 +65,7 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	}
 	record.lastProfileFileName = make([][]string, 2)
 	// Read last records
-	files, err := ioutil.ReadDir(record.tmpDir)
+	files, err := os.ReadDir(record.tmpDir)
 	if err != nil {
 		record.err = err
 		return
@@ -83,7 +83,6 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 		}
 	}
 	record.initialized = true
-	return
 }
 
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.

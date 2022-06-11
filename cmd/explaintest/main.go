@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,7 +20,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,8 +29,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -41,11 +40,12 @@ import (
 const dbName = "test"
 
 var (
-	logLevel   string
-	port       uint
-	statusPort uint
-	record     bool
-	create     bool
+	logLevel         string
+	port             uint
+	statusPort       uint
+	record           bool
+	create           bool
+	collationDisable bool
 )
 
 func init() {
@@ -54,6 +54,7 @@ func init() {
 	flag.UintVar(&statusPort, "status", 10080, "tidb server status port [default: 10080]")
 	flag.BoolVar(&record, "record", false, "record the test output in the result file")
 	flag.BoolVar(&create, "create", false, "create and import data into table, and save json file of stats")
+	flag.BoolVar(&collationDisable, "collation-disable", false, "run collation related-test with new-collation disabled")
 }
 
 var mdb *sql.DB
@@ -85,6 +86,13 @@ type tester struct {
 	resultFD *os.File
 	// ctx is used for Compile sql statement
 	ctx sessionctx.Context
+
+	// outputLen, lastQuery, lastLine and lastResult are used for checking the correctness of last query.
+	// See https://github.com/pingcap/tidb/issues/29475 for details.
+	outputLen  int
+	lastText   string
+	lastQuery  query
+	lastResult []byte
 }
 
 func newTester(name string) *tester {
@@ -94,7 +102,6 @@ func newTester(name string) *tester {
 	t.enableQueryLog = true
 	t.ctx = mock.NewContext()
 	t.ctx.GetSessionVars().EnableWindowFunction = true
-	t.ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered = true
 	return t
 }
 
@@ -161,11 +168,15 @@ LOOP:
 		}
 	}
 
+	if err = t.checkLastResult(); err != nil {
+		return errors.Annotate(err, fmt.Sprintf("sql:%v", t.lastQuery.Query))
+	}
+
 	return t.flushResult()
 }
 
 func (t *tester) loadQueries() ([]query, error) {
-	data, err := ioutil.ReadFile(t.testFileName())
+	data, err := os.ReadFile(t.testFileName())
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +223,14 @@ func (t *tester) parserErrorHandle(query query, err error) error {
 				t.buf.WriteString("\n")
 			}
 
+			t.buf.WriteString(fmt.Sprintf("%s\n", err))
+			err = nil
+			break
+		}
+		if strings.Contains(err.Error(), expectedErr) {
+			if t.enableQueryLog {
+				t.buf.WriteString(fmt.Sprintf("%s\n", query.Query))
+			}
 			t.buf.WriteString(fmt.Sprintf("%s\n", err))
 			err = nil
 			break
@@ -342,19 +361,21 @@ func (t *tester) execute(query query) error {
 		}
 
 		if err != nil && len(t.expectedErrs) > 0 {
-			// TODO: check whether this err is expected.
-			// but now we think it is.
-
-			// output expected err
-			t.buf.WriteString(fmt.Sprintf("%s\n", err))
-			err = nil
+			for _, expectErr := range t.expectedErrs {
+				if strings.Contains(err.Error(), expectErr) {
+					// output expected err
+					t.buf.WriteString(fmt.Sprintf("%s\n", err))
+					err = nil
+					break
+				}
+			}
 		}
 		// clear expected errors after we execute the first query
 		t.expectedErrs = nil
 		t.singleQuery = false
 
 		if err != nil {
-			return errors.Trace(errors.Errorf("run \"%v\" at line %d err %v", st.Text(), query.Line, err))
+			return errors.Trace(errors.Errorf("run \"%v\" at line %d err %v", qText, query.Line, err))
 		}
 
 		if !record && !create {
@@ -363,11 +384,15 @@ func (t *tester) execute(query query) error {
 
 			buf := make([]byte, t.buf.Len()-offset)
 			if _, err = t.resultFD.ReadAt(buf, int64(offset)); !(err == nil || err == io.EOF) {
-				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", st.Text(), query.Line, gotBuf, err))
+				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", qText, query.Line, gotBuf, err))
 			}
 			if !bytes.Equal(gotBuf, buf) {
-				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", query.Query, query.Line, buf, gotBuf))
+				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", qText, query.Line, buf, gotBuf))
 			}
+			t.outputLen = t.buf.Len()
+			t.lastText = qText
+			t.lastQuery = query
+			t.lastResult = gotBuf
 		}
 	}
 	return errors.Trace(err)
@@ -429,12 +454,17 @@ func (t *tester) create(tableName string, qText string) error {
 		return err
 	}
 
-	js, err := ioutil.ReadAll(resp.Body)
+	js, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	return ioutil.WriteFile(t.statsFileName(tableName), js, 0644)
+	err = resp.Body.Close()
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(t.statsFileName(tableName), js, 0600)
 }
 
 func (t *tester) commit() error {
@@ -505,8 +535,8 @@ func (t *tester) executeStmt(query string) error {
 			}
 			t.buf.WriteString("\n")
 		}
-		err = rows.Err()
-		if err != nil {
+
+		if err = rows.Err(); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
@@ -533,7 +563,7 @@ func (t *tester) flushResult() error {
 	if !record {
 		return nil
 	}
-	return ioutil.WriteFile(t.resultFileName(), t.buf.Bytes(), 0644)
+	return os.WriteFile(t.resultFileName(), t.buf.Bytes(), 0600)
 }
 
 func (t *tester) statsFileName(tableName string) string {
@@ -547,12 +577,42 @@ func (t *tester) testFileName() string {
 
 func (t *tester) resultFileName() string {
 	// test and result must be in current ./r, the same as MySQL
-	return fmt.Sprintf("./r/%s.result", t.name)
+	name := t.name
+	if strings.HasPrefix(name, "collation") {
+		if collationDisable {
+			name = name + "_disabled"
+		} else {
+			name = name + "_enabled"
+		}
+	}
+	return fmt.Sprintf("./r/%s.result", name)
+}
+
+func (t *tester) checkLastResult() error {
+	if record || create || t.outputLen == 0 {
+		return nil
+	}
+	fi, err := t.resultFD.Stat()
+	if err != nil {
+		return err
+	}
+	size := fi.Size()
+	if size == int64(t.outputLen) {
+		return nil
+	}
+	buf := make([]byte, int(size)-t.outputLen+len(t.lastResult))
+	if _, err = t.resultFD.ReadAt(buf, int64(t.outputLen-len(t.lastResult))); !(err == nil || err == io.EOF) {
+		return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", t.lastText, t.lastQuery.Line, t.lastResult, err))
+	}
+	if !bytes.Equal(t.lastResult, buf) {
+		return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", t.lastText, t.lastQuery.Line, buf, t.lastResult))
+	}
+	return nil
 }
 
 func loadAllTests() ([]string, error) {
 	// tests must be in t folder
-	files, err := ioutil.ReadDir("./t")
+	files, err := os.ReadDir("./t")
 	if err != nil {
 		return nil, err
 	}
@@ -566,6 +626,9 @@ func loadAllTests() ([]string, error) {
 		// the test file must have a suffix .test
 		name := f.Name()
 		if strings.HasSuffix(name, ".test") {
+			if collationDisable && !strings.HasPrefix(name, "collation") {
+				continue
+			}
 			name = strings.TrimSuffix(name, ".test")
 
 			if create && !strings.HasSuffix(name, "_stats") {
@@ -614,7 +677,7 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 func main() {
 	flag.Parse()
 
-	err := logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		panic("init logger fail, " + err.Error())
 	}
@@ -658,15 +721,14 @@ func main() {
 		"set @@tidb_projection_concurrency=4",
 		"set @@tidb_distsql_scan_concurrency=15",
 		"set @@global.tidb_enable_clustered_index=0;",
-		"set @@tidb_int_primary_key_default_as_clustered=1",
+		"set @@global.tidb_mem_quota_query=34359738368",
+		"set @@tidb_mem_quota_query=34359738368",
 	}
 	for _, sql := range resets {
 		if _, err = mdb.Exec(sql); err != nil {
 			log.Fatal(fmt.Sprintf("%s failed", sql), zap.Error(err))
 		}
 	}
-	// Wait global variables to reload.
-	time.Sleep(domain.GlobalVariableCacheExpiry)
 
 	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
 		log.Fatal("set sql_mode='STRICT_TRANS_TABLES' failed", zap.Error(err))
@@ -703,7 +765,7 @@ func main() {
 	log.Info("Explain test passed")
 }
 
-var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
+var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin", "with", "trace"}
 
 func trimSQL(sql string) string {
 	// Trim space.

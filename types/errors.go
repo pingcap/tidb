@@ -8,14 +8,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package types
 
 import (
-	parser_types "github.com/pingcap/parser/types"
 	mysql "github.com/pingcap/tidb/errno"
+	parser_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -48,7 +49,7 @@ var (
 	ErrTooBigSet = dbterror.ClassTypes.NewStd(mysql.ErrTooBigSet)
 	// ErrTooBigScale is returned when type DECIMAL/NUMERIC scale is bigger than mysql.MaxDecimalScale.
 	ErrTooBigScale = dbterror.ClassTypes.NewStd(mysql.ErrTooBigScale)
-	// ErrTooBigPrecision is returned when type DECIMAL/NUMERIC precision is bigger than mysql.MaxDecimalWidth
+	// ErrTooBigPrecision is returned when type DECIMAL/NUMERIC or DATETIME precision is bigger than mysql.MaxDecimalWidth or types.MaxFsp
 	ErrTooBigPrecision = dbterror.ClassTypes.NewStd(mysql.ErrTooBigPrecision)
 	// ErrBadNumber is return when parsing an invalid binary decimal number.
 	ErrBadNumber = dbterror.ClassTypes.NewStd(mysql.ErrBadNumber)
@@ -86,4 +87,7 @@ var (
 	// ErrPartitionStatsMissing is returned when the partition-level stats is missing and the build global-level stats fails.
 	// Put this error here is to prevent `import cycle not allowed`.
 	ErrPartitionStatsMissing = dbterror.ClassTypes.NewStd(mysql.ErrPartitionStatsMissing)
+	// ErrPartitionColumnStatsMissing is returned when the partition-level column stats is missing and the build global-level stats fails.
+	// Put this error here is to prevent `import cycle not allowed`.
+	ErrPartitionColumnStatsMissing = dbterror.ClassTypes.NewStd(mysql.ErrPartitionColumnStatsMissing)
 )

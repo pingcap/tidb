@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,16 +16,16 @@ package core
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"golang.org/x/exp/slices"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -127,13 +128,16 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 }
 
 // inlineProjection prunes unneeded columns inline a executor.
-func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column) {
+func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) {
+	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
+			prunedColumns = append(prunedColumns, s.Schema().Columns[i])
 			s.schema.Columns = append(s.Schema().Columns[:i], s.Schema().Columns[i+1:]...)
 		}
 	}
+	appendColumnPruneTraceStep(s.self, prunedColumns, opt)
 }
 
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
@@ -281,7 +285,7 @@ func GetStatsInfo(i interface{}) map[string]uint64 {
 	return statsInfos
 }
 
-// extractStringFromStringSet helps extract string info from set.StringSet
+// extractStringFromStringSet helps extract string info from set.StringSet.
 func extractStringFromStringSet(set set.StringSet) string {
 	if len(set) < 1 {
 		return ""
@@ -290,8 +294,43 @@ func extractStringFromStringSet(set set.StringSet) string {
 	for k := range set {
 		l = append(l, fmt.Sprintf(`"%s"`, k))
 	}
-	sort.Strings(l)
-	return fmt.Sprintf("%s", strings.Join(l, ","))
+	slices.Sort(l)
+	return strings.Join(l, ",")
+}
+
+// extractStringFromStringSlice helps extract string info from []string.
+func extractStringFromStringSlice(ss []string) string {
+	if len(ss) < 1 {
+		return ""
+	}
+	slices.Sort(ss)
+	return strings.Join(ss, ",")
+}
+
+// extractStringFromUint64Slice helps extract string info from uint64 slice.
+func extractStringFromUint64Slice(slice []uint64) string {
+	if len(slice) < 1 {
+		return ""
+	}
+	l := make([]string, 0, len(slice))
+	for _, k := range slice {
+		l = append(l, fmt.Sprintf(`%d`, k))
+	}
+	slices.Sort(l)
+	return strings.Join(l, ",")
+}
+
+// extractStringFromBoolSlice helps extract string info from bool slice.
+func extractStringFromBoolSlice(slice []bool) string {
+	if len(slice) < 1 {
+		return ""
+	}
+	l := make([]string, 0, len(slice))
+	for _, k := range slice {
+		l = append(l, fmt.Sprintf(`%t`, k))
+	}
+	slices.Sort(l)
+	return strings.Join(l, ",")
 }
 
 func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bool {
