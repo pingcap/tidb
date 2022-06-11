@@ -462,6 +462,7 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 // Execute implements glue.Session
 // These queries execute without privilege checking, since the calling statements
 // such as BACKUP and RESTORE have already been privilege checked.
+// NOTE: Maybe drain the restult too? See `gluetidb.tidbSession.ExecuteInternal` for more details.
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 	_, _, err := gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql)
 	return err
@@ -521,6 +522,11 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(ctx context.Context, policy *mo
 
 // Close implements glue.Session
 func (gs *tidbGlueSession) Close() {
+}
+
+// GetGlobalVariables implements glue.Session.
+func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
 // Open implements glue.Glue

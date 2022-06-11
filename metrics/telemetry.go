@@ -67,3 +67,22 @@ func GetCTECounter() CTEUsageCounter {
 		NonCTEUsed:          readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "notCTE"})),
 	}
 }
+
+// NonTransactionalStmtCounter records the usages of non-transactional statements.
+type NonTransactionalStmtCounter struct {
+	DeleteCount int64 `json:"delete"`
+}
+
+// Sub returns the difference of two counters.
+func (n NonTransactionalStmtCounter) Sub(rhs NonTransactionalStmtCounter) NonTransactionalStmtCounter {
+	return NonTransactionalStmtCounter{
+		DeleteCount: n.DeleteCount - rhs.DeleteCount,
+	}
+}
+
+// GetNonTransactionalStmtCounter gets the NonTransactionalStmtCounter.
+func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
+	return NonTransactionalStmtCounter{
+		DeleteCount: readCounter(NonTransactionalDeleteCount),
+	}
+}

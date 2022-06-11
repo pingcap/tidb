@@ -16,10 +16,11 @@ package schemacmp_test
 
 import (
 	"bytes"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/mysql"
 	. "github.com/pingcap/tidb/util/schemacmp"
+	"github.com/stretchr/testify/require"
 )
 
 // eqBytes is a sample type used for testing EqualitySingleton.
@@ -71,11 +72,7 @@ func (uintMap) ShouldDeleteIncompatibleJoin() bool {
 	return true
 }
 
-type latticeSchema struct{}
-
-var _ = Suite(&latticeSchema{})
-
-func (*latticeSchema) TestCompatibilities(c *C) {
+func TestCompatibilities(t *testing.T) {
 	testCases := []struct {
 		a             Lattice
 		b             Lattice
@@ -553,53 +550,49 @@ func (*latticeSchema) TestCompatibilities(c *C) {
 	}
 
 	for _, tc := range testCases {
-		assert := func(obtained interface{}, checker Checker, args ...interface{}) {
-			args = append(args, Commentf("test case = %+v", tc))
-			c.Assert(obtained, checker, args...)
-		}
 
 		cmp, err := tc.a.Compare(tc.b)
 		if len(tc.compareError) != 0 {
-			assert(err, FitsTypeOf, &IncompatibleError{})
-			assert(err, ErrorMatches, tc.compareError)
+			require.IsType(t, &IncompatibleError{}, err)
+			require.Regexp(t, tc.compareError, err)
 		} else {
-			assert(err, IsNil)
-			assert(cmp, Equals, tc.compareResult)
+			require.NoError(t, err)
+			require.Equal(t, tc.compareResult, cmp)
 		}
 
 		cmp, err = tc.b.Compare(tc.a)
 		if len(tc.compareError) != 0 {
-			assert(err, FitsTypeOf, &IncompatibleError{})
-			assert(err, ErrorMatches, tc.compareError)
+			require.IsType(t, &IncompatibleError{}, err)
+			require.Regexp(t, tc.compareError, err)
 		} else {
-			assert(err, IsNil)
-			assert(cmp, Equals, -tc.compareResult)
+			require.NoError(t, err)
+			require.Equal(t, -tc.compareResult, cmp)
 		}
 
 		join, err := tc.a.Join(tc.b)
 		if len(tc.joinError) != 0 {
-			assert(err, FitsTypeOf, &IncompatibleError{})
-			assert(err, ErrorMatches, tc.joinError)
+			require.IsType(t, &IncompatibleError{}, err)
+			require.Regexp(t, tc.joinError, err)
 		} else {
-			assert(err, IsNil)
-			assert(tc.join, DeepEquals, join)
+			require.NoError(t, err)
+			require.Equal(t, tc.join, join)
 		}
 
 		join, err = tc.b.Join(tc.a)
 		if len(tc.joinError) != 0 {
-			assert(err, FitsTypeOf, &IncompatibleError{})
-			assert(err, ErrorMatches, tc.joinError)
+			require.IsType(t, &IncompatibleError{}, err)
+			require.Regexp(t, tc.joinError, err)
 		} else {
-			assert(err, IsNil)
-			assert(tc.join, DeepEquals, join)
+			require.NoError(t, err)
+			require.Equal(t, tc.join, join)
 
 			cmp, err = join.Compare(tc.a)
-			assert(err, IsNil)
-			assert(cmp, GreaterEqual, 0)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, cmp, 0)
 
 			cmp, err = join.Compare(tc.b)
-			assert(err, IsNil)
-			assert(cmp, GreaterEqual, 0)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, cmp, 0)
 		}
 	}
 }

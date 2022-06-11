@@ -77,7 +77,7 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error
 	autoIDFn := func(id int64) int64 { return id }
 	if meta.PKIsHandle && meta.ContainsAutoRandomBits() {
 		for _, col := range cols {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
 				autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits // nolint:gosec
 				autoIDFn = func(id int64) int64 {
@@ -112,9 +112,9 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error
 }
 
 func autoRandomIncrementBits(col *table.Column, randomBits int) int {
-	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[col.Tp] * 8
+	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[col.GetType()] * 8
 	incrementalBits := typeBitsLength - randomBits
-	hasSignBit := !mysql.HasUnsignedFlag(col.Flag)
+	hasSignBit := !mysql.HasUnsignedFlag(col.GetFlag())
 	if hasSignBit {
 		incrementalBits--
 	}
@@ -356,50 +356,27 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 
 	meta := kvcodec.tbl.Meta()
-	isAutoRandom := meta.PKIsHandle && meta.ContainsAutoRandomBits()
 	for i, col := range cols {
+		var theDatum *types.Datum = nil
 		j := columnPermutation[i]
-		isAutoIncCol := mysql.HasAutoIncrementFlag(col.Flag)
-		isPk := mysql.HasPriKeyFlag(col.Flag)
-		switch {
-		case j >= 0 && j < len(row):
-			value, err = table.CastValue(kvcodec.se, row[j], col.ToInfo(), false, false)
-			if err == nil {
-				err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx)
-			}
-		case isAutoIncCol:
-			// we still need a conversion, e.g. to catch overflow with a TINYINT column.
-			value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo(), false, false)
-		case isAutoRandom && isPk:
-			var val types.Datum
-			realRowID := kvcodec.autoIDFn(rowID)
-			if mysql.HasUnsignedFlag(col.Flag) {
-				val = types.NewUintDatum(uint64(realRowID))
-			} else {
-				val = types.NewIntDatum(realRowID)
-			}
-			value, err = table.CastValue(kvcodec.se, val, col.ToInfo(), false, false)
-		case col.IsGenerated():
-			// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
-			// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
-			value = types.GetMinValue(&col.FieldType)
-		default:
-			value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
+		if j >= 0 && j < len(row) {
+			theDatum = &row[j]
 		}
+		value, err = kvcodec.getActualDatum(rowID, i, theDatum)
 		if err != nil {
 			return nil, logKVConvertFailed(logger, row, j, col.ToInfo(), err)
 		}
 
 		record = append(record, value)
 
-		if isAutoRandom && isPk {
+		if isTableAutoRandom(meta) && isPKCol(col.ToInfo()) {
 			incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
 			if err := alloc.Rebase(context.Background(), value.GetInt64()&((1<<incrementalBits)-1), false); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		if isAutoIncCol {
+		if isAutoIncCol(col.ToInfo()) {
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoIncrementType)
 			if err := alloc.Rebase(context.Background(), getAutoRecordID(value, &col.FieldType), false); err != nil {
 				return nil, errors.Trace(err)
@@ -450,17 +427,79 @@ func (kvcodec *tableKVEncoder) Encode(
 	return kvPairs, nil
 }
 
+func isTableAutoRandom(tblMeta *model.TableInfo) bool {
+	return tblMeta.PKIsHandle && tblMeta.ContainsAutoRandomBits()
+}
+
+func isAutoIncCol(colInfo *model.ColumnInfo) bool {
+	return mysql.HasAutoIncrementFlag(colInfo.GetFlag())
+}
+
+func isPKCol(colInfo *model.ColumnInfo) bool {
+	return mysql.HasPriKeyFlag(colInfo.GetFlag())
+}
+
+func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
+	var (
+		value types.Datum
+		err   error
+	)
+
+	tblMeta := kvcodec.tbl.Meta()
+	cols := kvcodec.tbl.Cols()
+
+	// Since this method is only called when iterating the columns in the `Encode()` method,
+	// we can assume that the `colIndex` always have a valid input
+	col := cols[colIndex]
+
+	isBadNullValue := false
+	if inputDatum != nil {
+		value, err = table.CastValue(kvcodec.se, *inputDatum, col.ToInfo(), false, false)
+		if err != nil {
+			return value, err
+		}
+		if err := col.CheckNotNull(&value); err == nil {
+			return value, nil // the most normal case
+		}
+		isBadNullValue = true
+	}
+	// handle special values
+	switch {
+	case isAutoIncCol(col.ToInfo()):
+		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
+		value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo(), false, false)
+	case isTableAutoRandom(tblMeta) && isPKCol(col.ToInfo()):
+		var val types.Datum
+		realRowID := kvcodec.autoIDFn(rowID)
+		if mysql.HasUnsignedFlag(col.GetFlag()) {
+			val = types.NewUintDatum(uint64(realRowID))
+		} else {
+			val = types.NewIntDatum(realRowID)
+		}
+		value, err = table.CastValue(kvcodec.se, val, col.ToInfo(), false, false)
+	case col.IsGenerated():
+		// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
+		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
+		value = types.GetMinValue(&col.FieldType)
+	case isBadNullValue:
+		err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx)
+	default:
+		value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
+	}
+	return value, err
+}
+
 // get record value for auto-increment field
 //
 // See: https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
 func getAutoRecordID(d types.Datum, target *types.FieldType) int64 {
-	switch target.Tp {
+	switch target.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		return int64(math.Round(d.GetFloat64()))
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		return d.GetInt64()
 	default:
-		panic(fmt.Sprintf("unsupported auto-increment field type '%d'", target.Tp))
+		panic(fmt.Sprintf("unsupported auto-increment field type '%d'", target.GetType()))
 	}
 }
 

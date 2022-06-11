@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -488,7 +488,6 @@ func TestMetricTables(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	statistics.ClearHistoryJobs()
 	tk.MustExec("use information_schema")
 	tk.MustQuery("select count(*) > 0 from `METRICS_TABLES`").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from `METRICS_TABLES` where table_name='tidb_qps'").
@@ -513,7 +512,21 @@ func TestForAnalyzeStatus(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	statistics.ClearHistoryJobs()
+	analyzeStatusTable := "CREATE TABLE `ANALYZE_STATUS` (\n" +
+		"  `TABLE_SCHEMA` varchar(64) DEFAULT NULL,\n" +
+		"  `TABLE_NAME` varchar(64) DEFAULT NULL,\n" +
+		"  `PARTITION_NAME` varchar(64) DEFAULT NULL,\n" +
+		"  `JOB_INFO` longtext DEFAULT NULL,\n" +
+		"  `PROCESSED_ROWS` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `START_TIME` datetime DEFAULT NULL,\n" +
+		"  `END_TIME` datetime DEFAULT NULL,\n" +
+		"  `STATE` varchar(64) DEFAULT NULL,\n" +
+		"  `FAIL_REASON` longtext DEFAULT NULL,\n" +
+		"  `INSTANCE` varchar(512) DEFAULT NULL,\n" +
+		"  `PROCESS_ID` bigint(64) unsigned DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	tk.MustQuery("show create table information_schema.analyze_status").Check(testkit.Rows("ANALYZE_STATUS " + analyzeStatusTable))
+	tk.MustExec("delete from mysql.analyze_jobs")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists analyze_test")
 	tk.MustExec("create table analyze_test (a int, b int, index idx(a))")
@@ -547,8 +560,17 @@ func TestForAnalyzeStatus(t *testing.T) {
 	rows := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort().Rows()
 	require.Greater(t, len(rows), 0)
 	for _, row := range rows {
-		require.Len(t, row, 8)    // test length of row
-		require.NotNil(t, row[6]) // test `End_time` field
+		require.Len(t, row, 11) // test length of row
+		// test `End_time` field
+		str, ok := row[6].(string)
+		require.True(t, ok)
+		_, err := time.Parse("2006-01-02 15:04:05", str)
+		require.NoError(t, err)
+	}
+	rows2 := tk.MustQuery("show analyze status where TABLE_NAME='t1'").Sort().Rows()
+	require.Equal(t, len(rows), len(rows2))
+	for i, row2 := range rows2 {
+		require.Equal(t, rows[i], row2)
 	}
 }
 
@@ -582,7 +604,6 @@ func TestForTableTiFlashReplica(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx(a))")
@@ -630,4 +651,62 @@ func TestTablesPKType(t *testing.T) {
 	tk.MustExec("create table t_common (a varchar(64) primary key, b int)")
 	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_common'").Check(testkit.Rows("CLUSTERED"))
 	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'").Check(testkit.Rows("NONCLUSTERED"))
+}
+
+// https://github.com/pingcap/tidb/issues/32459.
+func TestJoinSystemTableContainsView(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a timestamp, b int);")
+	tk.MustExec("insert into t values (null, 100);")
+	tk.MustExec("create view v as select * from t;")
+	// This is used by grafana when TiDB is specified as the data source.
+	// See https://github.com/grafana/grafana/blob/e86b6662a187c77656f72bef3b0022bf5ced8b98/public/app/plugins/datasource/mysql/meta_query.ts#L31
+	for i := 0; i < 10; i++ {
+		tk.MustQuery(`
+SELECT
+    table_name as table_name,
+    ( SELECT
+        column_name as column_name
+      FROM information_schema.columns c
+      WHERE
+        c.table_schema = t.table_schema AND
+        c.table_name = t.table_name AND
+        c.data_type IN ('timestamp', 'datetime')
+      ORDER BY ordinal_position LIMIT 1
+    ) AS time_column,
+    ( SELECT
+        column_name AS column_name
+      FROM information_schema.columns c
+      WHERE
+        c.table_schema = t.table_schema AND
+        c.table_name = t.table_name AND
+        c.data_type IN('float', 'int', 'bigint')
+      ORDER BY ordinal_position LIMIT 1
+    ) AS value_column
+  FROM information_schema.tables t
+  WHERE
+    t.table_schema = database() AND
+    EXISTS
+    ( SELECT 1
+      FROM information_schema.columns c
+      WHERE
+        c.table_schema = t.table_schema AND
+        c.table_name = t.table_name AND
+        c.data_type IN ('timestamp', 'datetime')
+    ) AND
+    EXISTS
+    ( SELECT 1
+      FROM information_schema.columns c
+      WHERE
+        c.table_schema = t.table_schema AND
+        c.table_name = t.table_name AND
+        c.data_type IN('float', 'int', 'bigint')
+    )
+  LIMIT 1
+;
+`).Check(testkit.Rows("t a b"))
+	}
 }

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -296,6 +297,10 @@ func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []stri
 }
 
 func TestCheckActRowsWithUnistore(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = true
+	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	// testSuite1 use default mockstore which is unistore
@@ -349,6 +354,9 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 			expected: []string{"4", "4", "4", "4", "4"},
 		},
 	}
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	for _, test := range tests {
 		checkActRows(t, tk, test.sql, test.expected)

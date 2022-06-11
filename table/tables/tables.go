@@ -446,11 +446,15 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
+	if err = injectMutationError(t, txn, sh); err != nil {
+		return err
+	}
 	if sessVars.EnableMutationChecker {
 		if err = CheckDataConsistency(txn, sessVars, t, newData, oldData, memBuffer, sh); err != nil {
 			return errors.Trace(err)
 		}
 	}
+
 	memBuffer.Release(sh)
 	if shouldWriteBinlog(sctx, t.meta) {
 		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
@@ -610,7 +614,7 @@ func PrimaryPrefixColumnIDs(tbl *model.TableInfo) (prefixCols []int64) {
 			continue
 		}
 		for _, col := range idx.Columns {
-			if col.Length > 0 && tbl.Columns[col.Offset].Flen > col.Length {
+			if col.Length > 0 && tbl.Columns[col.Offset].GetFlen() > col.Length {
 				prefixCols = append(prefixCols, tbl.Columns[col.Offset].ID)
 			}
 		}
@@ -886,6 +890,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		return h, err
 	}
 
+	if err = injectMutationError(t, txn, sh); err != nil {
+		return nil, err
+	}
 	if sessVars.EnableMutationChecker {
 		if err = CheckDataConsistency(txn, sessVars, t, r, nil, memBuffer, sh); err != nil {
 			return nil, errors.Trace(err)
@@ -1016,7 +1023,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			continue
 		}
 		if col.IsPKHandleColumn(meta) {
-			if mysql.HasUnsignedFlag(col.Flag) {
+			if mysql.HasUnsignedFlag(col.GetFlag()) {
 				v[i].SetUint64(uint64(h.IntValue()))
 			} else {
 				v[i].SetInt64(h.IntValue())
@@ -1146,6 +1153,9 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 
 	sessVars := ctx.GetSessionVars()
 	sc := sessVars.StmtCtx
+	if err = injectMutationError(t, txn, sh); err != nil {
+		return err
+	}
 	if sessVars.EnableMutationChecker {
 		if err = CheckDataConsistency(txn, sessVars, t, nil, r, memBuffer, sh); err != nil {
 			return errors.Trace(err)
@@ -1385,13 +1395,13 @@ func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 		data := make([]types.Datum, len(cols))
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
-				if mysql.HasUnsignedFlag(col.Flag) {
+				if mysql.HasUnsignedFlag(col.GetFlag()) {
 					data[col.Offset].SetUint64(uint64(handle.IntValue()))
 				} else {
 					data[col.Offset].SetInt64(handle.IntValue())
 				}
 				continue
-			} else if mysql.HasPriKeyFlag(col.Flag) {
+			} else if mysql.HasPriKeyFlag(col.GetFlag()) {
 				data[col.Offset], err = tryDecodeColumnFromCommonHandle(col, handle, pkIds, decodeLoc)
 				if err != nil {
 					return err
@@ -1443,11 +1453,8 @@ func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds 
 // The defaultVals is used to avoid calculating the default value multiple times.
 func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
-	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.Flag) {
+	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.GetFlag()) {
 		return colVal, errors.New("Miss column")
-	}
-	if col.State != model.StatePublic {
-		return colVal, nil
 	}
 	if defaultVals[col.Offset].IsNull() {
 		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
@@ -1556,6 +1563,11 @@ func (t *TableCommon) Type() table.Type {
 }
 
 func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
+	failpoint.Inject("forceWriteBinlog", func() {
+		// Just to cover binlog related code in this package, since the `BinlogClient` is
+		// still nil, mutations won't be written to pump on commit.
+		failpoint.Return(true)
+	})
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}
@@ -1873,7 +1885,7 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 			}
 		}
 		tablecodec.TruncateIndexValue(&datum, truncateTargetCol, pkCol)
-		if collate.IsBinCollation(pkCol.Collate) {
+		if collate.IsBinCollation(pkCol.GetCollate()) {
 			rsData = append(rsData, types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString())))
 		} else {
 			rsData = append(rsData, datum)

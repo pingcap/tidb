@@ -32,6 +32,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -164,7 +165,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	switch stmt.(type) {
-	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt:
+	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDeleteStmt:
 		return ErrUnsupportedPs
 	}
 
@@ -197,7 +198,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	if topsqlstate.TopSQLEnabled() {
-		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, vars.InRestrictedSQL)
+		e.ctx.GetSessionVars().StmtCtx.IsSQLRegistered.Store(true)
+		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, vars.InRestrictedSQL)
 	}
 
 	var (
@@ -333,7 +335,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion)
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion, 0)
 		if err != nil {
 			return err
 		}
@@ -347,7 +349,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, args []types.Datum) (*ExecStmt, bool, bool, error) {
+	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
@@ -356,6 +358,8 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, false, false, err
 	}
+	isStaleness := snapshotTS != 0
+	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
 	execStmt.BinaryArgs = args
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
@@ -365,17 +369,21 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	failpoint.Inject("assertTxnManagerInCompile", func() {
 		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
+		staleread.AssertStmtStaleness(sctx, snapshotTS != 0)
+		if snapshotTS != 0 {
+			sessiontxn.AssertTxnManagerReadTS(sctx, snapshotTS)
+		}
 	})
 
 	stmt := &ExecStmt{
-		GoCtx:       ctx,
-		InfoSchema:  is,
-		Plan:        execPlan,
-		StmtNode:    execStmt,
-		Ctx:         sctx,
-		OutputNames: names,
-		Ti:          &TelemetryInfo{},
-		SnapshotTS:  snapshotTS,
+		GoCtx:            ctx,
+		InfoSchema:       is,
+		Plan:             execPlan,
+		StmtNode:         execStmt,
+		Ctx:              sctx,
+		OutputNames:      names,
+		Ti:               &TelemetryInfo{},
+		ReplicaReadScope: replicaReadScope,
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)

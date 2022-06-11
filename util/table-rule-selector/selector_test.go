@@ -18,14 +18,10 @@ import (
 	"sort"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func TestClient(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testSelectorSuite{
+var ts = &testSelectorSuite{
 	tables: map[string][]string{
 		"t*":          {"test*"},
 		"schema*":     {"", "test*", "abc*", "xyz"},
@@ -71,7 +67,7 @@ var _ = Suite(&testSelectorSuite{
 		{"d", "zxcv", 1, []string{"[!a-c!f-g]", "*"}},
 	},
 	removeCases: []string{"schema*", "", "a?c", "t2_ab*", "i[x-z][1-3]", "i?[x-z]", "[!]", "[a-c-f]"},
-})
+}
 
 type testSelectorSuite struct {
 	// for generate rules,
@@ -92,125 +88,125 @@ type testSelectorSuite struct {
 	expectedTableRules  map[string]map[string][]interface{}
 }
 
-func (t *testSelectorSuite) TestSelector(c *C) {
+func TestSelector(t *testing.T) {
 	s := NewTrieSelector()
-	t.expectedSchemaRules, t.expectedTableRules = t.testGenerateExpectedRules()
+	ts.expectedSchemaRules, ts.expectedTableRules = testGenerateExpectedRules()
 
-	t.testInsert(c, s)
-	t.testMatch(c, s)
-	t.testAppend(c, s)
-	t.testReplace(c, s)
-	t.testRemove(c, s)
+	testInsert(t, s)
+	testMatch(t, s)
+	testAppend(t, s)
+	testReplace(t, s)
+	testRemove(t, s)
 }
 
 type dummyRule struct {
 	description string
 }
 
-func (t *testSelectorSuite) testInsert(c *C, s Selector) {
+func testInsert(t *testing.T, s Selector) {
 	var err error
-	for schema, rules := range t.expectedSchemaRules {
+	for schema, rules := range ts.expectedSchemaRules {
 		err = s.Insert(schema, "", rules[0], Insert)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		// test duplicate error
 		err = s.Insert(schema, "", rules[0], Insert)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 		// test simple replace
 		err = s.Insert(schema, "", rules[0], Replace)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
-	for schema, tables := range t.expectedTableRules {
+	for schema, tables := range ts.expectedTableRules {
 		for table, rules := range tables {
 			err = s.Insert(schema, table, rules[0], Insert)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			// test duplicate error
 			err = s.Insert(schema, table, rules[0], Insert)
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 			// test simple replace
 			err = s.Insert(schema, table, rules[0], Replace)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 	}
 
 	// insert wrong pattern
 	// rule can't be nil
 	err = s.Insert("schema", "", nil, Replace)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	// asterisk must be the last character of pattern
 	err = s.Insert("ab**", "", &dummyRule{"error"}, Replace)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	err = s.Insert("abcd", "ab**", &dummyRule{"error"}, Replace)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	schemas, tables := s.AllRules()
-	c.Assert(schemas, DeepEquals, t.expectedSchemaRules)
-	c.Assert(tables, DeepEquals, t.expectedTableRules)
+	require.EqualValues(t, schemas, ts.expectedSchemaRules)
+	require.EqualValues(t, tables, ts.expectedTableRules)
 }
 
-func (t *testSelectorSuite) testRemove(c *C, s Selector) {
-	for i := 0; i < len(t.removeCases); i += 2 {
-		schema, table := t.removeCases[i], t.removeCases[i+1]
+func testRemove(t *testing.T, s Selector) {
+	for i := 0; i < len(ts.removeCases); i += 2 {
+		schema, table := ts.removeCases[i], ts.removeCases[i+1]
 		err := s.Remove(schema, table)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = s.Remove(schema, table)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 
 		if len(table) == 0 {
-			delete(t.expectedSchemaRules, schema)
+			delete(ts.expectedSchemaRules, schema)
 		} else {
-			rules, ok := t.expectedTableRules[schema]
-			c.Assert(ok, IsTrue)
+			rules, ok := ts.expectedTableRules[schema]
+			require.True(t, ok)
 			delete(rules, table)
 		}
 	}
 
 	schemas, tables := s.AllRules()
-	c.Assert(schemas, DeepEquals, t.expectedSchemaRules)
-	c.Assert(tables, DeepEquals, t.expectedTableRules)
+	require.EqualValues(t, schemas, ts.expectedSchemaRules)
+	require.EqualValues(t, tables, ts.expectedTableRules)
 }
 
-func (t *testSelectorSuite) testAppend(c *C, s Selector) {
+func testAppend(t *testing.T, s Selector) {
 	var (
 		err          error
 		appendedRule = &dummyRule{description: "append"}
 	)
-	for schema := range t.expectedSchemaRules {
-		t.expectedSchemaRules[schema] = append(t.expectedSchemaRules[schema], appendedRule)
+	for schema := range ts.expectedSchemaRules {
+		ts.expectedSchemaRules[schema] = append(ts.expectedSchemaRules[schema], appendedRule)
 		err = s.Insert(schema, "", appendedRule, Append)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	schemas, tables := s.AllRules()
-	c.Assert(schemas, DeepEquals, t.expectedSchemaRules)
-	c.Assert(tables, DeepEquals, t.expectedTableRules)
+	require.EqualValues(t, schemas, ts.expectedSchemaRules)
+	require.EqualValues(t, tables, ts.expectedTableRules)
 }
 
-func (t *testSelectorSuite) testReplace(c *C, s Selector) {
+func testReplace(t *testing.T, s Selector) {
 	var (
 		err          error
 		replacedRule = &dummyRule{"replace"}
 	)
-	for schema := range t.expectedSchemaRules {
-		t.expectedSchemaRules[schema] = []interface{}{replacedRule}
+	for schema := range ts.expectedSchemaRules {
+		ts.expectedSchemaRules[schema] = []interface{}{replacedRule}
 		// to prevent it doesn't exist
 		err = s.Insert(schema, "", replacedRule, Replace)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		// test replace
 		err = s.Insert(schema, "", replacedRule, Replace)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = s.Insert(schema, "", replacedRule, Insert)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 
 	}
 
 	schemas, tables := s.AllRules()
-	c.Assert(schemas, DeepEquals, t.expectedSchemaRules)
-	c.Assert(tables, DeepEquals, t.expectedTableRules)
+	require.EqualValues(t, schemas, ts.expectedSchemaRules)
+	require.EqualValues(t, tables, ts.expectedTableRules)
 }
 
-func (t *testSelectorSuite) testMatch(c *C, s Selector) {
+func testMatch(t *testing.T, s Selector) {
 	cache := make(map[string]RuleSet)
-	for _, mc := range t.matchCase {
+	for _, mc := range ts.matchCase {
 		rules := s.Match(mc.schema, mc.table)
 		expectedRules := make(RuleSet, 0, mc.matchedNum)
 		for i := 0; i < mc.matchedNum; i++ {
@@ -223,39 +219,39 @@ func (t *testSelectorSuite) testMatch(c *C, s Selector) {
 		sort.Slice(rules, func(i, j int) bool {
 			return rules[i].(*dummyRule).description < rules[j].(*dummyRule).description
 		})
-		c.Assert(rules, DeepEquals, expectedRules)
+		require.EqualValues(t, rules, expectedRules)
 		cache[quoteSchemaTable(mc.schema, mc.table)] = expectedRules
 	}
 
 	// test cache
 	trie, ok := s.(*trieSelector)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 	for _, cacheItem := range trie.cache {
 		sort.Slice(cacheItem, func(i, j int) bool {
 			return cacheItem[i].(*dummyRule).description < cacheItem[j].(*dummyRule).description
 		})
 	}
-	c.Assert(trie.cache, DeepEquals, cache)
+	require.EqualValues(t, trie.cache, cache)
 
 	// test not mathced
 	rule := s.Match("t1", "")
-	c.Assert(rule, IsNil)
+	require.Nil(t, rule)
 	cache[quoteSchemaTable("t1", "")] = rule
 
 	rule = s.Match("t1", "abc")
-	c.Assert(rule, IsNil)
+	require.Nil(t, rule)
 	cache[quoteSchemaTable("t1", "abc")] = rule
 
 	rule = s.Match("xxx", "abc")
-	c.Assert(rule, IsNil)
+	require.Nil(t, rule)
 	cache[quoteSchemaTable("xxx", "abc")] = rule
-	c.Assert(trie.cache, DeepEquals, cache)
+	require.EqualValues(t, trie.cache, cache)
 }
 
-func (t *testSelectorSuite) testGenerateExpectedRules() (map[string][]interface{}, map[string]map[string][]interface{}) {
+func testGenerateExpectedRules() (map[string][]interface{}, map[string]map[string][]interface{}) {
 	schemaRules := make(map[string][]interface{})
 	tableRules := make(map[string]map[string][]interface{})
-	for schema, tables := range t.tables {
+	for schema, tables := range ts.tables {
 		_, ok := tableRules[schema]
 		if !ok {
 			tableRules[schema] = make(map[string][]interface{})

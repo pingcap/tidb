@@ -17,17 +17,14 @@ package dbutil
 import (
 	"database/sql/driver"
 	"errors"
+	"testing"
 
 	"github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/errno"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testRetrySuite{})
-
-type testRetrySuite struct{}
-
-func (t *testRetrySuite) TestIsRetryableError(c *C) {
+func TestIsRetryableError(t *testing.T) {
 	cases := []struct {
 		err       error
 		retryable bool
@@ -126,6 +123,6 @@ func (t *testRetrySuite) TestIsRetryableError(c *C) {
 	}
 
 	for _, cs := range cases {
-		c.Assert(IsRetryableError(cs.err), Equals, cs.retryable)
+		require.Equal(t, cs.retryable, IsRetryableError(cs.err))
 	}
 }

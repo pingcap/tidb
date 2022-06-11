@@ -47,63 +47,63 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 
 func TestConvertType(t *testing.T) {
 	ft := NewFieldType(mysql.TypeBlob)
-	ft.Flen = 4
-	ft.Charset = "utf8"
+	ft.SetFlen(4)
+	ft.SetCharset("utf8")
 	v, err := Convert("123456", ft)
 	require.True(t, ErrDataTooLong.Equal(err))
 	require.Equal(t, "1234", v)
 	ft = NewFieldType(mysql.TypeString)
-	ft.Flen = 4
-	ft.Charset = charset.CharsetBin
+	ft.SetFlen(4)
+	ft.SetCharset(charset.CharsetBin)
 	v, err = Convert("12345", ft)
 	require.True(t, ErrDataTooLong.Equal(err))
 	require.Equal(t, []byte("1234"), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 5
-	ft.Decimal = 2
+	ft.SetFlen(5)
+	ft.SetDecimal(2)
 	v, err = Convert(111.114, ft)
 	require.NoError(t, err)
 	require.Equal(t, float32(111.11), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 5
-	ft.Decimal = 2
+	ft.SetFlen(5)
+	ft.SetDecimal(2)
 	v, err = Convert(999.999, ft)
 	require.Error(t, err)
 	require.Equal(t, float32(999.99), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 5
-	ft.Decimal = 2
+	ft.SetFlen(5)
+	ft.SetDecimal(2)
 	v, err = Convert(-999.999, ft)
 	require.Error(t, err)
 	require.Equal(t, float32(-999.99), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 5
-	ft.Decimal = 2
+	ft.SetFlen(5)
+	ft.SetDecimal(2)
 	v, err = Convert(1111.11, ft)
 	require.Error(t, err)
 	require.Equal(t, float32(999.99), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 5
-	ft.Decimal = 2
+	ft.SetFlen(5)
+	ft.SetDecimal(2)
 	v, err = Convert(999.916, ft)
 	require.NoError(t, err)
 	require.Equal(t, float32(999.92), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 5
-	ft.Decimal = 2
+	ft.SetFlen(5)
+	ft.SetDecimal(2)
 	v, err = Convert(999.914, ft)
 	require.NoError(t, err)
 	require.Equal(t, float32(999.91), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 5
-	ft.Decimal = 2
+	ft.SetFlen(5)
+	ft.SetDecimal(2)
 	v, err = Convert(999.9155, ft)
 	require.NoError(t, err)
 	require.Equal(t, float32(999.92), v)
@@ -121,32 +121,32 @@ func TestConvertType(t *testing.T) {
 
 	// TypeDouble
 	ft = NewFieldType(mysql.TypeDouble)
-	ft.Flen = 5
-	ft.Decimal = 2
+	ft.SetFlen(5)
+	ft.SetDecimal(2)
 	v, err = Convert(999.9155, ft)
 	require.NoError(t, err)
 	require.Equal(t, float64(999.92), v)
 
 	// For TypeString
 	ft = NewFieldType(mysql.TypeString)
-	ft.Flen = 3
+	ft.SetFlen(3)
 	v, err = Convert("12345", ft)
 	require.True(t, ErrDataTooLong.Equal(err))
 	require.Equal(t, "123", v)
 	ft = NewFieldType(mysql.TypeString)
-	ft.Flen = 3
-	ft.Charset = charset.CharsetBin
+	ft.SetFlen(3)
+	ft.SetCharset(charset.CharsetBin)
 	v, err = Convert("12345", ft)
 	require.True(t, ErrDataTooLong.Equal(err))
 	require.Equal(t, []byte("123"), v)
 
 	// For TypeDuration
 	ft = NewFieldType(mysql.TypeDuration)
-	ft.Decimal = 3
+	ft.SetDecimal(3)
 	v, err = Convert("10:11:12.123456", ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:12.123", v.(Duration).String())
-	ft.Decimal = 1
+	ft.SetDecimal(1)
 	vv, err := Convert(v, ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:12.1", vv.(Duration).String())
@@ -167,11 +167,11 @@ func TestConvertType(t *testing.T) {
 
 	// For mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate
 	ft = NewFieldType(mysql.TypeTimestamp)
-	ft.Decimal = 3
+	ft.SetDecimal(3)
 	v, err = Convert("2010-10-10 10:11:11.12345", ft)
 	require.NoError(t, err)
 	require.Equal(t, "2010-10-10 10:11:11.123", v.(Time).String())
-	ft.Decimal = 1
+	ft.SetDecimal(1)
 	vv, err = Convert(v, ft)
 	require.NoError(t, err)
 	require.Equal(t, "2010-10-10 10:11:11.1", vv.(Time).String())
@@ -186,7 +186,7 @@ func TestConvertType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(math.MaxInt64), v)
 	ft = NewFieldType(mysql.TypeLonglong)
-	ft.Flag |= mysql.UnsignedFlag
+	ft.AddFlag(mysql.UnsignedFlag)
 	v, err = Convert("100", ft)
 	require.NoError(t, err)
 	require.Equal(t, uint64(100), v)
@@ -201,7 +201,7 @@ func TestConvertType(t *testing.T) {
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
-	ft.Flen = 24 // 3 bytes.
+	ft.SetFlen(24) // 3 bytes.
 	v, err = Convert("100", ft)
 	require.NoError(t, err)
 	require.Equal(t, NewBinaryLiteralFromUint(3223600, 3), v)
@@ -210,7 +210,7 @@ func TestConvertType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, NewBinaryLiteralFromUint(100, 3), v)
 
-	ft.Flen = 1
+	ft.SetFlen(1)
 	v, err = Convert(1, ft)
 	require.NoError(t, err)
 	require.Equal(t, NewBinaryLiteralFromUint(1, 1), v)
@@ -218,14 +218,14 @@ func TestConvertType(t *testing.T) {
 	_, err = Convert(2, ft)
 	require.Error(t, err)
 
-	ft.Flen = 0
+	ft.SetFlen(0)
 	_, err = Convert(2, ft)
 	require.Error(t, err)
 
 	// For TypeNewDecimal
 	ft = NewFieldType(mysql.TypeNewDecimal)
-	ft.Flen = 8
-	ft.Decimal = 4
+	ft.SetFlen(8)
+	ft.SetDecimal(4)
 	v, err = Convert(3.1416, ft)
 	require.NoErrorf(t, err, errors.ErrorStack(err))
 	require.Equal(t, "3.1416", v.(*MyDecimal).String())
@@ -296,7 +296,7 @@ func TestConvertType(t *testing.T) {
 
 	// For enum
 	ft = NewFieldType(mysql.TypeEnum)
-	ft.Elems = []string{"a", "b", "c"}
+	ft.SetElems([]string{"a", "b", "c"})
 	v, err = Convert("a", ft)
 	require.NoError(t, err)
 	require.Equal(t, Enum{Name: "a", Value: 1}, v)
@@ -310,7 +310,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, Enum{}, v)
 
 	ft = NewFieldType(mysql.TypeSet)
-	ft.Elems = []string{"a", "b", "c"}
+	ft.SetElems([]string{"a", "b", "c"})
 	v, err = Convert("a", ft)
 	require.NoError(t, err)
 	require.Equal(t, Set{Name: "a", Value: 1}, v)
@@ -357,8 +357,8 @@ func TestConvertToString(t *testing.T) {
 	testToString(t, td, "11:11:11.999999")
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
-	ft.Flen = 10
-	ft.Decimal = 5
+	ft.SetFlen(10)
+	ft.SetDecimal(5)
 	v, err := Convert(3.1415926, ft)
 	require.NoError(t, err)
 	testToString(t, v, "3.14159")
@@ -383,8 +383,8 @@ func TestConvertToString(t *testing.T) {
 	}
 	for _, tt := range tests {
 		ft = NewFieldType(mysql.TypeVarchar)
-		ft.Flen = tt.flen
-		ft.Charset = tt.charset
+		ft.SetFlen(tt.flen)
+		ft.SetCharset(tt.charset)
 		inputDatum := NewStringDatum(tt.input)
 		sc := new(stmtctx.StatementContext)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
@@ -421,8 +421,8 @@ func TestConvertToStringWithCheck(t *testing.T) {
 	}
 	for _, tt := range tests {
 		ft := NewFieldType(mysql.TypeVarchar)
-		ft.Flen = 255
-		ft.Charset = tt.outputChs
+		ft.SetFlen(255)
+		ft.SetCharset(tt.outputChs)
 		inputDatum := NewStringDatum(tt.input)
 		sc := new(stmtctx.StatementContext)
 		tt.setStmtCtx(sc)
@@ -460,8 +460,8 @@ func TestConvertToBinaryString(t *testing.T) {
 	}
 	for _, tt := range tests {
 		ft := NewFieldType(mysql.TypeVarchar)
-		ft.Flen = 255
-		ft.Charset = tt.outputCharset
+		ft.SetFlen(255)
+		ft.SetCharset(tt.outputCharset)
 		inputDatum := NewCollationStringDatum(tt.input, tt.inputCollate)
 		sc := new(stmtctx.StatementContext)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
@@ -600,7 +600,7 @@ func TestFieldTypeToStr(t *testing.T) {
 func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
 	ft := NewFieldType(tp)
 	if unsigned {
-		ft.Flag |= mysql.UnsignedFlag
+		ft.AddFlag(mysql.UnsignedFlag)
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
@@ -628,7 +628,7 @@ func signedAccept(t *testing.T, tp byte, value interface{}, expected string) {
 func deny(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
 	ft := NewFieldType(tp)
 	if unsigned {
-		ft.Flag |= mysql.UnsignedFlag
+		ft.AddFlag(mysql.UnsignedFlag)
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
@@ -841,7 +841,7 @@ func TestConvert(t *testing.T) {
 	dec := NewDecFromInt(-123)
 	err := dec.Shift(-5)
 	require.NoError(t, err)
-	err = dec.Round(dec, 5, ModeHalfEven)
+	err = dec.Round(dec, 5, ModeHalfUp)
 	require.NoError(t, err)
 	signedAccept(t, mysql.TypeNewDecimal, dec, "-0.00123")
 }

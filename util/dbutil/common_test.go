@@ -16,19 +16,20 @@ package dbutil
 
 import (
 	"context"
+	"testing"
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	pmysql "github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-func (*testDBSuite) TestReplacePlaceholder(c *C) {
+func TestReplacePlaceholder(t *testing.T) {
 	testCases := []struct {
 		originStr string
 		args      []string
@@ -47,12 +48,12 @@ func (*testDBSuite) TestReplacePlaceholder(c *C) {
 
 	for _, testCase := range testCases {
 		str := ReplacePlaceholder(testCase.originStr, testCase.args)
-		c.Assert(str, Equals, testCase.expectStr)
+		require.Equal(t, testCase.expectStr, str)
 	}
 
 }
 
-func (*testDBSuite) TestTableName(c *C) {
+func TestTableName(t *testing.T) {
 	testCases := []struct {
 		schema          string
 		table           string
@@ -77,11 +78,11 @@ func (*testDBSuite) TestTableName(c *C) {
 
 	for _, testCase := range testCases {
 		tableName := TableName(testCase.schema, testCase.table)
-		c.Assert(tableName, Equals, testCase.expectTableName)
+		require.Equal(t, testCase.expectTableName, tableName)
 	}
 }
 
-func (*testDBSuite) TestColumnName(c *C) {
+func TestColumnName(t *testing.T) {
 	testCases := []struct {
 		column        string
 		expectColName string
@@ -102,7 +103,7 @@ func (*testDBSuite) TestColumnName(c *C) {
 
 	for _, testCase := range testCases {
 		colName := ColumnName(testCase.column)
-		c.Assert(colName, Equals, testCase.expectColName)
+		require.Equal(t, testCase.expectColName, colName)
 	}
 }
 
@@ -113,7 +114,7 @@ func newMysqlErr(number uint16, message string) *mysql.MySQLError {
 	}
 }
 
-func (s *testDBSuite) TestIsIgnoreError(c *C) {
+func TestIsIgnoreError(t *testing.T) {
 	cases := []struct {
 		err       error
 		canIgnore bool
@@ -129,29 +130,29 @@ func (s *testDBSuite) TestIsIgnoreError(c *C) {
 		{errors.New("unknown error"), false},
 	}
 
-	for _, t := range cases {
-		c.Logf("err %v, expected %v", t.err, t.canIgnore)
-		c.Assert(ignoreError(t.err), Equals, t.canIgnore)
+	for _, tt := range cases {
+		t.Logf("err %v, expected %v", tt.err, tt.canIgnore)
+		require.Equal(t, tt.canIgnore, ignoreError(tt.err))
 	}
 }
 
-func (s *testDBSuite) TestDeleteRows(c *C) {
+func TestDeleteRows(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// delete twice
 	mock.ExpectExec("DELETE FROM").WillReturnResult(sqlmock.NewResult(0, DefaultDeleteRowsNum))
 	mock.ExpectExec("DELETE FROM").WillReturnResult(sqlmock.NewResult(0, DefaultDeleteRowsNum-1))
 
 	err = DeleteRows(context.Background(), db, "test", "t", "", nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	if err := mock.ExpectationsWereMet(); err != nil {
-		c.Errorf("there were unfulfilled expectations: %s", err)
+		t.Errorf("there were unfulfilled expectations: %s", err)
 	}
 }
 
-func (s *testDBSuite) TestGetParser(c *C) {
+func TestGetParser(t *testing.T) {
 	testCases := []struct {
 		sqlModeStr string
 		hasErr     bool
@@ -177,15 +178,15 @@ func (s *testDBSuite) TestGetParser(c *C) {
 	for _, testCase := range testCases {
 		parser, err := getParser(testCase.sqlModeStr)
 		if testCase.hasErr {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			c.Assert(parser, NotNil)
+			require.NoError(t, err)
+			require.NotNil(t, parser)
 		}
 	}
 }
 
-func (s *testDBSuite) TestAnalyzeValuesFromBuckets(c *C) {
+func TestAnalyzeValuesFromBuckets(t *testing.T) {
 	cases := []struct {
 		value  string
 		col    *model.ColumnInfo
@@ -193,44 +194,44 @@ func (s *testDBSuite) TestAnalyzeValuesFromBuckets(c *C) {
 	}{
 		{
 			"2021-03-05 21:31:03",
-			&model.ColumnInfo{FieldType: types.FieldType{Tp: pmysql.TypeDatetime}},
+			&model.ColumnInfo{FieldType: types.NewFieldTypeBuilder().SetType(pmysql.TypeDatetime).Build()},
 			"2021-03-05 21:31:03",
 		},
 		{
 			"2021-03-05 21:31:03",
-			&model.ColumnInfo{FieldType: types.FieldType{Tp: pmysql.TypeTimestamp}},
+			&model.ColumnInfo{FieldType: types.NewFieldTypeBuilder().SetType(pmysql.TypeTimestamp).Build()},
 			"2021-03-05 21:31:03",
 		},
 		{
 			"2021-03-05",
-			&model.ColumnInfo{FieldType: types.FieldType{Tp: pmysql.TypeDate}},
+			&model.ColumnInfo{FieldType: types.NewFieldTypeBuilder().SetType(pmysql.TypeDate).Build()},
 			"2021-03-05",
 		},
 		{
 			"1847956477067657216",
-			&model.ColumnInfo{FieldType: types.FieldType{Tp: pmysql.TypeDatetime}},
+			&model.ColumnInfo{FieldType: types.NewFieldTypeBuilder().SetType(pmysql.TypeDatetime).Build()},
 			"2020-01-01 10:00:00",
 		},
 		{
 			"1847955927311843328",
-			&model.ColumnInfo{FieldType: types.FieldType{Tp: pmysql.TypeTimestamp}},
+			&model.ColumnInfo{FieldType: types.NewFieldTypeBuilder().SetType(pmysql.TypeTimestamp).Build()},
 			"2020-01-01 02:00:00",
 		},
 		{
 			"1847955789872889856",
-			&model.ColumnInfo{FieldType: types.FieldType{Tp: pmysql.TypeDate}},
+			&model.ColumnInfo{FieldType: types.NewFieldTypeBuilder().SetType(pmysql.TypeDate).Build()},
 			"2020-01-01 00:00:00",
 		},
 	}
 	for _, ca := range cases {
 		val, err := AnalyzeValuesFromBuckets(ca.value, []*model.ColumnInfo{ca.col})
-		c.Assert(err, IsNil)
-		c.Assert(val, HasLen, 1)
-		c.Assert(val[0], Equals, ca.expect)
+		require.NoError(t, err)
+		require.Len(t, val, 1)
+		require.Equal(t, ca.expect, val[0])
 	}
 }
 
-func (s *testDBSuite) TestFormatTimeZoneOffset(c *C) {
+func TestFormatTimeZoneOffset(t *testing.T) {
 	cases := map[string]time.Duration{
 		"+00:00": 0,
 		"+01:00": time.Hour,
@@ -241,6 +242,17 @@ func (s *testDBSuite) TestFormatTimeZoneOffset(c *C) {
 
 	for k, v := range cases {
 		offset := FormatTimeZoneOffset(v)
-		c.Assert(k, Equals, offset)
+		require.Equal(t, offset, k)
 	}
+}
+
+func TestGetTimeZoneOffset(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SELECT cast\\(TIMEDIFF\\(NOW\\(6\\), UTC_TIMESTAMP\\(6\\)\\) as time\\);").
+		WillReturnRows(mock.NewRows([]string{""}).AddRow("01:00:00"))
+	d, err := GetTimeZoneOffset(context.Background(), db)
+	require.NoError(t, err)
+	require.Equal(t, "1h0m0s", d.String())
 }

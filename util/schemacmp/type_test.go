@@ -15,307 +15,97 @@
 package schemacmp_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/types"
 	. "github.com/pingcap/tidb/util/schemacmp"
+	"github.com/stretchr/testify/require"
 )
-
-type typeSchema struct{}
-
-var _ = Suite(&typeSchema{})
 
 const binary = "binary"
 
 var (
 	// INT
-	typeInt = &types.FieldType{
-		Tp:      mysql.TypeLong,
-		Flag:    0,
-		Flen:    11,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeInt = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(0).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// INT NOT NULL
-	typeIntNotNull = &types.FieldType{
-		Tp:      mysql.TypeLong,
-		Flag:    mysql.NoDefaultValueFlag | mysql.NotNullFlag,
-		Flen:    10,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeIntNotNull = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(mysql.NoDefaultValueFlag | mysql.NotNullFlag).SetFlen(10).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// INT AUTO_INCREMENT UNIQUE
-	typeIntAutoIncrementUnique = &types.FieldType{
-		Tp:      mysql.TypeLong,
-		Flag:    mysql.AutoIncrementFlag | mysql.UniqueKeyFlag,
-		Flen:    11,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeIntAutoIncrementUnique = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(mysql.AutoIncrementFlag | mysql.UniqueKeyFlag).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// INT NOT NULL, KEY
-	typeIntNotNullKey = &types.FieldType{
-		Tp:      mysql.TypeLong,
-		Flag:    mysql.NoDefaultValueFlag | mysql.MultipleKeyFlag | mysql.NotNullFlag,
-		Flen:    11,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeIntNotNullKey = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(mysql.NoDefaultValueFlag | mysql.MultipleKeyFlag | mysql.NotNullFlag).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// INT(1)
-	typeInt1 = &types.FieldType{
-		Tp:      mysql.TypeLong,
-		Flag:    0,
-		Flen:    1,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeInt1 = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(0).SetFlen(1).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// INT(22)
-	typeInt22 = &types.FieldType{
-		Tp:      mysql.TypeLong,
-		Flag:    0,
-		Flen:    22,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeInt22 = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(0).SetFlen(22).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// BIT(4)
-	typeBit4 = &types.FieldType{
-		Tp:      mysql.TypeBit,
-		Flag:    mysql.UnsignedFlag,
-		Flen:    4,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeBit4 = types.NewFieldTypeBuilder().SetType(mysql.TypeBit).SetFlag(mysql.UnsignedFlag).SetFlen(4).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// BIGINT(22) ZEROFILL
-	typeBigInt22ZeroFill = &types.FieldType{
-		Tp:      mysql.TypeLonglong,
-		Flag:    mysql.ZerofillFlag | mysql.UnsignedFlag,
-		Flen:    22,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeBigInt22ZeroFill = types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.ZerofillFlag | mysql.UnsignedFlag).SetFlen(22).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// DECIMAL(16, 8) DEFAULT 2.5
-	typeDecimal16_8 = &types.FieldType{
-		Tp:      mysql.TypeNewDecimal,
-		Flag:    0,
-		Flen:    16,
-		Decimal: 8,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeDecimal16_8 = types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlag(0).SetFlen(16).SetDecimal(8).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// DECIMAL
-	typeDecimal = &types.FieldType{
-		Tp:      mysql.TypeNewDecimal,
-		Flag:    0,
-		Flen:    11,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeDecimal = types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlag(0).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// DATE
-	typeDate = &types.FieldType{
-		Tp:      mysql.TypeDate,
-		Flag:    mysql.BinaryFlag,
-		Flen:    10,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeDate = types.NewFieldTypeBuilder().SetType(mysql.TypeDate).SetFlag(mysql.BinaryFlag).SetFlen(10).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// DATETIME(3)
-	typeDateTime3 = &types.FieldType{
-		Tp:      mysql.TypeDatetime,
-		Flag:    mysql.BinaryFlag,
-		Flen:    23,
-		Decimal: 3,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeDateTime3 = types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetFlag(mysql.BinaryFlag).SetFlen(23).SetDecimal(3).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// TIMESTAMP
-	typeTimestamp = &types.FieldType{
-		Tp:      mysql.TypeTimestamp,
-		Flag:    mysql.BinaryFlag,
-		Flen:    19,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeTimestamp = types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).SetFlag(mysql.BinaryFlag).SetFlen(19).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// TIME(6)
-	typeTime6 = &types.FieldType{
-		Tp:      mysql.TypeDuration,
-		Flag:    mysql.BinaryFlag,
-		Flen:    17,
-		Decimal: 6,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeTime6 = types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlag(mysql.BinaryFlag).SetFlen(17).SetDecimal(6).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// YEAR(4)
-	typeYear4 = &types.FieldType{
-		Tp:      mysql.TypeYear,
-		Flag:    mysql.ZerofillFlag | mysql.UnsignedFlag,
-		Flen:    4,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeYear4 = types.NewFieldTypeBuilder().SetType(mysql.TypeYear).SetFlag(mysql.ZerofillFlag | mysql.UnsignedFlag).SetFlen(4).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// CHAR(123)
-	typeChar123 = &types.FieldType{
-		Tp:      mysql.TypeString,
-		Flag:    0,
-		Flen:    123,
-		Decimal: 0,
-		Charset: mysql.UTF8MB4Charset,
-		Collate: mysql.UTF8MB4DefaultCollation,
-		Elems:   nil,
-	}
+	typeChar123 = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(0).SetFlen(123).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems(nil).BuildP()
 
 	// VARCHAR(65432) CHARSET ascii
-	typeVarchar65432CharsetASCII = &types.FieldType{
-		Tp:      mysql.TypeVarchar,
-		Flag:    0,
-		Flen:    65432,
-		Decimal: 0,
-		Charset: "ascii",
-		Collate: "ascii_bin",
-		Elems:   nil,
-	}
+	typeVarchar65432CharsetASCII = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlag(0).SetFlen(65432).SetDecimal(0).SetCharset("ascii").SetCollate("ascii_bin").SetElems(nil).BuildP()
 
 	// BINARY(69)
-	typeBinary69 = &types.FieldType{
-		Tp:      mysql.TypeString,
-		Flag:    mysql.BinaryFlag,
-		Flen:    69,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeBinary69 = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetFlen(69).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// VARBINARY(420)
-	typeVarBinary420 = &types.FieldType{
-		Tp:      mysql.TypeVarchar,
-		Flag:    mysql.BinaryFlag,
-		Flen:    420,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeVarBinary420 = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlag(mysql.BinaryFlag).SetFlen(420).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// LONGBLOB
-	typeLongBlob = &types.FieldType{
-		Tp:      mysql.TypeLongBlob,
-		Flag:    mysql.BinaryFlag,
-		Flen:    0xffffffff,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeLongBlob = types.NewFieldTypeBuilder().SetType(mysql.TypeLongBlob).SetFlag(mysql.BinaryFlag).SetFlen(0xffffffff).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// MEDIUMTEXT
-	typeMediumText = &types.FieldType{
-		Tp:      mysql.TypeMediumBlob,
-		Flag:    0,
-		Flen:    0xffffff,
-		Decimal: 0,
-		Charset: mysql.UTF8MB4Charset,
-		Collate: mysql.UTF8MB4DefaultCollation,
-		Elems:   nil,
-	}
+	typeMediumText = types.NewFieldTypeBuilder().SetType(mysql.TypeMediumBlob).SetFlag(0).SetFlen(0xffffffff).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems(nil).BuildP()
 
 	// ENUM('tidb', 'tikv', 'tiflash', 'golang', 'rust')
-	typeEnum5 = &types.FieldType{
-		Tp:      mysql.TypeEnum,
-		Flag:    0,
-		Flen:    types.UnspecifiedLength,
-		Decimal: 0,
-		Charset: mysql.UTF8MB4Charset,
-		Collate: mysql.UTF8MB4DefaultCollation,
-		Elems:   []string{"tidb", "tikv", "tiflash", "golang", "rust"},
-	}
+	typeEnum5 = types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv", "tiflash", "golang", "rust"}).BuildP()
 
 	// ENUM('tidb', 'tikv')
-	typeEnum2 = &types.FieldType{
-		Tp:      mysql.TypeEnum,
-		Flag:    0,
-		Flen:    types.UnspecifiedLength,
-		Decimal: 0,
-		Charset: mysql.UTF8MB4Charset,
-		Collate: mysql.UTF8MB4DefaultCollation,
-		Elems:   []string{"tidb", "tikv"},
-	}
+	typeEnum2 = types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv"}).BuildP()
 
 	// SET('tidb', 'tikv', 'tiflash', 'golang', 'rust')
-	typeSet5 = &types.FieldType{
-		Tp:      mysql.TypeSet,
-		Flag:    0,
-		Flen:    types.UnspecifiedLength,
-		Decimal: 0,
-		Charset: mysql.UTF8MB4Charset,
-		Collate: mysql.UTF8MB4DefaultCollation,
-		Elems:   []string{"tidb", "tikv", "tiflash", "golang", "rust"},
-	}
+	typeSet5 = types.NewFieldTypeBuilder().SetType(mysql.TypeSet).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv", "tiflash", "golang", "rust"}).BuildP()
 
 	// ENUM('tidb', 'tikv')
-	typeSet2 = &types.FieldType{
-		Tp:      mysql.TypeSet,
-		Flag:    0,
-		Flen:    types.UnspecifiedLength,
-		Decimal: 0,
-		Charset: mysql.UTF8MB4Charset,
-		Collate: mysql.UTF8MB4DefaultCollation,
-		Elems:   []string{"tidb", "tikv"},
-	}
+	typeSet2 = types.NewFieldTypeBuilder().SetType(mysql.TypeSet).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv"}).BuildP()
 
 	// JSON
-	typeJSON = &types.FieldType{
-		Tp:      mysql.TypeJSON,
-		Flag:    mysql.BinaryFlag,
-		Flen:    0xffffffff,
-		Decimal: 0,
-		Charset: binary,
-		Collate: binary,
-		Elems:   nil,
-	}
+	typeJSON = types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(0xffffffff).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 )
 
-func (*typeSchema) TestTypeUnwrap(c *C) {
+func TestTypeUnwrap(t *testing.T) {
 	testCases := []*types.FieldType{
 		typeInt,
 		typeIntNotNull,
@@ -346,15 +136,12 @@ func (*typeSchema) TestTypeUnwrap(c *C) {
 	}
 
 	for _, tc := range testCases {
-		assert := func(expected interface{}, checker Checker, args ...interface{}) {
-			c.Assert(expected, checker, append(args, Commentf("tc = %s", tc))...)
-		}
-		t := Type(tc)
-		assert(t.Unwrap(), DeepEquals, tc)
+		tt := Type(tc)
+		require.EqualValues(t, tc, tt.Unwrap())
 	}
 }
 
-func (*typeSchema) TestTypeCompareJoin(c *C) {
+func TestTypeCompareJoin(t *testing.T) {
 	testCases := []struct {
 		a             *types.FieldType
 		b             *types.FieldType
@@ -401,15 +188,7 @@ func (*typeSchema) TestTypeCompareJoin(c *C) {
 			a:            typeIntNotNullKey,
 			b:            typeIntAutoIncrementUnique,
 			compareError: `at tuple index \d+: combining contradicting orders.*`,
-			join: &types.FieldType{
-				Tp:      mysql.TypeLong,
-				Flag:    mysql.AutoIncrementFlag | mysql.MultipleKeyFlag,
-				Flen:    11,
-				Decimal: 0,
-				Charset: binary,
-				Collate: binary,
-				Elems:   nil,
-			},
+			join:         types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(mysql.AutoIncrementFlag | mysql.MultipleKeyFlag).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP(),
 		},
 		{
 			// DECIMAL of differet Flen/Decimal cannot be compared
@@ -445,46 +224,41 @@ func (*typeSchema) TestTypeCompareJoin(c *C) {
 	}
 
 	for _, tc := range testCases {
-		assert := func(expected interface{}, checker Checker, args ...interface{}) {
-			args = append(args, Commentf("a = %v %#x, b = %v %#x", tc.a, tc.a.Flag, tc.b, tc.b.Flag))
-			c.Assert(expected, checker, args...)
-		}
-
 		a := Type(tc.a)
 		b := Type(tc.b)
 		cmp, err := a.Compare(b)
 		if len(tc.compareError) != 0 {
 			if err == nil {
-				c.Log(cmp)
+				t.Log(cmp)
 			}
-			assert(err, ErrorMatches, tc.compareError)
+			require.Regexp(t, tc.compareError, err)
+
 		} else {
-			assert(err, IsNil)
-			assert(cmp, Equals, tc.compareResult)
+			require.NoError(t, err)
+			require.Equal(t, tc.compareResult, cmp)
 		}
 
 		cmp, err = b.Compare(a)
 		if len(tc.compareError) != 0 {
-			assert(err, ErrorMatches, tc.compareError)
+			require.Regexp(t, tc.compareError, err)
 		} else {
-			assert(err, IsNil)
-			assert(cmp, Equals, -tc.compareResult)
+			require.NoError(t, err)
+			require.Equal(t, -tc.compareResult, cmp)
 		}
 
 		wrappedJoin, err := a.Join(b)
 		if len(tc.joinError) != 0 {
-			assert(err, ErrorMatches, tc.joinError)
+			require.Regexp(t, tc.joinError, err)
 		} else {
-			assert(err, IsNil)
-			assert(wrappedJoin.Unwrap(), DeepEquals, tc.join)
-
+			require.NoError(t, err)
+			require.EqualValues(t, tc.join, wrappedJoin.Unwrap())
 			cmp, err = wrappedJoin.Compare(a)
-			assert(err, IsNil)
-			assert(cmp, GreaterEqual, 0)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, cmp, 0)
 
 			cmp, err = wrappedJoin.Compare(b)
-			assert(err, IsNil)
-			assert(cmp, GreaterEqual, 0)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, cmp, 0)
 		}
 	}
 }

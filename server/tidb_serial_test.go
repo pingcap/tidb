@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //go:build !race
-// +build !race
 
 package server
 
@@ -94,6 +93,22 @@ func TestLoadDataListPartition(t *testing.T) {
 	ts.runTestLoadDataForListPartition2(t)
 	ts.runTestLoadDataForListColumnPartition(t)
 	ts.runTestLoadDataForListColumnPartition2(t)
+}
+
+func TestInvalidTLS(t *testing.T) {
+	ts, cleanup := createTidbTestSuite(t)
+	defer cleanup()
+
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Security = config.Security{
+		SSLCA:   "bogus-ca-cert.pem",
+		SSLCert: "bogus-server-cert.pem",
+		SSLKey:  "bogus-server-key.pem",
+	}
+	_, err := NewServer(cfg, ts.tidbdrv)
+	require.Error(t, err)
 }
 
 func TestTLSAuto(t *testing.T) {
@@ -215,6 +230,7 @@ func TestTLSVerify(t *testing.T) {
 	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Port = cli.port
+	cfg.Socket = dir + "/tidbtest.sock"
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCA:   fileName("ca-cert.pem"),
@@ -223,6 +239,7 @@ func TestTLSVerify(t *testing.T) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	defer server.Close()
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -243,7 +260,6 @@ func TestTLSVerify(t *testing.T) {
 	err = cli.runTestTLSConnection(t, connOverrider)
 	require.NoError(t, err)
 	cli.runTestRegression(t, connOverrider, "TLSRegression")
-	server.Close()
 
 	require.False(t, util.IsTLSExpiredError(errors.New("unknown test")))
 	require.False(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
@@ -253,6 +269,34 @@ func TestTLSVerify(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = util.LoadTLSCertificates("wrong ca", fileName("server-key.pem"), fileName("server-cert.pem"), true, 528)
 	require.Error(t, err)
+
+	// Test connecting with a client that does not have TLS configured.
+	// It can still connect, but it should not be able to change "require_secure_transport" to "ON"
+	// because that is a lock-out risk.
+	err = cli.runTestEnableSecureTransport(t, nil)
+	require.ErrorContains(t, err, "require_secure_transport can only be set to ON if the connection issuing the change is secure")
+
+	// Success: when using a secure connection, the value of "require_secure_transport" can change to "ON"
+	err = cli.runTestEnableSecureTransport(t, connOverrider)
+	require.NoError(t, err)
+
+	// This connection will now fail since the client is not configured to use TLS.
+	err = cli.runTestTLSConnection(t, nil)
+	require.ErrorContains(t, err, "Connections using insecure transport are prohibited while --require_secure_transport=ON")
+
+	// However, this connection is successful
+	err = cli.runTestTLSConnection(t, connOverrider)
+	require.NoError(t, err)
+
+	// Test socketFile does not require TLS enabled in require-secure-transport.
+	// Since this restriction should only apply to TCP connections.
+	err = cli.runTestTLSConnection(t, func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.Addr = cfg.Socket
+		config.DBName = "test"
+	})
+	require.NoError(t, err)
 }
 
 func TestErrorNoRollback(t *testing.T) {
@@ -285,10 +329,9 @@ func TestErrorNoRollback(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	cfg.Security = config.Security{
-		RequireSecureTransport: true,
-		SSLCA:                  "wrong path",
-		SSLCert:                "wrong path",
-		SSLKey:                 "wrong path",
+		SSLCA:   "wrong path",
+		SSLCert: "wrong path",
+		SSLKey:  "wrong path",
 	}
 	_, err = NewServer(cfg, ts.tidbdrv)
 	require.Error(t, err)
@@ -346,6 +389,47 @@ func TestPrepareCount(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, prepareCnt, atomic.LoadInt64(&variable.PreparedStmtCount))
 	require.NoError(t, qctx.Close())
+}
+
+func TestPrepareExecute(t *testing.T) {
+	ts, cleanup := createTidbTestSuite(t)
+	defer cleanup()
+
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = qctx.Execute(ctx, "use test")
+	require.NoError(t, err)
+	_, err = qctx.Execute(ctx, "create table t1(id int primary key, v int)")
+	require.NoError(t, err)
+	_, err = qctx.Execute(ctx, "insert into t1 values(1, 100)")
+	require.NoError(t, err)
+
+	stmt, _, _, err := qctx.Prepare("select * from t1 where id=1")
+	require.NoError(t, err)
+	rs, err := stmt.Execute(ctx, nil)
+	require.NoError(t, err)
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(ctx, req))
+	require.Equal(t, 2, req.NumCols())
+	require.Equal(t, req.NumCols(), len(rs.Columns()))
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, int64(1), req.GetRow(0).GetInt64(0))
+	require.Equal(t, int64(100), req.GetRow(0).GetInt64(1))
+
+	// issue #33509
+	_, err = qctx.Execute(ctx, "alter table t1 drop column v")
+	require.NoError(t, err)
+
+	rs, err = stmt.Execute(ctx, nil)
+	require.NoError(t, err)
+	req = rs.NewChunk(nil)
+	require.NoError(t, rs.Next(ctx, req))
+	require.Equal(t, 1, req.NumCols())
+	require.Equal(t, req.NumCols(), len(rs.Columns()))
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, int64(1), req.GetRow(0).GetInt64(0))
 }
 
 func TestDefaultCharacterAndCollation(t *testing.T) {

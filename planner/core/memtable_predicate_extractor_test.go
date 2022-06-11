@@ -1705,3 +1705,40 @@ func TestPredicateQuery(t *testing.T) {
 	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
 	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
 }
+
+func TestTikvRegionStatusExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql      string
+		tableIDs []int64
+	}{
+		{
+			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id = 1",
+			tableIDs: []int64{1},
+		},
+		{
+			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id = 1 or table_id = 2",
+			tableIDs: []int64{1, 2},
+		},
+		{
+			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id in (1,2,3)",
+			tableIDs: []int64{1, 2, 3},
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+		rse := logicalMemTable.Extractor.(*plannercore.TiKVRegionStatusExtractor)
+		tableids := rse.GetTablesID()
+		sort.Slice(tableids, func(i, j int) bool {
+			return tableids[i] < tableids[j]
+		})
+		require.Equal(t, ca.tableIDs, tableids)
+	}
+}

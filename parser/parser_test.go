@@ -83,7 +83,7 @@ func TestSimple(t *testing.T) {
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
-		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
+		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
 		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
@@ -228,11 +228,16 @@ func TestSimple(t *testing.T) {
 	ct, ok := st.(*ast.CreateTableStmt)
 	require.True(t, ok)
 	for _, col := range ct.Cols {
-		require.Equal(t, uint(0), col.Tp.Flag&mysql.UnsignedFlag)
+		require.Equal(t, uint(0), col.Tp.GetFlag()&mysql.UnsignedFlag)
 	}
 
 	// for issue #4006
 	src = `insert into tb(v) (select v from tb);`
+	_, err = p.ParseOneStmt(src, "", "")
+	require.NoError(t, err)
+
+	// for issue #34642
+	src = `SELECT a as c having c = a;`
 	_, err = p.ParseOneStmt(src, "", "")
 	require.NoError(t, err)
 
@@ -544,6 +549,11 @@ func TestDMLStmt(t *testing.T) {
 			INSERT INTO tmp SELECT * from bar;
 			SELECT * from tmp;
 		ROLLBACK;`, true, "START TRANSACTION; INSERT INTO `tmp` SELECT * FROM `bar`; SELECT * FROM `tmp`; ROLLBACK"},
+		{"SAVEPOINT x", true, "SAVEPOINT x"},
+		{"RELEASE SAVEPOINT x", true, "RELEASE SAVEPOINT x"},
+		{"ROLLBACK TO x", true, "ROLLBACK TO x"},
+		{"ROLLBACK TO X", true, "ROLLBACK TO X"},
+		{"ROLLBACK TO SAVEPOINT x", true, "ROLLBACK TO x"},
 
 		// table statement
 		{"TABLE t", true, "TABLE `t`"},
@@ -867,10 +877,10 @@ func TestDMLStmt(t *testing.T) {
 		// for https://github.com/pingcap/tidb/issues/320
 		{`(select 1);`, true, "(SELECT 1)"},
 
-		//https://github.com/pingcap/tidb/issues/14297
+		// https://github.com/pingcap/tidb/issues/14297
 		{"select 1 where 1=1", true, "SELECT 1 FROM DUAL WHERE 1=1"},
 
-		//https://github.com/pingcap/tidb/issues/24496
+		// https://github.com/pingcap/tidb/issues/24496
 		{"select 1 group by 1", true, "SELECT 1 GROUP BY 1"},
 		{"select 1 from dual group by 1", true, "SELECT 1 GROUP BY 1"},
 
@@ -1027,6 +1037,13 @@ AAAAAAAAAAAA5gm5Mg==
 		{"SHOW PLACEMENT LABELS", true, "SHOW PLACEMENT LABELS"},
 		{"SHOW PLACEMENT LABELS LIKE '%zone%'", true, "SHOW PLACEMENT LABELS LIKE _UTF8MB4'%zone%'"},
 		{"SHOW PLACEMENT LABELS WHERE label='l123'", true, "SHOW PLACEMENT LABELS WHERE `label`=_UTF8MB4'l123'"},
+
+		// for show/set session_states
+		{"SHOW SESSION_STATES", true, "SHOW SESSION_STATES"},
+		{"SET SESSION_STATES 'x'", true, "SET SESSION_STATES 'x'"},
+		{"SET SESSION_STATES", false, ""},
+		{"SET SESSION_STATES 1", false, ""},
+		{"SET SESSION_STATES now()", false, ""},
 	}
 	RunTest(t, table, false)
 }
@@ -1050,6 +1067,7 @@ func TestDBAStmt(t *testing.T) {
 		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true, "SHOW FULL TABLES WHERE `Table_Type`!=_UTF8MB4'VIEW'"},
 		{`SHOW GRANTS`, true, "SHOW GRANTS"},
 		{`SHOW GRANTS FOR 'test'@'localhost'`, true, "SHOW GRANTS FOR `test`@`localhost`"},
+		{`SHOW GRANTS FOR 'test'@'LOCALHOST'`, true, "SHOW GRANTS FOR `test`@`localhost`"},
 		{`SHOW GRANTS FOR current_user()`, true, "SHOW GRANTS FOR CURRENT_USER"},
 		{`SHOW GRANTS FOR current_user`, true, "SHOW GRANTS FOR CURRENT_USER"},
 		{`SHOW GRANTS FOR 'u1'@'localhost' USING 'r1'`, true, "SHOW GRANTS FOR `u1`@`localhost` USING `r1`@`%`"},
@@ -2714,7 +2732,7 @@ func TestDDL(t *testing.T) {
 		// for default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true, "CREATE TABLE `sbtest` (`id` INT UNSIGNED NOT NULL AUTO_INCREMENT,`k` INT UNSIGNED DEFAULT _UTF8MB4'0' NOT NULL,`c` CHAR(120) DEFAULT _UTF8MB4'' NOT NULL,`pad` CHAR(60) DEFAULT _UTF8MB4'' NOT NULL,PRIMARY KEY(`id`))"},
 		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true, "CREATE TABLE `test` (`create_date` TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT CURRENT_TIMESTAMP())"},
-		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true, "CREATE TABLE `ts` (`t` INT,`v` TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3))"}, //TODO: The number yacc in parentheses has not been implemented yet.
+		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true, "CREATE TABLE `ts` (`t` INT,`v` TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3))"}, // TODO: The number yacc in parentheses has not been implemented yet.
 		// Create table with primary key name.
 		{"create table if not exists `t` (`id` int not null auto_increment comment '消息ID', primary key `pk_id` (`id`) );", true, "CREATE TABLE IF NOT EXISTS `t` (`id` INT NOT NULL AUTO_INCREMENT COMMENT '消息ID',PRIMARY KEY `pk_id`(`id`))"},
 		// Create table with like.
@@ -2749,15 +2767,25 @@ func TestDDL(t *testing.T) {
 
 		{"create table t (a timestamp default now)", false, ""},
 		{"create table t (a timestamp default now())", true, "CREATE TABLE `t` (`a` TIMESTAMP DEFAULT CURRENT_TIMESTAMP())"},
+		{"create table t (a timestamp default (((now()))))", true, "CREATE TABLE `t` (`a` TIMESTAMP DEFAULT CURRENT_TIMESTAMP())"},
 		{"create table t (a timestamp default now() on update now)", false, ""},
 		{"create table t (a timestamp default now() on update now())", true, "CREATE TABLE `t` (`a` TIMESTAMP DEFAULT CURRENT_TIMESTAMP() ON UPDATE CURRENT_TIMESTAMP())"},
+		{"create table t (a timestamp default now() on update (now()))", false, ""},
 		{"CREATE TABLE t (c TEXT) default CHARACTER SET utf8, default COLLATE utf8_general_ci;", true, "CREATE TABLE `t` (`c` TEXT) DEFAULT CHARACTER SET = UTF8 DEFAULT COLLATE = UTF8_GENERAL_CI"},
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1;", true, "CREATE TABLE `t` (`c` TEXT) SHARD_ROW_ID_BITS = 1"},
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1, PRE_SPLIT_REGIONS = 1;", true, "CREATE TABLE `t` (`c` TEXT) SHARD_ROW_ID_BITS = 1 PRE_SPLIT_REGIONS = 1"},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
-		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true, "CREATE TABLE IF NOT EXISTS `general_log` (`event_time` TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` MEDIUMTEXT NOT NULL,`thread_id` BIGINT(20) UNSIGNED NOT NULL,`server_id` INT(10) UNSIGNED NOT NULL,`command_type` VARCHAR(64) NOT NULL,`argument` MEDIUMBLOB NOT NULL) ENGINE = CSV DEFAULT CHARACTER SET = UTF8 COMMENT = 'General log'"}, //TODO: The number yacc in parentheses has not been implemented yet.
+		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true, "CREATE TABLE IF NOT EXISTS `general_log` (`event_time` TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` MEDIUMTEXT NOT NULL,`thread_id` BIGINT(20) UNSIGNED NOT NULL,`server_id` INT(10) UNSIGNED NOT NULL,`command_type` VARCHAR(64) NOT NULL,`argument` MEDIUMBLOB NOT NULL) ENGINE = CSV DEFAULT CHARACTER SET = UTF8 COMMENT = 'General log'"}, // TODO: The number yacc in parentheses has not been implemented yet.
 		// For reference_definition in column_definition.
 		{"CREATE TABLE followers ( f1 int NOT NULL REFERENCES user_profiles (uid) );", true, "CREATE TABLE `followers` (`f1` INT NOT NULL REFERENCES `user_profiles`(`uid`))"},
+
+		// For column default expression
+		{"create table t (a int default rand())", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
+		{"create table t (a int default rand(1))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
+		{"create table t (a int default (rand()))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
+		{"create table t (a int default (rand(1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
+		{"create table t (a int default (((rand()))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
+		{"create table t (a int default (((rand(1)))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3107,7 +3135,7 @@ func TestDDL(t *testing.T) {
 		{"CREATE INDEX idx ON t ( a ) ALGORITHM = ident", false, ""},
 		{"CREATE INDEX idx ON t ( a ) ALGORITHM ident", false, ""},
 
-		//For dorp index statement
+		// For dorp index statement
 		{"drop index a on t", true, "DROP INDEX `a` ON `t`"},
 		{"drop index a on db.t", true, "DROP INDEX `a` ON `db`.`t`"},
 		{"drop index a on db.`tb-ttb`", true, "DROP INDEX `a` ON `db`.`tb-ttb`"},
@@ -4182,6 +4210,38 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints, 2)
 	require.Equal(t, "limit_to_cop", hints[0].HintName.L)
 	require.Equal(t, "limit_to_cop", hints[1].HintName.L)
+
+	// Test STRAIGHT_JOIN
+	stmt, _, err = p.Parse("select /*+ STRAIGHT_JOIN(), straight_join() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "straight_join", hints[0].HintName.L)
+	require.Equal(t, "straight_join", hints[1].HintName.L)
+
+	// Test LEADING
+	stmt, _, err = p.Parse("select /*+ LEADING(T1), LEADING(t2, t3), LEADING(T4, t5, t6) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 3)
+	require.Equal(t, "leading", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 1)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+
+	require.Equal(t, "leading", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 2)
+	require.Equal(t, "t2", hints[1].Tables[0].TableName.L)
+	require.Equal(t, "t3", hints[1].Tables[1].TableName.L)
+
+	require.Equal(t, "leading", hints[2].HintName.L)
+	require.Len(t, hints[2].Tables, 3)
+	require.Equal(t, "t4", hints[2].Tables[0].TableName.L)
+	require.Equal(t, "t5", hints[2].Tables[1].TableName.L)
+	require.Equal(t, "t6", hints[2].Tables[2].TableName.L)
 }
 
 func TestType(t *testing.T) {
@@ -4249,7 +4309,7 @@ func TestPrivilege(t *testing.T) {
 		{"CREATE USER test.user", false, ""},
 		{"CREATE USER 'test.user'", true, "CREATE USER `test.user`@`%`"},
 		{"CREATE USER `test.user`", true, "CREATE USER `test.user`@`%`"},
-		{"CREATE USER uesr1@localhost", true, "CREATE USER `uesr1`@`localhost`"},
+		{"CREATE USER uesr1@LOCALhost", true, "CREATE USER `uesr1`@`localhost`"},
 		{"CREATE USER `uesr1`@localhost", true, "CREATE USER `uesr1`@`localhost`"},
 		{"CREATE USER uesr1@`localhost`", true, "CREATE USER `uesr1`@`localhost`"},
 		{"CREATE USER `uesr1`@`localhost`", true, "CREATE USER `uesr1`@`localhost`"},
@@ -4308,7 +4368,7 @@ func TestPrivilege(t *testing.T) {
 
 		// for grant statement
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' REQUIRE X509;", true, "GRANT ALL ON `db1`.* TO `jeffrey`@`localhost` REQUIRE X509"},
-		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' REQUIRE SSL;", true, "GRANT ALL ON `db1`.* TO `jeffrey`@`localhost` REQUIRE SSL"},
+		{"GRANT ALL ON db1.* TO 'jeffrey'@'LOCALhost' REQUIRE SSL;", true, "GRANT ALL ON `db1`.* TO `jeffrey`@`localhost` REQUIRE SSL"},
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' REQUIRE NONE;", true, "GRANT ALL ON `db1`.* TO `jeffrey`@`localhost` REQUIRE NONE"},
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' REQUIRE ISSUER '/C=SE/ST=Stockholm/L=Stockholm/O=MySQL/CN=CA/emailAddress=ca@example.com' AND CIPHER 'EDH-RSA-DES-CBC3-SHA';", true, "GRANT ALL ON `db1`.* TO `jeffrey`@`localhost` REQUIRE ISSUER '/C=SE/ST=Stockholm/L=Stockholm/O=MySQL/CN=CA/emailAddress=ca@example.com' AND CIPHER 'EDH-RSA-DES-CBC3-SHA'"},
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true, "GRANT ALL ON `db1`.* TO `jeffrey`@`localhost`"},
@@ -4316,6 +4376,7 @@ func TestPrivilege(t *testing.T) {
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' WITH GRANT OPTION;", true, "GRANT ALL ON `db1`.* TO `jeffrey`@`localhost` WITH GRANT OPTION"},
 		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true, "GRANT SELECT ON `db2`.`invoice` TO `jeffrey`@`localhost`"},
 		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true, "GRANT ALL ON *.* TO `someuser`@`somehost`"},
+		{"GRANT ALL ON *.* TO 'SOMEuser'@'SOMEhost';", true, "GRANT ALL ON *.* TO `SOMEuser`@`somehost`"},
 		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true, "GRANT SELECT, INSERT ON *.* TO `someuser`@`somehost`"},
 		{"GRANT ALL ON mydb.* TO 'someuser'@'somehost';", true, "GRANT ALL ON `mydb`.* TO `someuser`@`somehost`"},
 		{"GRANT SELECT, INSERT ON mydb.* TO 'someuser'@'somehost';", true, "GRANT SELECT, INSERT ON `mydb`.* TO `someuser`@`somehost`"},
@@ -4326,7 +4387,7 @@ func TestPrivilege(t *testing.T) {
 		{"GRANT SELECT ON test.* to 'test'", true, "GRANT SELECT ON `test`.* TO `test`@`%`"}, // For issue 2654.
 		{"grant PROCESS,usage, REPLICATION SLAVE, REPLICATION CLIENT on *.* to 'xxxxxxxxxx'@'%' identified by password 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx'", true, "GRANT PROCESS, USAGE, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO `xxxxxxxxxx`@`%` IDENTIFIED WITH 'mysql_native_password' AS 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx'"},
 		{"/* rds internal mark */ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, RELOAD, PROCESS, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES,      EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT,      TRIGGER on *.* to 'root2'@'%' identified by password '*sdsadsdsadssadsadsadsadsada' with grant option", true, "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, RELOAD, PROCESS, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER ON *.* TO `root2`@`%` IDENTIFIED WITH 'mysql_native_password' AS '*sdsadsdsadssadsadsadsadsada' WITH GRANT OPTION"},
-		{"GRANT 'role1', 'role2' TO 'user1'@'localhost', 'user2'@'localhost';", true, "GRANT `role1`@`%`, `role2`@`%` TO `user1`@`localhost`, `user2`@`localhost`"},
+		{"GRANT 'role1', 'role2' TO 'user1'@'LOCalhost', 'user2'@'LOcalhost';", true, "GRANT `role1`@`%`, `role2`@`%` TO `user1`@`localhost`, `user2`@`localhost`"},
 		{"GRANT 'u1' TO 'u1';", true, "GRANT `u1`@`%` TO `u1`@`%`"},
 		{"GRANT 'app_read'@'%','app_write'@'%' TO 'rw_user1'@'localhost'", true, "GRANT `app_read`@`%`, `app_write`@`%` TO `rw_user1`@`localhost`"},
 		{"GRANT 'app_developer' TO 'dev1'@'localhost';", true, "GRANT `app_developer`@`%` TO `dev1`@`localhost`"},
@@ -4344,7 +4405,7 @@ func TestPrivilege(t *testing.T) {
 		{"grant grant option on *.* to u1", true, "GRANT GRANT OPTION ON *.* TO `u1`@`%`"}, // not typical syntax, but supported
 
 		// for revoke statement
-		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true, "REVOKE ALL ON `db1`.* FROM `jeffrey`@`localhost`"},
+		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'LOCalhost';", true, "REVOKE ALL ON `db1`.* FROM `jeffrey`@`localhost`"},
 		{"REVOKE SELECT ON db2.invoice FROM 'jeffrey'@'localhost';", true, "REVOKE SELECT ON `db2`.`invoice` FROM `jeffrey`@`localhost`"},
 		{"REVOKE ALL ON *.* FROM 'someuser'@'somehost';", true, "REVOKE ALL ON *.* FROM `someuser`@`somehost`"},
 		{"REVOKE SELECT, INSERT ON *.* FROM 'someuser'@'somehost';", true, "REVOKE SELECT, INSERT ON *.* FROM `someuser`@`somehost`"},
@@ -4782,6 +4843,10 @@ func TestExplain(t *testing.T) {
 		{"DESC SCHE.TABL COLUM", true, "DESC `SCHE`.`TABL` `COLUM`"},
 		{"DESCRIBE SCHE.TABL COLUM", true, "DESC `SCHE`.`TABL` `COLUM`"},
 		{"EXPLAIN ANALYZE SELECT 1", true, "EXPLAIN ANALYZE SELECT 1"},
+		{"EXPLAIN ANALYZE format=VERBOSE SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'VERBOSE' SELECT 1"},
+		{"EXPLAIN ANALYZE format=TRUE_CARD_COST SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'TRUE_CARD_COST' SELECT 1"},
+		{"EXPLAIN ANALYZE format='VERBOSE' SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'VERBOSE' SELECT 1"},
+		{"EXPLAIN ANALYZE format='TRUE_CARD_COST' SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'TRUE_CARD_COST' SELECT 1"},
 		{"EXPLAIN FORMAT = 'dot' SELECT 1", true, "EXPLAIN FORMAT = 'dot' SELECT 1"},
 		{"EXPLAIN FORMAT = DOT SELECT 1", true, "EXPLAIN FORMAT = 'DOT' SELECT 1"},
 		{"EXPLAIN FORMAT = 'row' SELECT 1", true, "EXPLAIN FORMAT = 'row' SELECT 1"},
@@ -5157,9 +5222,9 @@ func TestDDLStatements(t *testing.T) {
 	stmts, _, err := p.Parse(createTableStr, "", "")
 	require.NoError(t, err)
 	stmt := stmts[0].(*ast.CreateTableStmt)
-	require.True(t, mysql.HasBinaryFlag(stmt.Cols[0].Tp.Flag))
+	require.True(t, mysql.HasBinaryFlag(stmt.Cols[0].Tp.GetFlag()))
 	for _, colDef := range stmt.Cols[1:] {
-		require.False(t, mysql.HasBinaryFlag(colDef.Tp.Flag))
+		require.False(t, mysql.HasBinaryFlag(colDef.Tp.GetFlag()))
 	}
 	for _, tblOpt := range stmt.Options {
 		switch tblOpt.Tp {
@@ -5177,9 +5242,9 @@ func TestDDLStatements(t *testing.T) {
 	require.NoError(t, err)
 	stmt = stmts[0].(*ast.CreateTableStmt)
 	for _, colDef := range stmt.Cols {
-		require.Equal(t, charset.CharsetBin, colDef.Tp.Charset)
-		require.Equal(t, charset.CollationBin, colDef.Tp.Collate)
-		require.True(t, mysql.HasBinaryFlag(colDef.Tp.Flag))
+		require.Equal(t, charset.CharsetBin, colDef.Tp.GetCharset())
+		require.Equal(t, charset.CollationBin, colDef.Tp.GetCollate())
+		require.True(t, mysql.HasBinaryFlag(colDef.Tp.GetFlag()))
 	}
 	// Test set collate for all column types
 	createTableStr = `CREATE TABLE t (
@@ -5921,6 +5986,32 @@ func TestCharset(t *testing.T) {
 	require.NotNil(t, st.(*ast.AlterDatabaseStmt))
 }
 
+func TestUnderscoreCharset(t *testing.T) {
+	p := parser.New()
+	tests := []struct {
+		cs        string
+		parseFail bool
+		unSupport bool
+	}{
+		{"utf8", false, false},
+		{"gbk", false, true},
+		{"ujis", false, true},
+		{"gbk1", true, true},
+		{"ujisx", true, true},
+	}
+	for _, tt := range tests {
+		sql := fmt.Sprintf("select hex(_%s '3F')", tt.cs)
+		_, err := p.ParseOneStmt(sql, "", "")
+		if tt.parseFail {
+			require.EqualError(t, err, fmt.Sprintf("line 1 column %d near \"'3F')\" ", len(tt.cs)+17))
+		} else if tt.unSupport {
+			require.EqualError(t, err, ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", tt.cs).Error())
+		} else {
+			require.NoError(t, err)
+		}
+	}
+}
+
 func TestFulltextSearch(t *testing.T) {
 	p := parser.New()
 
@@ -6026,8 +6117,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 			}
 		}
 		for _, col := range node.Cols {
-			col.Tp.Charset = strings.ToUpper(col.Tp.Charset)
-			col.Tp.Collate = strings.ToUpper(col.Tp.Collate)
+			col.Tp.SetCharset(strings.ToUpper(col.Tp.GetCharset()))
+			col.Tp.SetCollate(strings.ToUpper(col.Tp.GetCollate()))
 
 			for i, option := range col.Options {
 				if option.Tp == 0 && option.Expr == nil && option.Stored == false && option.Refer == nil {
@@ -6627,4 +6718,23 @@ func TestCharsetIntroducer(t *testing.T) {
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+}
+
+func TestNonTransactionalDelete(t *testing.T) {
+	cases := []testCase{
+		{"batch on c limit 10 delete from t where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
+		{"batch on c limit 10 dry run delete from t where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
+		{"batch on c limit 10 dry run query delete from t where c = 10", true,
+			"BATCH ON `c` LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
+		{"batch limit 10 delete from t where c = 10", true,
+			"BATCH LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
+		{"batch limit 10 dry run delete from t where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
+		{"batch limit 10 dry run query delete from t where c = 10", true,
+			"BATCH LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
+	}
+
+	RunTest(t, cases, false)
 }

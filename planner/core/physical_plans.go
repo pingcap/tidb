@@ -73,6 +73,30 @@ type tableScanAndPartitionInfo struct {
 	partitionInfo PartitionInfo
 }
 
+type readReqType uint8
+
+const (
+	// Cop means read from storage by cop request.
+	Cop readReqType = iota
+	// BatchCop means read from storage by BatchCop request, only used for TiFlash
+	BatchCop
+	// MPP means read from storage by MPP request, only used for TiFlash
+	MPP
+)
+
+// Name returns the name of read request type.
+func (r readReqType) Name() string {
+	switch r {
+	case BatchCop:
+		return "batchCop"
+	case MPP:
+		return "mpp"
+	default:
+		// return cop by default
+		return "cop"
+	}
+}
+
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
 	physicalSchemaProducer
@@ -84,8 +108,9 @@ type PhysicalTableReader struct {
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
 
-	// BatchCop = true means the cop task in the physical table reader will be executed in batch mode(use in TiFlash only)
-	BatchCop bool
+	// ReadReqType is the read request type for current physical table reader, there are 3 kinds of read request: Cop,
+	// BatchCop and MPP, currently, the latter two are only used in TiFlash
+	ReadReqType readReqType
 
 	IsCommonHandle bool
 
@@ -129,14 +154,14 @@ func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
 	return tableScans[0], nil
 }
 
-// SetMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
-func SetMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
+// setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
+func setMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 	if ts, ok := curPlan.(*PhysicalTableScan); ok {
 		ts.IsMPPOrBatchCop = true
 	}
 	children := curPlan.Children()
 	for _, child := range children {
-		SetMppOrBatchCopForTableScan(child)
+		setMppOrBatchCopForTableScan(child)
 	}
 }
 
@@ -173,7 +198,7 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.StoreType = p.StoreType
-	cloned.BatchCop = p.BatchCop
+	cloned.ReadReqType = p.ReadReqType
 	cloned.IsCommonHandle = p.IsCommonHandle
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
@@ -236,7 +261,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
-		case *PhysicalHashAgg, *PhysicalStreamAgg:
+		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
 			p.schema = p.indexPlan.Schema()
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -293,6 +318,10 @@ type PhysicalIndexLookUpReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+
+	// required by cost calculation
+	expectedCnt uint64
+	keepOrder   bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -408,6 +437,11 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 
 	NeedCommonHandle bool
+
+	// required by cost model
+	// tblColHists contains all columns before pruning, which are used to calculate row-size
+	tblColHists   *statistics.HistColl
+	pkIsHandleCol *expression.Column
 }
 
 // Clone implements PhysicalPlan interface.
@@ -504,6 +538,11 @@ type PhysicalTableScan struct {
 	PartitionInfo PartitionInfo
 
 	SampleInfo *TableSampleInfo
+
+	// required by cost model
+	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
+	tblCols     []*expression.Column
+	tblColHists *statistics.HistColl
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1153,11 +1192,15 @@ type PhysicalSort struct {
 	basePhysicalPlan
 
 	ByItems []*util.ByItems
+	// whether this operator only need to sort the data of one partition.
+	// it is true only if it is used to sort the sharded data of the window function.
+	IsPartialSort bool
 }
 
 // Clone implements PhysicalPlan interface.
 func (ls *PhysicalSort) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSort)
+	cloned.IsPartialSort = ls.IsPartialSort
 	base, err := ls.basePhysicalPlan.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
@@ -1254,6 +1297,17 @@ type PhysicalMaxOneRow struct {
 	basePhysicalPlan
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalMaxOneRow) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalMaxOneRow)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	return cloned, nil
+}
+
 // PhysicalTableDual is the physical operator of dual.
 type PhysicalTableDual struct {
 	physicalSchemaProducer
@@ -1283,6 +1337,9 @@ type PhysicalWindow struct {
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
 	Frame           *WindowFrame
+
+	// on which store the window function executes.
+	storeTp kv.StoreType
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -1306,6 +1363,34 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 		}
 	}
 	return corCols
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalWindow)
+	*cloned = *p
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
+	}
+	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
+	for _, it := range p.OrderBy {
+		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
+	}
+	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
+	for _, it := range p.WindowFuncDescs {
+		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
+	}
+	if p.Frame != nil {
+		cloned.Frame = p.Frame.Clone()
+	}
+
+	return cloned, nil
 }
 
 // PhysicalShuffle represents a shuffle plan.

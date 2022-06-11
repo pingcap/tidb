@@ -21,6 +21,7 @@ import (
 	"time"
 
 	pb "github.com/pingcap/tipb/go-binlog"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
@@ -57,10 +58,7 @@ func writeFakeBinlog(b *testing.B, pumpClient *PumpsClient, threadCount int, num
 					StartTs: int64(baseTS + j),
 				}
 				err := pumpClient.WriteBinlog(pBinlog)
-				if err != nil {
-					b.Error(err)
-					return
-				}
+				require.NoError(b, err)
 
 				cBinlog := &pb.Binlog{
 					Tp:       pb.BinlogType_Commit,
@@ -68,10 +66,7 @@ func writeFakeBinlog(b *testing.B, pumpClient *PumpsClient, threadCount int, num
 					CommitTs: int64(baseTS + j),
 				}
 				err = pumpClient.WriteBinlog(cBinlog)
-				if err != nil {
-					b.Error(err)
-					return
-				}
+				require.NoError(b, err)
 			}
 			wg.Done()
 		}(10000000 * i)

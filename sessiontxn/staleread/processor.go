@@ -45,6 +45,8 @@ type Processor interface {
 
 	// OnSelectTable will be called when process table in select statement
 	OnSelectTable(tn *ast.TableName) error
+	// OnExecutePreparedStmt when process execute
+	OnExecutePreparedStmt(preparedTSEvaluator StalenessTSEvaluator) error
 }
 
 type baseProcessor struct {
@@ -82,16 +84,20 @@ func (p *baseProcessor) OnSelectTable(_ *ast.TableName) error {
 	return errors.New("not supported")
 }
 
+func (p *baseProcessor) OnExecutePrepared(_ StalenessTSEvaluator) error {
+	return errors.New("not supported")
+}
+
 func (p *baseProcessor) setAsNonStaleRead() error {
 	return p.setEvaluatedValues(0, nil, nil)
 }
 
 func (p *baseProcessor) setEvaluatedTS(ts uint64) (err error) {
-	is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(ts)
+	is, err := GetSessionSnapshotInfoSchema(p.sctx, ts)
 	if err != nil {
 		return err
 	}
-	is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
+
 	return p.setEvaluatedValues(ts, is, func(sctx sessionctx.Context) (uint64, error) {
 		return ts, nil
 	})
@@ -103,8 +109,7 @@ func (p *baseProcessor) setEvaluatedEvaluator(evaluator StalenessTSEvaluator) er
 		return err
 	}
 
-	is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(ts)
-	is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
+	is, err := GetSessionSnapshotInfoSchema(p.sctx, ts)
 	if err != nil {
 		return err
 	}
@@ -126,7 +131,7 @@ func (p *baseProcessor) setEvaluatedValues(ts uint64, is infoschema.InfoSchema, 
 
 type staleReadProcessor struct {
 	baseProcessor
-	stmtAsOfTs uint64
+	stmtTS uint64
 }
 
 // NewStaleReadProcessor creates a new stale read processor
@@ -139,27 +144,14 @@ func NewStaleReadProcessor(sctx sessionctx.Context) Processor {
 // OnSelectTable will be called when process table in select statement
 func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	if p.sctx.GetSessionVars().InTxn() {
-		// When in explicit txn, it is not allowed to declare stale read in statement
-		// and the sys variables should also be ignored no matter it is set or not
 		if tn.AsOf != nil {
 			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 		}
 
-		if p.evaluated {
-			return nil
+		if !p.evaluated {
+			return p.evaluateFromTxn()
 		}
-
-		if txnCtx := p.sctx.GetSessionVars().TxnCtx; txnCtx.IsStaleness {
-			// It means we meet following case:
-			// 1. start transaction read only as of timestamp ts
-			// 2. select statement
-			return p.setEvaluatedValues(
-				txnCtx.StartTS,
-				temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, txnCtx.InfoSchema.(infoschema.InfoSchema)),
-				nil,
-			)
-		}
-		return p.setAsNonStaleRead()
+		return nil
 	}
 
 	// If `stmtAsOfTS` is not 0, it means we use 'select ... from xxx as of timestamp ...'
@@ -170,35 +162,75 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 
 	if p.evaluated {
 		// If the select statement is related to multi tables, we should guarantee that all tables use the same timestamp
-		if p.stmtAsOfTs != stmtAsOfTS {
+		if p.stmtTS != stmtAsOfTS {
 			return errAsOf.GenWithStack("can not set different time in the as of")
 		}
 		return nil
 	}
+	return p.evaluateFromStmtTSOrSysVariable(stmtAsOfTS)
+}
 
+func (p *staleReadProcessor) OnExecutePreparedStmt(preparedTSEvaluator StalenessTSEvaluator) (err error) {
+	if p.evaluated {
+		return errors.New("already evaluated")
+	}
+
+	if p.sctx.GetSessionVars().InTxn() {
+		if preparedTSEvaluator != nil {
+			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+		}
+		return p.evaluateFromTxn()
+	}
+
+	var stmtTS uint64
+	if preparedTSEvaluator != nil {
+		// If the `preparedTSEvaluator` is not nil, it means the prepared statement is stale read
+		if stmtTS, err = preparedTSEvaluator(p.sctx); err != nil {
+			return err
+		}
+	}
+	return p.evaluateFromStmtTSOrSysVariable(stmtTS)
+}
+
+func (p *staleReadProcessor) evaluateFromTxn() error {
+	// sys variables should be ignored when in an explicit transaction
+	if txnCtx := p.sctx.GetSessionVars().TxnCtx; txnCtx.IsStaleness {
+		// It means we meet following case:
+		// 1. `start transaction read only as of timestamp ts
+		// 2. select or execute statement
+		return p.setEvaluatedValues(
+			txnCtx.StartTS,
+			temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, txnCtx.InfoSchema.(infoschema.InfoSchema)),
+			nil,
+		)
+	}
+	return p.setAsNonStaleRead()
+}
+
+func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64) error {
 	// If `txnReadTS` is not 0, it means  we meet following situation:
-	// start transaction read only as of timestamp ...
-	// select from table
+	// set transaction read only as of timestamp ...
+	// select from table or execute prepared statement
 	txnReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
-	if txnReadTS > 0 && stmtAsOfTS > 0 {
+	if txnReadTS > 0 && stmtTS > 0 {
 		// `as of` and `@@tx_read_ts` cannot be set in the same time
 		return errAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 	}
 
-	if stmtAsOfTS > 0 {
-		p.stmtAsOfTs = stmtAsOfTS
-		return p.setEvaluatedTS(stmtAsOfTS)
+	if stmtTS > 0 {
+		p.stmtTS = stmtTS
+		return p.setEvaluatedTS(stmtTS)
 	}
 
 	if txnReadTS > 0 {
 		return p.setEvaluatedTS(txnReadTS)
 	}
 
-	// If both txnReadTS and stmtAsOfTS is empty while the readStaleness isn't, it means we meet following situation:
-	// set @@tidb_read_staleness='-5';
-	// select from table
-	// Then the following select statement should be affected by the tidb_read_staleness in session.
 	if evaluator := getTsEvaluatorFromReadStaleness(p.sctx); evaluator != nil {
+		// If both txnReadTS and stmtAsOfTS is empty while the return of getTsEvaluatorFromReadStaleness is not nil, it means we meet following situation:
+		// set @@tidb_read_staleness='-5';
+		// select from table
+		// Then the following select statement should be affected by the tidb_read_staleness in session.
 		return p.setEvaluatedEvaluator(evaluator)
 	}
 
@@ -232,4 +264,13 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluat
 	return func(sctx sessionctx.Context) (uint64, error) {
 		return CalculateTsWithReadStaleness(sctx, readStaleness)
 	}
+}
+
+// GetSessionSnapshotInfoSchema returns the session's information schema with specified ts
+func GetSessionSnapshotInfoSchema(sctx sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
+	is, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
+	if err != nil {
+		return nil, err
+	}
+	return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is), nil
 }

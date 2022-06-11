@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -44,22 +45,23 @@ import (
 
 type domainMap struct {
 	domains map[string]*domain.Domain
-	mu      sync.Mutex
+	mu      sync.RWMutex
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	dm.mu.Lock()
-	defer dm.mu.Unlock()
+	dm.mu.RLock()
 
 	// If this is the only domain instance, and the caller doesn't provide store.
 	if len(dm.domains) == 1 && store == nil {
 		for _, r := range dm.domains {
+			dm.mu.RUnlock()
 			return r, nil
 		}
 	}
 
 	key := store.UUID()
 	d = dm.domains[key]
+	dm.mu.RUnlock()
 	if d != nil {
 		return
 	}
@@ -92,7 +94,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if err != nil {
 		return nil, err
 	}
-	dm.domains[key] = d
+	dm.Set(store, d)
 
 	return
 }
@@ -100,6 +102,12 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 func (dm *domainMap) Delete(store kv.Storage) {
 	dm.mu.Lock()
 	delete(dm.domains, store.UUID())
+	dm.mu.Unlock()
+}
+
+func (dm *domainMap) Set(store kv.Storage, domain *domain.Domain) {
+	dm.mu.Lock()
+	dm.domains[store.UUID()] = domain
 	dm.mu.Unlock()
 }
 
@@ -292,7 +300,7 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 				history.Count(), sessVars.IsAutocommit())
 		}
-		err = se.NewTxn(ctx)
+		err = sessiontxn.NewTxn(ctx, se)
 		// The transaction does not committed yet, we need to keep it in transaction.
 		// The last history could not be "commit"/"rollback" statement.
 		// It means it is impossible to start a new transaction at the end of the transaction.

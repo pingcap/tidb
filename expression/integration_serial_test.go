@@ -24,14 +24,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -3356,8 +3353,11 @@ func TestBuiltin(t *testing.T) {
 
 	// test case decimal precision less than the scale.
 	_, err = tk.Exec("select cast(12.1 as decimal(3, 4));")
-	require.Error(t, err)
 	require.Error(t, err, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1').")
+
+	// test case cast(EXPR as datetime(x)) precision more than the scale(6).
+	_, err = tk.Exec("SELECT CAST(1 AS DATETIME(7));")
+	require.Error(t, err, "[types:1427]Too big precision 7 specified for column 'CAST'. Maximum is 6.")
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
@@ -3747,6 +3747,13 @@ func TestSetVariables(t *testing.T) {
 	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
 	require.Error(t, err)
 	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
+
+	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("1"))
+	require.True(t, variable.EnableConcurrentDDL.Load())
+	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=0")
+	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
+	require.False(t, variable.EnableConcurrentDDL.Load())
+	testkit.NewTestKit(t, store).MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
 }
 
 func TestPreparePlanCache(t *testing.T) {
@@ -3754,9 +3761,6 @@ func TestPreparePlanCache(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-
-	// Plan cache should now be off by default
-	require.False(t, plannercore.PreparedPlanCacheEnabled())
 
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -4184,8 +4188,6 @@ func TestNoopFunctions(t *testing.T) {
 		"SELECT * FROM t1 LOCK IN SHARE MODE",
 		"SELECT * FROM t1 GROUP BY a DESC",
 		"SELECT * FROM t1 GROUP BY a ASC",
-		"SELECT GET_LOCK('acdc', 10)",
-		"SELECT RELEASE_LOCK('acdc')",
 	}
 
 	for _, stmt := range stmts {
@@ -4313,51 +4315,30 @@ func TestIssue20128(t *testing.T) {
 }
 
 func TestCrossDCQuery(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("create placement policy p1 leader_constraints='[+zone=sh]'")
+	tk.MustExec("create placement policy p2 leader_constraints='[+zone=bj]'")
 	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))
 PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (6),
-	PARTITION p1 VALUES LESS THAN (11)
+	PARTITION p0 VALUES LESS THAN (6) placement policy p1,
+	PARTITION p1 VALUES LESS THAN (11) placement policy p2
 );`)
-	defer tk.MustExec("drop table if exists t1")
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop placement policy if exists p1")
+		tk.MustExec("drop placement policy if exists p2")
+	}()
 
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (3,5,7);`)
-
-	is := dom.InfoSchema()
-
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
-	setBundle := func(parName, dc string) {
-		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
-		require.NoError(t, err)
-		groupID := placement.GroupID(pid)
-		is.SetBundle(&placement.Bundle{
-			ID: groupID,
-			Rules: []*placement.Rule{
-				{
-					GroupID: groupID,
-					Role:    placement.Leader,
-					Count:   1,
-					Constraints: []placement.Constraint{
-						{
-							Key:    placement.DCLabelKey,
-							Op:     placement.In,
-							Values: []string{dc},
-						},
-					},
-				},
-			},
-		})
-	}
-	setBundle("p0", "sh")
-	setBundle("p1", "bj")
 
 	testcases := []struct {
 		name      string

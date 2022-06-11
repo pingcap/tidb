@@ -15,7 +15,6 @@ package charset
 
 import (
 	"bytes"
-
 	"golang.org/x/text/encoding"
 )
 
