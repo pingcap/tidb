@@ -1831,10 +1831,7 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 	if expr.GetType().EvalType() != types.ETString {
 		return expr
 	}
-	// Avoid padding 0 when cast character string to binary,
-	// which might affect string comparision result.
-	// See https://github.com/pingcap/tidb/issues/34823 for details.
-	if expr.GetType().GetCollate() == ec.Collation || ec.Charset == charset.CharsetBin {
+	if expr.GetType().GetCollate() == ec.Collation {
 		return expr
 	}
 	tp := expr.GetType().Clone()
@@ -1844,6 +1841,15 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 		} else {
 			return expr
 		}
+	} else if ec.Charset == charset.CharsetBin {
+		// When cast character string to binary string, if we still use fixed length representation,
+		// then 0 padding will be used, which can affect later execution.
+		// e.g. https://github.com/pingcap/tidb/issues/34823.
+		// On the other hand, we can not directly return origin expr back,
+		// since we need binary collation to do string comparison later.
+		// e.g. https://github.com/pingcap/tidb/pull/35053#discussion_r894155052
+		// Here we use VarString type of cast, i.e `cast(a as binary)`, to avoid this problem.
+		tp.SetType(mysql.TypeVarString)
 	}
 	tp.SetCharset(ec.Charset)
 	tp.SetCollate(ec.Collation)
