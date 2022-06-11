@@ -30,7 +30,7 @@ type BackupEBSConfig struct {
 
 // DefineBackupEBSFlags defines common flags for the backup command.
 func DefineBackupEBSFlags(flags *pflag.FlagSet) {
-	flags.String(flagBackupVolumeFile, ".", "the file path of volume infos of TiKV node")
+	flags.String(flagBackupVolumeFile, "./backup.toml", "the file path of volume infos of TiKV node")
 }
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
@@ -108,6 +108,8 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
+
+
 
 	// Step.3 save backup meta file to s3.
 

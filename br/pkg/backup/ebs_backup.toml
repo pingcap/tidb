@@ -1,0 +1,22 @@
+# EBS Backup Snapshot Configuration.
+
+# TODO: make sure the structure with TiDB Operator
+
+[stores]
+[stores.id1]
+[[stores.id1.volumes]]
+id = "vol-0e65f40961a9f6244"
+type = "raft-engine.dir"
+
+[[stores.id1.volumes]]
+id = "vol-0e65f40961a9f6245"
+type = "storage.data-dir"
+
+[stores.id2]
+[[stores.id2.volumes]]
+id = "vol-0e65f409611231231"
+type = "raft-engine.dir"
+
+[[stores.id2.volumes]]
+id = "vol-0e65f409611231232"
+type = "storage.data-dir"
