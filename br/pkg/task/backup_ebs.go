@@ -4,16 +4,18 @@ package task
 
 import (
 	"context"
-	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/spf13/pflag"
+
+	"github.com/opentracing/opentracing-go"
 	"go.uber.org/zap"
 )
 
@@ -101,17 +103,35 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 
+	//
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
 	// TODO get alloc id / cluster id from pd.
 	// allocID := 1000
 	// clusterID := 42
-
+	//
+	//
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
 
+	// receive the volume info from TiDB deployment tools.
+	ebsCfg := &backup.EBSBackupConfig{}
+	err = ebsCfg.ConfigFromFile(cfg.VolumeFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
+	err = backup.EBSSnapshot(ebsCfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Step.3 save backup meta file to s3.
+	externalStorage := client.GetStorage()
+	// TODO define the meta file in kvproto.
+	err = externalStorage.WriteFile(c, metautil.MetaFile,  nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	return nil
 }

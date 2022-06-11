@@ -43,3 +43,14 @@ func (c *EBSBackupConfig) ConfigFromFile(path string) error {
 	}
 	return nil
 }
+
+
+// EBSSnapshot is the mainly steps to control the data volume snapshots.
+// It will do the following works.
+// 1. determine the order of volume snapshot.
+// 2. send snapshot requests to aws.
+// 3. wait all snapshot finished.
+
+func EBSSnapshot(ebsCfg *EBSBackupConfig) error {
+	return nil
+}

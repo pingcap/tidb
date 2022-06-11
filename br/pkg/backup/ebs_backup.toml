@@ -1,6 +1,6 @@
 # EBS Backup Snapshot Configuration.
 
-# TODO: make sure the structure with TiDB Operator
+# TODO: make sure the file structure details with TiDB Operator developer
 
 [stores]
 [stores.id1]
