@@ -235,6 +235,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementForTable(ctx)
 	case ast.ShowPlacementForPartition:
 		return e.fetchShowPlacementForPartition(ctx)
+	case ast.ShowSessionStates:
+		return e.fetchShowSessionStates(ctx)
 	}
 	return nil
 }
@@ -1924,6 +1926,10 @@ func (e *ShowExec) fetchShowBuiltins() error {
 	for _, f := range expression.GetBuiltinList() {
 		e.appendRow([]interface{}{f})
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	return nil
 }
 
