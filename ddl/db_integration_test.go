@@ -154,8 +154,8 @@ func TestInvalidNameWhenCreateTable(t *testing.T) {
 	tk.MustGetErrCode("create table t(t.tttt.a bigint)", errno.ErrWrongDBName)
 }
 
-// TestCreateTableIfNotExists for issue #6879
-func TestCreateTableIfNotExists(t *testing.T) {
+// TestCreateTableIfNotExistsLike for issue #6879
+func TestCreateTableIfNotExistsLike(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1225,19 +1225,6 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 	done <- errors.Trace(err)
 }
 
-func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
-	var job *model.Job
-
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
-	})
-
-	return job, errors.Trace(err)
-}
-
 func TestCreateTableTooLarge(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1631,8 +1618,8 @@ func TestAlterColumn(t *testing.T) {
 	// TODO: After fix issue 2606.
 	// tk.MustExec( "alter table test_alter_column alter column d set default null")
 	tk.MustExec("alter table test_alter_column alter column a drop default")
-	tk.MustExec("insert into test_alter_column set b = 'd', c = 'dd'")
-	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
+	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
+	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
@@ -1718,6 +1705,65 @@ func TestAlterColumn(t *testing.T) {
 	require.NotEqual(t, "000", updateTime3[len(updateTime3)-3:])
 	updateTime6 := rows[0][2].(string)
 	require.NotEqual(t, "000000", updateTime6[len(updateTime6)-6:])
+
+	tk.MustExec("set sql_mode=default")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int auto_increment, b int, key i(a))")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustGetErrCode("insert into t values ()", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into t values (1, a + 1)")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustGetErrCode("insert into t values ()", errno.ErrNoDefaultForField)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` enum('a', 'b'))")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` enum('a', 'b') not null)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a"))
+
+	tk.MustExec("set sql_mode=''")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int auto_increment, key i(a))")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int not null)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` enum('a', 'b'))")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` enum('a', 'b') not null)")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a"))
 }
 
 func assertWarningExec(tk *testkit.TestKit, t *testing.T, sql string, expectedWarn *terror.Error) {
@@ -2699,6 +2745,23 @@ func TestDropColumnWithIndex(t *testing.T) {
 	tk.MustExec("alter table t_drop_column_with_idx drop column b")
 	query := queryIndexOnTable("test", "t_drop_column_with_idx")
 	tk.MustQuery(query).Check(testkit.Rows())
+}
+
+func TestDropColumnWithAutoInc(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int auto_increment, c int, key(b))")
+	tk.MustGetErrCode("alter table t drop column b", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
+	tk.MustExec("alter table t drop column b")
+	query := queryIndexOnTable("test", "t")
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(a int auto_increment, b int, key(a, b))")
+	tk.MustGetErrCode("alter table t drop column b", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestDropColumnWithMultiIndex(t *testing.T) {

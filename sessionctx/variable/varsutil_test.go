@@ -15,7 +15,6 @@
 package variable
 
 import (
-	"encoding/json"
 	"reflect"
 	"strconv"
 	"testing"
@@ -229,9 +228,9 @@ func TestVarsutil(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, ErrIncorrectScope))
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBConfig)
 	require.NoError(t, err)
-	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
+	jsonConfig, err := config.GetJSONConfig()
 	require.NoError(t, err)
-	require.Equal(t, config.HideConfig(string(bVal)), val)
+	require.Equal(t, jsonConfig, val)
 
 	require.Equal(t, DefTiDBOptimizerSelectivityLevel, v.OptimizerSelectivityLevel)
 	err = SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, "1")
@@ -303,21 +302,21 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "0", val)
 	require.Equal(t, float64(0), v.CorrelationThreshold)
 
-	require.Equal(t, 3.0, v.CPUFactor)
+	require.Equal(t, 3.0, v.GetCPUFactor())
 	err = SetSessionSystemVar(v, TiDBOptCPUFactor, "5.0")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptCPUFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.CPUFactor)
+	require.Equal(t, 5.0, v.GetCPUFactor())
 
-	require.Equal(t, 3.0, v.CopCPUFactor)
+	require.Equal(t, 3.0, v.GetCopCPUFactor())
 	err = SetSessionSystemVar(v, TiDBOptCopCPUFactor, "5.0")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptCopCPUFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.CopCPUFactor)
+	require.Equal(t, 5.0, v.GetCopCPUFactor())
 
 	require.Equal(t, 24.0, v.CopTiFlashConcurrencyFactor)
 	err = SetSessionSystemVar(v, TiDBOptTiFlashConcurrencyFactor, "5.0")
@@ -325,7 +324,7 @@ func TestVarsutil(t *testing.T) {
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptTiFlashConcurrencyFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.CopCPUFactor)
+	require.Equal(t, 5.0, v.GetCopCPUFactor())
 
 	require.Equal(t, 1.0, v.GetNetworkFactor(nil))
 	err = SetSessionSystemVar(v, TiDBOptNetworkFactor, "3.0")
@@ -359,29 +358,29 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "50.0", val)
 	require.Equal(t, 50.0, v.GetSeekFactor(nil))
 
-	require.Equal(t, 0.001, v.MemoryFactor)
+	require.Equal(t, 0.001, v.GetMemoryFactor())
 	err = SetSessionSystemVar(v, TiDBOptMemoryFactor, "1.0")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptMemoryFactor)
 	require.NoError(t, err)
 	require.Equal(t, "1.0", val)
-	require.Equal(t, 1.0, v.MemoryFactor)
+	require.Equal(t, 1.0, v.GetMemoryFactor())
 
-	require.Equal(t, 1.5, v.DiskFactor)
+	require.Equal(t, 1.5, v.GetDiskFactor())
 	err = SetSessionSystemVar(v, TiDBOptDiskFactor, "1.1")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptDiskFactor)
 	require.NoError(t, err)
 	require.Equal(t, "1.1", val)
-	require.Equal(t, 1.1, v.DiskFactor)
+	require.Equal(t, 1.1, v.GetDiskFactor())
 
-	require.Equal(t, 3.0, v.ConcurrencyFactor)
+	require.Equal(t, 3.0, v.GetConcurrencyFactor())
 	err = SetSessionSystemVar(v, TiDBOptConcurrencyFactor, "5.0")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptConcurrencyFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.ConcurrencyFactor)
+	require.Equal(t, 5.0, v.GetConcurrencyFactor())
 
 	err = SetSessionSystemVar(v, TiDBReplicaRead, "follower")
 	require.NoError(t, err)

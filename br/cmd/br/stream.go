@@ -55,6 +55,7 @@ func NewStreamCommand() *cobra.Command {
 		command.Root().HelpFunc()(command, strings)
 	})
 
+	command.Hidden = true
 	return command
 }
 

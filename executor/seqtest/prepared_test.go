@@ -328,8 +328,9 @@ func TestPreparedLimitOffset(t *testing.T) {
 
 		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
 		require.NoError(t, err)
-		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+		rs, err := tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
+		rs.Close()
 	}
 }
 
