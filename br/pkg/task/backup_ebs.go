@@ -128,7 +128,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// Step.3 save backup meta file to s3.
 	externalStorage := client.GetStorage()
 	// TODO define the meta file in kvproto.
-	err = externalStorage.WriteFile(c, metautil.MetaFile,  nil)
+	err = externalStorage.WriteFile(c, metautil.MetaFile, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
