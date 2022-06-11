@@ -2,6 +2,8 @@
 
 # TODO: make sure the file structure details with TiDB Operator developer
 
+region = "us-west-1"
+
 [stores]
 [stores.id1]
 [[stores.id1.volumes]]

@@ -5,6 +5,9 @@ package backup
 import (
 	"encoding/json"
 	"github.com/BurntSushi/toml"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/pingcap/errors"
 )
 
@@ -21,6 +24,7 @@ type EBSStore struct {
 }
 
 type EBSBackupConfig struct {
+	Region string               `json:"region" toml:"region"`
 	Stores map[string]*EBSStore `json:"stores" toml:"stores"`
 }
 
@@ -49,7 +53,33 @@ func (c *EBSBackupConfig) ConfigFromFile(path string) error {
 // 1. determine the order of volume snapshot.
 // 2. send snapshot requests to aws.
 // 3. wait all snapshot finished.
-
 func EBSSnapshot(ebsCfg *EBSBackupConfig) error {
+	// TODO get region from ebsConfig
+	awsConfig := aws.NewConfig().WithRegion(ebsCfg.Region)
+	// NOTE: we do not need credential. TiDB Operator need make sure we have the correct permission to access
+	// ec2 snapshot. we may change this behaviour in the future.
+	sessionOptions := session.Options{Config: *awsConfig}
+	sess, err := session.NewSessionWithOptions(sessionOptions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ec2Session := ec2.New(sess)
+
+	for _, cfg := range ebsCfg.Stores {
+		for _, volume := range cfg.Volumes {
+			// TODO sort by type
+			_, err = ec2Session.CreateSnapshot(&ec2.CreateSnapshotInput{
+				VolumeId: &volume.ID,
+				TagSpecifications: []*ec2.TagSpecification{
+					{
+						ResourceType: aws.String(ec2.ResourceTypeSnapshot),
+					},
+				},
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
 	return nil
 }
