@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +19,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,23 +28,26 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -60,6 +66,12 @@ func (m tableDeltaMap) update(id int64, delta int64, count int64, colSize *map[i
 		}
 	}
 	m[id] = item
+}
+
+func (m tableDeltaMap) merge(deltaMap tableDeltaMap) {
+	for id, item := range deltaMap {
+		m.update(id, item.Delta, item.Count, &item.ColSize)
+	}
 }
 
 type errorRateDelta struct {
@@ -123,15 +135,26 @@ func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
 	m[tableID] = item
 }
 
-func (h *Handle) merge(s *SessionStatsCollector, rateMap errorRateDeltaMap) {
-	for id, item := range s.mapper {
-		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
+// colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
+type colStatsUsageMap map[model.TableColumnID]time.Time
+
+func (m colStatsUsageMap) merge(other colStatsUsageMap) {
+	for id, t := range other {
+		if mt, ok := m[id]; !ok || mt.Before(t) {
+			m[id] = t
+		}
 	}
+}
+
+func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDeltaMap, feedback *statistics.QueryFeedbackMap, colMap colStatsUsageMap) {
+	deltaMap.merge(s.mapper)
 	s.mapper = make(tableDeltaMap)
 	rateMap.merge(s.rateMap)
 	s.rateMap = make(errorRateDeltaMap)
-	h.feedback.Merge(s.feedback)
+	feedback.Merge(s.feedback)
 	s.feedback = statistics.NewQueryFeedbackMap()
+	colMap.merge(s.colMap)
+	s.colMap = make(colStatsUsageMap)
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
@@ -141,6 +164,7 @@ type SessionStatsCollector struct {
 	mapper   tableDeltaMap
 	feedback *statistics.QueryFeedbackMap
 	rateMap  errorRateDeltaMap
+	colMap   colStatsUsageMap
 	next     *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
@@ -162,12 +186,12 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 
 var (
 	// MinLogScanCount is the minimum scan count for a feedback to be logged.
-	MinLogScanCount = int64(1000)
+	MinLogScanCount = atomic.NewInt64(1000)
 	// MinLogErrorRate is the minimum error rate for a feedback to be logged.
-	MinLogErrorRate = 0.5
+	MinLogErrorRate = atomic.NewFloat64(0.5)
 )
 
-// StoreQueryFeedback merges the feedback into stats collector.
+// StoreQueryFeedback merges the feedback into stats collector. Deprecated.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
 	q := feedback.(*statistics.QueryFeedback)
 	if !q.Valid || q.Hist == nil {
@@ -178,7 +202,9 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 		return errors.Trace(err)
 	}
 	rate := q.CalcErrorRate()
-	if !(rate >= MinLogErrorRate && (q.Actual() >= MinLogScanCount || q.Expected >= MinLogScanCount)) {
+	minScanCnt := MinLogScanCount.Load()
+	minErrRate := MinLogErrorRate.Load()
+	if !(rate >= minErrRate && (q.Actual() >= minScanCnt || q.Expected >= minScanCnt)) {
 		return nil
 	}
 	metrics.SignificantFeedbackCounter.Inc()
@@ -194,6 +220,13 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	return nil
 }
 
+// UpdateColStatsUsage updates the last time when the column stats are used(needed).
+func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
+	s.Lock()
+	defer s.Unlock()
+	s.colMap.merge(colMap)
+}
+
 // NewSessionStatsCollector allocates a stats collector for a session.
 func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
@@ -203,6 +236,7 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 		rateMap:  make(errorRateDeltaMap),
 		next:     h.listHead.next,
 		feedback: statistics.NewQueryFeedbackMap(),
+		colMap:   make(colStatsUsageMap),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -248,7 +282,8 @@ func (m indexUsageMap) update(tableID int64, indexID int64, value *IndexUsageInf
 }
 
 func (m indexUsageMap) merge(destMap indexUsageMap) {
-	for id, item := range destMap {
+	for id := range destMap {
+		item := destMap[id]
 		m.updateByKey(id, &item)
 	}
 }
@@ -305,15 +340,39 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 	return mapper
 }
 
+//batchInsertSize is the every insert values size limit.Used in such as DumpIndexUsageToKV,DumpColStatsUsageToKV
+const batchInsertSize = 10
+
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
 	ctx := context.Background()
 	mapper := h.sweepIdxUsageList()
+	type FullIndexUsageInformation struct {
+		id          GlobalIndexID
+		information IndexUsageInformation
+	}
+	indexInformationSlice := make([]FullIndexUsageInformation, 0, len(mapper))
 	for id, value := range mapper {
-		const sql = `insert into mysql.SCHEMA_INDEX_USAGE values (%?, %?, %?, %?, %?) on duplicate key update query_count=query_count+%?, rows_selected=rows_selected+%?, last_used_at=greatest(last_used_at, %?)`
-		_, _, err := h.execRestrictedSQL(ctx, sql, id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
-		if err != nil {
-			return err
+		indexInformationSlice = append(indexInformationSlice, FullIndexUsageInformation{id: id, information: value})
+	}
+	for i := 0; i < len(mapper); i += batchInsertSize {
+		end := i + batchInsertSize
+		if end > len(mapper) {
+			end = len(mapper)
+		}
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "insert into mysql.SCHEMA_INDEX_USAGE (table_id,index_id,query_count,rows_selected,last_used_at) values")
+		for j := i; j < end; j++ {
+			index := indexInformationSlice[j]
+			sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)", index.id.TableID, index.id.IndexID,
+				index.information.QueryCount, index.information.RowsSelected, index.information.LastUsedAt)
+			if j < end-1 {
+				sqlexec.MustFormatSQL(sql, ",")
+			}
+		}
+		sqlexec.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
+		if _, _, err := h.execRestrictedSQL(ctx, sql.String()); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -342,7 +401,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
-	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
+	tbl, ok := h.statsCache.Load().(statsCache).Get(id)
 	if !ok {
 		// No need to dump if the stats is invalid.
 		return false
@@ -370,13 +429,16 @@ const (
 // sweepList will loop over the list, merge each session's local stats into handle
 // and remove closed session's collector.
 func (h *Handle) sweepList() {
+	deltaMap := make(tableDeltaMap)
+	errorRateMap := make(errorRateDeltaMap)
+	feedback := statistics.NewQueryFeedbackMap()
+	colMap := make(colStatsUsageMap)
 	prev := h.listHead
 	prev.Lock()
-	errorRateMap := make(errorRateDeltaMap)
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
-		// Merge the session stats into handle and error rate map.
-		h.merge(curr, errorRateMap)
+		// Merge the session stats into deltaMap, errorRateMap and feedback respectively.
+		merge(curr, deltaMap, errorRateMap, feedback, colMap)
 		if curr.deleted {
 			prev.next = curr.next
 			// Since the session is already closed, we can safely unlock it here.
@@ -388,37 +450,37 @@ func (h *Handle) sweepList() {
 		}
 	}
 	prev.Unlock()
+	h.globalMap.Lock()
+	h.globalMap.data.merge(deltaMap)
+	h.globalMap.Unlock()
 	h.mu.Lock()
 	h.mu.rateMap.merge(errorRateMap)
 	h.mu.Unlock()
-	h.siftFeedbacks()
-}
-
-// siftFeedbacks eliminates feedbacks which are overlapped with others. It is a tradeoff between
-// feedback accuracy and its overhead.
-func (h *Handle) siftFeedbacks() {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	for k, qs := range h.feedback.Feedbacks {
-		fbs := make([]statistics.Feedback, 0, len(qs)*2)
-		for _, q := range qs {
-			fbs = append(fbs, q.Feedback...)
-		}
-		if len(fbs) == 0 {
-			delete(h.feedback.Feedbacks, k)
-			continue
-		}
-		h.feedback.Feedbacks[k] = h.feedback.Feedbacks[k][:1]
-		h.feedback.Feedbacks[k][0].Feedback, _ = statistics.NonOverlappedFeedbacks(sc, fbs)
-	}
-	h.feedback.Size = len(h.feedback.Feedbacks)
+	h.feedback.Lock()
+	h.feedback.data.Merge(feedback)
+	h.feedback.data.SiftFeedbacks()
+	h.feedback.Unlock()
+	h.colMap.Lock()
+	h.colMap.data.merge(colMap)
+	h.colMap.Unlock()
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	h.sweepList()
+	h.globalMap.Lock()
+	deltaMap := h.globalMap.data
+	h.globalMap.data = make(tableDeltaMap)
+	h.globalMap.Unlock()
+	defer func() {
+		h.globalMap.Lock()
+		deltaMap.merge(h.globalMap.data)
+		h.globalMap.data = deltaMap
+		h.globalMap.Unlock()
+	}()
 	currentTime := time.Now()
-	for id, item := range h.globalMap {
+	for id, item := range deltaMap {
 		if mode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
 			continue
 		}
@@ -427,17 +489,18 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 			return errors.Trace(err)
 		}
 		if updated {
-			h.globalMap.update(id, -item.Delta, -item.Count, nil)
+			deltaMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
+			delete(deltaMap, id)
 			return errors.Trace(err)
 		}
 		if updated {
-			delete(h.globalMap, id)
+			delete(deltaMap, id)
 		} else {
-			m := h.globalMap[id]
+			m := deltaMap[id]
 			m.ColSize = nil
-			h.globalMap[id] = m
+			deltaMap[id] = m
 		}
 	}
 	return nil
@@ -445,6 +508,12 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(id, statsVer)
+		}
+	}()
 	if delta.Count == 0 {
 		return true, nil
 	}
@@ -465,15 +534,34 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		return false, errors.Trace(err)
 	}
 	startTS := txn.StartTS()
-	if delta.Delta < 0 {
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
-	} else {
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+	updateStatsMeta := func(id int64) error {
+		var err error
+		if delta.Delta < 0 {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+		} else {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+		}
+		statsVer = startTS
+		return errors.Trace(err)
 	}
-	if err != nil {
-		return false, errors.Trace(err)
+	if err = updateStatsMeta(id); err != nil {
+		return
 	}
-	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	affectedRows := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+
+	// if it's a partitioned table and its global-stats exists, update its count and modify_count as well.
+	is := h.mu.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	if is == nil {
+		return false, errors.New("cannot get the information schema")
+	}
+	if tbl, _, _ := is.FindTableByPartitionID(id); tbl != nil {
+		if err = updateStatsMeta(tbl.Meta().ID); err != nil {
+			return
+		}
+	}
+
+	affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+	updated = affectedRows > 0
 	return
 }
 
@@ -497,15 +585,19 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	return errors.Trace(err)
 }
 
-// DumpStatsFeedbackToKV dumps the stats feedback to KV.
+// DumpStatsFeedbackToKV dumps the stats feedback to KV. Deprecated.
 func (h *Handle) DumpStatsFeedbackToKV() error {
+	h.feedback.Lock()
+	feedback := h.feedback.data
+	h.feedback.data = statistics.NewQueryFeedbackMap()
+	h.feedback.Unlock()
 	var err error
-	for _, fbs := range h.feedback.Feedbacks {
+	for _, fbs := range feedback.Feedbacks {
 		for _, fb := range fbs {
 			if fb.Tp == statistics.PkType {
 				err = h.DumpFeedbackToKV(fb)
 			} else {
-				t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
+				t, ok := h.statsCache.Load().(statsCache).Get(fb.PhysicalID)
 				if !ok {
 					continue
 				}
@@ -525,7 +617,6 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 			}
 		}
 	}
-	h.feedback = statistics.NewQueryFeedbackMap()
 	return errors.Trace(err)
 }
 
@@ -558,12 +649,21 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 // feedback locally on this tidb-server, so it could be used more timely.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 	h.sweepList()
-	for _, fbs := range h.feedback.Feedbacks {
+	h.feedback.Lock()
+	feedback := h.feedback.data
+	h.feedback.data = statistics.NewQueryFeedbackMap()
+	h.feedback.Unlock()
+OUTER:
+	for _, fbs := range feedback.Feedbacks {
 		for _, fb := range fbs {
 			h.mu.Lock()
 			table, ok := h.getTableByPhysicalID(is, fb.PhysicalID)
 			h.mu.Unlock()
 			if !ok {
+				continue
+			}
+			if table.Meta().Partition != nil {
+				// If the table is partition table, the feedback will not work.
 				continue
 			}
 			tblStats := h.GetPartitionStats(table.Meta(), fb.PhysicalID)
@@ -575,9 +675,10 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				}
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				// For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
 				if idx.StatsVer >= statistics.Version2 {
-					ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
+					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					continue OUTER
 				}
 				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
 				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB}, int(idx.StatsVer))
@@ -589,6 +690,11 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				if !ok || col.Histogram.Len() == 0 {
 					continue
 				}
+				if col.StatsVer >= statistics.Version2 {
+					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
+					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					continue OUTER
+				}
 				newCol := *col
 				// only use the range query to update primary key
 				_, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
@@ -598,8 +704,12 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 				newTblStats.Columns[fb.Hist.ID] = &newCol
 			}
-			oldCache := h.statsCache.Load().(statsCache)
-			h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version))
+			for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
+				oldCache := h.statsCache.Load().(statsCache)
+				if h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version)) {
+					break
+				}
+			}
 		}
 	}
 }
@@ -631,8 +741,12 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.mu.rateMap, id)
 	}
 	h.mu.Unlock()
-	oldCache := h.statsCache.Load().(statsCache)
-	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
+	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
+		oldCache := h.statsCache.Load().(statsCache)
+		if h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version)) {
+			break
+		}
+	}
 }
 
 // HandleUpdateStats update the stats using feedback.
@@ -647,50 +761,32 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	}
 
 	for _, ptbl := range tables {
-		// this func lets `defer` works normally, where `Close()` should be called before any return
-		err = func() error {
-			tbl := ptbl.GetInt64(0)
-			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%? order by hist_id, is_index"
-			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tbl)
+		tableID, histID, isIndex := ptbl.GetInt64(0), int64(-1), int64(-1)
+		for {
+			// fetch at most 100000 rows each time to avoid OOM
+			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id = %? and is_index >= %? and hist_id > %? order by is_index, hist_id limit 100000"
+			rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, histID, isIndex)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			defer terror.Call(rc.Close)
-			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
-			var rows []chunk.Row
-			for {
-				req := rc.NewChunk()
-				iter := chunk.NewIterator4Chunk(req)
-				err := rc.Next(context.TODO(), req)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if req.NumRows() == 0 {
-					if len(rows) > 0 {
-						if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+			if len(rows) == 0 {
+				break
+			}
+			startIdx := 0
+			for i, row := range rows {
+				if row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
+					if i > 0 {
+						if err = h.handleSingleHistogramUpdate(is, rows[startIdx:i]); err != nil {
 							return errors.Trace(err)
 						}
 					}
-					break
-				}
-				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-					// len(rows) > 100000 limits the rows to avoid OOM
-					if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex || len(rows) > 100000 {
-						if len(rows) > 0 {
-							if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
-								return errors.Trace(err)
-							}
-						}
-						tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-						rows = rows[:0]
-					}
-					rows = append(rows, row)
+					histID, isIndex = row.GetInt64(1), row.GetInt64(2)
+					startIdx = i
 				}
 			}
-			return nil
-		}()
-		if err != nil {
-			return err
+			if err = h.handleSingleHistogramUpdate(is, rows[startIdx:]); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -713,11 +809,11 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		return nil
 	}
 	var tbl *statistics.Table
-	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.DynamicOnly {
-		tbl = h.GetTableStats(table.Meta())
-	} else {
-		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
+	// feedback for partition is not ready
+	if table.Meta().GetPartitionInfo() != nil {
+		return nil
 	}
+	tbl = h.GetTableStats(table.Meta())
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
 	var topN *statistics.TopN
@@ -725,6 +821,12 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
 		statsVer = idx.StatsVer
+		if statsVer >= 2 {
+			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
+				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
+				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
+			return err
+		}
 		if ok && idx.Histogram.Len() > 0 {
 			statsVer = idx.StatsVer
 			idxHist := idx.Histogram
@@ -734,6 +836,12 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		}
 	} else {
 		col, ok := tbl.Columns[histID]
+		if ok && col.StatsVer >= 2 {
+			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
+				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
+				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
+			return err
+		}
 		if ok && col.Histogram.Len() > 0 {
 			colHist := col.Histogram
 			hist = &colHist
@@ -747,7 +855,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	for _, row := range rows {
 		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, topN, hist.Tp)
 		if err1 != nil {
-			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err))
+			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err1))
 		}
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, statsVer)
@@ -771,9 +879,66 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, int(statsVersion), 0)
+	// feedback for partition is not ready.
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, int(statsVersion), 0, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
+}
+
+// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
+func (h *Handle) DumpColStatsUsageToKV() error {
+	if !variable.EnableColumnTracking.Load() {
+		return nil
+	}
+	h.sweepList()
+	h.colMap.Lock()
+	colMap := h.colMap.data
+	h.colMap.data = make(colStatsUsageMap)
+	h.colMap.Unlock()
+	defer func() {
+		h.colMap.Lock()
+		h.colMap.data.merge(colMap)
+		h.colMap.Unlock()
+	}()
+	type pair struct {
+		tblColID   model.TableColumnID
+		lastUsedAt string
+	}
+	pairs := make([]pair, 0, len(colMap))
+	for id, t := range colMap {
+		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].tblColID.TableID == pairs[j].tblColID.TableID {
+			return pairs[i].tblColID.ColumnID < pairs[j].tblColID.ColumnID
+		}
+		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
+	})
+	// Use batch insert to reduce cost.
+	for i := 0; i < len(pairs); i += batchInsertSize {
+		end := i + batchInsertSize
+		if end > len(pairs) {
+			end = len(pairs)
+		}
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
+		for j := i; j < end; j++ {
+			// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
+			// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
+			sqlexec.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ColumnID, pairs[j].lastUsedAt)
+			if j < end-1 {
+				sqlexec.MustFormatSQL(sql, ",")
+			}
+		}
+		sqlexec.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
+		if _, _, err := h.execRestrictedSQL(context.Background(), sql.String()); err != nil {
+			return errors.Trace(err)
+		}
+		for j := i; j < end; j++ {
+			delete(colMap, pairs[j].tblColID)
+		}
+	}
+	return nil
 }
 
 const (
@@ -807,23 +972,26 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 // 2. If the table had been analyzed before, we need to analyze it when
 //    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
 //    between `start` and `end`.
-func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) (bool, string) {
+func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
 		dur := time.Since(t)
-		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %vs", dur)
+		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %v", dur)
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
 		return false, ""
 	}
 	// No need to analyze it.
-	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
+	tblCnt := float64(tbl.Count)
+	if histCnt := tbl.GetColRowCount(); histCnt > 0 {
+		tblCnt = histCnt
+	}
+	if float64(tbl.ModifyCount)/tblCnt <= autoAnalyzeRatio {
 		return false, ""
 	}
-	// Tests if current time is within the time period.
-	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
+	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tblCnt, autoAnalyzeRatio)
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
@@ -864,11 +1032,11 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
-func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
+func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	err := h.UpdateSessionVar()
 	if err != nil {
 		logutil.BgLogger().Error("[stats] update analyze version for auto analyze session failed", zap.Error(err))
-		return
+		return false
 	}
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
@@ -876,45 +1044,75 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
 		logutil.BgLogger().Error("[stats] parse auto analyze period failed", zap.Error(err))
-		return
+		return false
+	}
+	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+		return false
 	}
 	pruneMode := h.CurrentPruneMode()
+	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
+	rd.Shuffle(len(dbs), func(i, j int) {
+		dbs[i], dbs[j] = dbs[j], dbs[i]
+	})
 	for _, db := range dbs {
+		if util.IsMemOrSysDB(strings.ToLower(db)) {
+			continue
+		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
+		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
+		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
+		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
+		// TODO: Design a priority queue to place the table which needs analyze most in the front.
+		rd.Shuffle(len(tbls), func(i, j int) {
+			tbls[i], tbls[j] = tbls[j], tbls[i]
+		})
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
+			if tblInfo.IsView() {
+				continue
+			}
 			pi := tblInfo.GetPartitionInfo()
-			if pi == nil || pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
-					return
+					// analyze one table at a time to let it get the freshest parameters.
+					// others will be analyzed next round which is just 3s later.
+					return true
 				}
 				continue
 			}
-			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
-				for _, def := range pi.Definitions {
-					sql := "analyze table %n.%n partition %n"
-					statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-					analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
-					if analyzed {
-						return
-					}
-					continue
+			if pruneMode == variable.Dynamic {
+				analyzed := h.autoAnalyzePartitionTable(tblInfo, pi, db, start, end, autoAnalyzeRatio)
+				if analyzed {
+					return true
 				}
 				continue
+			}
+			for _, def := range pi.Definitions {
+				sql := "analyze table %n.%n partition %n"
+				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				if analyzed {
+					return true
+				}
 			}
 		}
 	}
+	return false
 }
 
 func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, params ...interface{}) bool {
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
-	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
-		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
+	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio); needAnalyze {
+		escaped, err := sqlexec.EscapeSQL(sql, params...)
+		if err != nil {
+			return false
+		}
+		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", escaped), zap.String("reason", reason))
 		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		h.execAutoAnalyze(tableStatsVer, sql, params...)
@@ -922,10 +1120,77 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
+			sqlWithIdx := sql + " index %n"
+			paramsWithIdx := append(params, idx.Name.O)
+			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)
+			if err != nil {
+				return false
+			}
+			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", escaped))
 			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			h.execAutoAnalyze(tableStatsVer, sql+" index %n", append(params, idx.Name.O)...)
+			h.execAutoAnalyze(tableStatsVer, sqlWithIdx, paramsWithIdx...)
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, start, end time.Time, ratio float64) bool {
+	h.mu.RLock()
+	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+	h.mu.RUnlock()
+	partitionNames := make([]interface{}, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
+		if partitionStatsTbl.Pseudo || partitionStatsTbl.Count < AutoAnalyzeMinCnt {
+			continue
+		}
+		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*h.Lease(), ratio); needAnalyze {
+			partitionNames = append(partitionNames, def.Name.O)
+			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
+		}
+	}
+	getSQL := func(prefix, suffix string, numPartitions int) string {
+		var sqlBuilder strings.Builder
+		sqlBuilder.WriteString(prefix)
+		for i := 0; i < numPartitions; i++ {
+			if i != 0 {
+				sqlBuilder.WriteString(",")
+			}
+			sqlBuilder.WriteString(" %n")
+		}
+		sqlBuilder.WriteString(suffix)
+		return sqlBuilder.String()
+	}
+	if len(partitionNames) > 0 {
+		logutil.BgLogger().Info("[stats] auto analyze triggered")
+		sql := getSQL("analyze table %n.%n partition", "", len(partitionNames))
+		params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
+		statsTbl := h.GetTableStats(tblInfo)
+		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+		h.execAutoAnalyze(tableStatsVer, sql, params...)
+		return true
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
+			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
+				partitionNames = append(partitionNames, def.Name.O)
+				statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
+			}
+		}
+		if len(partitionNames) > 0 {
+			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed")
+			sql := getSQL("analyze table %n.%n partition", " index %n", len(partitionNames))
+			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames...)
+			params = append(params, idx.Name.O)
+			statsTbl := h.GetTableStats(tblInfo)
+			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+			h.execAutoAnalyze(tableStatsVer, sql, params...)
 			return true
 		}
 	}
@@ -940,11 +1205,15 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, sql, params...)
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(h.serverIDGetter), sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
-		logutil.BgLogger().Error("[stats] auto analyze failed", zap.String("sql", sql), zap.Duration("cost_time", dur), zap.Error(err))
+		escaped, err1 := sqlexec.EscapeSQL(sql, params...)
+		if err1 != nil {
+			escaped = ""
+		}
+		logutil.BgLogger().Error("[stats] auto analyze failed", zap.String("sql", escaped), zap.Duration("cost_time", dur), zap.Error(err))
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
@@ -1020,8 +1289,9 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 		}
 		equalityCount := idx.QueryBytes(bytes)
 		rang := ranger.Range{
-			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
-			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
+			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		// prefer index stats over column stats
@@ -1050,7 +1320,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return
 	}
@@ -1089,17 +1359,20 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 	}
 }
 
-// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
+// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
-	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return nil
 	}
-	tablePseudo := t.Pseudo || t.IsOutdated()
+	tablePseudo := t.Pseudo
+	if h.mu.ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
+		tablePseudo = t.Pseudo || t.IsOutdated()
+	}
 	if !tablePseudo {
 		return nil
 	}
-	isIndex := q.Hist.Tp.Tp == mysql.TypeBlob
+	isIndex := q.Hist.Tp.GetType() == mysql.TypeBlob
 	id := q.Hist.ID
 	if isIndex && (t.Indices[id] == nil || !t.Indices[id].NotAccurate()) {
 		return nil
@@ -1108,7 +1381,18 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		return nil
 	}
 
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	timeZone := sctx.GetSessionVars().StmtCtx.TimeZone
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.TimeZone = timeZone
+		h.pool.Put(se)
+	}()
+	sctx.GetSessionVars().StmtCtx.TimeZone = time.UTC
+
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
 		return errors.Trace(err)
@@ -1116,12 +1400,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sc, ranges, t.ModifyCount)
-		expected *= idx.GetIncreaseFactor(t.Count)
+		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount, true)
-		expected *= c.GetIncreaseFactor(t.Count)
+		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, true)
 	}
 	q.Expected = int64(expected)
 	return err
@@ -1191,14 +1473,27 @@ func convertRangeType(ran *ranger.Range, ft *types.FieldType, loc *time.Location
 	return statistics.ConvertDatumsType(ran.HighVal, ft, loc)
 }
 
-// DumpFeedbackForIndex dumps the feedback for index.
+// DumpFeedbackForIndex dumps the feedback for index. Deprecated.
 // For queries that contains both equality and range query, we will split them and Update accordingly.
 func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics.Table) error {
 	idx, ok := t.Indices[q.Hist.ID]
 	if !ok {
 		return nil
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	sc := sctx.GetSessionVars().StmtCtx
+	timeZone := sc.TimeZone
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.TimeZone = timeZone
+		h.pool.Put(se)
+	}()
+	sc.TimeZone = time.UTC
+
 	if idx.CMSketch == nil || idx.StatsVer < statistics.Version1 {
 		return h.DumpFeedbackToKV(q)
 	}
@@ -1213,7 +1508,6 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
 			continue
 		}
-
 		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 		if err != nil {
 			logutil.BgLogger().Debug("encode keys fail", zap.Error(err))
@@ -1221,20 +1515,21 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		}
 		equalityCount := float64(idx.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
 		rang := &ranger.Range{
-			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
-			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
+			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		var rangeCount float64
 		rangeFB := &statistics.QueryFeedback{PhysicalID: q.PhysicalID}
 		// prefer index stats over column stats
 		if idx := t.IndexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
-			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{rang})
+			rangeCount, err = t.GetRowCountByIndexRanges(sctx, idx.ID, []*ranger.Range{rang})
 			rangeFB.Tp, rangeFB.Hist = statistics.IndexType, &idx.Histogram
 		} else if col := t.ColumnByName(colName); col != nil && col.Histogram.Len() != 0 {
 			err = convertRangeType(rang, col.Tp, time.UTC)
 			if err == nil {
-				rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{rang})
+				rangeCount, err = t.GetRowCountByColumnRanges(sctx, col.ID, []*ranger.Range{rang})
 				rangeFB.Tp, rangeFB.Hist = statistics.ColType, &col.Histogram
 			}
 		} else {

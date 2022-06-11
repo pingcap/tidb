@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -91,10 +92,12 @@ func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	return memDelta, nil
 }
 
-func (e *bitXorUint64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+var _ SlidingWindowAggFunc = &bitXorUint64{}
+
+func (e *bitXorUint64) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4BitFunc)(pr)
 	for i := uint64(0); i < shiftStart; i++ {
-		inputValue, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
+		inputValue, isNull, err := e.args[0].EvalInt(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -104,7 +107,7 @@ func (e *bitXorUint64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStar
 		*p ^= uint64(inputValue)
 	}
 	for i := uint64(0); i < shiftEnd; i++ {
-		inputValue, isNull, err := e.args[0].EvalInt(sctx, rows[lastEnd+i])
+		inputValue, isNull, err := e.args[0].EvalInt(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}

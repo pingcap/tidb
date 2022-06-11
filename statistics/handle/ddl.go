@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,11 +18,14 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -44,21 +48,113 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			}
 		}
 	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:
-		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
-			for _, def := range t.PartInfo.Definitions {
-				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
-					return err
-				}
+		for _, def := range t.PartInfo.Definitions {
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+				return err
 			}
-		}
-		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
-			// TODO: need trigger full analyze
 		}
 	case model.ActionDropTablePartition:
 		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
-			// TODO: need trigger full analyze
+		if pruneMode == variable.Dynamic && t.PartInfo != nil {
+			if err := h.updateGlobalStats(t.TableInfo); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// analyzeOptionDefault saves the default values of NumBuckets and NumTopN.
+// These values will be used in dynamic mode when we drop table partition and then need to merge global-stats.
+// These values originally came from the analyzeOptionDefault structure in the planner/core/planbuilder.go file.
+var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets: 256,
+	ast.AnalyzeOptNumTopN:    20,
+}
+
+// updateGlobalStats will trigger the merge of global-stats when we drop table partition
+func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
+	// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
+	tableID := tblInfo.ID
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	h.pool.Put(se)
+	globalStats, err := h.TableStatsFromStorage(tblInfo, tableID, true, 0)
+	if err != nil {
+		return err
+	}
+	// If we do not currently have global-stats, no new global-stats will be generated.
+	if globalStats == nil {
+		return nil
+	}
+	opts := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	for key, val := range analyzeOptionDefault {
+		opts[key] = val
+	}
+	// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
+	globalColStatsTopNNum, globalColStatsBucketNum := 0, 0
+	for colID := range globalStats.Columns {
+		globalColStatsTopN := globalStats.Columns[colID].TopN
+		if globalColStatsTopN != nil && len(globalColStatsTopN.TopN) > globalColStatsTopNNum {
+			globalColStatsTopNNum = len(globalColStatsTopN.TopN)
+		}
+		globalColStats := globalStats.Columns[colID]
+		if globalColStats != nil && len(globalColStats.Buckets) > globalColStatsBucketNum {
+			globalColStatsBucketNum = len(globalColStats.Buckets)
+		}
+	}
+	if globalColStatsTopNNum != 0 {
+		opts[ast.AnalyzeOptNumTopN] = uint64(globalColStatsTopNNum)
+	}
+	if globalColStatsBucketNum != 0 {
+		opts[ast.AnalyzeOptNumBuckets] = uint64(globalColStatsBucketNum)
+	}
+	// Generate the new column global-stats
+	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, nil)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < newColGlobalStats.Num; i++ {
+		hg, cms, topN := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i]
+		// fms for global stats doesn't need to dump to kv.
+		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, 2, 1, false)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Generate the new index global-stats
+	globalIdxStatsTopNNum, globalIdxStatsBucketNum := 0, 0
+	for idx := range tblInfo.Indices {
+		globalIdxStatsTopN := globalStats.Indices[int64(idx)].TopN
+		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) > globalIdxStatsTopNNum {
+			globalIdxStatsTopNNum = len(globalIdxStatsTopN.TopN)
+		}
+		globalIdxStats := globalStats.Indices[int64(idx)]
+		if globalIdxStats != nil && len(globalIdxStats.Buckets) > globalIdxStatsBucketNum {
+			globalIdxStatsBucketNum = len(globalIdxStats.Buckets)
+		}
+		if globalIdxStatsTopNNum != 0 {
+			opts[ast.AnalyzeOptNumTopN] = uint64(globalIdxStatsTopNNum)
+		}
+		if globalIdxStatsBucketNum != 0 {
+			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
+		}
+		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, []int64{int64(idx)})
+		if err != nil {
+			return err
+		}
+		for i := 0; i < newIndexGlobalStats.Num; i++ {
+			hg, cms, topN := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i]
+			// fms for global stats doesn't need to dump to kv.
+			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, 2, 1, false)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -70,13 +166,10 @@ func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64) {
 		return []int64{tblInfo.ID}
 	}
 	ids = make([]int64, 0, len(pi.Definitions)+1)
-	pruneMode := h.CurrentPruneMode()
-	if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
-		for _, def := range pi.Definitions {
-			ids = append(ids, def.ID)
-		}
+	for _, def := range pi.Definitions {
+		ids = append(ids, def.ID)
 	}
-	if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+	if h.CurrentPruneMode() == variable.Dynamic {
 		ids = append(ids, tblInfo.ID)
 	}
 	return ids
@@ -90,6 +183,12 @@ func (h *Handle) DDLEventCh() chan *util.Event {
 // insertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
 // new columns and indices which belong to this table.
 func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(physicalID, statsVer)
+		}
+	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.Background()
@@ -109,6 +208,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id) values(%?, %?)", startTS, physicalID); err != nil {
 		return err
 	}
+	statsVer = startTS
 	for _, col := range info.Columns {
 		if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 0, %?, 0, %?)", physicalID, col.ID, startTS); err != nil {
 			return err
@@ -125,6 +225,12 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 // insertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
 // This operation also updates version.
 func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(physicalID, statsVer)
+		}
+	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -147,6 +253,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	if err != nil {
 		return
 	}
+	statsVer = startTS
 	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
 	if h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
@@ -156,7 +263,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 			return
 		}
 		defer terror.Call(rs.Close)
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(ctx, req)
 		if err != nil {
 			return

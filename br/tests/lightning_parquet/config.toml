@@ -1,0 +1,10 @@
+[lightning]
+
+[[mydumper.files]]
+pattern = '(?i)^(?:[^/]*/)*([a-z0-9_]+)\.([a-z0-9_]+)/(?:[a-z0-9\-_.]+\.(parquet))$'
+schema = "$1"
+table = "$2"
+type = "$3"
+
+[mydumper]
+no-schema=true

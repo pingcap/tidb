@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,7 @@ package statistics
 import (
 	"math"
 
-	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // calculateEstimateNDV calculates the estimate ndv of a sampled data from a multisize with size total.
@@ -44,7 +45,7 @@ func calculateEstimateNDV(h *topNHelper, rowCount uint64) (ndv uint64, scaleRati
 	d := float64(sampleNDV)
 
 	ndv = uint64(math.Sqrt(N/n)*f1 + d - f1 + 0.5)
-	ndv = mathutil.MaxUint64(ndv, sampleNDV)
-	ndv = mathutil.MinUint64(ndv, rowCount)
+	ndv = mathutil.Max(ndv, sampleNDV)
+	ndv = mathutil.Min(ndv, rowCount)
 	return ndv, scaleRatio
 }

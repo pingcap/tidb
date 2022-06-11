@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,13 +16,13 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"math/rand"
+	"os"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/model"
 	stats "github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
@@ -29,7 +30,7 @@ import (
 )
 
 func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -74,6 +75,7 @@ func (h *histogram) randInt() int64 {
 	return h.Bounds.GetRow(idx).GetInt64(0)
 }
 
+// #nosec G404
 func getValidPrefix(lower, upper string) string {
 	for i := range lower {
 		if i >= len(upper) {

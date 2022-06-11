@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,6 +16,7 @@ package kv
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/mpp"
 )
@@ -31,6 +33,8 @@ type MPPTask struct {
 	ID      int64       // mppTaskID
 	StartTs uint64
 	TableID int64 // physical table id
+
+	PartitionTableIDs []int64
 }
 
 // ToPB generates the pb structure.
@@ -45,6 +49,20 @@ func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	return meta
 }
 
+//MppTaskStates denotes the state of mpp tasks
+type MppTaskStates uint8
+
+const (
+	// MppTaskReady means the task is ready
+	MppTaskReady MppTaskStates = iota
+	// MppTaskRunning means the task is running
+	MppTaskRunning
+	// MppTaskCancelled means the task is cancelled
+	MppTaskCancelled
+	// MppTaskDone means the task is done
+	MppTaskDone
+)
+
 // MPPDispatchRequest stands for a dispatching task.
 type MPPDispatchRequest struct {
 	Data    []byte      // data encodes the dag coprocessor request.
@@ -55,16 +73,17 @@ type MPPDispatchRequest struct {
 	SchemaVar int64
 	StartTs   uint64
 	ID        int64 // identify a single task
+	State     MppTaskStates
 }
 
 // MPPClient accepts and processes mpp requests.
 type MPPClient interface {
 	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest) ([]MPPTaskMeta, error)
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, map[string]time.Time, time.Duration) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(context.Context, []*MPPDispatchRequest) Response
+	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
@@ -72,4 +91,6 @@ type MPPClient interface {
 type MPPBuildTasksRequest struct {
 	KeyRanges []KeyRange
 	StartTS   uint64
+
+	PartitionIDAndRanges []PartitionIDAndRanges
 }

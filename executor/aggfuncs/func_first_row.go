@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,6 +17,8 @@ package aggfuncs
 import (
 	"unsafe"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -46,6 +49,7 @@ const (
 	DefPartialResult4FirstRowSetSize = int64(unsafe.Sizeof(partialResult4FirstRowSet{}))
 )
 
+// nolint:structcheck
 type basePartialResult4FirstRow struct {
 	// isNull indicates whether the first row is null.
 	isNull bool
@@ -474,7 +478,14 @@ func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of first_row should not be nil")
+	}
+	frac := e.retTp.GetDecimal()
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err := p.val.Round(&p.val, frac, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}
@@ -508,14 +519,13 @@ func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
-	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
+	if len(rowsInGroup) > 0 {
+		d, err := e.args[0].Eval(rowsInGroup[0])
 		if err != nil {
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlEnum().Copy()
 		memDelta += int64(len(p.val.Name))
-		break
 	}
 	return memDelta, nil
 }
@@ -556,14 +566,13 @@ func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
-	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
+	if len(rowsInGroup) > 0 {
+		d, err := e.args[0].Eval(rowsInGroup[0])
 		if err != nil {
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlSet().Copy()
 		memDelta += int64(len(p.val.Name))
-		break
 	}
 	return memDelta, nil
 }

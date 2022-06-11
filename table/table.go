@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,25 +8,32 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package table
 
 import (
 	"context"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/parser/model"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// Type , the type of table, store data in different ways.
+// Type is used to distinguish between different tables that store data in different ways.
 type Type int16
 
 const (
@@ -97,6 +100,10 @@ var (
 	ErrSequenceHasRunOut = dbterror.ClassTable.NewStd(mysql.ErrSequenceRunOut)
 	// ErrRowDoesNotMatchGivenPartitionSet returns when the destination partition conflict with the partition selection.
 	ErrRowDoesNotMatchGivenPartitionSet = dbterror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
+	// ErrTempTableFull returns a table is full error, it's used by temporary table now.
+	ErrTempTableFull = dbterror.ClassTable.NewStd(mysql.ErrRecordFileFull)
+	// ErrOptOnCacheTable returns when exec unsupported opt at cache mode
+	ErrOptOnCacheTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnCacheTable)
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -137,17 +144,7 @@ func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
 	opt.IsUpdate = true
 }
 
-// Table is used to retrieve and modify rows in table.
-type Table interface {
-	// IterRecords iterates records in the table and calls fn.
-	IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
-
-	// RowWithCols returns a row that contains the given cols.
-	RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*Column) ([]types.Datum, error)
-
-	// Row returns a row for all columns.
-	Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error)
-
+type columnAPI interface {
 	// Cols returns the columns of the table which is used in select, including hidden columns.
 	Cols() []*Column
 
@@ -161,29 +158,24 @@ type Table interface {
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 	WritableCols() []*Column
 
+	// DeletableCols returns columns of the table in deletable states.
+	// Deletable states includes Public, WriteOnly, WriteOnlyReorganization, DeleteOnly, DeleteReorganization.
+	DeletableCols() []*Column
+
 	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
 	FullHiddenColsAndVisibleCols() []*Column
+}
+
+// Table is used to retrieve and modify rows in table.
+type Table interface {
+	columnAPI
 
 	// Indices returns the indices of the table.
+	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
-
-	// WritableIndices returns write-only and public indices of the table.
-	WritableIndices() []Index
-
-	// DeletableIndices returns delete-only, write-only and public indices of the table.
-	DeletableIndices() []Index
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
-
-	// IndexPrefix returns the index key prefix.
-	IndexPrefix() kv.Key
-
-	// FirstKey returns the first key.
-	FirstKey() kv.Key
-
-	// RecordKey returns the key in KV storage for the row.
-	RecordKey(h kv.Handle) kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
 	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
@@ -197,16 +189,8 @@ type Table interface {
 	// Allocators returns all allocators.
 	Allocators(ctx sessionctx.Context) autoid.Allocators
 
-	// RebaseAutoID rebases the auto_increment ID base.
-	// If allocIDs is true, it will allocate some IDs and save to the cache.
-	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool, tp autoid.AllocatorType) error
-
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
-
-	// Seek returns the handle greater or equal to h.
-	Seek(ctx sessionctx.Context, h kv.Handle) (handle kv.Handle, found bool, err error)
 
 	// Type returns the type of table
 	Type() Type
@@ -220,7 +204,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	}
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
 	offset := sctx.GetSessionVars().AutoIncrementOffset
-	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, t.Meta().ID, uint64(1), int64(increment), int64(offset))
+	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -232,7 +216,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, t.Meta().ID, uint64(N), increment, offset)
+	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err
 	}
@@ -257,6 +241,7 @@ type PartitionedTable interface {
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
+	GetPartitionColumnNames() []model.CIStr
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
@@ -265,3 +250,24 @@ var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
+
+// CachedTable is a Table, and it has a UpdateLockForRead() method
+// UpdateLockForRead() according to the reasons for not meeting the read conditions, update the lock information,
+// And at the same time reload data from the original table.
+type CachedTable interface {
+	Table
+
+	Init(exec sqlexec.SQLExecutor) error
+
+	// TryReadFromCache checks if the cache table is readable.
+	TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer, bool)
+
+	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
+	// you need to update the lock information and read the data from the original table
+	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration)
+
+	// WriteLockAndKeepAlive first obtain the write lock, then it renew the lease to keep the lock alive.
+	// 'exit' is a channel to tell the keep alive goroutine to exit.
+	// The result is sent to the 'wg' channel.
+	WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error)
+}

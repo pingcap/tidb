@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,35 +17,30 @@ package executor
 import (
 	"context"
 	"sort"
-	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var _ Executor = &TableSampleExecutor{}
-
-const sampleMethodRegionConcurrency = 5
 
 // TableSampleExecutor fetches a few rows through kv.Scan
 // according to the specific sample method.
 type TableSampleExecutor struct {
 	baseExecutor
 
-	table     table.Table
-	startTS   uint64
-	tablePlan plannercore.PhysicalPlan
+	table   table.Table
+	startTS uint64
 
 	sampler rowSampler
 }
@@ -155,14 +151,14 @@ func (s *tableRegionSampler) pickRanges(count int) ([]kv.KeyRange, error) {
 }
 
 func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chunk.Chunk) error {
-	decLoc, sysLoc := s.ctx.GetSessionVars().TimeZone, time.UTC
+	decLoc := s.ctx.GetSessionVars().Location()
 	cols, decColMap, err := s.buildSampleColAndDecodeColMap()
 	if err != nil {
 		return err
 	}
 	rowDecoder := decoder.NewRowDecoder(s.table, cols, decColMap)
 	err = s.scanFirstKVForEachRange(ranges, func(handle kv.Handle, value []byte) error {
-		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx, handle, value, decLoc, sysLoc, s.rowMap)
+		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx, handle, value, decLoc, s.rowMap)
 		if err != nil {
 			return err
 		}
@@ -210,17 +206,17 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
-	var ranges []kv.KeyRange
 	regions, err := s.GetRegionCache().LoadRegionsInKeyRange(bo, startKey, endKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	var ranges = make([]kv.KeyRange, 0, len(regions))
 	for _, r := range regions {
 		start, end := r.StartKey(), r.EndKey()
 		if kv.Key(start).Cmp(startKey) < 0 {
 			start = startKey
 		}
-		if kv.Key(end).Cmp(endKey) > 0 {
+		if end == nil || kv.Key(end).Cmp(endKey) > 0 {
 			end = endKey
 		}
 		ranges = append(ranges, kv.KeyRange{StartKey: start, EndKey: end})
@@ -286,7 +282,8 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 	fn func(handle kv.Handle, value []byte) error) error {
 	ver := kv.Version{Ver: s.startTS}
 	snap := s.ctx.GetStore().GetSnapshot(ver)
-	concurrency := sampleMethodRegionConcurrency
+	setOptionForTopSQL(s.ctx.GetSessionVars().StmtCtx, snap)
+	concurrency := s.ctx.GetSessionVars().ExecutorConcurrency
 	if len(ranges) < concurrency {
 		concurrency = len(ranges)
 	}

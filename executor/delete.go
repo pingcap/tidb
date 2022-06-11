@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,15 +17,19 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // DeleteExec represents a delete executor.
@@ -84,9 +89,17 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() &&
-		config.GetGlobalConfig().EnableBatchDML && batchDMLSize > 0
+		variable.EnableBatchDML.Load() && batchDMLSize > 0
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
+	columns := e.children[0].Schema().Columns
+	if len(columns) != len(fields) {
+		logutil.BgLogger().Error("schema columns and fields mismatch",
+			zap.Int("len(columns)", len(columns)),
+			zap.Int("len(fields)", len(fields)))
+		// Should never run here, so the error code is not defined.
+		return errors.New("schema columns and fields mismatch")
+	}
 	memUsageOfChk := int64(0)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
@@ -108,7 +121,16 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				rowCount = 0
 			}
 
-			datumRow := chunkRow.GetDatumRow(fields)
+			datumRow := make([]types.Datum, 0, len(fields))
+			for i, field := range fields {
+				if columns[i].ID == model.ExtraPidColID || columns[i].ID == model.ExtraPhysTblID {
+					continue
+				}
+
+				datum := chunkRow.GetDatum(i, field)
+				datumRow = append(datumRow, datum)
+			}
+
 			err = e.deleteOneRow(tbl, handleCols, isExtrahandle, datumRow)
 			if err != nil {
 				return err
@@ -128,7 +150,7 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
@@ -138,6 +160,9 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
+		if unmatchedOuterRow(info, joinedRow) {
+			continue
+		}
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = kv.NewHandleMap()
 		}
@@ -188,10 +213,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 		var err error
 		rowMap.Range(func(h kv.Handle, val interface{}) bool {
 			err = e.removeRow(e.ctx, e.tblID2Table[id], h, val.([]types.Datum))
-			if err != nil {
-				return false
-			}
-			return true
+			return err == nil
 		})
 		if err != nil {
 			return err

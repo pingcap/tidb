@@ -8,19 +8,22 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package memory
 
 import (
-	"io/ioutil"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/shirou/gopsutil/mem"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/shirou/gopsutil/v3/mem"
 )
 
 // MemTotal returns the total amount of RAM on this system
@@ -88,6 +91,10 @@ var memLimit *memInfoCache
 // expiration time is 500ms
 var memUsage *memInfoCache
 
+// expiration time is 500ms
+// save the memory usage of the server process
+var serverMemUsage *memInfoCache
+
 // MemTotalCGroup returns the total amount of RAM on this system in container environment.
 func MemTotalCGroup() (uint64, error) {
 	mem, t := memLimit.get()
@@ -130,16 +137,17 @@ func init() {
 	memUsage = &memInfoCache{
 		RWMutex: &sync.RWMutex{},
 	}
+	serverMemUsage = &memInfoCache{
+		RWMutex: &sync.RWMutex{},
+	}
 	_, err := MemTotal()
-	if err != nil {
-	}
+	terror.MustNil(err)
 	_, err = MemUsed()
-	if err != nil {
-	}
+	terror.MustNil(err)
 }
 
 func inContainer() bool {
-	v, err := ioutil.ReadFile(selfCGroupPath)
+	v, err := os.ReadFile(selfCGroupPath)
 	if err != nil {
 		return false
 	}
@@ -172,9 +180,23 @@ func parseUint(s string, base, bitSize int) (uint64, error) {
 
 // refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L243
 func readUint(path string) (uint64, error) {
-	v, err := ioutil.ReadFile(path)
+	v, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
 	return parseUint(strings.TrimSpace(string(v)), 10, 64)
+}
+
+// InstanceMemUsed returns the memory usage of this TiDB server
+func InstanceMemUsed() (uint64, error) {
+	used, t := serverMemUsage.get()
+	if time.Since(t) < 500*time.Millisecond {
+		return used, nil
+	}
+	var memoryUsage uint64
+	instanceStats := &runtime.MemStats{}
+	runtime.ReadMemStats(instanceStats)
+	memoryUsage = instanceStats.HeapAlloc
+	serverMemUsage.set(memoryUsage, time.Now())
+	return memoryUsage, nil
 }

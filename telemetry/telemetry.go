@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -24,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"go.etcd.io/etcd/clientv3"
+	"github.com/pingcap/tidb/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
 
 const (
@@ -33,7 +37,7 @@ const (
 	// Prompt is the prompt for telemetry owner manager.
 	Prompt = "telemetry"
 	// ReportInterval is the interval of the report.
-	ReportInterval = 24 * time.Hour
+	ReportInterval = 6 * time.Hour
 )
 
 const (
@@ -47,7 +51,8 @@ func getTelemetryGlobalVariable(ctx sessionctx.Context) (bool, error) {
 	return variable.TiDBOptOn(val), err
 }
 
-func isTelemetryEnabled(ctx sessionctx.Context) (bool, error) {
+// IsTelemetryEnabled check whether telemetry enabled.
+func IsTelemetryEnabled(ctx sessionctx.Context) (bool, error) {
 	if !config.GetGlobalConfig().EnableTelemetry {
 		return false, nil
 	}
@@ -63,7 +68,7 @@ func PreviewUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (stri
 	if etcdClient == nil {
 		return "", nil
 	}
-	if enabled, err := isTelemetryEnabled(ctx); err != nil || !enabled {
+	if enabled, err := IsTelemetryEnabled(ctx); err != nil || !enabled {
 		return "", err
 	}
 
@@ -88,7 +93,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 		// silently ignore
 		return false, nil
 	}
-	enabled, err := isTelemetryEnabled(ctx)
+	enabled, err := IsTelemetryEnabled(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -108,6 +113,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	}
 
 	data := generateTelemetryData(ctx, trackingID)
+	postReportTelemetryData()
 
 	rawJSON, err := json.Marshal(data)
 	if err != nil {
@@ -125,6 +131,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	}
 
 	req.Header.Add("Content-Type", "application/json")
+	logutil.BgLogger().Info(fmt.Sprintf("Uploading telemetry data to %s", apiEndpoint))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -156,4 +163,14 @@ func ReportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) error 
 	}
 
 	return updateTelemetryStatus(s, etcdClient)
+}
+
+// InitialRun reports the Telmetry configuration and trigger an initial run
+func InitialRun(ctx sessionctx.Context, etcdClient *clientv3.Client) error {
+	enabled, err := IsTelemetryEnabled(ctx)
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("Telemetry configuration", zap.String("endpoint", apiEndpoint), zap.Duration("report_interval", ReportInterval), zap.Bool("enabled", enabled))
+	return ReportUsageData(ctx, etcdClient)
 }

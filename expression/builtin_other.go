@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -38,6 +39,7 @@ var (
 	_ functionClass = &getIntVarFunctionClass{}
 	_ functionClass = &getRealVarFunctionClass{}
 	_ functionClass = &getDecimalVarFunctionClass{}
+	_ functionClass = &getTimeVarFunctionClass{}
 	_ functionClass = &getStringVarFunctionClass{}
 	_ functionClass = &lockFunctionClass{}
 	_ functionClass = &releaseLockFunctionClass{}
@@ -64,6 +66,7 @@ var (
 	_ builtinFunc = &builtinGetIntVarSig{}
 	_ builtinFunc = &builtinGetRealVarSig{}
 	_ builtinFunc = &builtinGetDecimalVarSig{}
+	_ builtinFunc = &builtinGetTimeVarSig{}
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
 	_ builtinFunc = &builtinValuesIntSig{}
@@ -82,7 +85,8 @@ type inFunctionClass struct {
 }
 
 func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-	if err := c.verifyArgs(args); err != nil {
+	args, err = c.verifyArgs(ctx, args)
+	if err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, len(args))
@@ -96,7 +100,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	for i := 1; i < len(args); i++ {
 		DisableParseJSONFlag4Expr(args[i])
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
 		inInt := builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: bf}}
@@ -153,6 +157,28 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
+func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) ([]Expression, error) {
+	columnType := args[0].GetType()
+	validatedArgs := make([]Expression, 0, len(args))
+	for _, arg := range args {
+		if constant, ok := arg.(*Constant); ok {
+			switch {
+			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
+				if constant.Value.GetInt64() < 0 {
+					if MaybeOverOptimized4PlanCache(ctx, args) {
+						ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+					}
+					continue
+				}
+			}
+		}
+		validatedArgs = append(validatedArgs, arg)
+	}
+	err := c.baseFunctionClass.verifyArgs(validatedArgs)
+	return validatedArgs, err
+}
+
+// nolint:structcheck
 type baseInSig struct {
 	baseBuiltinFunc
 	// nonConstArgsIdx stores the indices of non-constant args in the baseBuiltinFunc.args (the first arg is not included).
@@ -181,7 +207,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 				b.hasNull = true
 				continue
 			}
-			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().Flag)
+			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().GetFlag())
 		} else {
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
@@ -204,7 +230,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 
 	args := b.args[1:]
 	if len(b.hashSet) != 0 {
@@ -216,7 +242,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 				return 1, false, nil
 			}
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -232,7 +258,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 			hasNull = true
 			continue
 		}
-		isUnsigned := mysql.HasUnsignedFlag(arg.GetType().Flag)
+		isUnsigned := mysql.HasUnsignedFlag(arg.GetType().GetFlag())
 		if isUnsigned0 && isUnsigned {
 			if evaledArg == arg0 {
 				return 1, false, nil
@@ -305,7 +331,7 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if b.hashSet.Exist(string(collator.Key(arg0))) {
 			return 1, false, nil
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -376,7 +402,7 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if b.hashSet.Exist(arg0) {
 			return 1, false, nil
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -456,7 +482,7 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if b.hashSet.Exist(string(key)) {
 			return 1, false, nil
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -527,7 +553,7 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if _, ok := b.hashSet[arg0.CoreTime()]; ok {
 			return 1, false, nil
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -598,7 +624,7 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if _, ok := b.hashSet[arg0.Duration]; ok {
 			return 1, false, nil
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -699,14 +725,14 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	argTp := args[1].GetType().EvalType()
-	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETJson {
+	if argTp == types.ETTimestamp || argTp == types.ETDuration || argTp == types.ETJson {
 		argTp = types.ETString
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = args[1].GetType().Flen
+	bf.tp.SetFlen(args[1].GetType().GetFlen())
 	switch argTp {
 	case types.ETString:
 		sig = &builtinSetStringVarSig{bf}
@@ -716,6 +742,8 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig = &builtinSetDecimalVarSig{bf}
 	case types.ETInt:
 		sig = &builtinSetIntVarSig{bf}
+	case types.ETDatetime:
+		sig = &builtinSetTimeVarSig{bf}
 	default:
 		return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 	}
@@ -748,7 +776,6 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 	if err != nil {
 		return "", isNull, err
 	}
-	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
 	sessionVars.SetUserVar(varName, stringutil.Copy(res), datum.Collation())
 	sessionVars.UsersLock.Unlock()
@@ -843,6 +870,34 @@ func (b *builtinSetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return res, false, nil
 }
 
+type builtinSetTimeVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSetTimeVarSig) Clone() builtinFunc {
+	newSig := &builtinSetTimeVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, err
+	}
+	datum, err := b.args[1].Eval(row)
+	if err != nil || datum.IsNull() {
+		return types.ZeroTime, datum.IsNull(), handleInvalidTimeError(b.ctx, err)
+	}
+	res := datum.GetMysqlTime()
+	varName = strings.ToLower(varName)
+	sessionVars.UsersLock.Lock()
+	sessionVars.Users[varName] = datum
+	sessionVars.UsersLock.Unlock()
+	return res, false, nil
+}
+
 // BuildGetVarFunction builds a GetVar ScalarFunction from the Expression.
 func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (Expression, error) {
 	var fc functionClass
@@ -853,6 +908,8 @@ func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types
 		fc = &getDecimalVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	case types.ETReal:
 		fc = &getRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
+	case types.ETDatetime:
+		fc = &getTimeVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	default:
 		fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	}
@@ -860,7 +917,7 @@ func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types
 	if err != nil {
 		return nil, err
 	}
-	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
+	if builtinRetTp := f.getRetTp(); builtinRetTp.GetType() != mysql.TypeUnspecified || retType.GetType() == mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
 	return &ScalarFunction{
@@ -888,10 +945,10 @@ func (c *getStringVarFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
-	if len(c.tp.Charset) > 0 {
-		bf.tp.Charset = c.tp.Charset
-		bf.tp.Collate = c.tp.Collate
+	bf.tp.SetFlen(c.tp.GetFlen())
+	if len(c.tp.GetCharset()) > 0 {
+		bf.tp.SetCharset(c.tp.GetCharset())
+		bf.tp.SetCollate(c.tp.GetCollate())
 	}
 	sig = &builtinGetStringVarSig{bf}
 	return sig, nil
@@ -945,8 +1002,8 @@ func (c *getIntVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
-	bf.tp.Flag = c.tp.Flag
+	bf.tp.SetFlen(c.tp.GetFlen())
+	bf.tp.SetFlag(c.tp.GetFlag())
 	sig = &builtinGetIntVarSig{bf}
 	return sig, nil
 }
@@ -988,7 +1045,7 @@ func (c *getRealVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
+	bf.tp.SetFlen(c.tp.GetFlen())
 	sig = &builtinGetRealVarSig{bf}
 	return sig, nil
 }
@@ -1030,7 +1087,7 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
+	bf.tp.SetFlen(c.tp.GetFlen())
 	sig = &builtinGetDecimalVarSig{bf}
 	return sig, nil
 }
@@ -1058,6 +1115,56 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 		return v.GetMysqlDecimal(), false, nil
 	}
 	return nil, true, nil
+}
+
+type getTimeVarFunctionClass struct {
+	getVarFunctionClass
+}
+
+func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	if c.tp.GetType() == mysql.TypeDatetime {
+		fsp := c.tp.GetFlen() - mysql.MaxDatetimeWidthNoFsp
+		if fsp > 0 {
+			fsp--
+		}
+		bf.setDecimalAndFlenForDatetime(fsp)
+	} else {
+		bf.setDecimalAndFlenForDate()
+	}
+	sig = &builtinGetTimeVarSig{bf}
+	return sig, nil
+}
+
+type builtinGetTimeVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetTimeVarSig) Clone() builtinFunc {
+	newSig := &builtinGetTimeVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, err
+	}
+	varName = strings.ToLower(varName)
+	sessionVars.UsersLock.RLock()
+	defer sessionVars.UsersLock.RUnlock()
+	if v, ok := sessionVars.Users[varName]; ok {
+		return v.GetMysqlTime(), false, nil
+	}
+	return types.ZeroTime, true, nil
 }
 
 type valuesFunctionClass struct {
@@ -1159,7 +1266,7 @@ func (b *builtinValuesRealSig) evalReal(_ chunk.Row) (float64, bool, error) {
 		if row.IsNull(b.offset) {
 			return 0, true, nil
 		}
-		if b.getRetTp().Tp == mysql.TypeFloat {
+		if b.getRetTp().GetType() == mysql.TypeFloat {
 			return float64(row.GetFloat32(b.offset)), false, nil
 		}
 		return row.GetFloat64(b.offset), false, nil
@@ -1283,7 +1390,7 @@ func (b *builtinValuesDurationSig) evalDuration(_ chunk.Row) (types.Duration, bo
 		if row.IsNull(b.offset) {
 			return types.Duration{}, true, nil
 		}
-		duration := row.GetDuration(b.offset, b.getRetTp().Decimal)
+		duration := row.GetDuration(b.offset, b.getRetTp().GetDecimal())
 		return duration, false, nil
 	}
 	return types.Duration{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
@@ -1329,7 +1436,7 @@ func (c *bitCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 2
+	bf.tp.SetFlen(2)
 	sig := &builtinBitCountSig{bf}
 	return sig, nil
 }
@@ -1372,7 +1479,7 @@ func (c *getParamFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = mysql.MaxFieldVarCharLength
+	bf.tp.SetFlen(mysql.MaxFieldVarCharLength)
 	sig := &builtinGetParamStringSig{bf}
 	return sig, nil
 }

@@ -200,6 +200,57 @@
     }
     ```
 
+    If the handle is clustered, specify the primary key column values in the query string
+
+    ```shell
+    $curl http://{TiDBIP}:10080/mvcc/key/{db}/{table}?${c1}={v1}&${c2}=${v2}
+    ```
+
+    ```shell
+    $curl http://127.0.0.1:10080/mvcc/key/test/t\?a\=aaa\&b\=2020-01-01
+    {
+        "key": "7480000000000000365F72016161610000000000FA0419A5420000000000",
+        "region_id": 52,
+        "value": {
+            "info": {
+                "writes": [
+                    {
+                        "type": 1,
+                        "start_ts": 423158426542538752,
+                        "commit_ts": 423158426543587328
+                    },
+                    {
+                        "start_ts": 423158426542538752,
+                        "commit_ts": 423158426543587328,
+                        "short_value": "gAACAAAAAQMDAAQAYWFhZA=="
+                    }
+                ],
+                "values": [
+                    {
+                        "start_ts": 423158426542538752,
+                        "value": "gAACAAAAAQMDAAQAYWFhZA=="
+                    }
+                ]
+            }
+        }
+    }
+    ```
+
+    *Hint: The meaning of the MVCC operation type:*
+
+    ```protobuf
+    enum Op {
+	Put = 0;
+	Del = 1;
+	Lock = 2;
+	Rollback = 3;
+	// insert operation has a constraint that key should not exist before.
+	Insert = 4;
+	PessimisticLock = 5;
+	CheckNotExists = 6;
+    }
+    ```
+
 1. Get MVCC Information of the first key in the table with a specified start ts
 
     ```shell
@@ -252,11 +303,41 @@ timezone.*
     }
     ```
 
-    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example:*
+    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `t1(p1)` for example:*
 
     ```shell
-    $curl http://127.0.0.1:10080/mvcc/index/test(p1)/t1/idx/1\?a\=A
+    $curl http://127.0.0.1:10080/mvcc/index/test/t1(p1)/idx/1\?a\=A
     ```
+
+   If the handle is clustered, also specify the primary key column values in the query string
+
+   ```shell
+   $curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}?${c1}={v1}&${c2}=${v2}
+   ```
+
+   ```shell
+   $curl http://127.0.0.1:10080/mvcc/index/test/t/idx\?a\=1.1\&b\=111\&c\=1
+   {
+       "key": "74800000000000003B5F69800000000000000203800000000000000105BFF199999999999A013131310000000000FA",
+       "region_id": 59,
+       "value": {
+           "info": {
+               "writes": [
+                   {
+                       "start_ts": 424752858505150464,
+                       "commit_ts": 424752858506461184,
+                       "short_value": "AH0B"
+                   }
+               ],
+               "values": [
+                   {
+                        "start_ts": 424752858505150464,
+                        "value": "AH0B"
+                   }
+               ]
+           }
+       }
+   }
 
 1. Scatter regions of the specified table, add a `scatter-range` scheduler for the PD and the range is same as the table range.
 
@@ -375,6 +456,8 @@ timezone.*
     curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
     ```
 
+   **Note**: If you request a TiDB that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
+
 1. Get all TiDB DDL job history information.
 
     ```shell
@@ -386,8 +469,6 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/ddl/history?limit={number}
     ```
-
-    **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.` 
 
 1. Download TiDB debug info
 
@@ -446,3 +527,33 @@ timezone.*
     * op=nowait: return after binlog status is recoverd, do not wait until the skipped-binlog transactions are committed.
     * op=reset: reset `SkippedCommitterCounter` to 0 to avoid the problem that `SkippedCommitterCounter` is not cleared due to some unusual cases.
     * op=status: Get the current status of binlog recovery.
+
+1. Enable/disable async commit feature
+
+    ```shell
+    curl -X POST -d "tidb_enable_async_commit=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_enable_async_commit=0" http://{TiDBIP}:10080/settings
+    ```
+
+1. Enable/disable one-phase commit feature
+
+    ```shell
+    curl -X POST -d "tidb_enable_1pc=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_enable_1pc=0" http://{TiDBIP}:10080/settings
+    ```
+
+1. Enable/disable the mutation checker
+
+    ```shell
+    curl -X POST -d "tidb_enable_mutation_checker=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_enable_mutation_checker=0" http://{TiDBIP}:10080/settings
+    ```
+
+1. Get/Set the size of the Ballast Object
+
+    ```shell
+    # get current size of the ballast object
+    curl -v http://{TiDBIP}:10080/debug/ballast-object-sz
+    # reset the size of the ballast object (2GB in this example)
+    curl -v -X POST -d "2147483648" http://{TiDBIP}:10080/debug/ballast-object-sz
+    ```

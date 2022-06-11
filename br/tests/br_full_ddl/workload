@@ -1,0 +1,13 @@
+recordcount=1000
+operationcount=0
+workload=core
+fieldcount=10
+
+readallfields=true
+
+readproportion=0
+updateproportion=0
+scanproportion=0
+insertproportion=0
+
+requestdistribution=uniform

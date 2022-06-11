@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,18 +16,13 @@ package types
 
 import (
 	"strconv"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testTypeHelperSuite{})
-
-type testTypeHelperSuite struct {
-}
-
-func (s *testTypeHelperSuite) TestStrToInt(c *C) {
-	c.Parallel()
+func TestStrToInt(t *testing.T) {
 	tests := []struct {
 		input  string
 		output string
@@ -41,13 +37,12 @@ func (s *testTypeHelperSuite) TestStrToInt(c *C) {
 	}
 	for _, tt := range tests {
 		output, err := strToInt(tt.input)
-		c.Assert(errors.Cause(err), Equals, tt.err)
-		c.Check(strconv.FormatInt(output, 10), Equals, tt.output)
+		require.Equal(t, tt.err, errors.Cause(err))
+		require.Equal(t, tt.output, strconv.FormatInt(output, 10))
 	}
 }
 
-func (s *testTypeHelperSuite) TestTruncate(c *C) {
-	c.Parallel()
+func TestTruncate(t *testing.T) {
 	tests := []struct {
 		f        float64
 		dec      int
@@ -60,6 +55,27 @@ func (s *testTypeHelperSuite) TestTruncate(c *C) {
 	}
 	for _, tt := range tests {
 		res := Truncate(tt.f, tt.dec)
-		c.Assert(res, Equals, tt.expected)
+		require.Equal(t, tt.expected, res)
+	}
+}
+
+func TestTruncateFloatToString(t *testing.T) {
+	tests := []struct {
+		f        float64
+		dec      int
+		expected string
+	}{
+		{12.13, -1, "10"},
+		{13.15, 0, "13"},
+		{0, 2, "0"},
+		{0.001, 2, "0"},
+		{0.539, 2, "0.53"},
+		{0.9951, 2, "0.99"},
+		{1, 2, "1"},
+		{-0.456, 2, "-0.45"},
+	}
+	for _, tt := range tests {
+		res := TruncateFloatToString(tt.f, tt.dec)
+		require.Equal(t, tt.expected, res)
 	}
 }

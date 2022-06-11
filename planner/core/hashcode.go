@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,9 @@ package core
 import (
 	"bytes"
 	"encoding/binary"
-	"sort"
 
 	"github.com/pingcap/tidb/util/plancodec"
+	"golang.org/x/exp/slices"
 )
 
 func encodeIntAsUint32(result []byte, value int) []byte {
@@ -78,7 +79,7 @@ func (p *LogicalSelection) HashCode() []byte {
 		condHashCodes[i] = expr.HashCode(p.ctx.GetSessionVars().StmtCtx)
 	}
 	// Sort the conditions, so `a > 1 and a < 100` can equal to `a < 100 and a > 1`.
-	sort.Slice(condHashCodes, func(i, j int) bool { return bytes.Compare(condHashCodes[i], condHashCodes[j]) < 0 })
+	slices.SortFunc(condHashCodes, func(i, j []byte) bool { return bytes.Compare(i, j) < 0 })
 
 	for _, condHashCode := range condHashCodes {
 		result = encodeIntAsUint32(result, len(condHashCode))

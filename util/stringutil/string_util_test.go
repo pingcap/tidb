@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,22 +17,10 @@ package stringutil
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testStringUtilSuite{})
-
-type testStringUtilSuite struct {
-}
-
-func (s *testStringUtilSuite) TestUnquote(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUnquote(t *testing.T) {
 	table := []struct {
 		str    string
 		expect string
@@ -65,20 +54,18 @@ func (s *testStringUtilSuite) TestUnquote(c *C) {
 		{"\"\\a\x18èàø»\x05\"", "a\x18èàø»\x05", true},
 	}
 
-	for _, t := range table {
-		x, err := Unquote(t.str)
-		c.Assert(x, Equals, t.expect)
-		comment := Commentf("source %v", t.str)
-		if t.ok {
-			c.Assert(err, IsNil, comment)
+	for _, v := range table {
+		x, err := Unquote(v.str)
+		require.Equal(t, v.expect, x)
+		if v.ok {
+			require.Nilf(t, err, "source %v", v)
 		} else {
-			c.Assert(err, NotNil, comment)
+			require.NotNilf(t, err, "source %v", v)
 		}
 	}
 }
 
-func (s *testStringUtilSuite) TestPatternMatch(c *C) {
-	defer testleak.AfterTest(c)()
+func TestPatternMatch(t *testing.T) {
 	tbl := []struct {
 		pattern string
 		input   string
@@ -102,32 +89,26 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{`\_a`, `_a`, '\\', true},
 		{`\_a`, `aa`, '\\', false},
 		{`\\_a`, `\xa`, '\\', true},
-		{`\a\b`, `\a\b`, '\\', true},
+		{`\a\b`, `\a\b`, '\\', false},
+		{`\a\b`, `ab`, '\\', true},
 		{`%%_`, `abc`, '\\', true},
 		{`%_%_aA`, "aaaA", '\\', true},
 		{`+_a`, `_a`, '+', true},
 		{`+%a`, `%a`, '+', true},
 		{`\%a`, `%a`, '+', false},
 		{`++a`, `+a`, '+', true},
+		{`+a`, `a`, '+', true},
 		{`++_a`, `+xa`, '+', true},
 		{`___Հ`, `䇇Հ`, '\\', false},
-		// We may reopen these test when like function go back to case insensitive.
-		/*
-			{"_ab", "AAB", '\\', true},
-			{"%a%", "BAB", '\\', true},
-			{"%a", "AAA", '\\', true},
-			{"b%", "BBB", '\\', true},
-		*/
 	}
 	for _, v := range tbl {
 		patChars, patTypes := CompilePattern(v.pattern, v.escape)
 		match := DoMatch(v.input, patChars, patTypes)
-		c.Assert(match, Equals, v.match, Commentf("%v", v))
+		require.Equalf(t, v.match, match, "source %v", v)
 	}
 }
 
-func (s *testStringUtilSuite) TestCompileLike2Regexp(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCompileLike2Regexp(t *testing.T) {
 	tbl := []struct {
 		pattern string
 		regexp  string
@@ -144,18 +125,17 @@ func (s *testStringUtilSuite) TestCompileLike2Regexp(c *C) {
 		{`\%a`, `%a`},
 		{`\_a`, `_a`},
 		{`\\_a`, `\.a`},
-		{`\a\b`, `\a\b`},
+		{`\a\b`, `ab`},
 		{`%%_`, `..*`},
 		{`%_%_aA`, "...*aA"},
 	}
 	for _, v := range tbl {
 		result := CompileLike2Regexp(v.pattern)
-		c.Assert(result, Equals, v.regexp, Commentf("%v", v))
+		require.Equalf(t, v.regexp, result, "source %v", v)
 	}
 }
 
-func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
-	defer testleak.AfterTest(c)()
+func TestIsExactMatch(t *testing.T) {
 	tbl := []struct {
 		pattern    string
 		escape     byte
@@ -178,13 +158,12 @@ func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
 	}
 	for _, v := range tbl {
 		_, patTypes := CompilePattern(v.pattern, v.escape)
-		c.Assert(IsExactMatch(patTypes), Equals, v.exactMatch, Commentf("%v", v))
+		require.Equalf(t, v.exactMatch, IsExactMatch(patTypes), "source %v", v)
 	}
 }
 
-func (s *testStringUtilSuite) TestBuildStringFromLabels(c *C) {
-	defer testleak.AfterTest(c)()
-	testcases := []struct {
+func TestBuildStringFromLabels(t *testing.T) {
+	tbl := []struct {
 		name     string
 		labels   map[string]string
 		expected string
@@ -210,9 +189,8 @@ func (s *testStringUtilSuite) TestBuildStringFromLabels(c *C) {
 			expected: "aaa=bbb,ccc=ddd",
 		},
 	}
-	for _, testcase := range testcases {
-		c.Log(testcase.name)
-		c.Assert(BuildStringFromLabels(testcase.labels), Equals, testcase.expected)
+	for _, v := range tbl {
+		require.Equalf(t, v.expected, BuildStringFromLabels(v.labels), "source %v", v)
 	}
 }
 

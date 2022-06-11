@@ -8,19 +8,19 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package mockstore
 
 import (
-	"crypto/tls"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func newUnistore(opts *mockOptions) (kv.Storage, error) {
@@ -29,30 +29,13 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 	opts.clusterInspector(cluster)
-	pdClient = execdetails.InterceptedPDClient{
+	pdClient = util.InterceptedPDClient{
 		Client: pdClient,
 	}
 
-	kvstore, err := tikv.NewTestTiKVStore(client, pdClient, opts.clientHijacker, opts.pdClientHijacker, opts.txnLocalLatches)
+	kvstore, err := tikv.NewTestTiKVStore(newClientRedirector(client), pdClient, opts.clientHijacker, opts.pdClientHijacker, opts.txnLocalLatches)
 	if err != nil {
 		return nil, err
 	}
-	return &mockStorage{KVStore: kvstore}, nil
-}
-
-// Wraps tikv.KVStore and make it compatible with kv.Storage.
-type mockStorage struct {
-	*tikv.KVStore
-}
-
-func (s *mockStorage) EtcdAddrs() ([]string, error) {
-	return nil, nil
-}
-
-func (s *mockStorage) TLSConfig() *tls.Config {
-	return nil
-}
-
-func (s *mockStorage) StartGCWorker() error {
-	return nil
+	return mockstorage.NewMockStorage(kvstore)
 }

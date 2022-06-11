@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,15 +24,12 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -40,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -76,13 +75,18 @@ type IndexMergeReaderExecutor struct {
 	startTS      uint64
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
-	columns           []*model.ColumnInfo
-	partialStreamings []bool
-	tableStreaming    bool
+	columns []*model.ColumnInfo
 	*dataReaderBuilder
+
+	// fields about accessing partition tables
+	partitionTableMode bool                  // if this IndexMerge is accessing a partition table
+	prunedPartitions   []table.PhysicalTable // pruned partition tables need to access
+	partitionKeyRanges [][][]kv.KeyRange     // [partitionIdx][partialIndex][ranges]
+
 	// All fields above are immutable.
 
 	tblWorkerWg    sync.WaitGroup
+	idxWorkerWg    sync.WaitGroup
 	processWokerWg sync.WaitGroup
 	finished       chan struct{}
 
@@ -95,49 +99,109 @@ type IndexMergeReaderExecutor struct {
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
+	paging     bool
 
 	// checkIndexValue is used to check the consistency of the index data.
-	*checkIndexValue
+	*checkIndexValue // nolint:unused
 
-	corColInIdxSide bool
-	partialPlans    [][]plannercore.PhysicalPlan
-	corColInTblSide bool
-	tblPlans        []plannercore.PhysicalPlan
-	corColInAccess  bool
-	idxCols         [][]*expression.Column
-	colLens         [][]int
+	partialPlans [][]plannercore.PhysicalPlan
+	tblPlans     []plannercore.PhysicalPlan
 
 	handleCols plannercore.HandleCols
 	stats      *IndexMergeRuntimeStat
+
+	// Indicates whether there is correlated column in filter or table/index range.
+	// We need to refresh dagPBs before send DAGReq to storage.
+	isCorColInPartialFilters []bool
+	isCorColInTableFilter    bool
+	isCorColInPartialAccess  []bool
+}
+
+// Table implements the dataSourceExecutor interface.
+func (e *IndexMergeReaderExecutor) Table() table.Table {
+	return e.table
 }
 
 // Open implements the Executor Open interface
-func (e *IndexMergeReaderExecutor) Open(ctx context.Context) error {
+func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
-	for i, plan := range e.partialPlans {
-		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
-		if !ok {
-			if e.table.Meta().IsCommonHandle {
-				keyRanges, err := distsql.CommonHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{getPhysicalTableID(e.table)}, e.ranges[i])
-				if err != nil {
-					return err
-				}
-				e.keyRanges = append(e.keyRanges, keyRanges)
-			} else {
-				e.keyRanges = append(e.keyRanges, nil)
-			}
-			continue
-		}
-		keyRange, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
-		if err != nil {
+
+	if err = e.rebuildRangeForCorCol(); err != nil {
+		return err
+	}
+
+	if !e.partitionTableMode {
+		if e.keyRanges, err = e.buildKeyRangesForTable(e.table); err != nil {
 			return err
 		}
-		e.keyRanges = append(e.keyRanges, keyRange)
+	} else {
+		for _, feedback := range e.feedbacks {
+			feedback.Invalidate() // feedback is not ready for partition tables
+		}
+		e.partitionKeyRanges = make([][][]kv.KeyRange, len(e.prunedPartitions))
+		for i, p := range e.prunedPartitions {
+			if e.partitionKeyRanges[i], err = e.buildKeyRangesForTable(p); err != nil {
+				return err
+			}
+		}
 	}
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return nil
+}
+
+func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
+	len1 := len(e.partialPlans)
+	len2 := len(e.isCorColInPartialAccess)
+	if len1 != len2 {
+		return errors.Errorf("unexpect length for partialPlans(%d) and isCorColInPartialAccess(%d)", len1, len2)
+	}
+	for i, plan := range e.partialPlans {
+		if e.isCorColInPartialAccess[i] {
+			switch x := plan[0].(type) {
+			case *plannercore.PhysicalIndexScan:
+				e.ranges[i], err = rebuildIndexRanges(e.ctx, x, x.IdxCols, x.IdxColLens)
+			case *plannercore.PhysicalTableScan:
+				e.ranges[i], err = x.ResolveCorrelatedColumns()
+			default:
+				err = errors.Errorf("unsupported plan type %T", plan[0])
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (ranges [][]kv.KeyRange, err error) {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	for i, plan := range e.partialPlans {
+		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
+		if !ok {
+			firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges[i], false, e.descs[i], tbl.Meta().IsCommonHandle)
+			firstKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, firstPartRanges, nil)
+			if err != nil {
+				return nil, err
+			}
+			secondKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, secondPartRanges, nil)
+			if err != nil {
+				return nil, err
+			}
+			keyRanges := append(firstKeyRanges, secondKeyRanges...)
+			ranges = append(ranges, keyRanges)
+			continue
+		}
+		keyRange, err := distsql.IndexRangesToKVRanges(sc, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
+		if err != nil {
+			return nil, err
+		}
+		ranges = append(ranges, keyRange)
+	}
+	return ranges, nil
 }
 
 func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
@@ -148,20 +212,19 @@ func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	e.startIndexMergeProcessWorker(ctx, workCh, fetchCh)
 
 	var err error
-	var partialWorkerWg sync.WaitGroup
-	for i := 0; i < len(e.keyRanges); i++ {
-		partialWorkerWg.Add(1)
+	for i := 0; i < len(e.partialPlans); i++ {
+		e.idxWorkerWg.Add(1)
 		if e.indexes[i] != nil {
-			err = e.startPartialIndexWorker(ctx, exitCh, fetchCh, i, &partialWorkerWg, e.keyRanges[i])
+			err = e.startPartialIndexWorker(ctx, exitCh, fetchCh, i)
 		} else {
-			err = e.startPartialTableWorker(ctx, exitCh, fetchCh, i, &partialWorkerWg)
+			err = e.startPartialTableWorker(ctx, exitCh, fetchCh, i)
 		}
 		if err != nil {
-			partialWorkerWg.Done()
+			e.idxWorkerWg.Done()
 			break
 		}
 	}
-	go e.waitPartialWorkersAndCloseFetchChan(&partialWorkerWg, fetchCh)
+	go e.waitPartialWorkersAndCloseFetchChan(fetchCh)
 	if err != nil {
 		close(exitCh)
 		return err
@@ -171,14 +234,15 @@ func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	return nil
 }
 
-func (e *IndexMergeReaderExecutor) waitPartialWorkersAndCloseFetchChan(partialWorkerWg *sync.WaitGroup, fetchCh chan *lookupTableTask) {
-	partialWorkerWg.Wait()
+func (e *IndexMergeReaderExecutor) waitPartialWorkersAndCloseFetchChan(fetchCh chan *lookupTableTask) {
+	e.idxWorkerWg.Wait()
 	close(fetchCh)
 }
 
 func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Context, workCh chan<- *lookupTableTask, fetch <-chan *lookupTableTask) {
 	idxMergeProcessWorker := &indexMergeProcessWorker{
-		stats: e.stats,
+		indexMerge: e,
+		stats:      e.stats,
 	}
 	e.processWokerWg.Add(1)
 	go func() {
@@ -193,42 +257,19 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 	}()
 }
 
-func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int, partialWorkerWg *sync.WaitGroup, keyRange []kv.KeyRange) error {
+func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) error {
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPBs[workID].CollectExecutionSummaries = &collExec
 	}
-	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetKeyRanges(keyRange).
-		SetDAGRequest(e.dagPBs[workID]).
-		SetStartTS(e.startTS).
-		SetDesc(e.descs[workID]).
-		SetKeepOrder(false).
-		SetStreaming(e.partialStreamings[workID]).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.memTracker).
-		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
-		Build()
-	if err != nil {
-		return err
-	}
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
-	if err != nil {
-		return err
-	}
 
-	result.Fetch(ctx)
-	worker := &partialIndexWorker{
-		stats:        e.stats,
-		idxID:        e.getPartitalPlanID(workID),
-		sc:           e.ctx,
-		batchSize:    e.maxChunkSize,
-		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
-		maxChunkSize: e.maxChunkSize,
-	}
-
-	if worker.batchSize > worker.maxBatchSize {
-		worker.batchSize = worker.maxBatchSize
+	var keyRanges [][]kv.KeyRange
+	if e.partitionTableMode {
+		for _, pKeyRanges := range e.partitionKeyRanges { // get all keyRanges related to this PartialIndex
+			keyRanges = append(keyRanges, pKeyRanges[workID])
+		}
+	} else {
+		keyRanges = [][]kv.KeyRange{e.keyRanges[workID]}
 	}
 
 	failpoint.Inject("startPartialIndexWorkerErr", func() error {
@@ -237,83 +278,178 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialIndexWorker").End()
-		defer partialWorkerWg.Done()
-		ctx1, cancel := context.WithCancel(ctx)
-		var err error
+		defer e.idxWorkerWg.Done()
 		util.WithRecovery(
 			func() {
-				_, err = worker.fetchHandles(ctx1, result, exitCh, fetchCh, e.resultCh, e.finished, e.handleCols)
+				worker := &partialIndexWorker{
+					stats:        e.stats,
+					idxID:        e.getPartitalPlanID(workID),
+					sc:           e.ctx,
+					batchSize:    e.maxChunkSize,
+					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
+					maxChunkSize: e.maxChunkSize,
+				}
+
+				if e.isCorColInPartialFilters[workID] {
+					// We got correlated column, so need to refresh Selection operator.
+					var err error
+					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+						worker.syncErr(e.resultCh, err)
+						return
+					}
+				}
+
+				var builder distsql.RequestBuilder
+				builder.SetDAGRequest(e.dagPBs[workID]).
+					SetStartTS(e.startTS).
+					SetDesc(e.descs[workID]).
+					SetKeepOrder(false).
+					SetReadReplicaScope(e.readReplicaScope).
+					SetIsStaleness(e.isStaleness).
+					SetFromSessionVars(e.ctx.GetSessionVars()).
+					SetMemTracker(e.memTracker).
+					SetPaging(e.paging).
+					SetFromInfoSchema(e.ctx.GetInfoSchema())
+
+				for parTblIdx, keyRange := range keyRanges {
+					// check if this executor is closed
+					select {
+					case <-e.finished:
+						break
+					default:
+					}
+
+					// init kvReq and worker for this partition
+					kvReq, err := builder.SetKeyRanges(keyRange).Build()
+					if err != nil {
+						worker.syncErr(e.resultCh, err)
+						return
+					}
+					result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
+					if err != nil {
+						worker.syncErr(e.resultCh, err)
+						return
+					}
+					worker.batchSize = e.maxChunkSize
+					if worker.batchSize > worker.maxBatchSize {
+						worker.batchSize = worker.maxBatchSize
+					}
+					if e.partitionTableMode {
+						worker.partition = e.prunedPartitions[parTblIdx]
+					}
+
+					// fetch all data from this partition
+					ctx1, cancel := context.WithCancel(ctx)
+					_, fetchErr := worker.fetchHandles(ctx1, result, exitCh, fetchCh, e.resultCh, e.finished, e.handleCols)
+					if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
+						e.feedbacks[workID].Invalidate()
+					}
+					if err := result.Close(); err != nil {
+						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
+					}
+					cancel()
+					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
+					if fetchErr != nil {
+						break
+					}
+				}
 			},
 			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialIndexWorker"),
 		)
-		if err != nil {
-			e.feedbacks[workID].Invalidate()
-		}
-		cancel()
-		if err := result.Close(); err != nil {
-			logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
-		}
-		e.ctx.StoreQueryFeedback(e.feedbacks[workID])
 	}()
 
 	return nil
 }
 
-func (e *IndexMergeReaderExecutor) buildPartialTableReader(ctx context.Context, workID int) Executor {
-	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getPartitalPlanID(workID)),
-		table:        e.table,
-		dagPB:        e.dagPBs[workID],
-		startTS:      e.startTS,
-		streaming:    e.partialStreamings[workID],
-		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
-		plans:        e.partialPlans[workID],
-		ranges:       e.ranges[workID],
-	}
-	return tableReaderExec
-}
+func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) error {
+	ts := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan)
 
-func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int,
-	partialWorkerWg *sync.WaitGroup) error {
-	partialTableReader := e.buildPartialTableReader(ctx, workID)
-	err := partialTableReader.Open(ctx)
-	if err != nil {
-		logutil.Logger(ctx).Error("open Select result failed:", zap.Error(err))
-		return err
-	}
-	tableInfo := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan).Table
-	worker := &partialTableWorker{
-		stats:        e.stats,
-		sc:           e.ctx,
-		batchSize:    e.maxChunkSize,
-		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
-		maxChunkSize: e.maxChunkSize,
-		tableReader:  partialTableReader,
-		tableInfo:    tableInfo,
+	tbls := make([]table.Table, 0, 1)
+	if e.partitionTableMode {
+		for _, p := range e.prunedPartitions {
+			tbls = append(tbls, p)
+		}
+	} else {
+		tbls = append(tbls, e.table)
 	}
 
-	if worker.batchSize > worker.maxBatchSize {
-		worker.batchSize = worker.maxBatchSize
-	}
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialTableWorker").End()
-		defer partialWorkerWg.Done()
-		ctx1, cancel := context.WithCancel(ctx)
-		var err error
+		defer e.idxWorkerWg.Done()
 		util.WithRecovery(
 			func() {
-				_, err = worker.fetchHandles(ctx1, exitCh, fetchCh, e.resultCh, e.finished, e.handleCols)
+				var err error
+				partialTableReader := &TableReaderExecutor{
+					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
+					dagPB:            e.dagPBs[workID],
+					startTS:          e.startTS,
+					readReplicaScope: e.readReplicaScope,
+					isStaleness:      e.isStaleness,
+					feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
+					plans:            e.partialPlans[workID],
+					ranges:           e.ranges[workID],
+				}
+
+				worker := &partialTableWorker{
+					stats:        e.stats,
+					sc:           e.ctx,
+					batchSize:    e.maxChunkSize,
+					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
+					maxChunkSize: e.maxChunkSize,
+					tableReader:  partialTableReader,
+				}
+
+				if e.isCorColInPartialFilters[workID] {
+					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+						worker.syncErr(e.resultCh, err)
+						return
+					}
+					partialTableReader.dagPB = e.dagPBs[workID]
+				}
+
+				for _, tbl := range tbls {
+					// check if this executor is closed
+					select {
+					case <-e.finished:
+						break
+					default:
+					}
+
+					// init partialTableReader and partialTableWorker again for the next table
+					partialTableReader.table = tbl
+					if err = partialTableReader.Open(ctx); err != nil {
+						logutil.Logger(ctx).Error("open Select result failed:", zap.Error(err))
+						worker.syncErr(e.resultCh, err)
+						break
+					}
+					worker.batchSize = e.maxChunkSize
+					if worker.batchSize > worker.maxBatchSize {
+						worker.batchSize = worker.maxBatchSize
+					}
+					if e.partitionTableMode {
+						worker.partition = tbl.(table.PhysicalTable)
+					}
+
+					// fetch all handles from this table
+					ctx1, cancel := context.WithCancel(ctx)
+					_, fetchErr := worker.fetchHandles(ctx1, exitCh, fetchCh, e.resultCh, e.finished, e.handleCols)
+					if fetchErr != nil { // this error is synced in fetchHandles, so don't sync it again
+						e.feedbacks[workID].Invalidate()
+					}
+
+					// release related resources
+					cancel()
+					if err = worker.tableReader.Close(); err != nil {
+						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
+					}
+					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
+					if fetchErr != nil {
+						break
+					}
+				}
 			},
 			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialTableWorker"),
 		)
-		if err != nil {
-			e.feedbacks[workID].Invalidate()
-		}
-		cancel()
-		if err := worker.tableReader.Close(); err != nil {
-			logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
-		}
-		e.ctx.StoreQueryFeedback(e.feedbacks[workID])
 	}()
 	return nil
 }
@@ -348,7 +484,15 @@ type partialTableWorker struct {
 	maxBatchSize int
 	maxChunkSize int
 	tableReader  Executor
-	tableInfo    *model.TableInfo
+	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
+}
+
+func (w *partialTableWorker) syncErr(resultCh chan<- *lookupTableTask, err error) {
+	doneCh := make(chan error, 1)
+	doneCh <- err
+	resultCh <- &lookupTableTask{
+		doneCh: doneCh,
+	}
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
@@ -362,11 +506,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
 		if err != nil {
-			doneCh := make(chan error, 1)
-			doneCh <- err
-			resultCh <- &lookupTableTask{
-				doneCh: doneCh,
-			}
+			w.syncErr(resultCh, err)
 			return count, err
 		}
 		if len(handles) == 0 {
@@ -423,6 +563,8 @@ func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 	task := &lookupTableTask{
 		handles: handles,
 		idxRows: retChk,
+
+		partitionTable: w.partition,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -437,9 +579,9 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			stats:          e.stats,
 			workCh:         workCh,
 			finished:       e.finished,
-			buildTblReader: e.buildFinalTableReader,
+			indexMergeExec: e,
 			tblPlans:       e.tblPlans,
-			memTracker:     memory.NewTracker(memory.LabelForSimpleTask, -1),
+			memTracker:     e.memTracker,
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
@@ -455,19 +597,27 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 	}
 }
 
-func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
+func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (_ Executor, err error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
-		table:        e.table,
-		dagPB:        e.tableRequest,
-		startTS:      e.startTS,
-		streaming:    e.tableStreaming,
-		columns:      e.columns,
-		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
-		plans:        e.tblPlans,
+		baseExecutor:     newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
+		table:            tbl,
+		dagPB:            e.tableRequest,
+		startTS:          e.startTS,
+		readReplicaScope: e.readReplicaScope,
+		isStaleness:      e.isStaleness,
+		columns:          e.columns,
+		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
+		plans:            e.tblPlans,
+	}
+	if e.isCorColInTableFilter {
+		if tableReaderExec.dagPB.Executors, err = constructDistExec(e.ctx, e.tblPlans); err != nil {
+			return nil, err
+		}
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, false)
+	// Reorder handles because SplitKeyRangesByLocations() requires startKey of kvRanges is ordered.
+	// Also it's good for performance.
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, err
@@ -547,6 +697,7 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	close(e.finished)
 	e.processWokerWg.Wait()
 	e.tblWorkerWg.Wait()
+	e.idxWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
 	// TODO: how to store e.feedbacks
@@ -554,7 +705,8 @@ func (e *IndexMergeReaderExecutor) Close() error {
 }
 
 type indexMergeProcessWorker struct {
-	stats *IndexMergeRuntimeStat
+	indexMerge *IndexMergeReaderExecutor
+	stats      *IndexMergeRuntimeStat
 }
 
 func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan *lookupTableTask,
@@ -564,15 +716,27 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 		close(resultCh)
 	}()
 
-	distinctHandles := kv.NewHandleMap()
+	distinctHandles := make(map[int64]*kv.HandleMap)
 	for task := range fetchCh {
 		start := time.Now()
 		handles := task.handles
 		fhs := make([]kv.Handle, 0, 8)
+
+		var tblID int64
+		if w.indexMerge.partitionTableMode {
+			tblID = getPhysicalTableID(task.partitionTable)
+		} else {
+			tblID = getPhysicalTableID(w.indexMerge.table)
+		}
+		if _, ok := distinctHandles[tblID]; !ok {
+			distinctHandles[tblID] = kv.NewHandleMap()
+		}
+		hMap := distinctHandles[tblID]
+
 		for _, h := range handles {
-			if _, ok := distinctHandles.Get(h); !ok {
+			if _, ok := hMap.Get(h); !ok {
 				fhs = append(fhs, h)
-				distinctHandles.Set(h, true)
+				hMap.Set(h, true)
 			}
 		}
 		if len(fhs) == 0 {
@@ -581,6 +745,8 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 		task := &lookupTableTask{
 			handles: fhs,
 			doneCh:  make(chan error, 1),
+
+			partitionTable: task.partitionTable,
 		}
 		if w.stats != nil {
 			w.stats.IndexMergeProcess += time.Since(start)
@@ -619,6 +785,15 @@ type partialIndexWorker struct {
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
+	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
+}
+
+func (w *partialIndexWorker) syncErr(resultCh chan<- *lookupTableTask, err error) {
+	doneCh := make(chan error, 1)
+	doneCh <- err
+	resultCh <- &lookupTableTask{
+		doneCh: doneCh,
+	}
 }
 
 func (w *partialIndexWorker) fetchHandles(
@@ -641,11 +816,7 @@ func (w *partialIndexWorker) fetchHandles(
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleCols)
 		if err != nil {
-			doneCh := make(chan error, 1)
-			doneCh <- err
-			resultCh <- &lookupTableTask{
-				doneCh: doneCh,
-			}
+			w.syncErr(resultCh, err)
 			return count, err
 		}
 		if len(handles) == 0 {
@@ -702,6 +873,8 @@ func (w *partialIndexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 	task := &lookupTableTask{
 		handles: handles,
 		idxRows: retChk,
+
+		partitionTable: w.partition,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -712,7 +885,7 @@ type indexMergeTableScanWorker struct {
 	stats          *IndexMergeRuntimeStat
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
-	buildTblReader func(ctx context.Context, handles []kv.Handle) (Executor, error)
+	indexMergeExec *IndexMergeReaderExecutor
 	tblPlans       []plannercore.PhysicalPlan
 
 	// memTracker is used to track the memory usage of this executor.
@@ -755,7 +928,11 @@ func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Conte
 }
 
 func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
-	tableReader, err := w.buildTblReader(ctx, task.handles)
+	tbl := w.indexMergeExec.table
+	if w.indexMergeExec.partitionTableMode {
+		tbl = task.partitionTable
+	}
+	tableReader, err := w.indexMergeExec.buildFinalTableReader(ctx, tbl, task.handles)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err

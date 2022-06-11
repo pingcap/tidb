@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,7 +24,7 @@ import (
 
 func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -31,7 +32,7 @@ func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -50,11 +51,7 @@ func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := types.CompareFloat64(arg0[i], arg1[i])
-		if val < 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val < 0)
 	}
 	return nil
 }
@@ -65,7 +62,7 @@ func (b *builtinLTRealSig) vectorized() bool {
 
 func (b *builtinLTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -73,7 +70,7 @@ func (b *builtinLTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -92,11 +89,7 @@ func (b *builtinLTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		val := arg0[i].Compare(&arg1[i])
-		if val < 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val < 0)
 	}
 	return nil
 }
@@ -107,7 +100,7 @@ func (b *builtinLTDecimalSig) vectorized() bool {
 
 func (b *builtinLTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -115,7 +108,7 @@ func (b *builtinLTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -132,11 +125,7 @@ func (b *builtinLTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
-		if val < 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val < 0)
 	}
 	return nil
 }
@@ -147,7 +136,7 @@ func (b *builtinLTStringSig) vectorized() bool {
 
 func (b *builtinLTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -155,7 +144,7 @@ func (b *builtinLTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -174,11 +163,7 @@ func (b *builtinLTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := arg0[i].Compare(arg1[i])
-		if val < 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val < 0)
 	}
 	return nil
 }
@@ -189,7 +174,7 @@ func (b *builtinLTTimeSig) vectorized() bool {
 
 func (b *builtinLTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDuration, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -197,7 +182,7 @@ func (b *builtinLTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalDuration(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -216,11 +201,7 @@ func (b *builtinLTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		val := types.CompareDuration(arg0[i], arg1[i])
-		if val < 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val < 0)
 	}
 	return nil
 }
@@ -231,7 +212,7 @@ func (b *builtinLTDurationSig) vectorized() bool {
 
 func (b *builtinLTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -239,7 +220,7 @@ func (b *builtinLTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -256,11 +237,7 @@ func (b *builtinLTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val < 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val < 0)
 	}
 	return nil
 }
@@ -271,7 +248,7 @@ func (b *builtinLTJSONSig) vectorized() bool {
 
 func (b *builtinLERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -279,7 +256,7 @@ func (b *builtinLERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -298,11 +275,7 @@ func (b *builtinLERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := types.CompareFloat64(arg0[i], arg1[i])
-		if val <= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val <= 0)
 	}
 	return nil
 }
@@ -313,7 +286,7 @@ func (b *builtinLERealSig) vectorized() bool {
 
 func (b *builtinLEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -321,7 +294,7 @@ func (b *builtinLEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -340,11 +313,7 @@ func (b *builtinLEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		val := arg0[i].Compare(&arg1[i])
-		if val <= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val <= 0)
 	}
 	return nil
 }
@@ -355,7 +324,7 @@ func (b *builtinLEDecimalSig) vectorized() bool {
 
 func (b *builtinLEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -363,7 +332,7 @@ func (b *builtinLEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -380,11 +349,7 @@ func (b *builtinLEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
-		if val <= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val <= 0)
 	}
 	return nil
 }
@@ -395,7 +360,7 @@ func (b *builtinLEStringSig) vectorized() bool {
 
 func (b *builtinLETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -403,7 +368,7 @@ func (b *builtinLETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -422,11 +387,7 @@ func (b *builtinLETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := arg0[i].Compare(arg1[i])
-		if val <= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val <= 0)
 	}
 	return nil
 }
@@ -437,7 +398,7 @@ func (b *builtinLETimeSig) vectorized() bool {
 
 func (b *builtinLEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDuration, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -445,7 +406,7 @@ func (b *builtinLEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalDuration(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -464,11 +425,7 @@ func (b *builtinLEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		val := types.CompareDuration(arg0[i], arg1[i])
-		if val <= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val <= 0)
 	}
 	return nil
 }
@@ -479,7 +436,7 @@ func (b *builtinLEDurationSig) vectorized() bool {
 
 func (b *builtinLEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -487,7 +444,7 @@ func (b *builtinLEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -504,11 +461,7 @@ func (b *builtinLEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val <= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val <= 0)
 	}
 	return nil
 }
@@ -519,7 +472,7 @@ func (b *builtinLEJSONSig) vectorized() bool {
 
 func (b *builtinGTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -527,7 +480,7 @@ func (b *builtinGTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -546,11 +499,7 @@ func (b *builtinGTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := types.CompareFloat64(arg0[i], arg1[i])
-		if val > 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val > 0)
 	}
 	return nil
 }
@@ -561,7 +510,7 @@ func (b *builtinGTRealSig) vectorized() bool {
 
 func (b *builtinGTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -569,7 +518,7 @@ func (b *builtinGTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -588,11 +537,7 @@ func (b *builtinGTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		val := arg0[i].Compare(&arg1[i])
-		if val > 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val > 0)
 	}
 	return nil
 }
@@ -603,7 +548,7 @@ func (b *builtinGTDecimalSig) vectorized() bool {
 
 func (b *builtinGTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -611,7 +556,7 @@ func (b *builtinGTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -628,11 +573,7 @@ func (b *builtinGTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
-		if val > 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val > 0)
 	}
 	return nil
 }
@@ -643,7 +584,7 @@ func (b *builtinGTStringSig) vectorized() bool {
 
 func (b *builtinGTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -651,7 +592,7 @@ func (b *builtinGTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -670,11 +611,7 @@ func (b *builtinGTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := arg0[i].Compare(arg1[i])
-		if val > 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val > 0)
 	}
 	return nil
 }
@@ -685,7 +622,7 @@ func (b *builtinGTTimeSig) vectorized() bool {
 
 func (b *builtinGTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDuration, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -693,7 +630,7 @@ func (b *builtinGTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalDuration(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -712,11 +649,7 @@ func (b *builtinGTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		val := types.CompareDuration(arg0[i], arg1[i])
-		if val > 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val > 0)
 	}
 	return nil
 }
@@ -727,7 +660,7 @@ func (b *builtinGTDurationSig) vectorized() bool {
 
 func (b *builtinGTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -735,7 +668,7 @@ func (b *builtinGTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -752,11 +685,7 @@ func (b *builtinGTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val > 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val > 0)
 	}
 	return nil
 }
@@ -767,7 +696,7 @@ func (b *builtinGTJSONSig) vectorized() bool {
 
 func (b *builtinGERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -775,7 +704,7 @@ func (b *builtinGERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -794,11 +723,7 @@ func (b *builtinGERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := types.CompareFloat64(arg0[i], arg1[i])
-		if val >= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val >= 0)
 	}
 	return nil
 }
@@ -809,7 +734,7 @@ func (b *builtinGERealSig) vectorized() bool {
 
 func (b *builtinGEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -817,7 +742,7 @@ func (b *builtinGEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -836,11 +761,7 @@ func (b *builtinGEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		val := arg0[i].Compare(&arg1[i])
-		if val >= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val >= 0)
 	}
 	return nil
 }
@@ -851,7 +772,7 @@ func (b *builtinGEDecimalSig) vectorized() bool {
 
 func (b *builtinGEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -859,7 +780,7 @@ func (b *builtinGEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -876,11 +797,7 @@ func (b *builtinGEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
-		if val >= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val >= 0)
 	}
 	return nil
 }
@@ -891,7 +808,7 @@ func (b *builtinGEStringSig) vectorized() bool {
 
 func (b *builtinGETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -899,7 +816,7 @@ func (b *builtinGETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -918,11 +835,7 @@ func (b *builtinGETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := arg0[i].Compare(arg1[i])
-		if val >= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val >= 0)
 	}
 	return nil
 }
@@ -933,7 +846,7 @@ func (b *builtinGETimeSig) vectorized() bool {
 
 func (b *builtinGEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDuration, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -941,7 +854,7 @@ func (b *builtinGEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalDuration(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -960,11 +873,7 @@ func (b *builtinGEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		val := types.CompareDuration(arg0[i], arg1[i])
-		if val >= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val >= 0)
 	}
 	return nil
 }
@@ -975,7 +884,7 @@ func (b *builtinGEDurationSig) vectorized() bool {
 
 func (b *builtinGEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -983,7 +892,7 @@ func (b *builtinGEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1000,11 +909,7 @@ func (b *builtinGEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val >= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val >= 0)
 	}
 	return nil
 }
@@ -1015,7 +920,7 @@ func (b *builtinGEJSONSig) vectorized() bool {
 
 func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1023,7 +928,7 @@ func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1042,11 +947,7 @@ func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := types.CompareFloat64(arg0[i], arg1[i])
-		if val == 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val == 0)
 	}
 	return nil
 }
@@ -1057,7 +958,7 @@ func (b *builtinEQRealSig) vectorized() bool {
 
 func (b *builtinEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1065,7 +966,7 @@ func (b *builtinEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1084,11 +985,7 @@ func (b *builtinEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		val := arg0[i].Compare(&arg1[i])
-		if val == 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val == 0)
 	}
 	return nil
 }
@@ -1099,7 +996,7 @@ func (b *builtinEQDecimalSig) vectorized() bool {
 
 func (b *builtinEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1107,7 +1004,7 @@ func (b *builtinEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1124,11 +1021,7 @@ func (b *builtinEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
-		if val == 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val == 0)
 	}
 	return nil
 }
@@ -1139,7 +1032,7 @@ func (b *builtinEQStringSig) vectorized() bool {
 
 func (b *builtinEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1147,7 +1040,7 @@ func (b *builtinEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1166,11 +1059,7 @@ func (b *builtinEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := arg0[i].Compare(arg1[i])
-		if val == 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val == 0)
 	}
 	return nil
 }
@@ -1181,7 +1070,7 @@ func (b *builtinEQTimeSig) vectorized() bool {
 
 func (b *builtinEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDuration, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1189,7 +1078,7 @@ func (b *builtinEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalDuration(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1208,11 +1097,7 @@ func (b *builtinEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		val := types.CompareDuration(arg0[i], arg1[i])
-		if val == 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val == 0)
 	}
 	return nil
 }
@@ -1223,7 +1108,7 @@ func (b *builtinEQDurationSig) vectorized() bool {
 
 func (b *builtinEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1231,7 +1116,7 @@ func (b *builtinEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1248,11 +1133,7 @@ func (b *builtinEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val == 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val == 0)
 	}
 	return nil
 }
@@ -1263,7 +1144,7 @@ func (b *builtinEQJSONSig) vectorized() bool {
 
 func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1271,7 +1152,7 @@ func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1290,11 +1171,7 @@ func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := types.CompareFloat64(arg0[i], arg1[i])
-		if val != 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val != 0)
 	}
 	return nil
 }
@@ -1305,7 +1182,7 @@ func (b *builtinNERealSig) vectorized() bool {
 
 func (b *builtinNEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1313,7 +1190,7 @@ func (b *builtinNEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1332,11 +1209,7 @@ func (b *builtinNEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		val := arg0[i].Compare(&arg1[i])
-		if val != 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val != 0)
 	}
 	return nil
 }
@@ -1347,7 +1220,7 @@ func (b *builtinNEDecimalSig) vectorized() bool {
 
 func (b *builtinNEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1355,7 +1228,7 @@ func (b *builtinNEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1372,11 +1245,7 @@ func (b *builtinNEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
-		if val != 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val != 0)
 	}
 	return nil
 }
@@ -1387,7 +1256,7 @@ func (b *builtinNEStringSig) vectorized() bool {
 
 func (b *builtinNETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1395,7 +1264,7 @@ func (b *builtinNETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1414,11 +1283,7 @@ func (b *builtinNETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := arg0[i].Compare(arg1[i])
-		if val != 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val != 0)
 	}
 	return nil
 }
@@ -1429,7 +1294,7 @@ func (b *builtinNETimeSig) vectorized() bool {
 
 func (b *builtinNEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDuration, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1437,7 +1302,7 @@ func (b *builtinNEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalDuration(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1456,11 +1321,7 @@ func (b *builtinNEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		val := types.CompareDuration(arg0[i], arg1[i])
-		if val != 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val != 0)
 	}
 	return nil
 }
@@ -1471,7 +1332,7 @@ func (b *builtinNEDurationSig) vectorized() bool {
 
 func (b *builtinNEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1479,7 +1340,7 @@ func (b *builtinNEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1496,11 +1357,7 @@ func (b *builtinNEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val != 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val != 0)
 	}
 	return nil
 }
@@ -1511,7 +1368,7 @@ func (b *builtinNEJSONSig) vectorized() bool {
 
 func (b *builtinNullEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETReal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1519,7 +1376,7 @@ func (b *builtinNullEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1553,7 +1410,7 @@ func (b *builtinNullEQRealSig) vectorized() bool {
 
 func (b *builtinNullEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1561,7 +1418,7 @@ func (b *builtinNullEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1595,7 +1452,7 @@ func (b *builtinNullEQDecimalSig) vectorized() bool {
 
 func (b *builtinNullEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1603,7 +1460,7 @@ func (b *builtinNullEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1635,7 +1492,7 @@ func (b *builtinNullEQStringSig) vectorized() bool {
 
 func (b *builtinNullEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1643,7 +1500,7 @@ func (b *builtinNullEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1677,7 +1534,7 @@ func (b *builtinNullEQTimeSig) vectorized() bool {
 
 func (b *builtinNullEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETDuration, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1685,7 +1542,7 @@ func (b *builtinNullEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 	if err := b.args[0].VecEvalDuration(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1719,7 +1576,7 @@ func (b *builtinNullEQDurationSig) vectorized() bool {
 
 func (b *builtinNullEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1727,7 +1584,7 @@ func (b *builtinNullEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1783,7 +1640,7 @@ func (b *builtinCoalesceIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	n := input.NumRows()
 	result.ResizeInt64(n, true)
 	i64s := result.Int64s()
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1840,7 +1697,7 @@ func (b *builtinCoalesceRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	n := input.NumRows()
 	result.ResizeFloat64(n, true)
 	i64s := result.Float64s()
-	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1897,7 +1754,7 @@ func (b *builtinCoalesceDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 	n := input.NumRows()
 	result.ResizeDecimal(n, true)
 	i64s := result.Decimals()
-	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1956,7 +1813,7 @@ func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	sc := b.ctx.GetSessionVars().StmtCtx
 	beforeWarns := sc.WarningCount()
 	for i := 0; i < argLen; i++ {
-		buf, err := b.bufAllocator.get(types.ETInt, n)
+		buf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -2017,7 +1874,7 @@ func (b *builtinCoalesceTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	n := input.NumRows()
 	result.ResizeTime(n, true)
 	i64s := result.Times()
-	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2074,7 +1931,7 @@ func (b *builtinCoalesceDurationSig) vecEvalDuration(input *chunk.Chunk, result 
 	n := input.NumRows()
 	result.ResizeGoDuration(n, true)
 	i64s := result.GoDurations()
-	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2133,7 +1990,7 @@ func (b *builtinCoalesceJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.C
 	sc := b.ctx.GetSessionVars().StmtCtx
 	beforeWarns := sc.WarningCount()
 	for i := 0; i < argLen; i++ {
-		buf, err := b.bufAllocator.get(types.ETInt, n)
+		buf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}

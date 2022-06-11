@@ -1,0 +1,53 @@
+[
+  {
+    "Name": "TestClusteredPrefixColumn",
+    "Cases": [
+      {
+        "SQL": "select c2 from t1 use index(idx1)",
+        "Plan": [
+          "IndexReader 10000.00 root  index:IndexFullScan",
+          "└─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx1(c2) keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "cd"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 use index(idx1) where c2 = 'cd'",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "    └─Selection 10.00 cop[tikv]  eq(test.t1.c2, \"cd\")",
+          "      └─IndexRangeScan 10.00 cop[tikv] table:t1, index:idx1(c2) range:[\"c\",\"c\"], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select c2 from t2 use index(idx1)",
+        "Plan": [
+          "IndexReader 10000.00 root  index:IndexFullScan",
+          "└─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx1(c1, c2) keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "cd"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t2 use index(idx1) where c2 = 'cd'",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(Column#9)->Column#4",
+          "└─IndexReader 1.00 root  index:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#9",
+          "    └─Selection 10.00 cop[tikv]  eq(test.t2.c2, \"cd\")",
+          "      └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx1(c1, c2) keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
+      }
+    ]
+  }
+]

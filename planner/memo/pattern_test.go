@@ -8,79 +8,82 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package memo
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testMemoSuite) TestGetOperand(c *C) {
-	c.Assert(GetOperand(&plannercore.LogicalJoin{}), Equals, OperandJoin)
-	c.Assert(GetOperand(&plannercore.LogicalAggregation{}), Equals, OperandAggregation)
-	c.Assert(GetOperand(&plannercore.LogicalProjection{}), Equals, OperandProjection)
-	c.Assert(GetOperand(&plannercore.LogicalSelection{}), Equals, OperandSelection)
-	c.Assert(GetOperand(&plannercore.LogicalApply{}), Equals, OperandApply)
-	c.Assert(GetOperand(&plannercore.LogicalMaxOneRow{}), Equals, OperandMaxOneRow)
-	c.Assert(GetOperand(&plannercore.LogicalTableDual{}), Equals, OperandTableDual)
-	c.Assert(GetOperand(&plannercore.DataSource{}), Equals, OperandDataSource)
-	c.Assert(GetOperand(&plannercore.LogicalUnionScan{}), Equals, OperandUnionScan)
-	c.Assert(GetOperand(&plannercore.LogicalUnionAll{}), Equals, OperandUnionAll)
-	c.Assert(GetOperand(&plannercore.LogicalSort{}), Equals, OperandSort)
-	c.Assert(GetOperand(&plannercore.LogicalTopN{}), Equals, OperandTopN)
-	c.Assert(GetOperand(&plannercore.LogicalLock{}), Equals, OperandLock)
-	c.Assert(GetOperand(&plannercore.LogicalLimit{}), Equals, OperandLimit)
+func TestGetOperand(t *testing.T) {
+	require.Equal(t, OperandJoin, GetOperand(&plannercore.LogicalJoin{}))
+	require.Equal(t, OperandAggregation, GetOperand(&plannercore.LogicalAggregation{}))
+	require.Equal(t, OperandProjection, GetOperand(&plannercore.LogicalProjection{}))
+	require.Equal(t, OperandSelection, GetOperand(&plannercore.LogicalSelection{}))
+	require.Equal(t, OperandApply, GetOperand(&plannercore.LogicalApply{}))
+	require.Equal(t, OperandMaxOneRow, GetOperand(&plannercore.LogicalMaxOneRow{}))
+	require.Equal(t, OperandTableDual, GetOperand(&plannercore.LogicalTableDual{}))
+	require.Equal(t, OperandDataSource, GetOperand(&plannercore.DataSource{}))
+	require.Equal(t, OperandUnionScan, GetOperand(&plannercore.LogicalUnionScan{}))
+	require.Equal(t, OperandUnionAll, GetOperand(&plannercore.LogicalUnionAll{}))
+	require.Equal(t, OperandSort, GetOperand(&plannercore.LogicalSort{}))
+	require.Equal(t, OperandTopN, GetOperand(&plannercore.LogicalTopN{}))
+	require.Equal(t, OperandLock, GetOperand(&plannercore.LogicalLock{}))
+	require.Equal(t, OperandLimit, GetOperand(&plannercore.LogicalLimit{}))
 }
 
-func (s *testMemoSuite) TestOperandMatch(c *C) {
-	c.Assert(OperandAny.Match(OperandLimit), IsTrue)
-	c.Assert(OperandAny.Match(OperandSelection), IsTrue)
-	c.Assert(OperandAny.Match(OperandJoin), IsTrue)
-	c.Assert(OperandAny.Match(OperandMaxOneRow), IsTrue)
-	c.Assert(OperandAny.Match(OperandAny), IsTrue)
+func TestOperandMatch(t *testing.T) {
+	require.True(t, OperandAny.Match(OperandLimit))
+	require.True(t, OperandAny.Match(OperandSelection))
+	require.True(t, OperandAny.Match(OperandJoin))
+	require.True(t, OperandAny.Match(OperandMaxOneRow))
+	require.True(t, OperandAny.Match(OperandAny))
 
-	c.Assert(OperandLimit.Match(OperandAny), IsTrue)
-	c.Assert(OperandSelection.Match(OperandAny), IsTrue)
-	c.Assert(OperandJoin.Match(OperandAny), IsTrue)
-	c.Assert(OperandMaxOneRow.Match(OperandAny), IsTrue)
-	c.Assert(OperandAny.Match(OperandAny), IsTrue)
+	require.True(t, OperandLimit.Match(OperandAny))
+	require.True(t, OperandSelection.Match(OperandAny))
+	require.True(t, OperandJoin.Match(OperandAny))
+	require.True(t, OperandMaxOneRow.Match(OperandAny))
+	require.True(t, OperandAny.Match(OperandAny))
 
-	c.Assert(OperandLimit.Match(OperandLimit), IsTrue)
-	c.Assert(OperandSelection.Match(OperandSelection), IsTrue)
-	c.Assert(OperandJoin.Match(OperandJoin), IsTrue)
-	c.Assert(OperandMaxOneRow.Match(OperandMaxOneRow), IsTrue)
-	c.Assert(OperandAny.Match(OperandAny), IsTrue)
+	require.True(t, OperandLimit.Match(OperandLimit))
+	require.True(t, OperandSelection.Match(OperandSelection))
+	require.True(t, OperandJoin.Match(OperandJoin))
+	require.True(t, OperandMaxOneRow.Match(OperandMaxOneRow))
+	require.True(t, OperandAny.Match(OperandAny))
 
-	c.Assert(OperandLimit.Match(OperandSelection), IsFalse)
-	c.Assert(OperandLimit.Match(OperandJoin), IsFalse)
-	c.Assert(OperandLimit.Match(OperandMaxOneRow), IsFalse)
+	require.False(t, OperandLimit.Match(OperandSelection))
+	require.False(t, OperandLimit.Match(OperandJoin))
+	require.False(t, OperandLimit.Match(OperandMaxOneRow))
 }
 
-func (s *testMemoSuite) TestNewPattern(c *C) {
+func TestNewPattern(t *testing.T) {
 	p := NewPattern(OperandAny, EngineAll)
-	c.Assert(p.Operand, Equals, OperandAny)
-	c.Assert(p.Children, IsNil)
+	require.Equal(t, OperandAny, p.Operand)
+	require.Nil(t, p.Children)
 
 	p = NewPattern(OperandJoin, EngineAll)
-	c.Assert(p.Operand, Equals, OperandJoin)
-	c.Assert(p.Children, IsNil)
+	require.Equal(t, OperandJoin, p.Operand)
+	require.Nil(t, p.Children)
 }
 
-func (s *testMemoSuite) TestPatternSetChildren(c *C) {
+func TestPatternSetChildren(t *testing.T) {
 	p := NewPattern(OperandAny, EngineAll)
 	p.SetChildren(NewPattern(OperandLimit, EngineAll))
-	c.Assert(len(p.Children), Equals, 1)
-	c.Assert(p.Children[0].Operand, Equals, OperandLimit)
-	c.Assert(p.Children[0].Children, IsNil)
+	require.Len(t, p.Children, 1)
+	require.Equal(t, OperandLimit, p.Children[0].Operand)
+	require.Nil(t, p.Children[0].Children)
 
 	p = NewPattern(OperandJoin, EngineAll)
 	p.SetChildren(NewPattern(OperandProjection, EngineAll), NewPattern(OperandSelection, EngineAll))
-	c.Assert(len(p.Children), Equals, 2)
-	c.Assert(p.Children[0].Operand, Equals, OperandProjection)
-	c.Assert(p.Children[0].Children, IsNil)
-	c.Assert(p.Children[1].Operand, Equals, OperandSelection)
-	c.Assert(p.Children[1].Children, IsNil)
+	require.Len(t, p.Children, 2)
+	require.Equal(t, OperandProjection, p.Children[0].Operand)
+	require.Nil(t, p.Children[0].Children)
+	require.Equal(t, OperandSelection, p.Children[1].Operand)
+	require.Nil(t, p.Children[1].Children)
 }

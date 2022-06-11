@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,6 +17,8 @@ package aggfuncs
 import (
 	"unsafe"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -47,13 +50,13 @@ type partialResult4SumDecimal struct {
 type partialResult4SumDistinctFloat64 struct {
 	val    float64
 	isNull bool
-	valSet set.Float64Set
+	valSet set.Float64SetWithMemoryUsage
 }
 
 type partialResult4SumDistinctDecimal struct {
 	val    types.MyDecimal
 	isNull bool
-	valSet set.StringSet
+	valSet set.StringSetWithMemoryUsage
 }
 
 type baseSumAggFunc struct {
@@ -115,10 +118,12 @@ type sum4Float64 struct {
 	baseSum4Float64
 }
 
-func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+var _ SlidingWindowAggFunc = &sum4Float64{}
+
+func (e *sum4Float64) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4SumFloat64)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastEnd+i])
+		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -129,7 +134,7 @@ func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		p.notNullRowCount++
 	}
 	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
+		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -166,7 +171,14 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of sum should not be nil")
+	}
+	frac := e.retTp.GetDecimal()
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err := p.val.Round(&p.val, frac, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}
@@ -201,10 +213,12 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return 0, nil
 }
 
-func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+var _ SlidingWindowAggFunc = &sum4Decimal{}
+
+func (e *sum4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4SumDecimal)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastEnd+i])
+		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}
@@ -225,7 +239,7 @@ func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		p.notNullRowCount++
 	}
 	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastStart+i])
+		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
 		}
@@ -263,16 +277,17 @@ type sum4DistinctFloat64 struct {
 }
 
 func (e *sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	setSize := int64(0)
 	p := new(partialResult4SumDistinctFloat64)
 	p.isNull = true
-	p.valSet = set.NewFloat64Set()
-	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size
+	p.valSet, setSize = set.NewFloat64SetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size + setSize
 }
 
 func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	p.isNull = true
-	p.valSet = set.NewFloat64Set()
+	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
 func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -285,8 +300,7 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if isNull || p.valSet.Exist(input) {
 			continue
 		}
-		p.valSet.Insert(input)
-		memDelta += DefFloat64Size
+		memDelta += p.valSet.Insert(input)
 		if p.isNull {
 			p.val = input
 			p.isNull = false
@@ -314,14 +328,15 @@ type sum4DistinctDecimal struct {
 func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
-	p.valSet = set.NewStringSet()
-	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize
+	setSize := int64(0)
+	p.valSet, setSize = set.NewStringSetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize + setSize
 }
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	p.isNull = true
-	p.valSet = set.NewStringSet()
+	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
 func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -342,7 +357,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if p.valSet.Exist(decStr) {
 			continue
 		}
-		p.valSet.Insert(decStr)
+		memDelta += p.valSet.Insert(decStr)
 		memDelta += int64(len(decStr))
 		if p.isNull {
 			p.val = *input

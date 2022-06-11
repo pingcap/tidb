@@ -8,15 +8,16 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -29,6 +30,7 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
+// nolint:structcheck
 type basePropConstSolver struct {
 	colMapper map[int64]int       // colMapper maps column to its index
 	eqList    []*Constant         // if eqList[i] != nil, it means col_i = eqList[i]
@@ -58,7 +60,8 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		return false, !oldCon.Equal(s.ctx, con)
+		res, err := oldCon.Value.Compare(s.ctx.GetSessionVars().StmtCtx, &con.Value, collate.GetCollator(col.GetType().GetCollate()))
+		return false, res != 0 || err != nil
 	}
 	s.eqList[id] = con
 	return true, false
@@ -85,10 +88,10 @@ func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft 
 	if !conOk {
 		return nil, nil
 	}
-	if ContainMutableConst(ctx, []Expression{con}) {
+	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
 		return nil, nil
 	}
-	if !collate.CompatibleCollate(col.GetType().Collate, con.GetType().Collate) {
+	if col.GetType().GetCollate() != con.GetType().GetCollate() {
 		return nil, nil
 	}
 	return col, con
@@ -120,7 +123,7 @@ func validEqualCond(ctx sessionctx.Context, cond Expression) (*Column, *Constant
 //  for 'a, b, sin(a) + cos(a) = 5', it returns 'true, false, returns sin(b) + cos(b) = 5'
 //  for 'a, b, cast(a) < rand()', it returns 'false, true, cast(a) < rand()'
 func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression, nullAware bool) (bool, bool, Expression) {
-	if src.RetType.Tp != tgt.RetType.Tp {
+	if src.RetType.GetType() != tgt.RetType.GetType() {
 		return false, false, cond
 	}
 	sf, ok := cond.(*ScalarFunction)
@@ -147,12 +150,12 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 			sf.FuncName.L == ast.If ||
 			sf.FuncName.L == ast.Case ||
 			sf.FuncName.L == ast.NullEQ) {
-		return false, false, cond
+		return false, true, cond
 	}
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {
-			_, coll := cond.CharsetAndCollation(ctx)
-			if tgt.GetType().Collate != coll {
+			_, coll := cond.CharsetAndCollation()
+			if tgt.GetType().GetCollate() != coll {
 				continue
 			}
 			replaced = true
@@ -239,7 +242,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
 			rCol, rOk := fun.GetArgs()[1].(*Column)
 			// TODO: Enable hybrid types in ConstantPropagate.
-			if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate && !lCol.GetType().Hybrid() && !rCol.GetType().Hybrid() {
+			if lOk && rOk && lCol.GetType().GetCollate() == rCol.GetType().GetCollate() && !lCol.GetType().Hybrid() && !rCol.GetType().Hybrid() {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
 				s.unionSet.Union(lID, rID)
@@ -298,7 +301,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 				continue
 			}
 			visited[i] = true
-			if ContainMutableConst(s.ctx, []Expression{con}) {
+			if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
 				continue
 			}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
@@ -348,6 +351,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
+	s.conditions = RemoveDupExprs(s.ctx, s.conditions)
 	return s.conditions
 }
 
@@ -404,7 +408,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 				continue
 			}
 			visited[i+condsOffset] = true
-			if ContainMutableConst(s.ctx, []Expression{con}) {
+			if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
 				continue
 			}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
@@ -490,7 +494,7 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 	if fun, ok := cond.(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 		lCol, lOk := fun.GetArgs()[0].(*Column)
 		rCol, rOk := fun.GetArgs()[1].(*Column)
-		if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate {
+		if lOk && rOk && lCol.GetType().GetCollate() == rCol.GetType().GetCollate() {
 			return s.colsFromOuterAndInner(lCol, rCol)
 		}
 	}
@@ -533,6 +537,9 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 // 'expression(..., outerCol, ...)' does not reference columns outside children schemas of join node.
 // Derived new expressions must be appended into join condition, not filter condition.
 func (s *propOuterJoinConstSolver) propagateColumnEQ() {
+	if s.nullSensitive {
+		return
+	}
 	visited := make([]bool, 2*len(s.joinConds)+len(s.filterConds))
 	s.unionSet = disjointset.NewIntSet(len(s.columns))
 	var outerCol, innerCol *Column
@@ -553,11 +560,8 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			// `select *, t1.a in (select t2.b from t t2) from t t1`
 			// rows with t2.b is null would impact whether LeftOuterSemiJoin should output 0 or null if there
 			// is no row satisfying t2.b = t1.a
-			if s.nullSensitive {
-				continue
-			}
 			childCol := s.innerSchema.RetrieveColumn(innerCol)
-			if !mysql.HasNotNullFlag(childCol.RetType.Flag) {
+			if !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 				notNullExpr := BuildNotNullExpr(s.ctx, childCol)
 				s.joinConds = append(s.joinConds, notNullExpr)
 			}

@@ -9,6 +9,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -16,7 +17,7 @@ set -euo pipefail
 
 exitCode=0
 
-list=$(find . -name "*_test.go" -not -path "./vendor/*" -print0 | xargs -0 grep -E "type test(.*)Suite"  | awk -F ':| ' '{print $1" "$3}')
+list=$(find . -name "*_test.go" -not -path "./vendor/*" -print0 | xargs -0 grep -E "type test(.*)Suite\s+"  | awk -F ':| ' '{print $1" "$3}')
 while read -r file testSuite; do
   # TODO: ugly regex
   # TODO: check code comment

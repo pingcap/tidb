@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -137,11 +138,8 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 		// The unicode must can be represented in 2 bytes.
 		return char, 0, errors.Trace(err)
 	}
-	var unicode uint16
-	err = binary.Read(bytes.NewReader(char[0:2]), binary.BigEndian, &unicode)
-	if err != nil {
-		return char, 0, errors.Trace(err)
-	}
+
+	unicode := binary.BigEndian.Uint16(char[0:2])
 	size = utf8.RuneLen(rune(unicode))
 	utf8.EncodeRune(char[0:size], rune(unicode))
 	return
@@ -530,7 +528,6 @@ func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) {
 		elems = append(elems, newBj)
 	}
 	bm.modifyValue, bm.err = buildBinaryObject(keys, elems)
-	return
 }
 
 func (bm *binaryModifier) remove(path PathExpression) BinaryJSON {
@@ -585,7 +582,6 @@ func (bm *binaryModifier) doRemove(path PathExpression) {
 		}
 	}
 	bm.modifyValue, bm.err = buildBinaryObject(keys, elems)
-	return
 }
 
 // rebuild merges the old and the modified JSON into a new BinaryJSON
@@ -648,7 +644,7 @@ func (bm *binaryModifier) rebuildTo(buf []byte) ([]byte, TypeCode) {
 // floatEpsilon is the acceptable error quantity when comparing two float numbers.
 const floatEpsilon = 1.e-8
 
-// compareFloat64 returns an integer comparing the float64 x to y,
+// compareFloat64PrecisionLoss returns an integer comparing the float64 x to y,
 // allowing precision loss.
 func compareFloat64PrecisionLoss(x, y float64) int {
 	if x-y < floatEpsilon && y-x < floatEpsilon {
@@ -786,6 +782,96 @@ func CompareBinary(left, right BinaryJSON) int {
 	return cmp
 }
 
+// MergePatchBinary implements RFC7396
+// https://datatracker.ietf.org/doc/html/rfc7396
+func MergePatchBinary(bjs []*BinaryJSON) (*BinaryJSON, error) {
+	var err error
+	length := len(bjs)
+
+	// according to the implements of RFC7396
+	// when the last item is not object
+	// we can return the last item directly
+	for i := length - 1; i >= 0; i-- {
+		if bjs[i] == nil || bjs[i].TypeCode != TypeCodeObject {
+			bjs = bjs[i:]
+			break
+		}
+	}
+
+	target := bjs[0]
+	for _, patch := range bjs[1:] {
+		target, err = mergePatchBinary(target, patch)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return target, nil
+}
+
+func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error) {
+	if patch == nil {
+		return nil, nil
+	}
+
+	if patch.TypeCode == TypeCodeObject {
+		if target == nil {
+			return nil, nil
+		}
+
+		keyValMap := make(map[string]BinaryJSON)
+		if target.TypeCode == TypeCodeObject {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				key := target.objectGetKey(i)
+				val := target.objectGetVal(i)
+				keyValMap[string(key)] = val
+			}
+		}
+		var tmp *BinaryJSON
+		elemCount := patch.GetElemCount()
+		for i := 0; i < elemCount; i++ {
+			key := patch.objectGetKey(i)
+			val := patch.objectGetVal(i)
+			k := string(key)
+
+			targetKV, exists := keyValMap[k]
+			if val.TypeCode == TypeCodeLiteral && val.Value[0] == LiteralNil {
+				if exists {
+					delete(keyValMap, k)
+				}
+			} else {
+				tmp, err = mergePatchBinary(&targetKV, &val)
+				if err != nil {
+					return result, err
+				}
+
+				keyValMap[k] = *tmp
+			}
+		}
+
+		length := len(keyValMap)
+		keys := make([][]byte, 0, length)
+		for key := range keyValMap {
+			keys = append(keys, []byte(key))
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			return bytes.Compare(keys[i], keys[j]) < 0
+		})
+		length = len(keys)
+		values := make([]BinaryJSON, 0, len(keys))
+		for i := 0; i < length; i++ {
+			values = append(values, keyValMap[string(keys[i])])
+		}
+
+		binaryObject, e := buildBinaryObject(keys, values)
+		if e != nil {
+			return nil, e
+		}
+		return &binaryObject, nil
+	}
+	return patch, nil
+}
+
 // MergeBinary merges multiple BinaryJSON into one according the following rules:
 // 1) adjacent arrays are merged to a single array;
 // 2) adjacent object are merged to a single object;
@@ -902,8 +988,8 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 	switch obj.TypeCode {
 	case TypeCodeObject:
 		if target.TypeCode == TypeCodeObject {
-			len := target.GetElemCount()
-			for i := 0; i < len; i++ {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
 				key := target.objectGetKey(i)
 				val := target.objectGetVal(i)
 				if exp, exists := obj.objectSearchKey(key); !exists || !ContainsBinary(exp, val) {
@@ -915,16 +1001,16 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 		return false
 	case TypeCodeArray:
 		if target.TypeCode == TypeCodeArray {
-			len := target.GetElemCount()
-			for i := 0; i < len; i++ {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
 				if !ContainsBinary(obj, target.arrayGetElem(i)) {
 					return false
 				}
 			}
 			return true
 		}
-		len := obj.GetElemCount()
-		for i := 0; i < len; i++ {
+		elemCount := obj.GetElemCount()
+		for i := 0; i < elemCount; i++ {
 			if ContainsBinary(obj.arrayGetElem(i), target) {
 				return true
 			}
@@ -948,9 +1034,9 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 func (bj BinaryJSON) GetElemDepth() int {
 	switch bj.TypeCode {
 	case TypeCodeObject:
-		len := bj.GetElemCount()
+		elemCount := bj.GetElemCount()
 		maxDepth := 0
-		for i := 0; i < len; i++ {
+		for i := 0; i < elemCount; i++ {
 			obj := bj.objectGetVal(i)
 			depth := obj.GetElemDepth()
 			if depth > maxDepth {
@@ -959,9 +1045,9 @@ func (bj BinaryJSON) GetElemDepth() int {
 		}
 		return maxDepth + 1
 	case TypeCodeArray:
-		len := bj.GetElemCount()
+		elemCount := bj.GetElemCount()
 		maxDepth := 0
-		for i := 0; i < len; i++ {
+		for i := 0; i < elemCount; i++ {
 			obj := bj.arrayGetElem(i)
 			depth := obj.GetElemDepth()
 			if depth > maxDepth {
@@ -1015,10 +1101,10 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 
 }
 
-// extractCallbackFn: the type of CALLBACK function for extractToCallback
+// extractCallbackFn the type of CALLBACK function for extractToCallback
 type extractCallbackFn func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error)
 
-// extractToCallback: callback alternative of extractTo
+// extractToCallback callback alternative of extractTo
 //     would be more effective when walk through the whole JSON is unnecessary
 // NOTICE: path [0] & [*] for JSON object other than array is INVALID, which is different from extractTo.
 func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extractCallbackFn, fullpath PathExpression) (stop bool, err error) {

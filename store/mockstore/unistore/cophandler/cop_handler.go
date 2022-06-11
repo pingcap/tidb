@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,25 +16,28 @@ package cophandler
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/ngaut/unistore/lockstore"
-	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -47,6 +51,7 @@ type MPPCtx struct {
 	RPCClient   client.Client
 	StoreAddr   string
 	TaskHandler *MPPTaskHandler
+	Ctx         context.Context
 }
 
 // HandleCopRequest handles coprocessor request.
@@ -61,7 +66,7 @@ func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstor
 	switch req.Tp {
 	case kv.ReqTypeDAG:
 		if mppCtx != nil && mppCtx.TaskHandler != nil {
-			return handleMPPDAGReq(dbReader, req, mppCtx)
+			return HandleMPPDAGReq(dbReader, req, mppCtx)
 		}
 		return handleCopDAGRequest(dbReader, lockStore, req)
 	case kv.ReqTypeAnalyze:
@@ -82,7 +87,32 @@ type dagContext struct {
 	startTS       uint64
 }
 
-// handleCopDAGRequest handles coprocessor DAG request.
+// ExecutorListsToTree converts a list of executors to a tree.
+func ExecutorListsToTree(exec []*tipb.Executor) *tipb.Executor {
+	i := len(exec) - 1
+	rootExec := exec[i]
+	for i--; 0 <= i; i-- {
+		switch exec[i+1].Tp {
+		case tipb.ExecType_TypeAggregation:
+			exec[i+1].Aggregation.Child = exec[i]
+		case tipb.ExecType_TypeProjection:
+			exec[i+1].Projection.Child = exec[i]
+		case tipb.ExecType_TypeTopN:
+			exec[i+1].TopN.Child = exec[i]
+		case tipb.ExecType_TypeLimit:
+			exec[i+1].Limit.Child = exec[i]
+		case tipb.ExecType_TypeSelection:
+			exec[i+1].Selection.Child = exec[i]
+		case tipb.ExecType_TypeStreamAgg:
+			exec[i+1].Aggregation.Child = exec[i]
+		default:
+			panic("unsupported dag executor type")
+		}
+	}
+	return rootExec
+}
+
+// handleCopDAGRequest handles coprocessor DAG request using MPP executors.
 func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (resp *coprocessor.Response) {
 	startTime := time.Now()
 	resp = &coprocessor.Response{}
@@ -110,12 +140,128 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 		resp.OtherError = err.Error()
 		return resp
 	}
-	closureExec, err := buildClosureExecutor(dagCtx, dagReq)
+
+	exec, chunks, counts, ndvs, err := buildAndRunMPPExecutor(dagCtx, dagReq)
+
 	if err != nil {
-		return buildResp(nil, nil, nil, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+		errMsg := err.Error()
+		if strings.HasPrefix(errMsg, ErrExecutorNotSupportedMsg) {
+			resp.OtherError = err.Error()
+			return resp
+		}
+		return genRespWithMPPExec(nil, nil, nil, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
-	chunks, err := closureExec.execute()
-	return buildResp(chunks, closureExec, closureExec.ndvs, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+	return genRespWithMPPExec(chunks, counts, ndvs, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+}
+
+func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (mppExec, []tipb.Chunk, []int64, []int64, error) {
+	rootExec := dagReq.RootExecutor
+	if rootExec == nil {
+		rootExec = ExecutorListsToTree(dagReq.Executors)
+	}
+
+	var counts, ndvs []int64
+
+	if dagReq.GetCollectRangeCounts() {
+		counts = make([]int64, len(dagCtx.keyRanges))
+		ndvs = make([]int64, len(dagCtx.keyRanges))
+	}
+	builder := &mppExecBuilder{
+		sc:       dagCtx.sc,
+		dbReader: dagCtx.dbReader,
+		dagReq:   dagReq,
+		dagCtx:   dagCtx,
+		mppCtx:   nil,
+		counts:   counts,
+		ndvs:     ndvs,
+	}
+	exec, err := builder.buildMPPExecutor(rootExec)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	chunks, err := mppExecute(exec, dagCtx, dagReq)
+	return exec, chunks, counts, ndvs, err
+}
+
+func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest) (chunks []tipb.Chunk, err error) {
+	err = exec.open()
+	defer func() {
+		err := exec.stop()
+		if err != nil {
+			panic(err)
+		}
+	}()
+	if err != nil {
+		return
+	}
+
+	var chk *chunk.Chunk
+	fields := exec.getFieldTypes()
+	for {
+		chk, err = exec.next()
+		if err != nil || chk == nil || chk.NumRows() == 0 {
+			return
+		}
+
+		switch dagReq.EncodeType {
+		case tipb.EncodeType_TypeDefault:
+			chunks, err = useDefaultEncoding(chk, dagCtx, dagReq, fields, chunks)
+		case tipb.EncodeType_TypeChunk:
+			chunks = useChunkEncoding(chk, dagReq, fields, chunks)
+		default:
+			err = fmt.Errorf("unsupported DAG request encode type %s", dagReq.EncodeType)
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRequest,
+	fields []*types.FieldType, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
+	var buf []byte
+	var datums []types.Datum
+	var err error
+	numRows := chk.NumRows()
+	for i := 0; i < numRows; i++ {
+		datums = datums[:0]
+		if dagReq.OutputOffsets != nil {
+			for _, j := range dagReq.OutputOffsets {
+				datums = append(datums, chk.GetRow(i).GetDatum(int(j), fields[j]))
+			}
+		} else {
+			for j, ft := range fields {
+				datums = append(datums, chk.GetRow(i).GetDatum(j, ft))
+			}
+		}
+		buf, err = codec.EncodeValue(dagCtx.sc, buf[:0], datums...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		chunks = appendRow(chunks, buf, i)
+	}
+	return chunks, nil
+}
+
+func useChunkEncoding(chk *chunk.Chunk, dagReq *tipb.DAGRequest, fields []*types.FieldType, chunks []tipb.Chunk) []tipb.Chunk {
+	if dagReq.OutputOffsets != nil {
+		offsets := make([]int, len(dagReq.OutputOffsets))
+		newFields := make([]*types.FieldType, len(dagReq.OutputOffsets))
+		for i := 0; i < len(dagReq.OutputOffsets); i++ {
+			offset := dagReq.OutputOffsets[i]
+			offsets[i] = int(offset)
+			newFields[i] = fields[offset]
+		}
+		chk = chk.Prune(offsets)
+		fields = newFields
+	}
+
+	c := chunk.NewCodec(fields)
+	buffer := c.Encode(chk)
+	chunks = append(chunks, tipb.Chunk{
+		RowsData: buffer,
+	})
+	return chunks
 }
 
 func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (*dagContext, *tipb.DAGRequest, error) {
@@ -132,7 +278,17 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		return nil, nil, errors.Trace(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	switch dagReq.TimeZoneName {
+	case "":
+		sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	case "System":
+		sc.TimeZone = time.Local
+	default:
+		sc.TimeZone, err = time.LoadLocation(dagReq.TimeZoneName)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+	}
 	ctx := &dagContext{
 		evalContext:   &evalContext{sc: sc},
 		dbReader:      reader,
@@ -202,30 +358,6 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	}
 }
 
-func (e *evalContext) fillColumnInfo(fieldTypes []*tipb.FieldType) {
-	e.columnInfos = make([]*tipb.ColumnInfo, 0, len(fieldTypes))
-	e.fieldTps = make([]*types.FieldType, 0, len(fieldTypes))
-	for i, pbType := range fieldTypes {
-		e.columnInfos = append(e.columnInfos, &tipb.ColumnInfo{ColumnId: int64(i),
-			Tp: pbType.Tp, Collation: pbType.Collate, ColumnLen: pbType.Flen,
-			Decimal: pbType.Decimal, Flag: int32(pbType.Flag)})
-		// todo fill collate and charset field
-		e.fieldTps = append(e.fieldTps, &types.FieldType{Tp: byte(pbType.Tp),
-			Flag: uint(pbType.Flag), Flen: int(pbType.Flen), Decimal: int(pbType.Decimal)})
-	}
-}
-
-func (e *evalContext) fillColumnInfoFromTPs(fieldTypes []*types.FieldType) {
-	e.columnInfos = make([]*tipb.ColumnInfo, 0, len(fieldTypes))
-	e.fieldTps = append(e.fieldTps, fieldTypes...)
-	for i, fieldType := range fieldTypes {
-		pbType := expression.ToPBFieldType(fieldType)
-		e.columnInfos = append(e.columnInfos, &tipb.ColumnInfo{ColumnId: int64(i),
-			Tp: pbType.Tp, Collation: pbType.Collate, ColumnLen: pbType.Flen,
-			Decimal: pbType.Decimal, Flag: int32(pbType.Flag)})
-	}
-}
-
 func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, primaryCols []int64, timeZone *time.Location) (*rowcodec.ChunkDecoder, error) {
 	var (
 		pkCols []int64
@@ -233,6 +365,10 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 	)
 	for i := range columnInfos {
 		info := columnInfos[i]
+		if info.ColumnId == model.ExtraPhysTblID {
+			// Skip since it needs to be filled in from the key
+			continue
+		}
 		ft := fieldTps[i]
 		col := rowcodec.ColInfo{
 			ID:         info.ColumnId,
@@ -265,18 +401,6 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 		return nil
 	}
 	return rowcodec.NewChunkDecoder(cols, pkCols, def, timeZone), nil
-}
-
-// decodeRelatedColumnVals decodes data to Datum slice according to the row information.
-func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][]byte, row []types.Datum) error {
-	var err error
-	for _, offset := range relatedColOffsets {
-		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sc.TimeZone)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }
 
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
@@ -320,48 +444,26 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, ndvs []int64, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
+func genRespWithMPPExec(chunks []tipb.Chunk, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	var counts []int64
-	if closureExecutor != nil {
-		counts = closureExecutor.counts
-	}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		Chunks:       chunks,
 		OutputCounts: counts,
 		Ndvs:         ndvs,
+		EncodeType:   dagReq.EncodeType,
 	}
 	executors := dagReq.Executors
 	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
+		// for simplicity, we assume all executors to be spending the same amount of time as the request
+		timeProcessed := uint64(dur / time.Nanosecond)
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(executors))
-		for i := range execSummary {
-			if closureExecutor == nil {
-				selResp.ExecutionSummaries = execSummary
-				continue
-			}
-			switch executors[i].Tp {
-			case tipb.ExecType_TypeTableScan:
-				execSummary[i] = closureExecutor.scanCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeIndexScan:
-				execSummary[i] = closureExecutor.idxScanCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeSelection:
-				execSummary[i] = closureExecutor.selectionCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeTopN:
-				execSummary[i] = closureExecutor.topNCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
-				execSummary[i] = closureExecutor.aggCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeLimit:
-				costNs := uint64(0)
-				rows := uint64(closureExecutor.rowCount)
-				numIter := uint64(1)
-				execSummary[i] = &tipb.ExecutorExecutionSummary{
-					TimeProcessedNs: &costNs,
-					NumProducedRows: &rows,
-					NumIterations:   &numIter,
-				}
-			default:
-				execSummary[i] = &tipb.ExecutorExecutionSummary{}
+		e := exec
+		for i := len(executors) - 1; 0 <= i; i-- {
+			execSummary[i] = e.buildSummary()
+			execSummary[i].TimeProcessedNs = &timeProcessed
+			if i != 0 {
+				e = exec.child()
 			}
 		}
 		selResp.ExecutionSummaries = execSummary
@@ -386,12 +488,17 @@ func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, ndvs []int
 	resp.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{
 		TimeDetail: resp.ExecDetails.TimeDetail,
 	}
-	data, err := proto.Marshal(selResp)
-	if err != nil {
-		resp.OtherError = err.Error()
+	data, mErr := proto.Marshal(selResp)
+	if mErr != nil {
+		resp.OtherError = mErr.Error()
 		return resp
 	}
 	resp.Data = data
+	if err != nil {
+		if conflictErr, ok := errors.Cause(err).(*kverrors.ErrConflict); ok {
+			resp.OtherError = conflictErr.Error()
+		}
+	}
 	return resp
 }
 
@@ -479,14 +586,16 @@ func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 
 // fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
 func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
-	return &types.FieldType{
-		Tp:      byte(col.GetTp()),
-		Flag:    uint(col.Flag),
-		Flen:    int(col.GetColumnLen()),
-		Decimal: int(col.GetDecimal()),
-		Elems:   col.Elems,
-		Collate: collate.CollationID2Name(collate.RestoreCollationIDIfNeeded(col.GetCollation())),
-	}
+	charsetStr, collationStr, _ := charset.GetCharsetInfoByID(int(collate.RestoreCollationIDIfNeeded(col.GetCollation())))
+	ft := &types.FieldType{}
+	ft.SetType(byte(col.GetTp()))
+	ft.SetFlag(uint(col.GetFlag()))
+	ft.SetFlen(int(col.GetColumnLen()))
+	ft.SetDecimal(int(col.GetDecimal()))
+	ft.SetElems(col.Elems)
+	ft.SetCharset(charsetStr)
+	ft.SetCollate(collationStr)
+	return ft
 }
 
 // handleCopChecksumRequest handles coprocessor check sum request.

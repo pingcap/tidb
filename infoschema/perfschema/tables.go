@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,13 +24,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/profile"
@@ -104,9 +106,10 @@ var tableIDMap = map[string]int64{
 // perfSchemaTable stands for the fake table all its data is in the memory.
 type perfSchemaTable struct {
 	infoschema.VirtualTable
-	meta *model.TableInfo
-	cols []*table.Column
-	tp   table.Type
+	meta    *model.TableInfo
+	cols    []*table.Column
+	tp      table.Type
+	indices []table.Index
 }
 
 var pluginTable = make(map[string]func(autoid.Allocators, *model.TableInfo) (table.Table, error))
@@ -129,11 +132,11 @@ func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table
 		ret, err := f(allocs, meta)
 		return ret, err
 	}
-	return createPerfSchemaTable(meta), nil
+	return createPerfSchemaTable(meta)
 }
 
 // createPerfSchemaTable creates all perfSchemaTables
-func createPerfSchemaTable(meta *model.TableInfo) *perfSchemaTable {
+func createPerfSchemaTable(meta *model.TableInfo) (*perfSchemaTable, error) {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)
@@ -145,7 +148,10 @@ func createPerfSchemaTable(meta *model.TableInfo) *perfSchemaTable {
 		cols: columns,
 		tp:   tp,
 	}
-	return t
+	if err := initTableIndices(t); err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
 // Cols implements table.Table Type interface.
@@ -168,12 +174,17 @@ func (vt *perfSchemaTable) WritableCols() []*table.Column {
 	return vt.cols
 }
 
+// DeletableCols implements table.Table Type interface.
+func (vt *perfSchemaTable) DeletableCols() []*table.Column {
+	return vt.cols
+}
+
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (vt *perfSchemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return vt.cols
 }
 
-// GetID implements table.Table GetID interface.
+// GetPhysicalID implements table.Table GetID interface.
 func (vt *perfSchemaTable) GetPhysicalID() int64 {
 	return vt.meta.ID
 }
@@ -186,6 +197,24 @@ func (vt *perfSchemaTable) Meta() *model.TableInfo {
 // Type implements table.Table Type interface.
 func (vt *perfSchemaTable) Type() table.Type {
 	return vt.tp
+}
+
+// Indices implements table.Table Indices interface.
+func (vt *perfSchemaTable) Indices() []table.Index {
+	return vt.indices
+}
+
+// initTableIndices initializes the indices of the perfSchemaTable.
+func initTableIndices(t *perfSchemaTable) error {
+	tblInfo := t.meta
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo.State == model.StateNone {
+			return table.ErrIndexStateCantNone.GenWithStackByArgs(idxInfo.Name)
+		}
+		idx := tables.NewIndex(t.meta.ID, tblInfo, idxInfo)
+		t.indices = append(t.indices, idx)
+	}
+	return nil
 }
 
 func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
@@ -237,11 +266,8 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
+func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	if len(startKey) != 0 {
-		return table.ErrUnsupportedOp
-	}
 	rows, err := vt.getRows(ctx, cols)
 	if err != nil {
 		return err
@@ -356,7 +382,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	close(ch)
 
 	// Keep the original order to make the result more stable
-	var results []result
+	var results []result // nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)

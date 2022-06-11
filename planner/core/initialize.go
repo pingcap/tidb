@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,6 +16,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -412,12 +414,53 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 	return &p
 }
 
+func (p *PhysicalTableReader) adjustReadReqType(ctx sessionctx.Context) {
+	if p.StoreType == kv.TiFlash {
+		_, ok := p.tablePlan.(*PhysicalExchangeSender)
+		if ok {
+			p.ReadReqType = MPP
+			return
+		}
+		tableScans := p.GetTableScans()
+		// When PhysicalTableReader's store type is tiflash, has table scan
+		// and all table scans contained are not keepOrder, try to use batch cop.
+		if len(tableScans) > 0 {
+			for _, tableScan := range tableScans {
+				if tableScan.KeepOrder {
+					return
+				}
+			}
+
+			// When allow batch cop is 1, only agg / topN uses batch cop.
+			// When allow batch cop is 2, every query uses batch cop.
+			switch ctx.GetSessionVars().AllowBatchCop {
+			case 1:
+				for _, plan := range p.TablePlans {
+					switch plan.(type) {
+					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
+						p.ReadReqType = BatchCop
+						return
+					}
+				}
+			case 2:
+				p.ReadReqType = BatchCop
+			}
+		}
+	}
+}
+
 // Init initializes PhysicalTableReader.
 func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalTableReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableReader, &p, offset)
-	if p.tablePlan != nil {
-		p.TablePlans = flattenPushDownPlan(p.tablePlan)
-		p.schema = p.tablePlan.Schema()
+	p.ReadReqType = Cop
+	if p.tablePlan == nil {
+		return &p
+	}
+	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.schema = p.tablePlan.Schema()
+	p.adjustReadReqType(ctx)
+	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
+		setMppOrBatchCopForTableScan(p.tablePlan)
 	}
 	return &p
 }
@@ -511,4 +554,30 @@ func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 		plans[i], plans[j] = plans[j], plans[i]
 	}
 	return plans
+}
+
+// Init only assigns type and context.
+func (p LogicalCTE) Init(ctx sessionctx.Context, offset int) *LogicalCTE {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeCTE, &p, offset)
+	return &p
+}
+
+// Init only assigns type and context.
+func (p PhysicalCTE) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTE {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeCTE, 0)
+	p.stats = stats
+	return &p
+}
+
+// Init only assigns type and context.
+func (p LogicalCTETable) Init(ctx sessionctx.Context, offset int) *LogicalCTETable {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeCTETable, &p, offset)
+	return &p
+}
+
+// Init only assigns type and context.
+func (p PhysicalCTETable) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTETable {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeCTETable, 0)
+	p.stats = stats
+	return &p
 }

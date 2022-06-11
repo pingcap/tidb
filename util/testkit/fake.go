@@ -1,3 +1,0 @@
-// +build codes
-
-package testkit

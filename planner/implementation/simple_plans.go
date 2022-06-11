@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -52,7 +53,7 @@ type TiDBSelectionImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (sel *TiDBSelectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().CPUFactor + children[0].GetCost()
+	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().GetCPUFactor() + children[0].GetCost()
 	return sel.cost
 }
 
@@ -68,7 +69,7 @@ type TiKVSelectionImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (sel *TiKVSelectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().CopCPUFactor + children[0].GetCost()
+	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().GetCopCPUFactor() + children[0].GetCost()
 	return sel.cost
 }
 
@@ -85,7 +86,7 @@ type TiDBHashAggImpl struct {
 // CalcCost implements Implementation CalcCost interface.
 func (agg *TiDBHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
-	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, true)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, true, false, 0)
 	agg.cost = selfCost + children[0].GetCost()
 	return agg.cost
 }
@@ -110,7 +111,7 @@ type TiKVHashAggImpl struct {
 // CalcCost implements Implementation CalcCost interface.
 func (agg *TiKVHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
-	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, false)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, false, false, 0)
 	agg.cost = selfCost + children[0].GetCost()
 	return agg.cost
 }
@@ -182,7 +183,7 @@ func (impl *UnionAllImpl) CalcCost(outCount float64, children ...memo.Implementa
 			childMaxCost = childCost
 		}
 	}
-	selfCost := float64(1+len(children)) * impl.plan.SCtx().GetSessionVars().ConcurrencyFactor
+	selfCost := float64(1+len(children)) * impl.plan.SCtx().GetSessionVars().GetConcurrencyFactor()
 	// Children of UnionAll are executed in parallel.
 	impl.cost = selfCost + childMaxCost
 	return impl.cost

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +19,9 @@ import (
 	"reflect"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // Codec is used to:
@@ -139,6 +140,9 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 
 	// decode data.
 	col.data = buffer[:numDataBytes:numDataBytes]
+	// The column reference the data of the grpc response, the memory of the grpc message cannot be GCed if we reuse
+	// this column. Thus, we set `avoidReusing` to true.
+	col.avoidReusing = true
 	return buffer[numDataBytes:]
 }
 
@@ -169,7 +173,7 @@ func bytesToI64Slice(b []byte) (i64s []int64) {
 const varElemLen = -1
 
 func getFixedLen(colType *types.FieldType) int {
-	switch colType.Tp {
+	switch colType.GetType() {
 	case mysql.TypeFloat:
 		return 4
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
@@ -202,7 +206,7 @@ func EstimateTypeWidth(colType *types.FieldType) int {
 		return colLen
 	}
 
-	colLen = colType.Flen
+	colLen = colType.GetFlen()
 	if colLen > 0 {
 		if colLen <= 32 {
 			return colLen

@@ -1,0 +1,12 @@
+[lightning]
+table-concurrency = 1
+
+[tikv-importer]
+backend = "local"
+
+[checkpoint]
+enable = true
+driver = "mysql"
+
+[mydumper]
+batch-size = 50 # force splitting the data into 4 batches

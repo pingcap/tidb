@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,10 +22,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // ProcessInfo is a struct used for show processlist statement.
@@ -32,6 +34,7 @@ type ProcessInfo struct {
 	ID               uint64
 	User             string
 	Host             string
+	Port             string
 	DB               string
 	Digest           string
 	Plan             interface{}
@@ -67,16 +70,27 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	if len(pi.DB) > 0 {
 		db = pi.DB
 	}
+	var host string
+	if pi.Port != "" {
+		host = fmt.Sprintf("%s:%s", pi.Host, pi.Port)
+	} else {
+		host = pi.Host
+	}
 	return []interface{}{
 		pi.ID,
 		pi.User,
-		pi.Host,
+		host,
 		db,
 		mysql.Command2Str[pi.Command],
 		t,
 		serverStatus2Str(pi.State),
 		info,
 	}
+}
+
+func (pi *ProcessInfo) String() string {
+	rows := pi.ToRowForShow(false)
+	return fmt.Sprintf("{id:%v, user:%v, host:%v, db:%v, command:%v, time:%v, state:%v, info:%v}", rows...)
 }
 
 func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
@@ -139,7 +153,7 @@ var mapServerStatus2Str = map[uint16]string{
 // Param state is a bit-field. (e.g. 0x0003 = "in transaction; autocommit").
 func serverStatus2Str(state uint16) string {
 	// l collect server status strings.
-	var l []string
+	var l []string // nolint: prealloc
 	// check each defined server status, if match, append to collector.
 	for _, s := range ascServerStatus {
 		if state&s == 0 {
@@ -154,11 +168,18 @@ func serverStatus2Str(state uint16) string {
 // kill statement rely on this interface.
 type SessionManager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
+	ShowTxnList() []*txninfo.TxnInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
 	Kill(connectionID uint64, query bool)
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
+	// Put the internal session pointer to the map in the SessionManager
+	StoreInternalSession(se interface{})
+	// Delete the internal session pointer from the map in the SessionManager
+	DeleteInternalSession(se interface{})
+	// Get all startTS of every transactions running in the current internal sessions
+	GetInternalSessionStartTSList() []uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
@@ -179,6 +200,16 @@ type GlobalConnID struct {
 	LocalConnID    uint64
 	Is64bits       bool
 	ServerIDGetter func() uint64
+}
+
+// NewGlobalConnID creates GlobalConnID with serverID
+func NewGlobalConnID(serverID uint64, is64Bits bool) GlobalConnID {
+	return GlobalConnID{ServerID: serverID, Is64bits: is64Bits, LocalConnID: reservedLocalConns}
+}
+
+// NewGlobalConnIDWithGetter creates GlobalConnID with serverIDGetter
+func NewGlobalConnIDWithGetter(serverIDGetter func() uint64, is64Bits bool) GlobalConnID {
+	return GlobalConnID{ServerIDGetter: serverIDGetter, Is64bits: is64Bits, LocalConnID: reservedLocalConns}
 }
 
 const (
@@ -240,4 +271,16 @@ func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) 
 		LocalConnID: (id >> 1) & 0x7fff_ffff,
 		ServerID:    0,
 	}, false, nil
+}
+
+const (
+	reservedLocalConns  = 200
+	reservedConnAnalyze = 1
+)
+
+// GetAutoAnalyzeProcID returns processID for auto analyze
+// TODO support IDs for concurrent auto-analyze
+func GetAutoAnalyzeProcID(serverIDGetter func() uint64) uint64 {
+	globalConnID := NewGlobalConnIDWithGetter(serverIDGetter, true)
+	return globalConnID.makeID(reservedConnAnalyze)
 }

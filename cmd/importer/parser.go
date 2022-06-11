@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,14 +20,15 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type column struct {
@@ -73,7 +75,7 @@ func (col *column) parseRule(kvs []string, uniq bool) {
 		var err error
 		col.data.step, err = strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("parsing err", zap.String("key", key), zap.Error(err))
 		}
 	} else if key == "set" {
 		fields := strings.Split(value, ",")
@@ -84,12 +86,12 @@ func (col *column) parseRule(kvs []string, uniq bool) {
 		var err error
 		col.incremental, err = strconv.ParseBool(value)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("parsing err", zap.String("key", key), zap.Error(err))
 		}
 	} else if key == "repeats" {
 		repeats, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("parsing err", zap.String("key", key), zap.Error(err))
 		}
 		if uniq && repeats > 1 {
 			log.Fatal("cannot repeat more than 1 times on unique columns")
@@ -99,7 +101,7 @@ func (col *column) parseRule(kvs []string, uniq bool) {
 	} else if key == "probability" {
 		prob, err := strconv.ParseUint(value, 10, 32)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("parsing err", zap.String("key", key), zap.Error(err))
 		}
 		if prob > 100 || prob == 0 {
 			log.Fatal("probability must be in (0, 100]")
@@ -172,17 +174,17 @@ func (t *table) String() string {
 	}
 
 	ret := fmt.Sprintf("[table]name: %s\n", t.name)
-	ret += fmt.Sprintf("[table]columns:\n")
+	ret += "[table]columns:\n"
 	ret += t.printColumns()
 
 	ret += fmt.Sprintf("[table]column list: %s\n", t.columnList)
 
-	ret += fmt.Sprintf("[table]indices:\n")
+	ret += "[table]indices:\n"
 	for k, v := range t.indices {
 		ret += fmt.Sprintf("key->%s, value->%v", k, v)
 	}
 
-	ret += fmt.Sprintf("[table]unique indices:\n")
+	ret += "[table]unique indices:\n"
 	for k, v := range t.uniqIndices {
 		ret += fmt.Sprintf("key->%s, value->%v", k, v)
 	}
@@ -290,7 +292,7 @@ func parseIndex(table *table, stmt *ast.CreateIndexStmt) error {
 }
 
 func parseIndexSQL(table *table, sql string) error {
-	if len(sql) == 0 {
+	if sql == "" {
 		return nil
 	}
 
