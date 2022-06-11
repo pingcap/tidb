@@ -20,14 +20,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -48,7 +49,12 @@ type Context interface {
 	NewTxn(context.Context) error
 	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
 	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
-
+	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// RollbackTxn rolls back the current transaction.
+	RollbackTxn(ctx context.Context)
+	// CommitTxn commits the current transaction.
+	CommitTxn(ctx context.Context) error
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn
@@ -70,7 +76,9 @@ type Context interface {
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
 
-	// Deprecated: Use TxnManager.GetTxnInfoSchema to get the current schema in session
+	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
+	// If you want to get the infoschema of the current transaction in SQL layer, use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	// If you want to get the latest infoschema use domain.GetDomain(ctx).GetInfoSchema()
 	GetInfoSchema() InfoschemaMetaVersion
 
 	GetSessionVars() *variable.SessionVars
@@ -115,8 +123,8 @@ type Context interface {
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
-	// DDLOwnerChecker returns owner.DDLOwnerChecker.
-	DDLOwnerChecker() owner.DDLOwnerChecker
+	// IsDDLOwner checks whether this session is DDL owner.
+	IsDDLOwner() bool
 	// AddTableLock adds table lock to the session lock map.
 	AddTableLock([]model.TableLockTpInfo)
 	// ReleaseTableLocks releases table locks in the session lock map.
@@ -140,6 +148,19 @@ type Context interface {
 	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
 	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
 	GetBuiltinFunctionUsage() map[string]uint32
+	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
+	// Notice that this is a thread safe function
+	BuiltinFunctionUsageInc(scalarFuncSigName string)
+	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
+	GetStmtStats() *stmtstats.StatementStats
+	// ShowProcess returns ProcessInfo running in current Context
+	ShowProcess() *util.ProcessInfo
+	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
+	GetAdvisoryLock(string, int64) error
+	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
+	ReleaseAdvisoryLock(string) bool
+	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
+	ReleaseAllAdvisoryLocks() int
 }
 
 type basicCtxType int
@@ -202,4 +223,12 @@ func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error
 		return errors.Errorf("cannot set read timestamp to a future time")
 	}
 	return nil
+}
+
+// SysProcTracker is used to track background sys processes
+type SysProcTracker interface {
+	Track(id uint64, proc Context) error
+	UnTrack(id uint64)
+	GetSysProcessList() map[uint64]*util.ProcessInfo
+	KillSysProcess(id uint64)
 }

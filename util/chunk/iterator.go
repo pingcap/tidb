@@ -14,6 +14,8 @@
 
 package chunk
 
+import "sync"
+
 var (
 	_ Iterator = (*Iterator4Chunk)(nil)
 	_ Iterator = (*iterator4RowPtr)(nil)
@@ -22,6 +24,22 @@ var (
 	_ Iterator = (*iterator4RowContainer)(nil)
 	_ Iterator = (*multiIterator)(nil)
 )
+
+var (
+	iterator4SlicePool = &sync.Pool{New: func() any { return new(iterator4Slice) }}
+)
+
+// FreeIterator try to free and reuse the iterator.
+func FreeIterator(it any) {
+	switch it := it.(type) {
+	case *iterator4Slice:
+		it.rows = nil
+		it.cursor = 0
+		iterator4SlicePool.Put(it)
+	default:
+		// Do Nothing.
+	}
+}
 
 // Iterator is used to iterate a number of rows.
 //
@@ -53,7 +71,10 @@ type Iterator interface {
 
 // NewIterator4Slice returns a Iterator for Row slice.
 func NewIterator4Slice(rows []Row) Iterator {
-	return &iterator4Slice{rows: rows}
+	it := iterator4SlicePool.Get().(*iterator4Slice)
+	it.rows = rows
+	it.cursor = 0
+	return it
 }
 
 type iterator4Slice struct {
@@ -72,8 +93,8 @@ func (it *iterator4Slice) Begin() Row {
 
 // Next implements the Iterator interface.
 func (it *iterator4Slice) Next() Row {
-	if len := it.Len(); it.cursor >= len {
-		it.cursor = len + 1
+	if l := it.Len(); it.cursor >= l {
+		it.cursor = l + 1
 		return it.End()
 	}
 	row := it.rows[it.cursor]
@@ -274,8 +295,8 @@ func (it *iterator4RowPtr) Begin() Row {
 
 // Next implements the Iterator interface.
 func (it *iterator4RowPtr) Next() Row {
-	if len := it.Len(); it.cursor >= len {
-		it.cursor = len + 1
+	if l := it.Len(); it.cursor >= l {
+		it.cursor = l + 1
 		return it.End()
 	}
 	row := it.li.GetRow(it.ptrs[it.cursor])

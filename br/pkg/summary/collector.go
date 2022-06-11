@@ -47,11 +47,13 @@ type LogCollector interface {
 	SetSuccessStatus(success bool)
 
 	Summary(name string)
+
+	Log(msg string, fields ...zap.Field)
 }
 
 type logFunc func(msg string, fields ...zap.Field)
 
-var collector LogCollector = NewLogCollector(log.Info)
+var collector = NewLogCollector(log.Info)
 
 // InitCollector initilize global collector instance.
 func InitCollector( // revive:disable-line:flag-parameter
@@ -235,6 +237,10 @@ func (tc *logCollector) Summary(name string) {
 	}
 
 	tc.log(name+" success summary", logFields...)
+}
+
+func (tc *logCollector) Log(msg string, fields ...zap.Field) {
+	tc.log(msg, fields...)
 }
 
 // SetLogCollector allow pass LogCollector outside.

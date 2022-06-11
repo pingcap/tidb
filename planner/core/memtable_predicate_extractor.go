@@ -19,12 +19,10 @@ import (
 	"fmt"
 	"math"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -36,10 +34,14 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
@@ -237,6 +239,7 @@ func (helper extractHelper) extractLikePatternCol(
 	predicates []expression.Expression,
 	extractColName string,
 	toLower bool,
+	needLike2Regexp bool,
 ) (
 	remained []expression.Expression,
 	patterns []string,
@@ -263,13 +266,13 @@ func (helper extractHelper) extractLikePatternCol(
 		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
-		if fn.FuncName.L == ast.LogicOr {
-			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols)
+		if fn.FuncName.L == ast.LogicOr && !toLower {
+			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		} else {
-			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols)
+			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		}
 		if canBuildPattern && toLower {
-			pattern = "(?i)" + pattern
+			pattern = strings.ToLower(pattern)
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
@@ -284,6 +287,7 @@ func (helper extractHelper) extractOrLikePattern(
 	orFunc *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
+	needLike2Regexp bool,
 ) (
 	ok bool,
 	pattern string,
@@ -300,7 +304,7 @@ func (helper extractHelper) extractOrLikePattern(
 			return false, ""
 		}
 
-		ok, partPattern := helper.extractLikePattern(fn, extractColName, extractCols)
+		ok, partPattern := helper.extractLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		if !ok {
 			return false, ""
 		}
@@ -313,6 +317,7 @@ func (helper extractHelper) extractLikePattern(
 	fn *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
+	needLike2Regexp bool,
 ) (
 	ok bool,
 	pattern string,
@@ -328,7 +333,10 @@ func (helper extractHelper) extractLikePattern(
 		case ast.EQ:
 			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
 		case ast.Like:
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+			if needLike2Regexp {
+				return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+			}
+			return true, datums[0].GetString()
 		case ast.Regexp:
 			return true, datums[0].GetString()
 		default:
@@ -430,7 +438,7 @@ func (helper extractHelper) extractTimeRange(
 
 		if colName == extractColName {
 			timeType := types.NewFieldType(mysql.TypeDatetime)
-			timeType.Decimal = 6
+			timeType.SetDecimal(6)
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
 			if err != nil || timeDatum.Kind() == types.KindNull {
 				remained = append(remained, expr)
@@ -450,28 +458,28 @@ func (helper extractHelper) extractTimeRange(
 
 			switch fnName {
 			case ast.EQ:
-				startTime = mathutil.MaxInt64(startTime, timestamp)
+				startTime = mathutil.Max(startTime, timestamp)
 				if endTime == 0 {
 					endTime = timestamp
 				} else {
-					endTime = mathutil.MinInt64(endTime, timestamp)
+					endTime = mathutil.Min(endTime, timestamp)
 				}
 			case ast.GT:
 				// FixMe: add 1ms is not absolutely correct here, just because the log search precision is millisecond.
-				startTime = mathutil.MaxInt64(startTime, timestamp+int64(time.Millisecond))
+				startTime = mathutil.Max(startTime, timestamp+int64(time.Millisecond))
 			case ast.GE:
-				startTime = mathutil.MaxInt64(startTime, timestamp)
+				startTime = mathutil.Max(startTime, timestamp)
 			case ast.LT:
 				if endTime == 0 {
 					endTime = timestamp - int64(time.Millisecond)
 				} else {
-					endTime = mathutil.MinInt64(endTime, timestamp-int64(time.Millisecond))
+					endTime = mathutil.Min(endTime, timestamp-int64(time.Millisecond))
 				}
 			case ast.LE:
 				if endTime == 0 {
 					endTime = timestamp
 				} else {
-					endTime = mathutil.MinInt64(endTime, timestamp)
+					endTime = mathutil.Min(endTime, timestamp)
 				}
 			default:
 				remained = append(remained, expr)
@@ -493,7 +501,7 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 		}
 		quantiles = append(quantiles, v)
 	}
-	sort.Float64s(quantiles)
+	slices.Sort(quantiles)
 	return quantiles
 }
 
@@ -507,7 +515,7 @@ func (helper extractHelper) parseUint64(uint64Set set.StringSet) []uint64 {
 		}
 		uint64s = append(uint64s, v)
 	}
-	sort.Slice(uint64s, func(i, j int) bool { return uint64s[i] < uint64s[j] })
+	slices.Sort(uint64s)
 	return uint64s
 }
 
@@ -682,7 +690,7 @@ func (e *ClusterLogTableExtractor) Extract(
 		return nil
 	}
 
-	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message", false)
+	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message", false, true)
 	e.Patterns = patterns
 	return remained
 }
@@ -1506,9 +1514,9 @@ func (e *ColumnsTableExtractor) Extract(_ sessionctx.Context,
 	if e.SkipRequest {
 		return
 	}
-	remained, tableSchemaPatterns := e.extractLikePatternCol(schema, names, remained, "table_schema", true)
-	remained, tableNamePatterns := e.extractLikePatternCol(schema, names, remained, "table_name", true)
-	remained, columnNamePatterns := e.extractLikePatternCol(schema, names, remained, "column_name", true)
+	remained, tableSchemaPatterns := e.extractLikePatternCol(schema, names, remained, "table_schema", true, false)
+	remained, tableNamePatterns := e.extractLikePatternCol(schema, names, remained, "table_name", true, false)
+	remained, columnNamePatterns := e.extractLikePatternCol(schema, names, remained, "column_name", true, false)
 
 	e.ColumnName = columnName
 	e.TableName = tableName
@@ -1548,4 +1556,54 @@ func (e *ColumnsTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		return s[:len(s)-2]
 	}
 	return s
+}
+
+// TiKVRegionStatusExtractor is used to extract single table region scan region from predictions
+type TiKVRegionStatusExtractor struct {
+	extractHelper
+	tablesID []int64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, _, tableIDSet := e.extractCol(schema, names, predicates, "table_id", true)
+	if tableIDSet.Count() < 1 {
+		return predicates
+	}
+	var tableID int64
+	var err error
+	for key := range tableIDSet {
+		tableID, err = strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			logutil.BgLogger().Error("extract table_id failed", zap.Error(err), zap.String("tableID", key))
+			e.tablesID = nil
+			return predicates
+		}
+		e.tablesID = append(e.tablesID, tableID)
+	}
+	return remained
+}
+
+func (e *TiKVRegionStatusExtractor) explainInfo(p *PhysicalMemTable) string {
+	r := new(bytes.Buffer)
+	if len(e.tablesID) > 0 {
+		r.WriteString("table_id in {")
+		for i, tableID := range e.tablesID {
+			if i > 0 {
+				r.WriteString(",")
+			}
+			r.WriteString(fmt.Sprintf("%v", tableID))
+		}
+		r.WriteString("}")
+	}
+	return r.String()
+}
+
+// GetTablesID returns TablesID
+func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
+	return e.tablesID
 }

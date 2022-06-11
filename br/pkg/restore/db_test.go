@@ -20,7 +20,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -79,7 +82,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	require.Equal(t, uint64(globalAutoID), autoIncID)
 	// Alter AutoIncID to the next AutoIncID + 100
 	table.Info.AutoIncID = globalAutoID + 100
-	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage)
+	db, _, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
 	require.NoErrorf(t, err, "Error create DB")
 	tk.MustExec("drop database if exists test;")
 	// Test empty collate value
@@ -94,7 +97,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	err = db.CreateDatabase(context.Background(), table.DB)
 	require.NoErrorf(t, err, "Error create empty charset db: %s %s", err, s.mock.DSN)
 	uniqueMap := make(map[restore.UniqueTableName]bool)
-	err = db.CreateTable(context.Background(), &table, uniqueMap)
+	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoErrorf(t, err, "Error create table: %s %s", err, s.mock.DSN)
 
 	tk.MustExec("use test")
@@ -105,7 +108,8 @@ func TestRestoreAutoIncID(t *testing.T) {
 
 	// try again, failed due to table exists.
 	table.Info.AutoIncID = globalAutoID + 200
-	err = db.CreateTable(context.Background(), &table, uniqueMap)
+	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
+	require.NoError(t, err)
 	// Check if AutoIncID is not altered.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
 	require.NoErrorf(t, err, "Error query auto inc id: %s", err)
@@ -114,11 +118,51 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// try again, success because we use alter sql in unique map.
 	table.Info.AutoIncID = globalAutoID + 300
 	uniqueMap[restore.UniqueTableName{"test", "\"t\""}] = true
-	err = db.CreateTable(context.Background(), &table, uniqueMap)
+	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
+	require.NoError(t, err)
 	// Check if AutoIncID is altered to globalAutoID + 300.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
 	require.NoErrorf(t, err, "Error query auto inc id: %s", err)
 	require.Equal(t, uint64(globalAutoID+300), autoIncID)
+
+}
+
+func TestCreateTablesInDb(t *testing.T) {
+	s, clean := createRestoreSchemaSuite(t)
+	defer clean()
+	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
+
+	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
+	require.True(t, isExist)
+
+	tables := make([]*metautil.Table, 4)
+	intField := types.NewFieldType(mysql.TypeLong)
+	intField.SetCharset("binary")
+	ddlJobMap := make(map[restore.UniqueTableName]bool)
+	for i := len(tables) - 1; i >= 0; i-- {
+		tables[i] = &metautil.Table{
+			DB: dbSchema,
+			Info: &model.TableInfo{
+				ID:   int64(i),
+				Name: model.NewCIStr("test" + strconv.Itoa(i)),
+				Columns: []*model.ColumnInfo{{
+					ID:        1,
+					Name:      model.NewCIStr("id"),
+					FieldType: *intField,
+					State:     model.StatePublic,
+				}},
+				Charset: "utf8mb4",
+				Collate: "utf8mb4_bin",
+			},
+		}
+		ddlJobMap[restore.UniqueTableName{dbSchema.Name.String(), tables[i].Info.Name.String()}] = false
+	}
+	db, _, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
+	require.NoError(t, err)
+
+	err = db.CreateTables(context.Background(), tables, ddlJobMap, false, nil)
+	require.NoError(t, err)
 
 }
 
@@ -146,7 +190,7 @@ func TestFilterDDLJobs(t *testing.T) {
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
 
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, &cipher)
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
@@ -210,7 +254,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
 
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, &cipher)
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
@@ -249,4 +293,78 @@ func TestFilterDDLJobsV2(t *testing.T) {
 		t.Logf("get ddl job: %s", job.Query)
 	}
 	require.Equal(t, 7, len(ddlJobs))
+}
+
+func TestDB_ExecDDL(t *testing.T) {
+	s, clean := createRestoreSchemaSuite(t)
+	defer clean()
+
+	ctx := context.Background()
+	ddlJobs := []*model.Job{
+		{
+			Type:       model.ActionAddIndex,
+			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionAddIndex,
+			Query:      "",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+	}
+
+	db, _, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
+	require.NoError(t, err)
+
+	for _, ddlJob := range ddlJobs {
+		err = db.ExecDDL(ctx, ddlJob)
+		assert.NoError(t, err)
+	}
+}
+
+func TestFilterDDLJobByRules(t *testing.T) {
+	ddlJobs := []*model.Job{
+		{
+			Type: model.ActionSetTiFlashReplica,
+		},
+		{
+			Type: model.ActionAddPrimaryKey,
+		},
+		{
+			Type: model.ActionUpdateTiFlashReplicaStatus,
+		},
+		{
+			Type: model.ActionCreateTable,
+		},
+		{
+			Type: model.ActionLockTable,
+		},
+		{
+			Type: model.ActionAddIndex,
+		},
+		{
+			Type: model.ActionUnlockTable,
+		},
+		{
+			Type: model.ActionCreateSchema,
+		},
+		{
+			Type: model.ActionModifyColumn,
+		},
+	}
+
+	expectedDDLTypes := []model.ActionType{
+		model.ActionAddPrimaryKey,
+		model.ActionCreateTable,
+		model.ActionAddIndex,
+		model.ActionCreateSchema,
+		model.ActionModifyColumn,
+	}
+
+	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
+
+	require.Equal(t, len(expectedDDLTypes), len(ddlJobs))
+	for i, ddlJob := range ddlJobs {
+		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
+	}
 }

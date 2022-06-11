@@ -1,0 +1,54 @@
+drop database if exists agg_predicate_pushdown;
+create database agg_predicate_pushdown;
+create table t(a int, b int, c int);
+desc format='brief' select a, b, avg(c) from t group by a, b, c having
+(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3);
+id	estRows	task	access object	operator info
+Projection	711.11	root		test.t.a, test.t.b, Column#5
+└─Selection	711.11	root		gt(Column#5, 3)
+  └─HashAgg	888.89	root		group by:Column#16, Column#17, Column#18, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->test.t.a, funcs:firstrow(Column#15)->test.t.b
+    └─Projection	1111.11	root		cast(test.t.c, decimal(15,4) BINARY)->Column#13, test.t.a, test.t.b, test.t.a, test.t.b, test.t.c
+      └─TableReader	1111.11	root		data:Selection
+        └─Selection	1111.11	cop[tikv]		gt(test.t.a, 1), gt(test.t.a, 2), gt(test.t.b, 2)
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select a, b, avg(c) from t group by a, b, c having
+(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3);
+id	estRows	task	access object	operator info
+Projection	657.65	root		test.t.a, test.t.b, Column#5
+└─Selection	657.65	root		gt(Column#5, 3)
+  └─HashAgg	822.06	root		group by:Column#16, Column#17, Column#18, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->test.t.a, funcs:firstrow(Column#15)->test.t.b
+    └─Projection	1027.57	root		cast(test.t.c, decimal(15,4) BINARY)->Column#13, test.t.a, test.t.b, test.t.a, test.t.b, test.t.c
+      └─TableReader	1027.57	root		data:Selection
+        └─Selection	1027.57	cop[tikv]		gt(test.t.b, 2), or(gt(test.t.a, 1), gt(test.t.b, 2)), or(gt(test.t.a, 2), lt(test.t.b, 1))
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select a, b, avg(c) from t group by a, b, c having
+(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3);
+id	estRows	task	access object	operator info
+Projection	3027.54	root		test.t.a, test.t.b, Column#5
+└─Selection	3027.54	root		or(and(gt(test.t.a, 1), gt(test.t.b, 2)), or(and(gt(test.t.a, 2), lt(test.t.b, 1)), and(gt(test.t.b, 2), gt(Column#5, 3))))
+  └─HashAgg	3784.43	root		group by:Column#16, Column#17, Column#18, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->test.t.a, funcs:firstrow(Column#15)->test.t.b
+    └─Projection	4730.53	root		cast(test.t.c, decimal(15,4) BINARY)->Column#13, test.t.a, test.t.b, test.t.a, test.t.b, test.t.c
+      └─TableReader	4730.53	root		data:Selection
+        └─Selection	4730.53	cop[tikv]		or(and(gt(test.t.a, 1), gt(test.t.b, 2)), or(and(gt(test.t.a, 2), lt(test.t.b, 1)), gt(test.t.b, 2)))
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select a, b, avg(c) from t group by a, b, c having
+(a > 1 or avg(c) > 1) and (a < 3);
+id	estRows	task	access object	operator info
+Projection	2126.93	root		test.t.a, test.t.b, Column#5
+└─Selection	2126.93	root		or(gt(test.t.a, 1), gt(Column#5, 1))
+  └─HashAgg	2658.67	root		group by:Column#16, Column#17, Column#18, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->test.t.a, funcs:firstrow(Column#15)->test.t.b
+    └─Projection	3323.33	root		cast(test.t.c, decimal(15,4) BINARY)->Column#13, test.t.a, test.t.b, test.t.a, test.t.b, test.t.c
+      └─TableReader	3323.33	root		data:Selection
+        └─Selection	3323.33	cop[tikv]		lt(test.t.a, 3)
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select a, b, avg(c) from t group by a, b, c having
+(a > 1 and avg(c) > 1) or (a < 3);
+id	estRows	task	access object	operator info
+Projection	6393.60	root		test.t.a, test.t.b, Column#5
+└─Selection	6393.60	root		or(and(gt(test.t.a, 1), gt(Column#5, 1)), lt(test.t.a, 3))
+  └─HashAgg	7992.00	root		group by:Column#16, Column#17, Column#18, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->test.t.a, funcs:firstrow(Column#15)->test.t.b
+    └─Projection	9990.00	root		cast(test.t.c, decimal(15,4) BINARY)->Column#13, test.t.a, test.t.b, test.t.a, test.t.b, test.t.c
+      └─TableReader	9990.00	root		data:Selection
+        └─Selection	9990.00	cop[tikv]		or(gt(test.t.a, 1), lt(test.t.a, 3))
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+use test;

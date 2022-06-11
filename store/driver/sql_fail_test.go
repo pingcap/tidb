@@ -16,17 +16,13 @@ package driver
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestFailBusyServerCop(t *testing.T) {
@@ -59,67 +55,4 @@ func TestFailBusyServerCop(t *testing.T) {
 		require.Equal(t, "True", req.GetRow(0).GetString(0))
 	})
 	wg.Wait()
-}
-
-func TestCoprocessorStreamRecvTimeout(t *testing.T) {
-	store, _, clean := createTestStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table cop_stream_timeout (id int)")
-	for i := 0; i < 200; i++ {
-		tk.MustExec(fmt.Sprintf("insert into cop_stream_timeout values (%d)", i))
-	}
-	tk.Session().GetSessionVars().EnableStreaming = true
-
-	tests := []struct {
-		name    string
-		timeout time.Duration
-	}{
-		{"timeout", tikv.ReadTimeoutMedium + 100*time.Second},
-		{"no timeout", time.Millisecond},
-	}
-
-	for _, test := range tests {
-		timeout := test.timeout
-		t.Run(test.name, func(t *testing.T) {
-			enable := true
-			visited := make(chan int, 1)
-			isTimeout := false
-			ctx := context.WithValue(context.Background(), mock.HookKeyForTest("mockTiKVStreamRecvHook"), func(ctx context.Context) {
-				if !enable {
-					return
-				}
-				visited <- 1
-
-				select {
-				case <-ctx.Done():
-				case <-time.After(timeout):
-					isTimeout = true
-				}
-				enable = false
-			})
-
-			res, err := tk.Session().Execute(ctx, "select * from cop_stream_timeout")
-			require.NoError(t, err)
-
-			req := res[0].NewChunk(nil)
-			for i := 0; ; i++ {
-				err := res[0].Next(ctx, req)
-				require.NoError(t, err)
-				if req.NumRows() == 0 {
-					break
-				}
-				req.Reset()
-			}
-			select {
-			case <-visited:
-				// run with mock tikv
-				require.False(t, isTimeout)
-			default:
-				// run with real tikv
-			}
-		})
-	}
 }

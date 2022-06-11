@@ -227,6 +227,14 @@ func (t *tester) parserErrorHandle(query query, err error) error {
 			err = nil
 			break
 		}
+		if strings.Contains(err.Error(), expectedErr) {
+			if t.enableQueryLog {
+				t.buf.WriteString(fmt.Sprintf("%s\n", query.Query))
+			}
+			t.buf.WriteString(fmt.Sprintf("%s\n", err))
+			err = nil
+			break
+		}
 	}
 
 	if err != nil {
@@ -353,12 +361,14 @@ func (t *tester) execute(query query) error {
 		}
 
 		if err != nil && len(t.expectedErrs) > 0 {
-			// TODO: check whether this err is expected.
-			// but now we think it is.
-
-			// output expected err
-			t.buf.WriteString(fmt.Sprintf("%s\n", err))
-			err = nil
+			for _, expectErr := range t.expectedErrs {
+				if strings.Contains(err.Error(), expectErr) {
+					// output expected err
+					t.buf.WriteString(fmt.Sprintf("%s\n", err))
+					err = nil
+					break
+				}
+			}
 		}
 		// clear expected errors after we execute the first query
 		t.expectedErrs = nil
@@ -525,8 +535,8 @@ func (t *tester) executeStmt(query string) error {
 			}
 			t.buf.WriteString("\n")
 		}
-		err = rows.Err()
-		if err != nil {
+
+		if err = rows.Err(); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
@@ -711,6 +721,8 @@ func main() {
 		"set @@tidb_projection_concurrency=4",
 		"set @@tidb_distsql_scan_concurrency=15",
 		"set @@global.tidb_enable_clustered_index=0;",
+		"set @@global.tidb_mem_quota_query=34359738368",
+		"set @@tidb_mem_quota_query=34359738368",
 	}
 	for _, sql := range resets {
 		if _, err = mdb.Exec(sql); err != nil {
@@ -753,7 +765,7 @@ func main() {
 	log.Info("Explain test passed")
 }
 
-var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin", "with"}
+var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin", "with", "trace"}
 
 func trimSQL(sql string) string {
 	// Trim space.

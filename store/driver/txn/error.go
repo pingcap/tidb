@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,8 +53,8 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 
 	if handle.IsInt() {
 		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
-			if mysql.HasUnsignedFlag(pkInfo.Flag) {
-				handleStr := fmt.Sprintf("%d", uint64(handle.IntValue()))
+			if mysql.HasUnsignedFlag(pkInfo.GetFlag()) {
+				handleStr := strconv.FormatUint(uint64(handle.IntValue()), 10)
 				return genKeyExistsError(name, handleStr, nil)
 			}
 		}

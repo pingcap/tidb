@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,17 @@ func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
 		datums[i] = item.Value
 	}
 	return datums
+}
+
+func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize int) (*FMSketch, int64, error) {
+	s := NewFMSketch(maxSize)
+	for _, value := range values {
+		err := s.InsertValue(sc, value)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+	}
+	return s, s.NDV(), nil
 }
 
 func SubTestSketch() func(*testing.T) {

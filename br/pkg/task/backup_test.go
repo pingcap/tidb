@@ -16,18 +16,21 @@ func TestParseTSString(t *testing.T) {
 		err error
 	)
 
-	ts, err = parseTSString("")
+	ts, err = ParseTSString("")
 	require.NoError(t, err)
 	require.Zero(t, ts)
 
-	ts, err = parseTSString("400036290571534337")
+	ts, err = ParseTSString("400036290571534337")
 	require.NoError(t, err)
 	require.Equal(t, uint64(400036290571534337), ts)
 
-	_, offset := time.Now().Local().Zone()
-	ts, err = parseTSString("2018-05-11 01:42:23")
+	ts, err = ParseTSString("2021-01-01 01:42:23")
 	require.NoError(t, err)
-	require.Equal(t, uint64(400032515489792000-(offset*1000)<<18), ts)
+	localTime := time.Date(2021, time.Month(1), 1, 1, 42, 23, 0, time.Local)
+
+	localTimestamp := localTime.Unix()
+	localTSO := uint64((localTimestamp << 18) * 1000)
+	require.Equal(t, localTSO, ts)
 }
 
 func TestParseCompressionType(t *testing.T) {

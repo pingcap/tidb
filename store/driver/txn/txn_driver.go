@@ -42,6 +42,8 @@ type tikvTxn struct {
 	*tikv.KVTxn
 	idxNameCache        map[int64]*model.TableInfo
 	snapshotInterceptor kv.SnapshotInterceptor
+	// columnMapsCache is a cache used for the mutation checker
+	columnMapsCache interface{}
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -52,7 +54,7 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
-	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil}
+	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil, nil}
 }
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
@@ -76,6 +78,16 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 func (txn *tikvTxn) Commit(ctx context.Context) error {
 	err := txn.KVTxn.Commit(ctx)
 	return txn.extractKeyErr(err)
+}
+
+func (txn *tikvTxn) GetMemDBCheckpoint() *tikv.MemDBCheckpoint {
+	buf := txn.KVTxn.GetMemBuffer()
+	return buf.Checkpoint()
+}
+
+func (txn *tikvTxn) RollbackMemDBToCheckpoint(savepoint *tikv.MemDBCheckpoint) {
+	buf := txn.KVTxn.GetMemBuffer()
+	buf.RevertToCheckpoint(savepoint)
 }
 
 // GetSnapshot returns the Snapshot binding to this transaction.
@@ -188,8 +200,6 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetPriority(getTiKVPriority(val.(int)))
 	case kv.NotFillCache:
 		txn.KVTxn.GetSnapshot().SetNotFillCache(val.(bool))
-	case kv.SyncLog:
-		txn.EnableForceSyncLog()
 	case kv.Pessimistic:
 		txn.SetPessimistic(val.(bool))
 	case kv.SnapshotTS:
@@ -237,6 +247,10 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetCommitTSUpperBoundCheck(val.(func(commitTS uint64) bool))
 	case kv.RPCInterceptor:
 		txn.KVTxn.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
+	case kv.AssertionLevel:
+		txn.KVTxn.SetAssertionLevel(val.(kvrpcpb.AssertionLevel))
+	case kv.TableToColumnMaps:
+		txn.columnMapsCache = val
 	}
 }
 
@@ -246,6 +260,8 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 		return !txn.KVTxn.IsCasualConsistency()
 	case kv.TxnScope:
 		return txn.KVTxn.GetScope()
+	case kv.TableToColumnMaps:
+		return txn.columnMapsCache
 	default:
 		return nil
 	}
@@ -288,6 +304,19 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 		return extractKeyExistsErrFromHandle(key, value, tblInfo)
 	}
 	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
+}
+
+// SetAssertion sets an assertion for the key operation.
+func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
+	f, err := txn.GetUnionStore().GetMemBuffer().GetFlags(key)
+	if err != nil && !tikverr.IsErrNotFound(err) {
+		return err
+	}
+	if err == nil && f.HasAssertionFlags() {
+		return nil
+	}
+	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(assertion)...)
+	return nil
 }
 
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.

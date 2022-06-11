@@ -1,5 +1,9 @@
 [lightning]
+index-concurrency = 1
 table-concurrency = 1
+
+[tikv-importer]
+backend = "local"
 
 [checkpoint]
 enable = true
