@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -120,6 +121,12 @@ const (
 	TypeIndexFullScan = "IndexFullScan"
 	// TypeIndexRangeScan is the type of IndexRangeScan.
 	TypeIndexRangeScan = "IndexRangeScan"
+	// TypeCTETable is the type of TypeCTETable.
+	TypeCTETable = "CTETable"
+	// TypeCTE is the type of CTEFullScan.
+	TypeCTE = "CTEFullScan"
+	// TypeCTEDefinition is the type of CTE definition
+	TypeCTEDefinition = "CTE"
 )
 
 // plan id.
@@ -167,13 +174,19 @@ const (
 	typeDataSourceID          int = 40
 	typeLoadDataID            int = 41
 	typeTableSampleID         int = 42
-	typeTableFullScan         int = 43
-	typeTableRangeScan        int = 44
-	typeTableRowIDScan        int = 45
-	typeIndexFullScan         int = 46
-	typeIndexRangeScan        int = 47
-	typeExchangeReceiver      int = 48
-	typeExchangeSender        int = 49
+	typeTableFullScanID       int = 43
+	typeTableRangeScanID      int = 44
+	typeTableRowIDScanID      int = 45
+	typeIndexFullScanID       int = 46
+	typeIndexRangeScanID      int = 47
+	typeExchangeReceiverID    int = 48
+	typeExchangeSenderID      int = 49
+	typeCTEID                 int = 50
+	typeCTEDefinitionID       int = 51
+	typeCTETableID            int = 52
+	typePartitionUnionID      int = 53
+	typeShuffleID             int = 54
+	typeShuffleReceiverID     int = 55
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -197,6 +210,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeJoinID
 	case TypeUnion:
 		return typeUnionID
+	case TypePartitionUnion:
+		return typePartitionUnionID
 	case TypeTableScan:
 		return typeTableScanID
 	case TypeMemTableScan:
@@ -245,6 +260,10 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeIndexReaderID
 	case TypeWindow:
 		return typeWindowID
+	case TypeShuffle:
+		return typeShuffleID
+	case TypeShuffleReceiver:
+		return typeShuffleReceiverID
 	case TypeTiKVSingleGather:
 		return typeTiKVSingleGatherID
 	case TypeIndexMerge:
@@ -264,19 +283,25 @@ func TypeStringToPhysicalID(tp string) int {
 	case TypeTableSample:
 		return typeTableSampleID
 	case TypeTableFullScan:
-		return typeTableFullScan
+		return typeTableFullScanID
 	case TypeTableRangeScan:
-		return typeTableRangeScan
+		return typeTableRangeScanID
 	case TypeTableRowIDScan:
-		return typeTableRowIDScan
+		return typeTableRowIDScanID
 	case TypeIndexFullScan:
-		return typeIndexFullScan
+		return typeIndexFullScanID
 	case TypeIndexRangeScan:
-		return typeIndexRangeScan
+		return typeIndexRangeScanID
 	case TypeExchangeReceiver:
-		return typeExchangeReceiver
+		return typeExchangeReceiverID
 	case TypeExchangeSender:
-		return typeExchangeSender
+		return typeExchangeSenderID
+	case TypeCTE:
+		return typeCTEID
+	case TypeCTEDefinition:
+		return typeCTEDefinitionID
+	case TypeCTETable:
+		return typeCTETableID
 	}
 	// Should never reach here.
 	return 0
@@ -303,6 +328,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeJoin
 	case typeUnionID:
 		return TypeUnion
+	case typePartitionUnionID:
+		return TypePartitionUnion
 	case typeTableScanID:
 		return TypeTableScan
 	case typeMemTableScanID:
@@ -351,6 +378,10 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeIndexReader
 	case typeWindowID:
 		return TypeWindow
+	case typeShuffleID:
+		return TypeShuffle
+	case typeShuffleReceiverID:
+		return TypeShuffleReceiver
 	case typeTiKVSingleGatherID:
 		return TypeTiKVSingleGather
 	case typeIndexMergeID:
@@ -365,20 +396,28 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeClusterMemTableReader
 	case typeLoadDataID:
 		return TypeLoadData
-	case typeTableFullScan:
+	case typeTableSampleID:
+		return TypeTableSample
+	case typeTableFullScanID:
 		return TypeTableFullScan
-	case typeTableRangeScan:
+	case typeTableRangeScanID:
 		return TypeTableRangeScan
-	case typeTableRowIDScan:
+	case typeTableRowIDScanID:
 		return TypeTableRowIDScan
-	case typeIndexFullScan:
+	case typeIndexFullScanID:
 		return TypeIndexFullScan
-	case typeIndexRangeScan:
+	case typeIndexRangeScanID:
 		return TypeIndexRangeScan
-	case typeExchangeReceiver:
+	case typeExchangeReceiverID:
 		return TypeExchangeReceiver
-	case typeExchangeSender:
+	case typeExchangeSenderID:
 		return TypeExchangeSender
+	case typeCTEID:
+		return TypeCTE
+	case typeCTEDefinitionID:
+		return TypeCTEDefinition
+	case typeCTETableID:
+		return TypeCTETable
 	}
 
 	// Should never reach here.

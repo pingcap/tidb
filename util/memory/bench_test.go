@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,4 +28,15 @@ func BenchmarkMemUsed(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _ = MemUsed()
 	}
+}
+
+func BenchmarkConsume(b *testing.B) {
+	tracker := NewTracker(1, -1)
+	b.RunParallel(func(pb *testing.PB) {
+		childTracker := NewTracker(2, -1)
+		childTracker.AttachTo(tracker)
+		for pb.Next() {
+			childTracker.Consume(256 << 20)
+		}
+	})
 }

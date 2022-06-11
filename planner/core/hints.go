@@ -8,15 +8,16 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package core
 
 import (
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	utilhint "github.com/pingcap/tidb/util/hint"
 )
@@ -48,11 +49,6 @@ func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 }
 
 func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
-	_, isProj := p.(*PhysicalProjection)
-	_, isUnionScan := p.(*PhysicalUnionScan)
-	if isProj || isUnionScan {
-		return extractTableAsName(p.Children()[0])
-	}
 	if len(p.Children()) > 1 {
 		return nil, nil
 	}
@@ -75,6 +71,8 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
+	case *PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection:
+		return extractTableAsName(p.Children()[0])
 	}
 	return nil, nil
 }
@@ -124,6 +122,11 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	for _, child := range p.Children() {
 		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
 	}
+	if phCte, ok := p.(*PhysicalCTE); ok {
+		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.seedPartPhysicalPlan, nodeType)...)
+		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.recursivePartPhysicalPlan, nodeType)...)
+	}
+
 	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())
 	if err != nil {
 		return res
@@ -131,16 +134,17 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	switch pp := p.(type) {
 	case *PhysicalTableReader:
 		tbl := pp.TablePlans[0].(*PhysicalTableScan)
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(HintUseIndex),
-			Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
-		})
 		if tbl.StoreType == kv.TiFlash {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,
 				HintName: model.NewCIStr(HintReadFromStorage),
 				HintData: model.NewCIStr(kv.TiFlash.Name()),
+				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+			})
+		} else {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   qbName,
+				HintName: model.NewCIStr(HintUseIndex),
 				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 			})
 		}

@@ -23,7 +23,14 @@
       "explain format = 'brief' select * from t7 where (a, b) in ((3, 4), (5, 6))",
       "explain format = 'brief' select * from t7 where (a = 1 and b = 2) or (a = 3 and b = 4)",
       "explain format = 'brief' select * from t7 where (a = 1 and b = 2) or (a = 1 and b = 2)",
-      "explain format = 'brief' select * from t7 partition(p0) where (a = 1 and b = 2) or (a = 3 and b = 4)"
+      "explain format = 'brief' select * from t7 partition(p0) where (a = 1 and b = 2) or (a = 3 and b = 4)",
+      "explain format = 'brief' select * from t8 where a between 10 and 11",
+      "explain format = 'brief' select * from t8 where (a is null) or (a between 5 and 8)",
+      "explain format = 'brief' select * from t8 where a between 5 and 12",
+      "explain format = 'brief' select * from t8 where (a <= 10 and a >= 8) or (a <= 13 and a >= 11) or (a <= 16 and a >= 14)",
+      "explain format = 'brief' select * from t8 where a < 12 and a > 9",
+      "explain format = 'brief' select * from t9",
+      "explain format = 'brief' select * from t10 where a between 0 AND 15218001646226433652"
     ]
   },
   {
@@ -268,11 +275,11 @@
       },
       {
         "SQL": "select * from t1 where t1.a in (select b from t2 where a in (1,2)) order by a",
-        "Pruner": "t1: all; t2: p0"
+        "Pruner": "t1: p0,p1; t2: p0"
       },
       {
         "SQL": "select * from t1 where t1.a in (select b from t1 where a in (1,2)) order by a",
-        "Pruner": "t1: all; t1: p0"
+        "Pruner": "t1: p0; t1: p0,p1"
       },
       {
         "SQL": "select * from t1 left join t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3) and t2.a in (6,7,8)",
@@ -309,7 +316,204 @@
       {
         "SQL": "select * from t1 where a in (1,2,3) union select * from t1 where b in (6,7,8) order by a",
         "Pruner": "t1: p0; t1: p1"
+      },
+      // For ranges
+      {
+        "SQL": "select * from t1 where a < 1 or b < 2",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select count(1) from t1 where a < 1 or b < 2",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where a < 1 and b < 2",
+        "Pruner": "t1: dual"
+      },
+      {
+        "SQL": "select * from t1 where a < 3 or b > 4",
+        "Pruner": "t1: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 where a < 3 and b > 4",
+        "Pruner": "t1: dual"
+      },
+      {
+        "SQL": "select * from t1 where a < 3 and b >= 3",
+        "Pruner": "t1: dual"
+      },
+      {
+        "SQL": "select * from t1 where a < 3 and (b >= 1 and b <= 3)",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where a <= 3 or b <= 3",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where (a<=1 and b<=1) or (a >=6 and b>=6)",
+        "Pruner": "t1: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 where a <= 100 and b <= 100",
+        "Pruner": "t1: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 join t2 on t1.id = t2.id where (t1.a <= 3 and (t1.b >= 3 and t1.b <= 5)) and (t2.a >= 6 and t2.a <= 8) and t2.b>=7 and t2.id>=7",
+        "Pruner": "t1: p0; t2: p1"
+      },
+      {
+        "SQL": "select * from t1 left join t2 on true where (t1.a <=1 or t1.a <= 3 and (t1.b >=3 and t1.b <= 5)) and (t2.a >= 6 and t2.a <= 8) and t2.b>=7 and t2.id>=7 order by t1.id,t1.a",
+        "Pruner": "t1: p0; t2: p1"
+      },
+      {
+        "SQL": "select * from t1 where a <= 1",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where b <= 1",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where a <= 1 or b <= 2",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where a <= 1 or (a <= 2 and b <= 2) or (a <= 5 or b <= 5)",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where a <= 1 or (a is null and b >= 10)",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where a <= 1 or (a <= 10 and b is null)",
+        "Pruner": "t1: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 where a <= 8 or b <= 9",
+        "Pruner": "t1: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 where a <= 3 and false",
+        "Pruner": ""
+      },
+      {
+        "SQL": "select * from t1 where a <= 3 and true",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where a <= 3 or false",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where a = 3 or true order by id,a",
+        "Pruner": "t1: all"
+      },
+      {
+        "SQL": "select * from t1 where a = 3 or (b >= 100 and b <= 200)",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where a = 100 or b >= 1 and b <= 2",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 where a = 100 or b >= 1 and b <= 6",
+        "Pruner": "t1: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 where a = 100 or (b >= 100 and b <= 200)",
+        "Pruner": "t1: dual"
+      },
+      {
+        "SQL": "select * from t1 where (a >= 1 and a <= 6) or (b >= 1 and b <= 2) or (a<=3 and b <=3)",
+        "Pruner": "t1: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 where a >= 1 and a <= 6",
+        "Pruner": "t1: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 where (a >= 1 and a <= 6) or (a>=3 and b >=3)",
+        "Pruner": "t1: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 where a in (1,6) and (a=3 and b =3)",
+        "Pruner": ""
+      },
+      {
+        "SQL": "select * from t1 where a <= 1 and (b>=6 or a>=6)",
+        "Pruner": "t1: dual"
+      },
+      {
+        "SQL": "select * from t1 where a = 100 and (b<=200 or a<=200)",
+        "Pruner": "t1: dual"
+      },
+      {
+        "SQL": "select * from t1 where a <= 5 or (a+b=3)",
+        "Pruner": "t1: all"
+      },
+      {
+        "SQL": "select * from t1 where id <= 1 or id<=2",
+        "Pruner": "t1: all"
+      },
+      {
+        "SQL": "select * from t1 where id <= 1 and a<=1",
+        "Pruner": "t1: p0"
+      },
+      {
+        "SQL": "select * from t1 partition(p1) where a <= 1 or b <= 2",
+        "Pruner": "t1: dual"
+      },
+      {
+        "SQL": "select * from t1 join t2 on t1.id = t2.id where (t1.a<=1 or t1.a <= 3) and (t2.a <= 6 and t2.b <= 6)",
+        "Pruner": "t1: p0; t2: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 join t1 as t2 on t1.id = t2.id where (t1.a<=1 or t1.a <= 3) and (t2.a <= 6 and t2.b <= 6)",
+        "Pruner": "t1: p0; t2: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 where t1.a in (select b from t2 where a BETWEEN 1 AND 2) order by a",
+        "Pruner": "t1: p0,p1; t2: p0"
+      },
+      {
+        "SQL": "select * from t1 where t1.a in (select b from t1 where a BETWEEN 1 AND 2) order by a",
+        "Pruner": "t1: p0; t1: p0,p1"
+      },
+      {
+        "SQL": "select * from t1 left join t2 on t1.id = t2.id where (t1.a<=1 or t1.a <= 3) and t2.a BETWEEN 6 AND 8",
+        "Pruner": "t1: p0; t2: p1"
+      },
+      {
+        "SQL": "select * from t1 right join t2 on t1.id = t2.id where (t1.a<=1 or t1.a <= 3) and t2.a BETWEEN 1 AND 3",
+        "Pruner": "t1: p0; t2: p0"
+      },
+      {
+        "SQL": "select * from t1 join t2 on true where t1.a=5 and t2.a BETWEEN 6 AND 8 and t2.b >= 6",
+        "Pruner": "t1: p0; t2: p1"
+      },
+      {
+        "SQL": "select count(*) from t1 join t2 on t1.b = t2.b where t1.a BETWEEN 1 AND 2 and t2.a BETWEEN 1 AND 6 and t1.b BETWEEN 1 AND 6",
+        "Pruner": "t1: p0; t2: p0,p1"
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(t2,t1) */      count(*) from t2 join t1 on t2.b = t1.b where t2.a BETWEEN 1 AND 2 and t1.a BETWEEN 1 AND 6 and t1.b BETWEEN 1 AND 6",
+        "Pruner": "t1: p0,p1; t2: p0"
       }
+    ]
+  },
+  {
+    "name": "TestRangePartitionPredicatePruner",
+    "cases": [
+      "explain format = 'brief' select * from t where a = 1",
+      "explain format = 'brief' select * from t where a = 2",
+      "explain format = 'brief' select * from t where a = 10",
+      "explain format = 'brief' select * from t where a = -1",
+      "explain format = 'brief' select * from t where a is NULL",
+      "explain format = 'brief' select * from t where a = 1.5",
+      "explain format = 'brief' select * from t where a in (2)"
     ]
   }
 ]

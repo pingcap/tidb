@@ -1,7 +1,3 @@
-// Copyright 2014 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2014 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package types
 
@@ -21,11 +22,11 @@ import (
 	"io"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
-	ast "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
+	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/util/collate"
 )
 
@@ -93,13 +94,13 @@ func IsTemporalWithDate(tp byte) bool {
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
-	return ft.Collate == charset.CollationBin && IsString(ft.Tp)
+	return ft.GetCollate() == charset.CollationBin && IsString(ft.GetType())
 }
 
 // IsNonBinaryStr returns a boolean indicating
 // whether the field type is a non-binary string type.
 func IsNonBinaryStr(ft *FieldType) bool {
-	if ft.Collate != charset.CollationBin && IsString(ft.Tp) {
+	if ft.GetCollate() != charset.CollationBin && IsString(ft.GetType()) {
 		return true
 	}
 	return false
@@ -108,7 +109,9 @@ func IsNonBinaryStr(ft *FieldType) bool {
 // NeedRestoredData returns if a type needs restored data.
 // If the type is char and the collation is _bin, NeedRestoredData() returns false.
 func NeedRestoredData(ft *FieldType) bool {
-	if IsNonBinaryStr(ft) && !(collate.IsBinCollation(ft.Collate) && !IsTypeVarchar(ft.Tp)) {
+	if collate.NewCollationEnabled() &&
+		IsNonBinaryStr(ft) &&
+		!(collate.IsBinCollation(ft.GetCollate()) && !IsTypeVarchar(ft.GetType())) {
 		return true
 	}
 	return false

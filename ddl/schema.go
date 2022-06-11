@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,13 +16,14 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -45,7 +47,7 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
+	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -68,16 +70,12 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 }
 
 func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
-	// d.infoHandle maybe nil in some test.
-	if d.infoHandle == nil {
-		return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)
-	}
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return err
 	}
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	if is.SchemaMetaVersion() == currVer {
 		return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbInfo)
 	}
@@ -113,7 +111,7 @@ func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.D
 	return nil
 }
 
-func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifySchemaCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var toCharset, toCollate string
 	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
 		job.State = model.JobStateCancelled
@@ -136,7 +134,43 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
-	if ver, err = updateSchemaVersion(t, job); err != nil {
+	if ver, err = updateSchemaVersion(d, t, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	return ver, nil
+}
+
+func onModifySchemaDefaultPlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var placementPolicyRef *model.PolicyRefInfo
+	if err := job.DecodeArgs(&placementPolicyRef); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// Double Check if policy exits while ddl executing
+	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, placementPolicyRef); err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Notice: dbInfo.DirectPlacementOpts and dbInfo.PlacementPolicyRef can not be both not nil, which checked before constructing ddl job.
+	// So that we can just check the two situation that do not need ddl: 1. DB.DP == DDL.DP && nil == nil 2. nil == nil && DB.PP == DDL.PP
+	if placementPolicyRef != nil && dbInfo.PlacementPolicyRef != nil && *dbInfo.PlacementPolicyRef == *placementPolicyRef {
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	}
+
+	// If placementPolicyRef and directPlacementOpts are both nil, And placement of dbInfo is not nil, it will remove all placement options.
+	dbInfo.PlacementPolicyRef = placementPolicyRef
+
+	if err = t.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(d, t, job); err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
@@ -149,7 +183,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
+	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -166,20 +200,17 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		oldIDs := getIDs(tables)
-		bundles := make([]*placement.Bundle, 0, len(oldIDs)+1)
-		for _, ID := range append(oldIDs, dbInfo.ID) {
-			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
-			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
-			}
+		var ruleIDs []string
+		for _, tblInfo := range tables {
+			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
+			ruleIDs = append(ruleIDs, rules...)
 		}
-		err := infosync.PutRuleBundles(context.TODO(), bundles)
+		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
+		err = infosync.UpdateLabelRules(context.TODO(), patch)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		// Update the job state when all affairs done.
-		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
 		dbInfo.State = model.StateDeleteOnly
@@ -187,8 +218,6 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// Update the job state when all affairs done.
-		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
 		var tables []*model.TableInfo
@@ -212,9 +241,9 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
 	default:
 		// We can't enter here.
-		err = errors.Errorf("invalid db state %v", dbInfo.State)
+		return ver, errors.Trace(errors.Errorf("invalid db state %v", dbInfo.State))
 	}
-
+	job.SchemaState = dbInfo.State
 	return ver, errors.Trace(err)
 }
 

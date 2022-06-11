@@ -1,0 +1,11 @@
+[lightning]
+region-concurrency = 1
+
+[tikv-importer]
+backend = "local"
+
+[checkpoint]
+enable = true
+schema = "tidb_lightning_checkpoint_test_cpch"
+driver = "mysql"
+keep-after-success = true

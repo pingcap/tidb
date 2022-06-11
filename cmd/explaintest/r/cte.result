@@ -1,0 +1,807 @@
+use test;
+drop table if exists tbl_0;
+create table tbl_0(a int);
+with recursive cte_0 (col_10,col_11,col_12) AS ( select 1, 2,3 from tbl_0 UNION select col_10 + 1,col_11 + 1,col_12 + 1 from cte_0 where col_10 < 10 ) select * from cte_0;
+col_10	col_11	col_12
+drop table if exists tbl_1;
+CREATE TABLE `tbl_1` (
+`col_5` decimal(47,21) NOT NULL DEFAULT '5308.880000000000000000000',
+`col_6` enum('Alice','Bob','Charlie','David') DEFAULT NULL,
+`col_7` float NOT NULL,
+`col_8` bigint NOT NULL DEFAULT '-688199144806783096',
+`col_9` varchar(248) NOT NULL,
+PRIMARY KEY (`col_5`,`col_7`,`col_9`,`col_8`),
+UNIQUE KEY `idx_4` (`col_8`),
+UNIQUE KEY `idx_7` (`col_5`,`col_7`,`col_8`),
+UNIQUE KEY `idx_9` (`col_9`,`col_8`),
+UNIQUE KEY `idx_3` (`col_9`(3),`col_8`),
+UNIQUE KEY `idx_8` (`col_7`,`col_6`,`col_8`,`col_5`),
+KEY `idx_5` (`col_7`),
+KEY `idx_6` (`col_7`),
+KEY `idx_10` (`col_9`,`col_5`),
+KEY `idx_11` (`col_5`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+/*!50100 PARTITION BY HASH (`col_8`)
+PARTITIONS 4 */;
+with recursive cte_1 (col_13,col_14,col_15,col_16,col_17) AS ( with recursive cte_2 (col_18,col_19,col_20,col_21,col_22,col_23,col_24) AS ( select 1, 2,col_8,4,5,6,7 from tbl_1 ) select col_19,col_18,col_22,col_23,col_21 from cte_2 UNION ALL select col_13 + 1,col_14 + 1,col_15 + 1,col_16 + 1,col_17 + 1 from cte_1 where col_13 < 10 ) select * from cte_1;
+col_13	col_14	col_15	col_16	col_17
+with recursive cte_256 (col_969,col_970,col_971) AS ( with recursive cte_257 (col_972,col_973,col_974,col_975) AS ( select 1, 2,col_8,4 from tbl_1 UNION select col_972 + 1,col_973 + 1,col_974 + 1,col_975 + 1 from cte_257 where col_972 < 10 ) select col_975,col_974,col_973 from cte_257 UNION DISTINCT select col_969 + 1,col_970 + 1,col_971 + 1 from cte_256 where col_969 < 10 ) select * from cte_256;
+col_969	col_970	col_971
+drop table if exists tbl_2, tbl_3;
+create table tbl_2 ( col_4 char(246) collate utf8_unicode_ci not null , col_5 char(253) collate utf8mb4_unicode_ci  )  ;
+create table tbl_3 ( col_6 char(207) collate utf8mb4_unicode_ci , col_7 int unsigned not null  )  ;
+insert into tbl_2 values ( "0",null ) ;
+insert into tbl_2 values ( "1","0" ) ;
+insert into tbl_2 values ( "1","1" ) ;
+insert into tbl_2 values ( "0","0" ) ;
+insert into tbl_2 values ( "0","1" ) ;
+insert into tbl_3 values ( "1",0 ) ;
+insert into tbl_3 values ( "1",1 ) ;
+insert into tbl_3 values ( "0",0 ) ;
+insert into tbl_3 values ( "0",1 ) ;
+with recursive tbl_2 (col_64,col_65,col_66,col_67) AS ( select 1, col_6,col_6,4 from tbl_3 UNION DISTINCT select col_64 + 1,concat(col_65, 1),col_66 + 1,concat(col_67, 1) from tbl_2 where col_64 < 5 ) select * from tbl_2 order by col_64;
+col_64	col_65	col_66	col_67
+1	1	1	4
+1	0	0	4
+2	11	2	41
+2	01	1	41
+3	111	3	411
+3	011	2	411
+4	1111	4	4111
+4	0111	3	4111
+5	11111	5	41111
+5	01111	4	41111
+drop table if exists tbl_3, tbl_4;
+create table tbl_3 ( col_6 int not null , col_7 char(95) collate utf8_general_ci  )  ;
+create table tbl_4 ( col_8 char collate utf8_unicode_ci , col_9 char collate utf8mb4_bin  )  ;
+insert into tbl_3 values ( 0,"1" ) ;
+insert into tbl_4 values ( "1","0" ) ;
+with recursive cte_2245 (col_8692,col_8693) AS ( select 1, col_7 from tbl_3 UNION  select col_8692 + 1,concat(col_8693, 1) from cte_2245 where col_8692 < 5 ) , cte_2246 (col_8694,col_8695,col_8696,col_8697) AS ( with recursive cte_2247 (col_8698,col_8699,col_8700,col_8701) AS ( select 1, cast("2" as char(20)),3,col_8 from tbl_4 ) select col_8698,col_8699,col_8700,col_8701 from cte_2247 UNION  select col_8694 + 1,col_8695 + 1,col_8696 + 1,col_8697 + 1 from cte_2246 where col_8694 < 5 ) select * from cte_2245,cte_2246 order by col_8692,col_8693,col_8696,col_8695,col_8697,col_8694;
+col_8692	col_8693	col_8694	col_8695	col_8696	col_8697
+1	1	1	2	3	1
+1	1	2	3	4	2
+1	1	3	4	5	3
+1	1	4	5	6	4
+1	1	5	6	7	5
+2	11	1	2	3	1
+2	11	2	3	4	2
+2	11	3	4	5	3
+2	11	4	5	6	4
+2	11	5	6	7	5
+3	111	1	2	3	1
+3	111	2	3	4	2
+3	111	3	4	5	3
+3	111	4	5	6	4
+3	111	5	6	7	5
+4	1111	1	2	3	1
+4	1111	2	3	4	2
+4	1111	3	4	5	3
+4	1111	4	5	6	4
+4	1111	5	6	7	5
+5	11111	1	2	3	1
+5	11111	2	3	4	2
+5	11111	3	4	5	3
+5	11111	4	5	6	4
+5	11111	5	6	7	5
+with recursive cte2 as (select 1 as col_1, 2 as col_2) select c1.col_1, c2.col_2 from cte2 as c1, cte2 as c2 where c2.col_2 = 1;
+col_1	col_2
+with recursive cte (c1) as (select 1), cte1 (c2) as (select 1 union select c1 + 1 from cte, cte1) select * from cte, cte1;
+c1	c2
+1	1
+1	2
+with recursive tbl_0 (col_943,col_944,col_945,col_946,col_947) AS ( with recursive tbl_0 (col_948,col_949,col_950,col_951,col_952) AS ( select 1, 2,3,4,5 UNION ALL select col_948 + 1,col_949 + 1,col_950 + 1,col_951 + 1,col_952 + 1 from tbl_0 where col_948 < 5 ) select col_948,col_949,col_951,col_950,col_952 from tbl_0 UNION ALL select col_943 + 1,col_944 + 1,col_945 + 1,col_946 + 1,col_947 + 1 from tbl_0 where col_943 < 5 ) select * from tbl_0;
+Error 1054: Unknown column 'col_943' in 'where clause'
+with recursive cte1 (c1, c2) as (select 1, '1' union select concat(c1, 1), c2 + 1 from cte1 where c1 < 100) select * from cte1;
+c1	c2
+1	1
+11	2
+111	3
+with recursive cte_8 (col_51,col_52,col_53,col_54) AS ( with recursive cte_9 (col_55,col_56,col_57,col_58) AS ( select 1, 2,3,4 UNION ALL select col_55 + 1,col_56 + 1,col_57 + 1,col_58 + 1 from cte_9 where col_55 < 5 ) select col_55,col_57,col_56,col_58 from cte_9 UNION DISTINCT select col_51 + 1,col_52 + 1,col_53 + 1,col_54 + 1 from cte_8 where col_51 < 5 ) select * from cte_8;
+col_51	col_52	col_53	col_54
+1	3	2	4
+2	4	3	5
+3	5	4	6
+4	6	5	7
+5	7	6	8
+with recursive qn as (select 1 from dual union all select 1 from dual) select * from qn;
+1
+1
+1
+with recursive qn as (select 1 as a from dual group by a union all select a+1 from qn where a<3) select * from qn;
+a
+1
+2
+3
+with recursive qn as ((select 1 as a from dual order by a) union all select a+1 from qn where a<3) select * from qn;
+a
+1
+2
+3
+drop table if exists employees;
+CREATE TABLE employees (
+ID INT PRIMARY KEY,
+NAME VARCHAR(100),
+MANAGER_ID INT,
+INDEX (MANAGER_ID),
+FOREIGN KEY (MANAGER_ID) REFERENCES employees(ID)
+);
+INSERT INTO employees VALUES
+(333, "Yasmina", NULL),
+(198, "John", 333),
+(692, "Tarek", 333),
+(29, "Pedro", 198),
+(4610, "Sarah", 29),
+(72, "Pierre", 29),
+(123, "Adil", 692);
+WITH RECURSIVE employees_extended AS (SELECT ID, NAME, MANAGER_ID, CAST(ID AS CHAR(200)) AS PATH FROM employees WHERE NAME='Pierre' UNION ALL SELECT S.ID, S.NAME, S.MANAGER_ID, CONCAT(M.PATH, ",", S.ID) FROM employees_extended M JOIN employees S ON M.MANAGER_ID=S.ID)   SELECT * FROM employees_extended;
+ID	NAME	MANAGER_ID	PATH
+72	Pierre	29	72
+29	Pedro	198	72,29
+198	John	333	72,29,198
+333	Yasmina	NULL	72,29,198,333
+with recursive cte (c1) as (select 1), cte1 (c2) as (select 1 union select c1 + 1 from cte where c1 < 10) select * from cte where c1 < 5;
+c1
+1
+with recursive cte_581 (col_2343,col_2344,col_2345) AS ( select 1, '2',cast('3' as char(20))) , cte_582 (col_2346,col_2347,col_2348) AS ( select 1, 2, 3) select * from cte_581 as cte_as_583,cte_582 as cte_as_584,cte_582 as cte_as_585 order by cte_as_583.col_2343,cte_as_585.col_2348,cte_as_584.col_2346,cte_as_584.col_2348,cte_as_583.col_2344,cte_as_584.col_2347,cte_as_585.col_2346,cte_as_585.col_2347,cte_as_583.col_2345;
+col_2343	col_2344	col_2345	col_2346	col_2347	col_2348	col_2346	col_2347	col_2348
+1	2	3	1	2	3	1	2	3
+with recursive tbl_3 (col_19,col_20,col_21,col_22) AS ( select 1, 2,3,4 UNION  select col_19 + 1,col_20 + 1,col_21 + 1,concat(col_22, 1) from tbl_3 where col_19 < 5 ) , cte_4 (col_23,col_24,col_25,col_26) AS ( select 1, 2,cast("3" as char(20)),4 UNION DISTINCT select col_23 + 1,col_24 + 1,concat(col_25, 1),col_26 + 1 from cte_4 where col_23 < 5 ) select * from tbl_3 as cte_as_3,cte_4 as cte_as_4,tbl_3 as cte_as_5 order by cte_as_3.col_19,cte_as_4.col_23,cte_as_4.col_25,cte_as_4.col_24,cte_as_4.col_26,cte_as_3.col_20,cte_as_5.col_22,cte_as_3.col_21,cte_as_5.col_20,cte_as_3.col_22,cte_as_5.col_19,cte_as_5.col_21;
+col_19	col_20	col_21	col_22	col_23	col_24	col_25	col_26	col_19	col_20	col_21	col_22
+1	2	3	4	1	2	3	4	1	2	3	4
+1	2	3	4	1	2	3	4	2	3	4	41
+1	2	3	4	1	2	3	4	3	4	5	411
+1	2	3	4	1	2	3	4	4	5	6	4111
+1	2	3	4	1	2	3	4	5	6	7	41111
+1	2	3	4	2	3	31	5	1	2	3	4
+1	2	3	4	2	3	31	5	2	3	4	41
+1	2	3	4	2	3	31	5	3	4	5	411
+1	2	3	4	2	3	31	5	4	5	6	4111
+1	2	3	4	2	3	31	5	5	6	7	41111
+1	2	3	4	3	4	311	6	1	2	3	4
+1	2	3	4	3	4	311	6	2	3	4	41
+1	2	3	4	3	4	311	6	3	4	5	411
+1	2	3	4	3	4	311	6	4	5	6	4111
+1	2	3	4	3	4	311	6	5	6	7	41111
+1	2	3	4	4	5	3111	7	1	2	3	4
+1	2	3	4	4	5	3111	7	2	3	4	41
+1	2	3	4	4	5	3111	7	3	4	5	411
+1	2	3	4	4	5	3111	7	4	5	6	4111
+1	2	3	4	4	5	3111	7	5	6	7	41111
+1	2	3	4	5	6	31111	8	1	2	3	4
+1	2	3	4	5	6	31111	8	2	3	4	41
+1	2	3	4	5	6	31111	8	3	4	5	411
+1	2	3	4	5	6	31111	8	4	5	6	4111
+1	2	3	4	5	6	31111	8	5	6	7	41111
+2	3	4	41	1	2	3	4	1	2	3	4
+2	3	4	41	1	2	3	4	2	3	4	41
+2	3	4	41	1	2	3	4	3	4	5	411
+2	3	4	41	1	2	3	4	4	5	6	4111
+2	3	4	41	1	2	3	4	5	6	7	41111
+2	3	4	41	2	3	31	5	1	2	3	4
+2	3	4	41	2	3	31	5	2	3	4	41
+2	3	4	41	2	3	31	5	3	4	5	411
+2	3	4	41	2	3	31	5	4	5	6	4111
+2	3	4	41	2	3	31	5	5	6	7	41111
+2	3	4	41	3	4	311	6	1	2	3	4
+2	3	4	41	3	4	311	6	2	3	4	41
+2	3	4	41	3	4	311	6	3	4	5	411
+2	3	4	41	3	4	311	6	4	5	6	4111
+2	3	4	41	3	4	311	6	5	6	7	41111
+2	3	4	41	4	5	3111	7	1	2	3	4
+2	3	4	41	4	5	3111	7	2	3	4	41
+2	3	4	41	4	5	3111	7	3	4	5	411
+2	3	4	41	4	5	3111	7	4	5	6	4111
+2	3	4	41	4	5	3111	7	5	6	7	41111
+2	3	4	41	5	6	31111	8	1	2	3	4
+2	3	4	41	5	6	31111	8	2	3	4	41
+2	3	4	41	5	6	31111	8	3	4	5	411
+2	3	4	41	5	6	31111	8	4	5	6	4111
+2	3	4	41	5	6	31111	8	5	6	7	41111
+3	4	5	411	1	2	3	4	1	2	3	4
+3	4	5	411	1	2	3	4	2	3	4	41
+3	4	5	411	1	2	3	4	3	4	5	411
+3	4	5	411	1	2	3	4	4	5	6	4111
+3	4	5	411	1	2	3	4	5	6	7	41111
+3	4	5	411	2	3	31	5	1	2	3	4
+3	4	5	411	2	3	31	5	2	3	4	41
+3	4	5	411	2	3	31	5	3	4	5	411
+3	4	5	411	2	3	31	5	4	5	6	4111
+3	4	5	411	2	3	31	5	5	6	7	41111
+3	4	5	411	3	4	311	6	1	2	3	4
+3	4	5	411	3	4	311	6	2	3	4	41
+3	4	5	411	3	4	311	6	3	4	5	411
+3	4	5	411	3	4	311	6	4	5	6	4111
+3	4	5	411	3	4	311	6	5	6	7	41111
+3	4	5	411	4	5	3111	7	1	2	3	4
+3	4	5	411	4	5	3111	7	2	3	4	41
+3	4	5	411	4	5	3111	7	3	4	5	411
+3	4	5	411	4	5	3111	7	4	5	6	4111
+3	4	5	411	4	5	3111	7	5	6	7	41111
+3	4	5	411	5	6	31111	8	1	2	3	4
+3	4	5	411	5	6	31111	8	2	3	4	41
+3	4	5	411	5	6	31111	8	3	4	5	411
+3	4	5	411	5	6	31111	8	4	5	6	4111
+3	4	5	411	5	6	31111	8	5	6	7	41111
+4	5	6	4111	1	2	3	4	1	2	3	4
+4	5	6	4111	1	2	3	4	2	3	4	41
+4	5	6	4111	1	2	3	4	3	4	5	411
+4	5	6	4111	1	2	3	4	4	5	6	4111
+4	5	6	4111	1	2	3	4	5	6	7	41111
+4	5	6	4111	2	3	31	5	1	2	3	4
+4	5	6	4111	2	3	31	5	2	3	4	41
+4	5	6	4111	2	3	31	5	3	4	5	411
+4	5	6	4111	2	3	31	5	4	5	6	4111
+4	5	6	4111	2	3	31	5	5	6	7	41111
+4	5	6	4111	3	4	311	6	1	2	3	4
+4	5	6	4111	3	4	311	6	2	3	4	41
+4	5	6	4111	3	4	311	6	3	4	5	411
+4	5	6	4111	3	4	311	6	4	5	6	4111
+4	5	6	4111	3	4	311	6	5	6	7	41111
+4	5	6	4111	4	5	3111	7	1	2	3	4
+4	5	6	4111	4	5	3111	7	2	3	4	41
+4	5	6	4111	4	5	3111	7	3	4	5	411
+4	5	6	4111	4	5	3111	7	4	5	6	4111
+4	5	6	4111	4	5	3111	7	5	6	7	41111
+4	5	6	4111	5	6	31111	8	1	2	3	4
+4	5	6	4111	5	6	31111	8	2	3	4	41
+4	5	6	4111	5	6	31111	8	3	4	5	411
+4	5	6	4111	5	6	31111	8	4	5	6	4111
+4	5	6	4111	5	6	31111	8	5	6	7	41111
+5	6	7	41111	1	2	3	4	1	2	3	4
+5	6	7	41111	1	2	3	4	2	3	4	41
+5	6	7	41111	1	2	3	4	3	4	5	411
+5	6	7	41111	1	2	3	4	4	5	6	4111
+5	6	7	41111	1	2	3	4	5	6	7	41111
+5	6	7	41111	2	3	31	5	1	2	3	4
+5	6	7	41111	2	3	31	5	2	3	4	41
+5	6	7	41111	2	3	31	5	3	4	5	411
+5	6	7	41111	2	3	31	5	4	5	6	4111
+5	6	7	41111	2	3	31	5	5	6	7	41111
+5	6	7	41111	3	4	311	6	1	2	3	4
+5	6	7	41111	3	4	311	6	2	3	4	41
+5	6	7	41111	3	4	311	6	3	4	5	411
+5	6	7	41111	3	4	311	6	4	5	6	4111
+5	6	7	41111	3	4	311	6	5	6	7	41111
+5	6	7	41111	4	5	3111	7	1	2	3	4
+5	6	7	41111	4	5	3111	7	2	3	4	41
+5	6	7	41111	4	5	3111	7	3	4	5	411
+5	6	7	41111	4	5	3111	7	4	5	6	4111
+5	6	7	41111	4	5	3111	7	5	6	7	41111
+5	6	7	41111	5	6	31111	8	1	2	3	4
+5	6	7	41111	5	6	31111	8	2	3	4	41
+5	6	7	41111	5	6	31111	8	3	4	5	411
+5	6	7	41111	5	6	31111	8	4	5	6	4111
+5	6	7	41111	5	6	31111	8	5	6	7	41111
+with cte1 (c1) as (select 1) select * from cte1 as b, cte1 as a;
+c1	c1
+1	1
+WITH RECURSIVE qn AS
+(
+select 1
+union all
+select 3, 0 from qn
+)
+select * from qn;
+Error 1222: The used SELECT statements have a different number of columns
+with recursive cte1 as (select 1 union all (select 1 from cte1 limit 10)) select * from cte1;
+Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+with recursive qn as (select 123 as a union all select null from qn where a is not null) select * from qn;
+a
+123
+NULL
+with recursive q (b) as (select 1, 1 union all select 1, 1 from q) select b from q;
+Error 1353: In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+drop table if exists t1;
+create table t1(a int);
+insert into t1 values(1);
+insert into t1 values(2);
+SELECT *
+FROM
+t1 dt
+WHERE
+EXISTS(
+WITH RECURSIVE qn AS (SELECT a*0 AS b UNION ALL SELECT b+1 FROM qn WHERE b=0)
+SELECT * FROM qn WHERE b=a
+);
+a
+1
+drop table if exists t1;
+create table t1 (a int);
+insert into t1 values (1);
+SELECT (WITH qn AS (SELECT 10*a as a FROM t1),
+qn2 AS (SELECT 3*a AS b FROM qn)                                                                                                                                                                                                                                              SELECT * from qn2 LIMIT 1)
+FROM t1;
+(WITH qn AS (SELECT 10*a as a FROM t1),
+qn2 AS (SELECT 3*a AS b FROM qn)                                                                                                                                                                                        
+30
+select (with qn as (select "with") select * from qn) as scal_subq
+from dual;
+scal_subq
+with
+drop table if exists t1;
+create table t1 (a int);
+                                                                                                                                                                                                                                                      insert into t1 values(1), (2), (3);
+with q as (select * from t1)
+select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
+a	a
+1	2
+drop table if exists t1;
+                                                                                                                                                                                                                                                      create table t1 (a int, b int);
+with qn as (select a, b from t1) select b from qn group by a;
+b
+drop table if exists t1;
+create table t1(a int);
+insert into t1 values(1);
+insert into t1 values(2);
+SELECT *
+FROM
+t1 dt
+WHERE
+EXISTS(
+WITH RECURSIVE qn AS (SELECT a*0+1 AS b UNION ALL SELECT b+1 FROM qn WHERE b=0)
+SELECT * FROM qn WHERE b=1
+);
+a
+1
+2
+drop table if exists tbl_1;
+CREATE TABLE `tbl_1` (
+`col_2` char(65) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,
+`col_3` int(11) NOT NULL
+);
+with recursive cte_8932 (col_34891,col_34892) AS ( with recursive cte_8932 (col_34893,col_34894,col_34895) AS ( with  tbl_1 (col_34896,col_34897,col_34898,col_34899) AS ( select 1, "2",3,col_3 from tbl_1 ) select cte_as_8958.col_34896,cte_as_8958.col_34898,cte_as_8958.col_34899 from tbl_1 as cte_as_8958 UNION DISTINCT select col_34893 + 1,concat(col_34894, 1),col_34895 + 1 from cte_8932 where col_34893 < 5 ) select cte_as_8959.col_34893,cte_as_8959.col_34895 from cte_8932 as cte_as_8959 ) select * from cte_8932 as cte_as_8960 order by cte_as_8960.col_34891,cte_as_8960.col_34892;
+col_34891	col_34892
+drop table if exists t1;
+create table t1(c1 bigint unsigned);
+insert into t1 values(0);
+with recursive cte1 as (select c1 - 1 c1 from t1 union all select c1 - 1 c1 from cte1 where c1 != 0) select * from cte1 dt1, cte1 dt2;
+Error 1690: BIGINT UNSIGNED value is out of range in '(test.t1.c1 - 1)'
+drop table if exists t;
+create table t(a int, b int, key (b));
+desc with cte as (select * from t) select * from cte;
+id	estRows	task	access object	operator info
+CTEFullScan_9	10000.00	root	CTE:cte	data:CTE_0
+CTE_0	10000.00	root		Non-Recursive CTE
+└─TableReader_7(Seed Part)	10000.00	root		data:TableFullScan_6
+  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create SESSION binding for with cte as (select * from t) select * from cte using with cte as (select * from t use index(b)) select * from cte;
+desc with cte as (select * from t) select * from cte;
+id	estRows	task	access object	operator info
+CTEFullScan_10	10000.00	root	CTE:cte	data:CTE_0
+CTE_0	10000.00	root		Non-Recursive CTE
+└─IndexLookUp_8(Seed Part)	10000.00	root		
+  ├─IndexFullScan_6(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+  └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc with cte as (select * from t use index()) select * from cte;
+id	estRows	task	access object	operator info
+CTEFullScan_10	10000.00	root	CTE:cte	data:CTE_0
+CTE_0	10000.00	root		Non-Recursive CTE
+└─IndexLookUp_8(Seed Part)	10000.00	root		
+  ├─IndexFullScan_6(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+  └─TableRowIDScan_7(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t1, tpk;
+create table t1(c1 int);
+insert into t1 values(1), (2), (1), (2);
+create table tpk(c1 int primary key);
+insert into tpk values(1), (2), (3);
+// Expect a Sort operator on CTE.
+explain with cte1 as (select c1 from t1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+id	estRows	task	access object	operator info
+MergeJoin_28	8000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
+├─Sort_26(Build)	6400.00	root		test.t1.c1
+│ └─Selection_24	6400.00	root		not(isnull(test.t1.c1))
+│   └─CTEFullScan_25	8000.00	root	CTE:dt2	data:CTE_0
+└─Sort_22(Probe)	9990.00	root		test.t1.c1
+  └─TableReader_21	9990.00	root		data:Selection_20
+    └─Selection_20	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+      └─TableFullScan_19	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_11(Seed Part)	8000.00	root		not(isnull(test.t1.c1))
+  └─TableReader_14	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+with cte1 as (select c1 from t1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+c1	c1
+1	1
+1	1
+1	1
+1	1
+2	2
+2	2
+2	2
+2	2
+// Sort should not exist, because tpk.c1 is pk. Not the best plan for now(#25674).
+explain with cte1 as (select c1 from tpk) select /*+ MERGE_JOIN(dt1, dt2) */ * from tpk dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+id	estRows	task	access object	operator info
+MergeJoin_26	8000.00	root		inner join, left key:test.tpk.c1, right key:test.tpk.c1
+├─Sort_24(Build)	6400.00	root		test.tpk.c1
+│ └─Selection_22	6400.00	root		not(isnull(test.tpk.c1))
+│   └─CTEFullScan_23	8000.00	root	CTE:dt2	data:CTE_0
+└─TableReader_20(Probe)	10000.00	root		data:TableFullScan_19
+  └─TableFullScan_19	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_11(Seed Part)	8000.00	root		not(isnull(test.tpk.c1))
+  └─TableReader_14	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
+with cte1 as (select c1 from tpk) select /*+ MERGE_JOIN(dt1, dt2) */ * from tpk dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+c1	c1
+1	1
+2	2
+3	3
+// Sort should not exist, because we have order by in CTE definition. Not the best plan for now(#25674).
+explain with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+id	estRows	task	access object	operator info
+MergeJoin_32	8000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
+├─Sort_30(Build)	6400.00	root		test.t1.c1
+│ └─Selection_28	6400.00	root		not(isnull(test.t1.c1))
+│   └─CTEFullScan_29	8000.00	root	CTE:dt2	data:CTE_0
+└─Sort_26(Probe)	9990.00	root		test.t1.c1
+  └─TableReader_25	9990.00	root		data:Selection_24
+    └─Selection_24	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+      └─TableFullScan_23	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_12(Seed Part)	8000.00	root		not(isnull(test.t1.c1))
+  └─Sort_13	10000.00	root		test.t1.c1
+    └─TableReader_17	10000.00	root		data:TableFullScan_16
+      └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+c1	c1
+1	1
+1	1
+1	1
+1	1
+2	2
+2	2
+2	2
+2	2
+// Expect a Sort operator on CTE. Because it's recursive.
+explain with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+id	estRows	task	access object	operator info
+MergeJoin_35	8001.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
+├─Sort_33(Build)	6400.80	root		test.t1.c1
+│ └─Selection_31	6400.80	root		not(isnull(test.t1.c1))
+│   └─CTEFullScan_32	8001.00	root	CTE:dt2	data:CTE_0
+└─Sort_29(Probe)	9990.00	root		test.t1.c1
+  └─TableReader_28	9990.00	root		data:Selection_27
+    └─Selection_27	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+      └─TableFullScan_26	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8001.00	root		Recursive CTE
+├─TableReader_18(Seed Part)	10000.00	root		data:TableFullScan_17
+│ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_19(Recursive Part)	8000.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+  └─Selection_20	8000.00	root		lt(test.t1.c1, 3)
+    └─CTETable_21	10000.00	root		Scan on CTE_0
+with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+c1	c1
+1	1
+1	1
+2	2
+2	2
+// Expect a Sort operator on CTE. Because it's recursive.
+explain with recursive cte1 as (select c1 from tpk union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+id	estRows	task	access object	operator info
+MergeJoin_35	8001.00	root		inner join, left key:test.t1.c1, right key:test.tpk.c1
+├─Sort_33(Build)	6400.80	root		test.tpk.c1
+│ └─Selection_31	6400.80	root		not(isnull(test.tpk.c1))
+│   └─CTEFullScan_32	8001.00	root	CTE:dt2	data:CTE_0
+└─Sort_29(Probe)	9990.00	root		test.t1.c1
+  └─TableReader_28	9990.00	root		data:Selection_27
+    └─Selection_27	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+      └─TableFullScan_26	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8001.00	root		Recursive CTE
+├─TableReader_18(Seed Part)	10000.00	root		data:TableFullScan_17
+│ └─TableFullScan_17	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
+└─Projection_19(Recursive Part)	8000.00	root		cast(plus(test.tpk.c1, 1), int(11))->test.tpk.c1
+  └─Selection_20	8000.00	root		lt(test.tpk.c1, 3)
+    └─CTETable_21	10000.00	root		Scan on CTE_0
+with recursive cte1 as (select c1 from tpk union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+c1	c1
+1	1
+1	1
+2	2
+2	2
+// Got order by in CTE definition
+// Expect Sort operator in CTE definition.
+explain with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+id	estRows	task	access object	operator info
+MergeJoin_32	8000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
+├─Sort_30(Build)	6400.00	root		test.t1.c1
+│ └─Selection_28	6400.00	root		not(isnull(test.t1.c1))
+│   └─CTEFullScan_29	8000.00	root	CTE:dt2	data:CTE_0
+└─Sort_26(Probe)	9990.00	root		test.t1.c1
+  └─TableReader_25	9990.00	root		data:Selection_24
+    └─Selection_24	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+      └─TableFullScan_23	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_12(Seed Part)	8000.00	root		not(isnull(test.t1.c1))
+  └─Sort_13	10000.00	root		test.t1.c1
+    └─TableReader_17	10000.00	root		data:TableFullScan_16
+      └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+c1	c1
+1	1
+1	1
+1	1
+1	1
+2	2
+2	2
+2	2
+2	2
+// Sort should not exist, because tpk is ordered. Not the best plan for now(#25674).
+explain with cte1 as (select c1 from tpk order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+id	estRows	task	access object	operator info
+MergeJoin_34	8000.00	root		inner join, left key:test.t1.c1, right key:test.tpk.c1
+├─Sort_32(Build)	6400.00	root		test.tpk.c1
+│ └─Selection_30	6400.00	root		not(isnull(test.tpk.c1))
+│   └─CTEFullScan_31	8000.00	root	CTE:dt2	data:CTE_0
+└─Sort_28(Probe)	9990.00	root		test.t1.c1
+  └─TableReader_27	9990.00	root		data:Selection_26
+    └─Selection_26	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+      └─TableFullScan_25	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_12(Seed Part)	8000.00	root		not(isnull(test.tpk.c1))
+  └─TableReader_20	10000.00	root		data:TableFullScan_19
+    └─TableFullScan_19	10000.00	cop[tikv]	table:tpk	keep order:true, stats:pseudo
+with cte1 as (select c1 from tpk order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+c1	c1
+1	1
+1	1
+2	2
+2	2
+// HashJoin. No need to sort
+explain with cte1 as (select c1 from t1) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
+id	estRows	task	access object	operator info
+Sort_15	64000000.00	root		test.t1.c1, test.t1.c1
+└─HashJoin_18	64000000.00	root		CARTESIAN inner join
+  ├─Selection_22(Build)	6400.00	root		eq(test.t1.c1, 1)
+  │ └─CTEFullScan_23	8000.00	root	CTE:dt2	data:CTE_0
+  └─TableReader_21(Probe)	10000.00	root		data:TableFullScan_20
+    └─TableFullScan_20	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_11(Seed Part)	8000.00	root		eq(test.t1.c1, 1)
+  └─TableReader_14	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+with cte1 as (select c1 from t1) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
+c1	c1
+1	1
+1	1
+1	1
+1	1
+2	1
+2	1
+2	1
+2	1
+explain with cte1 as (select c1 from tpk) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
+id	estRows	task	access object	operator info
+Sort_15	64000000.00	root		test.t1.c1, test.tpk.c1
+└─HashJoin_18	64000000.00	root		CARTESIAN inner join
+  ├─Selection_22(Build)	6400.00	root		eq(test.tpk.c1, 1)
+  │ └─CTEFullScan_23	8000.00	root	CTE:dt2	data:CTE_0
+  └─TableReader_21(Probe)	10000.00	root		data:TableFullScan_20
+    └─TableFullScan_20	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_11(Seed Part)	8000.00	root		eq(test.tpk.c1, 1)
+  └─TableReader_14	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
+with cte1 as (select c1 from tpk) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
+c1	c1
+1	1
+1	1
+2	1
+2	1
+// Use same CTE.
+drop table if exists tpk1, tpk;
+create table tpk(c1 int primary key);
+insert into tpk values(1), (2), (3);
+create table tpk1(c1 int primary key);
+insert into tpk1 values(1), (2), (3);
+explain with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
+id	estRows	task	access object	operator info
+Projection_20	10000.00	root		test.tpk1.c1, test.tpk.c1, test.tpk.c1
+└─HashJoin_22	10000.00	root		inner join, equal:[eq(test.tpk.c1, test.tpk.c1)]
+  ├─Selection_23(Build)	6400.00	root		not(isnull(test.tpk.c1))
+  │ └─CTEFullScan_24	8000.00	root	CTE:dt3	data:CTE_0
+  └─MergeJoin_25(Probe)	8000.00	root		inner join, left key:test.tpk1.c1, right key:test.tpk.c1
+    ├─Sort_31(Build)	6400.00	root		test.tpk.c1
+    │ └─Selection_29	6400.00	root		not(isnull(test.tpk.c1))
+    │   └─CTEFullScan_30	8000.00	root	CTE:dt2	data:CTE_0
+    └─TableReader_27(Probe)	10000.00	root		data:TableFullScan_26
+      └─TableFullScan_26	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_13(Seed Part)	8000.00	root		or(not(isnull(test.tpk.c1)), not(isnull(test.tpk.c1)))
+  └─TableReader_16	10000.00	root		data:TableFullScan_15
+    └─TableFullScan_15	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
+with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
+c1	c1	c1
+1	1	1
+2	2	2
+3	3	3
+// Test CTE as inner side of Apply
+drop table if exists t1, t2;
+create table t1(c1 int, c2 int);
+insert into t1 values(2, 1);
+insert into t1 values(2, 2);
+create table t2(c1 int, c2 int);
+insert into t2 values(1, 1);
+insert into t2 values(3, 2);
+explain select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
+id	estRows	task	access object	operator info
+Projection_18	10000.00	root		test.t1.c1, test.t1.c2
+└─Apply_20	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(test.t1.c1), NULL, 0)))
+  ├─TableReader_22(Build)	10000.00	root		data:TableFullScan_21
+  │ └─TableFullScan_21	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashAgg_23(Probe)	1.00	root		funcs:max(Column#13)->Column#8, funcs:sum(Column#14)->Column#9, funcs:count(1)->Column#10
+    └─Projection_27	10.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#14
+      └─CTEFullScan_25	10.00	root	CTE:cte1	data:CTE_0
+CTE_0	10.00	root		Non-Recursive CTE
+└─Projection_13(Seed Part)	10.00	root		test.t2.c1
+  └─TableReader_16	10.00	root		data:Selection_15
+    └─Selection_15	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
+      └─TableFullScan_14	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
+c1	c2
+2	1
+// Test semi apply.
+insert into t1 values(2, 3);
+explain select * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
+id	estRows	task	access object	operator info
+Apply_17	10000.00	root		CARTESIAN semi join
+├─TableReader_19(Build)	10000.00	root		data:TableFullScan_18
+│ └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─CTEFullScan_20(Probe)	10.00	root	CTE:cte1	data:CTE_0
+CTE_0	10.00	root		Non-Recursive CTE
+└─Projection_11(Seed Part)	10.00	root		test.t2.c1
+  └─TableReader_14	10.00	root		data:Selection_13
+    └─Selection_13	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
+      └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
+c1	c2
+2	1
+2	2
+// Same as above, but test recursive cte.
+explain select * from t1 where c1 > all(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 1) select c1 from cte1);
+id	estRows	task	access object	operator info
+Projection_26	10000.00	root		test.t1.c1, test.t1.c2
+└─Apply_28	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(test.t1.c1), NULL, 0)))
+  ├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
+  │ └─TableFullScan_29	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashAgg_31(Probe)	1.00	root		funcs:max(Column#19)->Column#14, funcs:sum(Column#20)->Column#15, funcs:count(1)->Column#16
+    └─Projection_35	20.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#20
+      └─CTEFullScan_33	20.00	root	CTE:cte1	data:CTE_0
+CTE_0	20.00	root		Recursive CTE, limit(offset:0, count:1)
+├─Projection_19(Seed Part)	10.00	root		test.t2.c1
+│ └─TableReader_22	10.00	root		data:Selection_21
+│   └─Selection_21	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
+│     └─TableFullScan_20	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_23(Recursive Part)	10.00	root		cast(plus(test.t2.c1, 1), int(11))->test.t2.c1
+  └─CTETable_24	10.00	root		Scan on CTE_0
+select * from t1 where c1 > all(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 1) select c1 from cte1);
+c1	c2
+2	1
+2	3
+explain select * from t1 where exists(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 10) select c1 from cte1);
+id	estRows	task	access object	operator info
+Apply_25	10000.00	root		CARTESIAN semi join
+├─TableReader_27(Build)	10000.00	root		data:TableFullScan_26
+│ └─TableFullScan_26	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─CTEFullScan_28(Probe)	20.00	root	CTE:cte1	data:CTE_0
+CTE_0	20.00	root		Recursive CTE, limit(offset:0, count:10)
+├─Projection_17(Seed Part)	10.00	root		test.t2.c1
+│ └─TableReader_20	10.00	root		data:Selection_19
+│   └─Selection_19	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
+│     └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_21(Recursive Part)	10.00	root		cast(plus(test.t2.c1, 1), int(11))->test.t2.c1
+  └─CTETable_22	10.00	root		Scan on CTE_0
+select * from t1 where exists(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 10) select c1 from cte1);
+c1	c2
+2	1
+2	2
+// Test correlated col is in recursive part.
+explain select * from t1 where c1 > all(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
+id	estRows	task	access object	operator info
+Projection_24	10000.00	root		test.t1.c1, test.t1.c2
+└─Apply_26	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#18), if(ne(Column#19, 0), NULL, 1)), or(eq(Column#20, 0), if(isnull(test.t1.c1), NULL, 0)))
+  ├─TableReader_28(Build)	10000.00	root		data:TableFullScan_27
+  │ └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashAgg_29(Probe)	1.00	root		funcs:max(Column#23)->Column#18, funcs:sum(Column#24)->Column#19, funcs:count(1)->Column#20
+    └─Projection_33	18000.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#24
+      └─CTEFullScan_31	18000.00	root	CTE:cte1	data:CTE_0
+CTE_0	18000.00	root		Recursive CTE
+├─TableReader_19(Seed Part)	10000.00	root		data:TableFullScan_18
+│ └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_20(Recursive Part)	8000.00	root		cast(plus(test.t2.c1, 1), int(11))->test.t2.c1, cast(plus(test.t2.c2, 1), int(11))->test.t2.c2
+  └─Selection_21	8000.00	root		eq(test.t2.c2, test.t1.c2)
+    └─CTETable_22	10000.00	root		Scan on CTE_0
+select * from t1 where c1 > all(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
+c1	c2
+explain select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
+id	estRows	task	access object	operator info
+Apply_23	10000.00	root		CARTESIAN semi join
+├─TableReader_25(Build)	10000.00	root		data:TableFullScan_24
+│ └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─CTEFullScan_26(Probe)	18000.00	root	CTE:cte1	data:CTE_0
+CTE_0	18000.00	root		Recursive CTE
+├─TableReader_17(Seed Part)	10000.00	root		data:TableFullScan_16
+│ └─TableFullScan_16	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_18(Recursive Part)	8000.00	root		cast(plus(test.t2.c1, 1), int(11))->test.t2.c1, cast(plus(test.t2.c2, 1), int(11))->test.t2.c2
+  └─Selection_19	8000.00	root		eq(test.t2.c2, test.t1.c2)
+    └─CTETable_20	10000.00	root		Scan on CTE_0
+select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
+c1	c2
+2	1
+2	2
+2	3
+use test;
+drop table if exists t1, t2;
+drop view if exists v1;
+create table t1 (a int);
+insert into t1 values (0), (1), (2), (3), (4);
+create table t2 (a int);
+insert into t2 values (1), (2), (3), (4), (5);
+drop view if exists v1,v2;
+create view v1 as with t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
+create view v2 as with recursive t1 as ( select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
+create database if not exists test1;
+use test1;
+select * from test.v1;
+a
+5
+4
+3
+2
+select * from test.v2;
+a
+6
+5
+4
+3
+use test;
+drop table if exists t ,t1, t2;
+create table t(a int);
+insert into t values (0);
+create table t1 (b int);
+insert into t1 values (0);
+create table t2 (c int);
+insert into t2 values (0);
+drop view if exists v1;
+create view v1 as with t1 as (with t11 as (select * from t) select * from t1, t2) select * from t1;
+use test1;
+select * from test.v1;
+b	c
+0	0
+use test;
+drop table if exists t11111;
+create table t11111 (d int);
+insert into t11111 values (123), (223), (323);
+drop view if exists v1;
+create view v1 as WITH t123 AS (WITH t11111 AS ( SELECT * FROM t1 ) SELECT ( WITH t2 AS ( SELECT ( WITH t23 AS ( SELECT * FROM t11111 ) SELECT * FROM t23 LIMIT 1 ) FROM t11111 ) SELECT *  FROM t2  LIMIT 1  )  FROM t11111, t2 ) SELECT * FROM t11111;
+use test1;
+select * from test.v1;
+d
+123
+223
+323
+use test;
+drop table if exists t1;
+create table t1 (a int);
+insert into t1 values (1);
+drop view if exists v1;
+create view v1 as SELECT (WITH qn AS (SELECT 10*a as a FROM t1),qn2 AS (SELECT 3*a AS b FROM qn) SELECT * from qn2 LIMIT 1) FROM t1;
+use test1;
+select * from test.v1;
+name_exp_1
+30
+use test;
+drop table if exists t1,t2;
+create table t1 (a int);
+insert into t1 values (0), (1);
+create table t2 (b int);
+insert into t2 values  (4), (5);
+drop view if exists v1;
+create view v1 as with t1 as (with t11 as (select * from t1) select * from t1, t2) select * from t1;
+use test1;
+select * from test.v1;
+a	b
+0	5
+0	4
+1	5
+1	4

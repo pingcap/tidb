@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -60,6 +61,9 @@ func (s *FMSketch) Copy() *FMSketch {
 
 // NDV returns the ndv of the sketch.
 func (s *FMSketch) NDV() int64 {
+	if s == nil {
+		return 0
+	}
 	return int64(s.mask+1) * int64(len(s.hashset))
 }
 
@@ -93,15 +97,23 @@ func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) 
 	return nil
 }
 
-func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize int) (*FMSketch, int64, error) {
-	s := NewFMSketch(maxSize)
-	for _, value := range values {
-		err := s.InsertValue(sc, value)
+// InsertRowValue inserts multi-column values to the sketch.
+func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.Datum) error {
+	b := make([]byte, 0, 8)
+	s.hashFunc.Reset()
+	for _, v := range values {
+		b = b[:0]
+		b, err := codec.EncodeValue(sc, b, v)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return err
+		}
+		_, err = s.hashFunc.Write(b)
+		if err != nil {
+			return err
 		}
 	}
-	return s, s.NDV(), nil
+	s.insertHashValue(s.hashFunc.Sum64())
+	return nil
 }
 
 // MergeFMSketch merges two FM Sketch.

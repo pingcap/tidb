@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -36,11 +37,7 @@ type clusterInfoItem struct {
 func getClusterInfo(ctx sessionctx.Context) ([]*clusterInfoItem, error) {
 	// Explicitly list all field names instead of using `*` to avoid potential leaking sensitive info when adding new fields in future.
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT TYPE, INSTANCE, STATUS_ADDRESS, VERSION, GIT_HASH, START_TIME, UPTIME FROM information_schema.cluster_info`)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT TYPE, INSTANCE, STATUS_ADDRESS, VERSION, GIT_HASH, START_TIME, UPTIME FROM information_schema.cluster_info`)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -49,8 +46,14 @@ func getClusterInfo(ctx sessionctx.Context) ([]*clusterInfoItem, error) {
 		if row.Len() < 7 {
 			continue
 		}
-		listenHostHash, listenPort := parseAddressAndHash(row.GetString(1))
-		statusHostHash, statusPort := parseAddressAndHash(row.GetString(2))
+		listenHostHash, listenPort, err := parseAddressAndHash(row.GetString(1))
+		if err != nil {
+			return nil, err
+		}
+		statusHostHash, statusPort, err := parseAddressAndHash(row.GetString(2))
+		if err != nil {
+			return nil, err
+		}
 		r = append(r, &clusterInfoItem{
 			InstanceType:   row.GetString(0),
 			ListenHostHash: listenHostHash,

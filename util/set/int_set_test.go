@@ -8,20 +8,21 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package set
 
 import (
-	"github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-var _ = check.Suite(&intSetTestSuite{})
+func TestIntSet(t *testing.T) {
+	assert := assert.New(t)
 
-type intSetTestSuite struct{}
-
-func (s *intSetTestSuite) TestIntSet(c *check.C) {
 	set := NewIntSet()
 	vals := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	for i := range vals {
@@ -31,17 +32,19 @@ func (s *intSetTestSuite) TestIntSet(c *check.C) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
-	c.Assert(set.Count(), check.Equals, len(vals))
+	assert.Equal(len(vals), set.Count())
 
-	c.Assert(len(set), check.Equals, len(vals))
+	assert.Equal(len(vals), len(set))
 	for i := range vals {
-		c.Assert(set.Exist(vals[i]), check.IsTrue)
+		assert.True(set.Exist(vals[i]))
 	}
 
-	c.Assert(set.Exist(11), check.IsFalse)
+	assert.False(set.Exist(11))
 }
 
-func (s *intSetTestSuite) TestInt64Set(c *check.C) {
+func TestInt64Set(t *testing.T) {
+	assert := assert.New(t)
+
 	set := NewInt64Set()
 	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	for i := range vals {
@@ -52,16 +55,16 @@ func (s *intSetTestSuite) TestInt64Set(c *check.C) {
 		set.Insert(vals[i])
 	}
 
-	c.Assert(len(set), check.Equals, len(vals))
+	assert.Equal(len(vals), len(set))
 	for i := range vals {
-		c.Assert(set.Exist(vals[i]), check.IsTrue)
+		assert.True(set.Exist(vals[i]))
 	}
 
-	c.Assert(set.Exist(11), check.IsFalse)
+	assert.False(set.Exist(11))
 
 	set = NewInt64Set(1, 2, 3, 4, 5, 6)
 	for i := 1; i < 7; i++ {
-		c.Assert(set.Exist(int64(i)), check.IsTrue)
+		assert.True(set.Exist(int64(i)))
 	}
-	c.Assert(set.Exist(7), check.IsFalse)
+	assert.False(set.Exist(7))
 }

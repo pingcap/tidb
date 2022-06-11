@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,6 +21,10 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/metrics"
+	atomicutil "go.uber.org/atomic"
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -39,6 +44,16 @@ import (
 // that is to say:
 // 1. Only "BytesConsumed()", "Consume()" and "AttachTo()" are thread-safe.
 // 2. Other operations of a Tracker tree is not thread-safe.
+//
+// We have two limits for the memory quota: soft limit and hard limit.
+// If the soft limit is exceeded, we will trigger the action that alleviates the
+// speed of memory growth. The soft limit is hard-coded as `0.8*hard limit`.
+// The actions that could be triggered are: AggSpillDiskAction.
+//
+// If the hard limit is exceeded, we will trigger the action that immediately
+// reduces memory usage. The hard limit is set by the system variable `tidb_mem_query_quota`.
+// The actions that could be triggered are: SpillDiskAction, SortAndSpillDiskAction, rateLimitAction,
+// PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
 	mu struct {
 		sync.Mutex
@@ -46,20 +61,51 @@ type Tracker struct {
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children map[int][]*Tracker
 	}
-	actionMu struct {
-		sync.Mutex
-		actionOnExceed ActionOnExceed
-	}
-	parMu struct {
+	actionMuForHardLimit actionMu
+	actionMuForSoftLimit actionMu
+	parMu                struct {
 		sync.Mutex
 		parent *Tracker // The parent memory tracker.
 	}
 
 	label         int   // Label of this "Tracker".
 	bytesConsumed int64 // Consumed bytes.
-	bytesLimit    int64 // bytesLimit <= 0 means no limit.
-	maxConsumed   int64 // max number of bytes consumed during execution.
-	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
+	bytesLimit    atomic.Value
+	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
+	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
+}
+
+type actionMu struct {
+	sync.Mutex
+	actionOnExceed ActionOnExceed
+}
+
+// softScale means the scale of the soft limit to the hard limit.
+const softScale = 0.8
+
+// bytesLimits holds limit config atomically.
+type bytesLimits struct {
+	bytesHardLimit int64 // bytesHardLimit <= 0 means no limit, used for actionMuForHardLimit.
+	bytesSoftLimit int64 // bytesSoftLimit <= 0 means no limit, used for actionMuForSoftLimit.
+}
+
+// InitTracker initializes a memory tracker.
+//	1. "label" is the label used in the usage string.
+//	2. "bytesLimit <= 0" means no limit.
+// For the common tracker, isGlobal is default as false
+func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed) {
+	t.mu.children = nil
+	t.actionMuForHardLimit.actionOnExceed = action
+	t.actionMuForSoftLimit.actionOnExceed = nil
+	t.parMu.parent = nil
+
+	t.label = label
+	t.bytesLimit.Store(&bytesLimits{
+		bytesHardLimit: bytesLimit,
+		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+	})
+	t.maxConsumed.Store(0)
+	t.isGlobal = false
 }
 
 // NewTracker creates a memory tracker.
@@ -68,10 +114,13 @@ type Tracker struct {
 // For the common tracker, isGlobal is default as false
 func NewTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
-		label:      label,
-		bytesLimit: bytesLimit,
+		label: label,
 	}
-	t.actionMu.actionOnExceed = &LogOnExceed{}
+	t.bytesLimit.Store(&bytesLimits{
+		bytesHardLimit: bytesLimit,
+		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+	})
+	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = false
 	return t
 }
@@ -79,10 +128,13 @@ func NewTracker(label int, bytesLimit int64) *Tracker {
 // NewGlobalTracker creates a global tracker, its isGlobal is default as true
 func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
-		label:      label,
-		bytesLimit: bytesLimit,
+		label: label,
 	}
-	t.actionMu.actionOnExceed = &LogOnExceed{}
+	t.bytesLimit.Store(&bytesLimits{
+		bytesHardLimit: bytesLimit,
+		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+	})
+	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = true
 	return t
 }
@@ -90,46 +142,61 @@ func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 // CheckBytesLimit check whether the bytes limit of the tracker is equal to a value.
 // Only used in test.
 func (t *Tracker) CheckBytesLimit(val int64) bool {
-	return t.bytesLimit == val
+	return t.bytesLimit.Load().(*bytesLimits).bytesHardLimit == val
 }
 
 // SetBytesLimit sets the bytes limit for this tracker.
-// "bytesLimit <= 0" means no limit.
+// "bytesHardLimit <= 0" means no limit.
 func (t *Tracker) SetBytesLimit(bytesLimit int64) {
-	t.bytesLimit = bytesLimit
+	t.bytesLimit.Store(&bytesLimits{
+		bytesHardLimit: bytesLimit,
+		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+	})
 }
 
 // GetBytesLimit gets the bytes limit for this tracker.
-// "bytesLimit <= 0" means no limit.
+// "bytesHardLimit <= 0" means no limit.
 func (t *Tracker) GetBytesLimit() int64 {
-	return t.bytesLimit
+	return t.bytesLimit.Load().(*bytesLimits).bytesHardLimit
 }
 
 // CheckExceed checks whether the consumed bytes is exceed for this tracker.
 func (t *Tracker) CheckExceed() bool {
-	return atomic.LoadInt64(&t.bytesConsumed) >= t.bytesLimit && t.bytesLimit > 0
+	bytesHardLimit := t.bytesLimit.Load().(*bytesLimits).bytesHardLimit
+	return atomic.LoadInt64(&t.bytesConsumed) >= bytesHardLimit && bytesHardLimit > 0
 }
 
-// SetActionOnExceed sets the action when memory usage exceeds bytesLimit.
+// SetActionOnExceed sets the action when memory usage exceeds bytesHardLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
-	t.actionMu.Lock()
-	t.actionMu.actionOnExceed = a
-	t.actionMu.Unlock()
+	t.actionMuForHardLimit.Lock()
+	t.actionMuForHardLimit.actionOnExceed = a
+	t.actionMuForHardLimit.Unlock()
 }
 
-// FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesLimit
+// FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesHardLimit
 // and set the original action as its fallback.
 func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
-	t.actionMu.Lock()
-	defer t.actionMu.Unlock()
-	t.actionMu.actionOnExceed = reArrangeFallback(t.actionMu.actionOnExceed, a)
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+	t.actionMuForHardLimit.actionOnExceed = reArrangeFallback(t.actionMuForHardLimit.actionOnExceed, a)
+}
+
+// FallbackOldAndSetNewActionForSoftLimit sets the action when memory usage exceeds bytesSoftLimit
+// and set the original action as its fallback.
+func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
+	t.actionMuForSoftLimit.Lock()
+	defer t.actionMuForSoftLimit.Unlock()
+	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(t.actionMuForSoftLimit.actionOnExceed, a)
 }
 
 // GetFallbackForTest get the oom action used by test.
-func (t *Tracker) GetFallbackForTest() ActionOnExceed {
-	t.actionMu.Lock()
-	defer t.actionMu.Unlock()
-	return t.actionMu.actionOnExceed
+func (t *Tracker) GetFallbackForTest(ignoreFinishedAction bool) ActionOnExceed {
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+	if t.actionMuForHardLimit.actionOnExceed != nil && t.actionMuForHardLimit.actionOnExceed.IsFinished() && ignoreFinishedAction {
+		t.actionMuForHardLimit.actionOnExceed = t.actionMuForHardLimit.actionOnExceed.GetFallback()
+	}
+	return t.actionMuForHardLimit.actionOnExceed
 }
 
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
@@ -151,7 +218,12 @@ func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 
 // SetLabel sets the label of a Tracker.
 func (t *Tracker) SetLabel(label int) {
+	parent := t.getParent()
+	t.Detach()
 	t.label = label
+	if parent != nil {
+		t.AttachTo(parent)
+	}
 }
 
 // Label gets the label of a Tracker.
@@ -163,6 +235,10 @@ func (t *Tracker) Label() int {
 // already has a parent, this function will remove it from the old parent.
 // Its consumed memory usage is used to update all its ancestors.
 func (t *Tracker) AttachTo(parent *Tracker) {
+	if parent.isGlobal {
+		t.AttachToGlobalTracker(parent)
+		return
+	}
 	oldParent := t.getParent()
 	if oldParent != nil {
 		oldParent.remove(t)
@@ -182,6 +258,10 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 func (t *Tracker) Detach() {
 	parent := t.getParent()
 	if parent == nil {
+		return
+	}
+	if parent.isGlobal {
+		t.DetachFromGlobalTracker()
 		return
 	}
 	parent.remove(t)
@@ -257,32 +337,60 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation. When memory usage of a tracker
-// exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
+// exceeds its bytesSoftLimit/bytesHardLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bytes int64) {
 	if bytes == 0 {
 		return
 	}
-	var rootExceed *Tracker
+	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
-		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
+		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
+		limits := tracker.bytesLimit.Load().(*bytesLimits)
+		if bytesConsumed >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
 			rootExceed = tracker
+		}
+		if bytesConsumed >= limits.bytesSoftLimit && limits.bytesSoftLimit > 0 {
+			rootExceedForSoftLimit = tracker
 		}
 
 		for {
-			maxNow := atomic.LoadInt64(&tracker.maxConsumed)
+			maxNow := tracker.maxConsumed.Load()
 			consumed := atomic.LoadInt64(&tracker.bytesConsumed)
-			if consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed) {
+			if consumed > maxNow && !tracker.maxConsumed.CAS(maxNow, consumed) {
 				continue
+			}
+			if label, ok := MetricsTypes[tracker.label]; ok {
+				metrics.MemoryUsage.WithLabelValues(label).Set(float64(consumed))
 			}
 			break
 		}
 	}
-	if bytes > 0 && rootExceed != nil {
-		rootExceed.actionMu.Lock()
-		defer rootExceed.actionMu.Unlock()
-		if rootExceed.actionMu.actionOnExceed != nil {
-			rootExceed.actionMu.actionOnExceed.Action(rootExceed)
+
+	tryAction := func(mu *actionMu, tracker *Tracker) {
+		mu.Lock()
+		defer mu.Unlock()
+		for mu.actionOnExceed != nil && mu.actionOnExceed.IsFinished() {
+			mu.actionOnExceed = mu.actionOnExceed.GetFallback()
 		}
+		if mu.actionOnExceed != nil {
+			mu.actionOnExceed.Action(tracker)
+		}
+	}
+
+	if bytes > 0 && rootExceedForSoftLimit != nil {
+		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
+	}
+	if bytes > 0 && rootExceed != nil {
+		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
+	}
+}
+
+// BufferedConsume is used to buffer memory usage and do late consume
+func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
+	*bufferedMemSize += bytes
+	if *bufferedMemSize > int64(config.TrackMemWhenExceeds) {
+		t.Consume(*bufferedMemSize)
+		*bufferedMemSize = int64(0)
 	}
 }
 
@@ -293,7 +401,7 @@ func (t *Tracker) BytesConsumed() int64 {
 
 // MaxConsumed returns max number of bytes consumed during execution.
 func (t *Tracker) MaxConsumed() int64 {
-	return atomic.LoadInt64(&t.maxConsumed)
+	return t.maxConsumed.Load()
 }
 
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
@@ -317,8 +425,9 @@ func (t *Tracker) String() string {
 
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	fmt.Fprintf(buffer, "%s\"%d\"{\n", indent, t.label)
-	if t.bytesLimit > 0 {
-		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.FormatBytes(t.bytesLimit))
+	bytesLimit := t.GetBytesLimit()
+	if bytesLimit > 0 {
+		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.FormatBytes(bytesLimit))
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.FormatBytes(t.BytesConsumed()))
 
@@ -491,4 +600,23 @@ const (
 	LabelForApplyCache int = -17
 	// LabelForSimpleTask represents the label of the simple task
 	LabelForSimpleTask int = -18
+	// LabelForCTEStorage represents the label of CTE storage
+	LabelForCTEStorage int = -19
+	// LabelForIndexJoinInnerWorker represents the label of IndexJoin InnerWorker
+	LabelForIndexJoinInnerWorker int = -20
+	// LabelForIndexJoinOuterWorker represents the label of IndexJoin OuterWorker
+	LabelForIndexJoinOuterWorker int = -21
+	// LabelForBindCache represents the label of the bind cache
+	LabelForBindCache int = -22
+	// LabelForNonTransactionalDML represents the label of the non-transactional DML
+	LabelForNonTransactionalDML = -23
+	// LabelForAnalyzeMemory represents the label of the memory of each analyze job
+	LabelForAnalyzeMemory int = -24
+	// LabelForGlobalAnalyzeMemory represents the label of the global memory of all analyze jobs
+	LabelForGlobalAnalyzeMemory int = -25
 )
+
+// MetricsTypes is used to get label for metrics
+var MetricsTypes = map[int]string{
+	LabelForGlobalAnalyzeMemory: "analyze",
+}

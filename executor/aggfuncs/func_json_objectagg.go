@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,8 +29,6 @@ import (
 const (
 	// DefPartialResult4JsonObjectAgg is the size of partialResult4JsonObject
 	DefPartialResult4JsonObjectAgg = int64(unsafe.Sizeof(partialResult4JsonObjectAgg{}))
-	// DefMapStringInterfaceBucketSize = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(interface{}))+2*ptrSize
-	DefMapStringInterfaceBucketSize = 8*(1+16+16) + 16
 )
 
 type jsonObjectAgg struct {
@@ -45,7 +44,7 @@ func (e *jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) 
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
 	p.bInMap = 0
-	return PartialResult(&p), DefPartialResult4JsonObjectAgg + (1<<p.bInMap)*DefMapStringInterfaceBucketSize
+	return PartialResult(&p), DefPartialResult4JsonObjectAgg + (1<<p.bInMap)*hack.DefBucketMemoryUsageForMapStringToAny
 }
 
 func (e *jsonObjectAgg) ResetPartialResult(pr PartialResult) {
@@ -113,7 +112,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			if _, ok := p.entries[keyString]; !ok {
 				memDelta += int64(len(keyString)) + getValMemDelta(realVal)
 				if len(p.entries)+1 > (1<<p.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-					memDelta += (1 << p.bInMap) * DefMapStringInterfaceBucketSize
+					memDelta += (1 << p.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
 					p.bInMap++
 				}
 			}
@@ -161,7 +160,7 @@ func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst Par
 		p2.entries[k] = v
 		memDelta += int64(len(k)) + getValMemDelta(v)
 		if len(p2.entries)+1 > (1<<p2.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			memDelta += (1 << p2.bInMap) * DefMapStringInterfaceBucketSize
+			memDelta += (1 << p2.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
 			p2.bInMap++
 		}
 	}

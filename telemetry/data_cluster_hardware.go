@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -68,11 +69,7 @@ func normalizeFieldName(name string) string {
 
 func getClusterHardware(ctx sessionctx.Context) ([]*clusterHardwareItem, error) {
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT TYPE, INSTANCE, DEVICE_TYPE, DEVICE_NAME, NAME, VALUE FROM information_schema.cluster_hardware`)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT TYPE, INSTANCE, DEVICE_TYPE, DEVICE_NAME, NAME, VALUE FROM information_schema.cluster_hardware`)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -86,7 +83,10 @@ L:
 		instance := row.GetString(1)
 		activeItem, ok := itemsByInstance[instance]
 		if !ok {
-			hostHash, port := parseAddressAndHash(instance)
+			hostHash, port, err := parseAddressAndHash(instance)
+			if err != nil {
+				return nil, err
+			}
 			activeItem = &clusterHardwareItem{
 				InstanceType:   row.GetString(0),
 				ListenHostHash: hostHash,
@@ -127,7 +127,10 @@ L:
 				// Use plain text only when it is in a list that we know safe.
 				hashedDeviceName = normalizedDiskName
 			} else {
-				hashedDeviceName = hashString(normalizedDiskName)
+				hashedDeviceName, err = hashString(normalizedDiskName)
+				if err != nil {
+					return nil, err
+				}
 			}
 			activeDiskItem, ok := activeItem.Disk[hashedDeviceName]
 			if !ok {
@@ -141,7 +144,10 @@ L:
 					// Use plain text only when it is in a list that we know safe.
 					path = fieldValue
 				} else {
-					path = hashString(fieldValue)
+					path, err = hashString(fieldValue)
+					if err != nil {
+						return nil, err
+					}
 				}
 				activeDiskItem[normalizeFieldName("path")] = path
 			} else if sortedStringContains(sortedDiskAllowedFieldNames, fieldName) {

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,21 +24,26 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -84,18 +90,39 @@ type worker struct {
 	wg              sync.WaitGroup
 
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
-	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 	logCtx          context.Context
+	lockSeqNum      bool
+
+	*ddlCtx
 }
 
-func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
+// JobContext is the ddl job execution context.
+type JobContext struct {
+	// below fields are cache for top sql
+	ddlJobCtx          context.Context
+	cacheSQL           string
+	cacheNormalizedSQL string
+	cacheDigest        *parser.Digest
+}
+
+// NewJobContext returns a new ddl job context.
+func NewJobContext() *JobContext {
+	return &JobContext{
+		ddlJobCtx:          context.Background(),
+		cacheSQL:           "",
+		cacheNormalizedSQL: "",
+		cacheDigest:        nil,
+	}
+}
+
+func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
 	worker := &worker{
 		id:              atomic.AddInt32(&ddlWorkerID, 1),
 		tp:              tp,
 		ddlJobCh:        make(chan struct{}, 1),
 		ctx:             ctx,
-		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
+		ddlCtx:          dCtx,
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
 	}
@@ -111,7 +138,7 @@ func (w *worker) typeStr() string {
 	case generalWorker:
 		str = "general"
 	case addIdxWorker:
-		str = model.AddIndexStr
+		str = "add index"
 	default:
 		str = "unknown"
 	}
@@ -207,14 +234,11 @@ func asyncNotify(ch chan struct{}) {
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
 	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	var jobs []*model.Job
-	var err error
-	switch curJob.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		jobs, err = t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-	default:
-		jobs, err = t.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
+	jobListKey := meta.DefaultJobListKey
+	if !curJob.MayNeedReorg() {
+		jobListKey = meta.AddIndexJobListKey
 	}
+	jobs, err := t.GetAllDDLJobsInQueue(jobListKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -237,7 +261,6 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 }
 
 func (d *ddl) limitDDLJobs() {
-	defer d.wg.Done()
 	defer tidbutil.Recover(metrics.LabelDDL, "limitDDLJobs", nil, true)
 
 	tasks := make([]*limitJobTask, 0, batchAddingJobs)
@@ -266,25 +289,36 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		for i, task := range tasks {
 			job := task.job
 			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
+			job.State = model.JobStateQueueing
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
 			}
-
-			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-				jobKey := meta.AddIndexJobListKey
-				err = t.EnQueueDDLJob(job, jobKey)
-			} else {
-				err = t.EnQueueDDLJob(job)
+			jobListKey := meta.DefaultJobListKey
+			if job.MayNeedReorg() {
+				jobListKey = meta.AddIndexJobListKey
 			}
-			if err != nil {
+			failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
+				if val.(bool) {
+					if len(job.Args) > 0 {
+						job.Args[0] = 1
+					}
+				}
+			})
+			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
 				return errors.Trace(err)
 			}
 		}
+		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
+			}
+		})
 		return nil
 	})
 	var jobs string
@@ -294,26 +328,41 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}
-	logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	}
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
 func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
-	var job *model.Job
-
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
-	})
+	se, err := d.sessPool.get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer d.sessPool.put(se)
+	job, err := GetHistoryJobByID(se, id)
 
 	return job, errors.Trace(err)
+}
+
+func injectFailPointForGetJob(job *model.Job) {
+	if job == nil {
+		return
+	}
+	failpoint.Inject("mockModifyJobSchemaId", func(val failpoint.Value) {
+		job.SchemaID = int64(val.(int))
+	})
+	failpoint.Inject("MockModifyJobTableId", func(val failpoint.Value) {
+		job.TableID = int64(val.(int))
+	})
 }
 
 // getFirstDDLJob gets the first DDL job form DDL queue.
 func (w *worker) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 	job, err := t.GetDDLJobByIdx(0)
+	injectFailPointForGetJob(job)
 	return job, errors.Trace(err)
 }
 
@@ -354,14 +403,31 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
 }
 
-func (w *worker) deleteRange(job *model.Job) error {
+func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 	var err error
 	if job.Version <= currentVersion {
-		err = w.delRangeManager.addDelRangeJob(job)
+		err = w.delRangeManager.addDelRangeJob(ctx, job)
 	} else {
-		err = errInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
+		err = dbterror.ErrInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
 	}
 	return errors.Trace(err)
+}
+
+func jobNeedGC(job *model.Job) bool {
+	if !job.IsCancelled() {
+		switch job.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			if job.State != model.JobStateRollbackDone {
+				break
+			}
+			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+			return true
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
+			return true
+		}
+	}
+	return false
 }
 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
@@ -372,22 +438,22 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	if !job.IsCancelled() {
-		switch job.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			if job.State != model.JobStateRollbackDone {
-				break
-			}
-
-			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-			err = w.deleteRange(job)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn:
-			err = w.deleteRange(job)
+	if jobNeedGC(job) {
+		err = w.deleteRange(w.ctx, job)
+		if err != nil {
+			return err
 		}
 	}
-	if job.Type == model.ActionRecoverTable {
-		err = finishRecoverTable(w, t, job)
+
+	switch job.Type {
+	case model.ActionRecoverTable:
+		err = finishRecoverTable(w, job)
+	case model.ActionCreateTables:
+		if job.IsCancelled() {
+			// it may be too large that it can not be added to the history queue, too
+			// delete its arguments
+			job.Args = nil
+		}
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -406,11 +472,20 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		// Notice: warnings is used to support non-strict mode.
 		updateRawArgs = false
 	}
+	w.writeDDLSeqNum(job)
+	w.removeJobCtx(job)
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
 
-func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
+func (w *worker) writeDDLSeqNum(job *model.Job) {
+	w.ddlSeqNumMu.Lock()
+	w.ddlSeqNumMu.seqNum++
+	w.lockSeqNum = true
+	job.SeqNum = w.ddlSeqNumMu.seqNum
+}
+
+func finishRecoverTable(w *worker, job *model.Job) error {
 	tbInfo := &model.TableInfo{}
 	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
@@ -444,11 +519,38 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 	return true, nil
 }
 
-func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
-	if tp == model.AddIndexStr || tp == model.AddPrimaryKeyStr {
+func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
+	if tp == addIdxWorker {
 		return meta.NewMeta(txn, meta.AddIndexJobListKey)
 	}
 	return meta.NewMeta(txn)
+}
+
+func (w *JobContext) setDDLLabelForTopSQL(job *model.Job) {
+	if !topsqlstate.TopSQLEnabled() || job == nil {
+		return
+	}
+
+	if job.Query != w.cacheSQL || w.cacheDigest == nil {
+		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
+		w.cacheSQL = job.Query
+		w.ddlJobCtx = topsql.AttachAndRegisterSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, false)
+	} else {
+		topsql.AttachAndRegisterSQLInfo(w.ddlJobCtx, w.cacheNormalizedSQL, w.cacheDigest, false)
+	}
+}
+
+func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
+	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
+		return nil
+	}
+
+	digest := w.cacheDigest
+	tagger := func(req *tikvrpc.Request) {
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
+			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+	}
+	return tagger
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
@@ -473,11 +575,21 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			var err error
-			t := newMetaWithQueueTp(txn, w.typeStr())
+			t := newMetaWithQueueTp(txn, w.tp)
 			// We become the owner. Get the first job and run it.
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
 				return errors.Trace(err)
+			}
+
+			// only general ddls allowed to be executed when TiKV is disk full.
+			if w.tp == addIdxWorker && job.IsRunning() {
+				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+			}
+
+			w.setDDLLabelForTopSQL(job)
+			if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
+				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
@@ -538,10 +650,20 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 
 		if err != nil {
+			if w.lockSeqNum {
+				// txn commit failed, we should reset seqNum.
+				w.ddlSeqNumMu.seqNum--
+				w.lockSeqNum = false
+				w.ddlSeqNumMu.Unlock()
+			}
 			return errors.Trace(err)
 		} else if job == nil {
 			// No job now, return and retry getting later.
 			return nil
+		}
+		if w.lockSeqNum {
+			w.lockSeqNum = false
+			d.ddlSeqNumMu.Unlock()
 		}
 		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
 
@@ -563,7 +685,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		d.mu.hook.OnJobUpdated(job)
 		d.mu.RUnlock()
 
-		if job.IsSynced() || job.IsCancelled() {
+		if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
@@ -575,8 +697,9 @@ func skipWriteBinlog(job *model.Job) bool {
 	// it's used to update table's TiFlash replica available status.
 	case model.ActionUpdateTiFlashReplicaStatus:
 		return true
-	// It is done without modifying table info, bin log is not needed
-	case model.ActionAlterTableAlterPartition:
+	// Don't sync 'alter table cache|nocache' to other tools.
+	// It's internal to the current cluster.
+	case model.ActionAlterCacheTable, model.ActionAlterNoCacheTable:
 		return true
 	}
 
@@ -621,12 +744,59 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 	return t
 }
 
+// countForPanic records the error count for DDL job.
+func (w *worker) countForPanic(job *model.Job) {
+	// If run DDL job panic, just cancel the DDL jobs.
+	if job.State == model.JobStateRollingback {
+		job.State = model.JobStateCancelled
+	} else {
+		job.State = model.JobStateCancelling
+	}
+	job.ErrorCount++
+
+	// Load global DDL variables.
+	if err1 := loadDDLVars(w); err1 != nil {
+		logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
+	}
+	errorCount := variable.GetDDLErrorCountLimit()
+
+	if job.ErrorCount > errorCount {
+		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
+		logutil.Logger(w.logCtx).Warn(msg)
+		job.Error = toTError(errors.New(msg))
+		job.State = model.JobStateCancelled
+	}
+}
+
+// countForError records the error count for DDL job.
+func (w *worker) countForError(err error, job *model.Job) error {
+	job.Error = toTError(err)
+	job.ErrorCount++
+
+	// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
+	if job.State == model.JobStateCancelled {
+		logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
+		return nil
+	}
+	logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
+
+	// Load global DDL variables.
+	if err1 := loadDDLVars(w); err1 != nil {
+		logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
+	}
+	// Check error limit to avoid falling into an infinite loop.
+	if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && job.IsRollbackable() {
+		logutil.Logger(w.logCtx).Warn("[ddl] DDL job error count exceed the limit, cancelling it now", zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
+		job.State = model.JobStateCancelling
+	}
+	return err
+}
+
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runDDLJob", w),
 		func() {
-			// If run DDL job panic, just cancel the DDL jobs.
-			job.State = model.JobStateCancelling
+			w.countForPanic(job)
 		}, false)
 
 	// Mock for run ddl job panic.
@@ -634,6 +804,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	timeStart := time.Now()
+	if job.RealStartTS == 0 {
+		job.RealStartTS = t.StartTS
+	}
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
@@ -658,17 +831,21 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreateSchema:
 		ver, err = onCreateSchema(d, t, job)
 	case model.ActionModifySchemaCharsetAndCollate:
-		ver, err = onModifySchemaCharsetAndCollate(t, job)
+		ver, err = onModifySchemaCharsetAndCollate(d, t, job)
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(d, t, job)
+	case model.ActionModifySchemaDefaultPlacement:
+		ver, err = onModifySchemaDefaultPlacement(d, t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
+	case model.ActionCreateTables:
+		ver, err = onCreateTables(d, t, job)
 	case model.ActionRepairTable:
 		ver, err = onRepairTable(d, t, job)
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(t, job)
+		ver, err = onDropTableOrView(d, t, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
@@ -680,90 +857,90 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionAddColumns:
 		ver, err = onAddColumns(d, t, job)
 	case model.ActionDropColumn:
-		ver, err = onDropColumn(t, job)
+		ver, err = onDropColumn(d, t, job)
 	case model.ActionDropColumns:
-		ver, err = onDropColumns(t, job)
+		ver, err = onDropColumns(d, t, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(d, t, job)
 	case model.ActionSetDefaultValue:
-		ver, err = onSetDefaultValue(t, job)
+		ver, err = onSetDefaultValue(d, t, job)
 	case model.ActionAddIndex:
 		ver, err = w.onCreateIndex(d, t, job, false)
 	case model.ActionAddPrimaryKey:
 		ver, err = w.onCreateIndex(d, t, job, true)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		ver, err = onDropIndex(t, job)
+		ver, err = onDropIndex(d, t, job)
+	case model.ActionDropIndexes:
+		ver, err = onDropIndexes(d, t, job)
 	case model.ActionRenameIndex:
-		ver, err = onRenameIndex(t, job)
+		ver, err = onRenameIndex(d, t, job)
 	case model.ActionAddForeignKey:
-		ver, err = onCreateForeignKey(t, job)
+		ver, err = onCreateForeignKey(d, t, job)
 	case model.ActionDropForeignKey:
-		ver, err = onDropForeignKey(t, job)
+		ver, err = onDropForeignKey(d, t, job)
 	case model.ActionTruncateTable:
 		ver, err = onTruncateTable(d, t, job)
 	case model.ActionRebaseAutoID:
-		ver, err = onRebaseRowIDType(d.store, t, job)
+		ver, err = onRebaseRowIDType(d, t, job)
 	case model.ActionRebaseAutoRandomBase:
-		ver, err = onRebaseAutoRandomType(d.store, t, job)
+		ver, err = onRebaseAutoRandomType(d, t, job)
 	case model.ActionRenameTable:
 		ver, err = onRenameTable(d, t, job)
 	case model.ActionShardRowID:
 		ver, err = w.onShardRowID(d, t, job)
 	case model.ActionModifyTableComment:
-		ver, err = onModifyTableComment(t, job)
+		ver, err = onModifyTableComment(d, t, job)
 	case model.ActionModifyTableAutoIdCache:
-		ver, err = onModifyTableAutoIDCache(t, job)
+		ver, err = onModifyTableAutoIDCache(d, t, job)
 	case model.ActionAddTablePartition:
 		ver, err = w.onAddTablePartition(d, t, job)
 	case model.ActionModifyTableCharsetAndCollate:
-		ver, err = onModifyTableCharsetAndCollate(t, job)
+		ver, err = onModifyTableCharsetAndCollate(d, t, job)
 	case model.ActionRecoverTable:
 		ver, err = w.onRecoverTable(d, t, job)
 	case model.ActionLockTable:
-		ver, err = onLockTables(t, job)
+		ver, err = onLockTables(d, t, job)
 	case model.ActionUnlockTable:
-		ver, err = onUnlockTables(t, job)
+		ver, err = onUnlockTables(d, t, job)
 	case model.ActionSetTiFlashReplica:
-		ver, err = w.onSetTableFlashReplica(t, job)
+		ver, err = w.onSetTableFlashReplica(d, t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
-		ver, err = onUpdateFlashReplicaStatus(t, job)
+		ver, err = onUpdateFlashReplicaStatus(d, t, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(d, t, job)
 	case model.ActionAlterIndexVisibility:
-		ver, err = onAlterIndexVisibility(t, job)
-	case model.ActionAlterTableAlterPartition:
-		ver, err = onAlterTableAlterPartition(t, job)
+		ver, err = onAlterIndexVisibility(d, t, job)
 	case model.ActionAlterSequence:
-		ver, err = onAlterSequence(t, job)
+		ver, err = onAlterSequence(d, t, job)
 	case model.ActionRenameTables:
 		ver, err = onRenameTables(d, t, job)
+	case model.ActionAlterTableAttributes:
+		ver, err = onAlterTableAttributes(d, t, job)
+	case model.ActionAlterTablePartitionAttributes:
+		ver, err = onAlterTablePartitionAttributes(d, t, job)
+	case model.ActionCreatePlacementPolicy:
+		ver, err = onCreatePlacementPolicy(d, t, job)
+	case model.ActionDropPlacementPolicy:
+		ver, err = onDropPlacementPolicy(d, t, job)
+	case model.ActionAlterPlacementPolicy:
+		ver, err = onAlterPlacementPolicy(d, t, job)
+	case model.ActionAlterTablePartitionPlacement:
+		ver, err = onAlterTablePartitionPlacement(d, t, job)
+	case model.ActionAlterTablePlacement:
+		ver, err = onAlterTablePlacement(d, t, job)
+	case model.ActionAlterCacheTable:
+		ver, err = onAlterCacheTable(d, t, job)
+	case model.ActionAlterNoCacheTable:
+		ver, err = onAlterNoCacheTable(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
-		err = errInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
+		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
 
-	// Save errors in job, so that others can know errors happened.
+	// Save errors in job if any, so that others can know errors happened.
 	if err != nil {
-		job.Error = toTError(err)
-		job.ErrorCount++
-
-		// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
-		if job.State == model.JobStateCancelled {
-			logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
-			return ver, nil
-		}
-		logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
-
-		// Load global ddl variables.
-		if err1 := loadDDLVars(w); err1 != nil {
-			logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
-		}
-		// Check error limit to avoid falling into an infinite loop.
-		if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && admin.IsJobRollbackable(job) {
-			logutil.Logger(w.logCtx).Warn("[ddl] DDL job error count exceed the limit, cancelling it now", zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
-			job.State = model.JobStateCancelling
-		}
+		err = w.countForError(err, job)
 	}
 	return
 }
@@ -876,7 +1053,7 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
+func updateSchemaVersion(_ *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	schemaVersion, err := t.GenSchemaVersion()
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -887,6 +1064,21 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		SchemaID: job.SchemaID,
 	}
 	switch job.Type {
+	case model.ActionCreateTables:
+		var tableInfos []*model.TableInfo
+		err = job.DecodeArgs(&tableInfos)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.AffectedOpts = make([]*model.AffectedOption, len(tableInfos))
+		for i := range tableInfos {
+			diff.AffectedOpts[i] = &model.AffectedOption{
+				SchemaID:    job.SchemaID,
+				OldSchemaID: job.SchemaID,
+				TableID:     tableInfos[i].ID,
+				OldTableID:  tableInfos[i].ID,
+			}
+		}
 	case model.ActionTruncateTable:
 		// Truncate table has two table ID, should be handled differently.
 		err = job.DecodeArgs(&diff.TableID)
@@ -921,11 +1113,11 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 		diff.TableID = job.TableID
 	case model.ActionRenameTables:
-		oldSchemaIDs := []int64{}
-		newSchemaIDs := []int64{}
-		tableNames := []*model.CIStr{}
-		tableIDs := []int64{}
-		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs)
+		var (
+			oldSchemaIDs, newSchemaIDs, tableIDs []int64
+			tableNames, oldSchemaNames           []*model.CIStr
+		)
+		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -972,15 +1164,6 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
-			}
-		}
-	case model.ActionAlterTableAlterPartition:
-		diff.TableID = job.TableID
-		if len(job.CtxVars) > 0 {
-			diff.AffectedOpts = []*model.AffectedOption{
-				{
-					TableID: job.CtxVars[0].(int64),
-				},
 			}
 		}
 	default:

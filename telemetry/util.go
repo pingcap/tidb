@@ -8,13 +8,14 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package telemetry
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505
 	"fmt"
 	"sort"
 	"strconv"
@@ -22,15 +23,18 @@ import (
 )
 
 // hashString returns the SHA1 checksum in hex of the string.
-func hashString(text string) string {
-	hash := sha1.New()
-	hash.Write([]byte(text))
+func hashString(text string) (string, error) {
+	hash := sha1.New() // #nosec G401
+	_, err := hash.Write([]byte(text))
+	if err != nil {
+		return "", err
+	}
 	hashed := hash.Sum(nil)
-	return fmt.Sprintf("%x", hashed)
+	return fmt.Sprintf("%x", hashed), nil
 }
 
 // parseAddressAndHash parses an address in HOST:PORT format, returns the hashed host and the port.
-func parseAddressAndHash(address string) (string, string) {
+func parseAddressAndHash(address string) (string, string, error) {
 	var host, port string
 	if !strings.Contains(address, ":") {
 		host = address
@@ -48,8 +52,11 @@ func parseAddressAndHash(address string) (string, string) {
 			port = lastPart
 		}
 	}
-
-	return hashString(host), port
+	res, err := hashString(host)
+	if err != nil {
+		return "", "", err
+	}
+	return res, port, err
 }
 
 // See https://stackoverflow.com/a/58026884

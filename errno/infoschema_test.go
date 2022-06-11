@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,19 +17,10 @@ package errno
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testErrno{})
-
-type testErrno struct{}
-
-func (s *testErrno) TestCopySafety(c *C) {
-
+func TestCopySafety(t *testing.T) {
 	IncrementError(123, "user", "host")
 	IncrementError(321, "user2", "host2")
 	IncrementWarning(123, "user", "host")
@@ -48,42 +40,42 @@ func (s *testErrno) TestCopySafety(c *C) {
 	IncrementWarning(333, "c", "d")
 
 	// global stats
-	c.Assert(stats.global[123].ErrorCount, Equals, 3)
-	c.Assert(globalCopy[123].ErrorCount, Equals, 1)
+	assert.Equal(t, 3, stats.global[123].ErrorCount)
+	assert.Equal(t, 1, globalCopy[123].ErrorCount)
 
 	// user stats
-	c.Assert(len(stats.users), Equals, 6)
-	c.Assert(len(userCopy), Equals, 3)
-	c.Assert(stats.users["user"][123].ErrorCount, Equals, 2)
-	c.Assert(stats.users["user"][123].WarningCount, Equals, 2)
-	c.Assert(userCopy["user"][123].ErrorCount, Equals, 1)
-	c.Assert(userCopy["user"][123].WarningCount, Equals, 1)
+	assert.Len(t, stats.users, 6)
+	assert.Len(t, userCopy, 3)
+	assert.Equal(t, 2, stats.users["user"][123].ErrorCount)
+	assert.Equal(t, 2, stats.users["user"][123].WarningCount)
+	assert.Equal(t, 1, userCopy["user"][123].ErrorCount)
+	assert.Equal(t, 1, userCopy["user"][123].WarningCount)
 
 	// ensure there is no user3 in userCopy
 	_, ok := userCopy["user3"]
-	c.Assert(ok, IsFalse)
+	assert.False(t, ok)
 	_, ok = stats.users["user3"]
-	c.Assert(ok, IsTrue)
+	assert.True(t, ok)
 	_, ok = userCopy["a"]
-	c.Assert(ok, IsFalse)
+	assert.False(t, ok)
 	_, ok = stats.users["a"]
-	c.Assert(ok, IsTrue)
+	assert.True(t, ok)
 
 	// host stats
-	c.Assert(len(stats.hosts), Equals, 5)
-	c.Assert(len(hostCopy), Equals, 3)
+	assert.Len(t, stats.hosts, 5)
+	assert.Len(t, hostCopy, 3)
+
 	IncrementError(123, "user3", "newhost")
-	c.Assert(len(stats.hosts), Equals, 6)
-	c.Assert(len(hostCopy), Equals, 3)
+	assert.Len(t, stats.hosts, 6)
+	assert.Len(t, hostCopy, 3)
 
 	// ensure there is no newhost in hostCopy
 	_, ok = hostCopy["newhost"]
-	c.Assert(ok, IsFalse)
+	assert.False(t, ok)
 	_, ok = stats.hosts["newhost"]
-	c.Assert(ok, IsTrue)
+	assert.True(t, ok)
 	_, ok = hostCopy["b"]
-	c.Assert(ok, IsFalse)
+	assert.False(t, ok)
 	_, ok = stats.hosts["b"]
-	c.Assert(ok, IsTrue)
-
+	assert.True(t, ok)
 }

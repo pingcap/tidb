@@ -8,24 +8,20 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package codec
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testDecimalSuite{})
-
-type testDecimalSuite struct {
-}
-
-func (s *testDecimalSuite) TestDecimalCodec(c *C) {
-	defer testleak.AfterTest(c)()
+func TestDecimalCodec(t *testing.T) {
 	inputs := []struct {
 		Input float64
 	}{
@@ -49,23 +45,22 @@ func (s *testDecimalSuite) TestDecimalCodec(c *C) {
 		datum := types.NewDatum(v)
 
 		b, err := EncodeDecimal([]byte{}, datum.GetMysqlDecimal(), datum.Length(), datum.Frac())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		_, d, prec, frac, err := DecodeDecimal(b)
 		if datum.Length() != 0 {
-			c.Assert(prec, Equals, datum.Length())
-			c.Assert(frac, Equals, datum.Frac())
+			require.Equal(t, datum.Length(), prec)
+			require.Equal(t, datum.Frac(), frac)
 		} else {
 			prec1, frac1 := datum.GetMysqlDecimal().PrecisionAndFrac()
-			c.Assert(prec, Equals, prec1)
-			c.Assert(frac, Equals, frac1)
+			require.Equal(t, prec1, prec)
+			require.Equal(t, frac1, frac)
 		}
-		c.Assert(err, IsNil)
-		c.Assert(v.Compare(d), Equals, 0)
+		require.NoError(t, err)
+		require.Equal(t, 0, v.Compare(d))
 	}
 }
 
-func (s *testDecimalSuite) TestFrac(c *C) {
-	defer testleak.AfterTest(c)()
+func TestFrac(t *testing.T) {
 	inputs := []struct {
 		Input *types.MyDecimal
 	}{
@@ -73,17 +68,14 @@ func (s *testDecimalSuite) TestFrac(c *C) {
 		{types.NewDecFromFloatForTest(0.03)},
 	}
 	for _, v := range inputs {
-		testFrac(c, v.Input)
+		var datum types.Datum
+		datum.SetMysqlDecimal(v.Input)
+
+		b, err := EncodeDecimal([]byte{}, datum.GetMysqlDecimal(), datum.Length(), datum.Frac())
+		require.NoError(t, err)
+
+		_, dec, _, _, err := DecodeDecimal(b)
+		require.NoError(t, err)
+		require.Equal(t, v.Input.String(), dec.String())
 	}
-}
-
-func testFrac(c *C, v *types.MyDecimal) {
-	var d1 types.Datum
-	d1.SetMysqlDecimal(v)
-
-	b, err := EncodeDecimal([]byte{}, d1.GetMysqlDecimal(), d1.Length(), d1.Frac())
-	c.Assert(err, IsNil)
-	_, dec, _, _, err := DecodeDecimal(b)
-	c.Assert(err, IsNil)
-	c.Assert(dec.String(), Equals, v.String())
 }

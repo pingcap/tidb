@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 package linux_test
@@ -15,20 +16,12 @@ package linux_test
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/sys/linux"
+	. "github.com/pingcap/tidb/util/sys/linux"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
 func TestGetOSVersion(t *testing.T) {
-	osRelease, err := linux.OSVersion()
-	if err != nil {
-		t.Fatal(t)
-	}
-	if len(osRelease) == 0 {
-		t.Fatalf("counld not get os version")
-	}
+	osRelease, err := OSVersion()
+	require.NoError(t, err)
+	require.NotEmpty(t, osRelease)
 }

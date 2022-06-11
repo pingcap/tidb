@@ -1,0 +1,16 @@
+[lightning]
+index-concurrency = 1
+table-concurrency = 1
+
+[checkpoint]
+enable = true
+driver = 'mysql'
+
+[tikv-importer]
+backend = 'local'
+max-kv-pairs = 3
+
+[mydumper]
+# ensure we get 3 engines.
+batch-size = 1
+batch-import-ratio = 0.0

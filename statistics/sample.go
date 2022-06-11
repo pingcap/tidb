@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,12 +18,13 @@ import (
 	"context"
 	"sort"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -45,6 +47,9 @@ type SampleItem struct {
 	// This property is used to calculate Ordinal in fast analyze.
 	Handle kv.Handle
 }
+
+// EmptySampleItemSize is the size of empty SampleItem, 96 = 72 (datum) + 8 (int) + 16.
+const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
 // CopySampleItems returns a deep copy of SampleItem slice.
 func CopySampleItems(items []*SampleItem) []*SampleItem {
@@ -77,7 +82,7 @@ func (s *sampleItemSorter) Len() int {
 
 func (s *sampleItemSorter) Less(i, j int) bool {
 	var cmp int
-	cmp, s.err = s.items[i].Value.CompareDatum(s.sc, &s.items[j].Value)
+	cmp, s.err = s.items[i].Value.Compare(s.sc, &s.items[j].Value, collate.GetBinaryCollator())
 	if s.err != nil {
 		return true
 	}
@@ -100,6 +105,7 @@ type SampleCollector struct {
 	CMSketch      *CMSketch
 	TopN          *TopN
 	TotalSize     int64 // TotalSize is the total size of column.
+	MemSize       int64 // major memory size of this sample collector.
 }
 
 // MergeSampleCollector merges two sample collectors.
@@ -135,7 +141,8 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	return collector
 }
 
-const maxSampleValueLength = mysql.MaxFieldVarCharLength / 2
+// MaxSampleValueLength defines the max length of the useful samples. If one sample value exceeds the max length, we drop it before building the stats.
+const MaxSampleValueLength = mysql.MaxFieldVarCharLength / 2
 
 // SampleCollectorFromProto converts SampleCollector from its protobuf representation.
 func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector {
@@ -150,7 +157,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	s.CMSketch, s.TopN = CMSketchAndTopNFromProto(collector.CmSketch)
 	for _, val := range collector.Samples {
 		// When store the histogram bucket boundaries to kv, we need to limit the length of the value.
-		if len(val) <= maxSampleValueLength {
+		if len(val) <= MaxSampleValueLength {
 			item := &SampleItem{Value: types.NewBytesDatum(val)}
 			s.Samples = append(s.Samples, item)
 		}
@@ -239,7 +246,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		}
 	}
 	ctx := context.TODO()
-	req := s.RecordSet.NewChunk()
+	req := s.RecordSet.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := s.RecordSet.Next(ctx, req)
