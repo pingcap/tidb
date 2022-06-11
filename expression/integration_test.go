@@ -7385,14 +7385,18 @@ func TestDateAddForNonExistingTimestamp(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(ts timestamp)")
-	// Non-existing CET timestamp.
-	tk.MustGetErrCode("insert into t values('2022-03-27 02:30:00')", errno.ErrTruncatedWrongValue)
-	tk.MustExec("insert into t values('2022-03-27 01:30:00')")
-	tk.MustExec("insert into t values('2022-10-30 02:30:00')")
-	tk.MustQuery("select date_add(ts, interval 1 hour) from t order by ts").Check([][]interface{}{
-		{"2022-03-27 02:30:00"},
-		{"2022-10-30 03:30:00"},
-	})
+        tk.MustExec("set time_zone = 'UTC'")
+        tk.MustExec("insert into t values('2022-03-27 00:30:00')")
+        tk.MustExec("insert into t values('2022-10-30 00:30:00')")
+        tk.MustExec("insert into t values('2022-10-30 01:30:00')")
+        tk.MustExec("set time_zone = 'Europe/Amsterdam'")
+        // Non-existing CET timestamp.
+        tk.MustGetErrCode("insert into t values('2022-03-27 02:30:00')", errno.ErrTruncatedWrongValue)
+        tk.MustQuery("select date_add(ts, interval 1 hour) from t order by ts").Check([][]interface{}{
+                {"2022-03-27 02:30:00"},
+                {"2022-10-30 03:30:00"},
+                {"2022-10-30 03:30:00"},
+        })   
 	tk.MustExec("drop table t")
 }
 
