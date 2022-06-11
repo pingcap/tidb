@@ -388,6 +388,20 @@ func TestIssue34823(t *testing.T) {
 	tk.MustQuery("select a from t1, t2 where cast(t1.a as binary(20)) between t2.b and t2.c;").Check(testkit.Rows("-1", "-1"))
 }
 
+func TestBetweenExprBinaryCollationInSingleSide(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1(a char(20)) collate utf8mb4_general_ci;")
+	tk.MustExec("create table t2(b binary(20), c char(20)) collate utf8mb4_general_ci;")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("insert into t2 values (0x0, 'A');")
+	tk.MustQuery("select * from t1, t2 where t1.a between t2.b and t2.c;").Check(testkit.Rows())
+}
+
 func TestInsertOnDuplicateLazyMoreThan1Row(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
