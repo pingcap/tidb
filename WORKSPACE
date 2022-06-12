@@ -1,12 +1,10 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
-http_archive(
+git_repository(
     name = "io_bazel_rules_go",
-    sha256 = "685052b498b6ddfe562ca7a97736741d87916fe536623afb7da2824c0211c369",
-    urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.33.0/rules_go-v0.33.0.zip",
-        "https://github.com/bazelbuild/rules_go/releases/download/v0.33.0/rules_go-v0.33.0.zip",
-    ],
+    commit = "194bc8f9eb2a23b5bbb173af8d9602bfae6db176",  # master as of 2020-02-03
+    remote = "https://github.com/hawkingrei/rules_go",
 )
 
 http_archive(
@@ -19,13 +17,13 @@ http_archive(
 )
 
 load("@io_bazel_rules_go//go:deps.bzl", "go_register_toolchains", "go_rules_dependencies")
-
 load("//:DEPS.bzl", "go_deps")
 
 # gazelle:repository_macro DEPS.bzl%go_deps
 go_deps()
 
 load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies", "go_repository")
+
 go_rules_dependencies()
 
 go_register_toolchains(version = "1.18.3")
