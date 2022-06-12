@@ -3668,8 +3668,14 @@ func (n *PartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type PartitionIntervalExpr struct {
+	IntervalExpr ExprNode
+	// TimeUnitInvalid if not Time based INTERVAL!
+	TimeUnit TimeUnitType
+}
+
 type PartitionInterval struct {
-	IntervalExpr  ExprNode
+	IntervalExpr  PartitionIntervalExpr
 	FirstRangeEnd *ExprNode
 	LastRangeEnd  *ExprNode
 	MaxValPart    bool

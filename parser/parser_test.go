@@ -6731,3 +6731,12 @@ func TestNonTransactionalDelete(t *testing.T) {
 
 	RunTest(t, cases, false)
 }
+
+// For `PARTITION BY [LINEAR] KEY ALGORITHM` syntax
+func TestIntervalPartition(t *testing.T) {
+	table := []testCase{
+		{"CREATE TABLE t  (c1 integer ,c2 integer) PARTITION BY RANGE (c1) INTERVAL (1000)", true, "CREATE TABLE `t` (`c1` INT,`c2` INT) PARTITION BY LINEAR KEY ALGORITHM = 1 (`c1`,`c2`) PARTITIONS 4"},
+	}
+
+	RunTest(t, table, false)
+}

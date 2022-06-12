@@ -1030,6 +1030,7 @@ import (
 	TableRefsClause                        "Table references clause"
 	FieldItem                              "Field item for load data clause"
 	FieldItemList                          "Field items for load data clause"
+	FirstAndLastPartOpt                    "First and Last partition option"
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
@@ -1066,6 +1067,7 @@ import (
 	IndexPartSpecificationList             "List of index column name or expression"
 	IndexPartSpecificationListOpt          "Optional list of index column name or expression"
 	InsertValues                           "Rest part of INSERT/REPLACE INTO statement"
+	IntervalExpr                           "Interval expression"
 	JoinTable                              "join table"
 	JoinType                               "join type"
 	KillOrKillTiDB                         "Kill or Kill TiDB"
@@ -1080,6 +1082,8 @@ import (
 	LocalOpt                               "Local opt"
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
+	MaxValPartOpt                          "MAXVALUE partition option"
+	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt                "NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType                             "Grant statement object type"
@@ -1104,6 +1108,7 @@ import (
 	PartitionDefinition                    "Partition definition"
 	PartitionDefinitionList                "Partition definition list"
 	PartitionDefinitionListOpt             "Partition definition list option"
+	PartitionIntervalOpt                   "Partition interval option"
 	PartitionKeyAlgorithmOpt               "ALGORITHM = n option for KEY partition"
 	PartitionMethod                        "Partition method"
 	PartitionOpt                           "Partition option"
@@ -3895,14 +3900,16 @@ PartitionMethod:
 		$$ = &ast.PartitionMethod{
 			Tp:       model.PartitionTypeRange,
 			Expr:     $3.(ast.ExprNode),
-			Interval: $5,
+			Interval: $5.(*ast.PartitionInterval),
 		}
 	}
 |	"RANGE" FieldsOrColumns '(' ColumnNameList ')' PartitionIntervalOpt
 	{
+		partitionInterval, _ := $6.(*ast.PartitionInterval)
 		$$ = &ast.PartitionMethod{
 			Tp:          model.PartitionTypeRange,
 			ColumnNames: $4.([]*ast.ColumnName),
+			Interval:    partitionInterval,
 		}
 	}
 |	"LIST" '(' BitExpr ')'
@@ -3945,29 +3952,29 @@ PartitionIntervalOpt:
 	{
 		$$ = nil
 	}
-|	"INTERVAL" '(' IntervalExpr ')' FirstAndLastPartOpt NullPartOpt MaxValOpt
+|	"INTERVAL" '(' IntervalExpr ')' FirstAndLastPartOpt NullPartOpt MaxValPartOpt
 	{
 		$$ = &ast.PartitionInterval{
-			IntervalExpr:  $3,
-			FirstRangeEnd: $5.(PartitionInterval).FirstRangeEnd,
-			FirstRangeEnd: $5.(PartitionInterval).LastRangeEnd,
-			NullPart:      $6,
-			MaxValPart:    $7,
+			IntervalExpr:  $3.(ast.PartitionIntervalExpr),
+			FirstRangeEnd: $5.(ast.PartitionInterval).FirstRangeEnd,
+			LastRangeEnd:  $5.(ast.PartitionInterval).LastRangeEnd,
+			NullPart:      $6.(bool),
+			MaxValPart:    $7.(bool),
 		}
 	}
 
 IntervalExpr:
 	Expression
 	{
-		$$ = &[]ast.ExprNode{$1}
+		$$ = ast.PartitionIntervalExpr{IntervalExpr: $1, TimeUnit: ast.TimeUnitInvalid}
 	}
 |	Expression TimeUnit
 	{
-		$$ = &[]ast.ExprNode{$1, &ast.TimeUnitExp{Unit: $2.(ast.TimeUnitType)}}
+		$$ = ast.PartitionIntervalExpr{IntervalExpr: $1, TimeUnit: $2.(ast.TimeUnitType)}
 	}
 |	"INTERVAL" Expression TimeUnit
 	{
-		$$ = &[]ast.ExprNode{$2, &ast.TimeUnitExp{Unit: $3.(ast.TimeUnitType)}}
+		$$ = ast.PartitionIntervalExpr{IntervalExpr: $2, TimeUnit: $3.(ast.TimeUnitType)}
 	}
 
 NullPartOpt:
@@ -3979,7 +3986,7 @@ NullPartOpt:
 		$$ = true
 	}
 
-MaxValOpt:
+MaxValPartOpt:
 	{
 		$$ = false
 	}
@@ -3990,13 +3997,15 @@ MaxValOpt:
 
 FirstAndLastPartOpt:
 	{
-		$$ = &ast.PartitionInterval{} // First/LastRangeEnd defaults to nil
+		$$ = ast.PartitionInterval{} // First/LastRangeEnd defaults to nil
 	}
-|	"FIRST" "PARTITION" "LESS" "THAN" '(' Expr ')' "LAST" "PARTITION" "LESS" "THAN" '(' Expr ')'
+|	"FIRST" "PARTITION" "LESS" "THAN" '(' Expression ')' "LAST" "PARTITION" "LESS" "THAN" '(' Expression ')'
 	{
-		$$ = &ast.PartitionInterval{
-			FirstRangeEnd: $6,
-			LastRangeEnd:  $13,
+		first := $6.(ast.ExprNode)
+		last := $13.(ast.ExprNode)
+		$$ = ast.PartitionInterval{
+			FirstRangeEnd: &first,
+			LastRangeEnd:  &last,
 		}
 	}
 
