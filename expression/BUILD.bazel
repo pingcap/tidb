@@ -172,9 +172,9 @@ go_test(
         "util_test.go",
     ],
     data = glob(["testdata/**"]),
+    embed = [":expression"],
     flaky = True,
     shard_count = 50,
-    embed = [":expression"],
     deps = [
         "//config",
         "//domain",
