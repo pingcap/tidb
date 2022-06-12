@@ -398,7 +398,6 @@ func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFun
 			restoreSQLs += "; "
 		}
 		restoreSQLs += restoreSQL
-
 	}
 	require.Equalf(t, expectSQLs, restoreSQLs, "restore %v; expect %v", restoreSQLs, expectSQLs)
 }
@@ -6119,9 +6118,20 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 				}
 			}
 		}
-		if node.Partition != nil && node.Partition.Expr != nil {
+		if node.Partition != nil {
 			var tmpCleaner nodeTextCleaner
-			node.Partition.Expr.Accept(&tmpCleaner)
+			if node.Partition.Expr != nil {
+				node.Partition.Expr.Accept(&tmpCleaner)
+			}
+			if node.Partition.Interval != nil {
+				node.Partition.Interval.IntervalExpr.Expr.Accept(&tmpCleaner)
+				if node.Partition.Interval.FirstRangeEnd != nil {
+					(*node.Partition.Interval.FirstRangeEnd).Accept(&tmpCleaner)
+				}
+				if node.Partition.Interval.LastRangeEnd != nil {
+					(*node.Partition.Interval.LastRangeEnd).Accept(&tmpCleaner)
+				}
+			}
 		}
 	case *ast.DeleteStmt:
 		for _, tableHint := range node.TableHints {
@@ -6145,6 +6155,9 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 	case *ast.SelectField:
 		node.Offset = 0
 	case *test_driver.ValueExpr:
+		if node.Kind() == test_driver.KindMysqlDecimal {
+			_ = node.GetMysqlDecimal().FromString(node.GetMysqlDecimal().ToString())
+		}
 		if node.Kind() == test_driver.KindMysqlDecimal {
 			_ = node.GetMysqlDecimal().FromString(node.GetMysqlDecimal().ToString())
 		}
@@ -6732,10 +6745,11 @@ func TestNonTransactionalDelete(t *testing.T) {
 	RunTest(t, cases, false)
 }
 
-// For `PARTITION BY [LINEAR] KEY ALGORITHM` syntax
 func TestIntervalPartition(t *testing.T) {
 	table := []testCase{
-		{"CREATE TABLE t  (c1 integer ,c2 integer) PARTITION BY RANGE (c1) INTERVAL (1000)", true, "CREATE TABLE `t` (`c1` INT,`c2` INT) PARTITION BY LINEAR KEY ALGORITHM = 1 (`c1`,`c2`) PARTITIONS 4"},
+		{"CREATE TABLE t (c1 integer,c2 integer) PARTITION BY RANGE (c1) INTERVAL (1000)", true, "CREATE TABLE `t` (`c1` INT,`c2` INT) PARTITION BY RANGE (`c1`) INTERVAL (1000)"},
+		{"CREATE TABLE t (c1 int, c2 date) PARTITION BY RANGE (c2) INTERVAL (1 Month)", true, "CREATE TABLE `t` (`c1` INT,`c2` DATE) PARTITION BY RANGE (`c2`) INTERVAL (1 MONTH)"},
+		{"CREATE TABLE t (c1 int, c2 date) PARTITION BY RANGE (c1) (partition p1 values less than (22))", true, "CREATE TABLE `t` (`c1` INT,`c2` DATE) PARTITION BY RANGE (`c1`) (PARTITION `p1` VALUES LESS THAN (22))"},
 	}
 
 	RunTest(t, table, false)

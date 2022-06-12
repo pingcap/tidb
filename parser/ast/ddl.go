@@ -3669,7 +3669,7 @@ func (n *PartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 }
 
 type PartitionIntervalExpr struct {
-	IntervalExpr ExprNode
+	Expr ExprNode
 	// TimeUnitInvalid if not Time based INTERVAL!
 	TimeUnit TimeUnitType
 }
@@ -3689,8 +3689,7 @@ type PartitionMethod struct {
 	// Linear is a modifier to the HASH and KEY type for choosing a different
 	// algorithm
 	Linear bool
-	// Expr is an expression used as argument of HASH, RANGE, LIST and
-	// SYSTEM_TIME types
+	// Expr is an expression used as argument of HASH, RANGE AND LIST types
 	Expr ExprNode
 	// ColumnNames is a list of column names used as argument of KEY,
 	// RANGE COLUMNS and LIST COLUMNS types
@@ -3735,6 +3734,10 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(" ")
 			ctx.WriteKeyWord(n.Unit.String())
 		}
+		if n.Limit > 0 {
+			ctx.WriteKeyWord(" LIMIT ")
+			ctx.WritePlainf("%d", n.Limit)
+		}
 
 	case n.Expr != nil:
 		ctx.WritePlain(" (")
@@ -3759,9 +3762,30 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if n.Limit > 0 {
-		ctx.WriteKeyWord(" LIMIT ")
-		ctx.WritePlainf("%d", n.Limit)
+	if n.Interval != nil {
+		ctx.WritePlain(" INTERVAL (")
+		n.Interval.IntervalExpr.Expr.Restore(ctx)
+		if n.Interval.IntervalExpr.TimeUnit != TimeUnitInvalid {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(n.Interval.IntervalExpr.TimeUnit.String())
+		}
+		ctx.WritePlain(")")
+		if n.Interval.FirstRangeEnd != nil {
+			ctx.WritePlain(" FIRST PARTITION LESS THAN (")
+			(*n.Interval.FirstRangeEnd).Restore(ctx)
+			ctx.WritePlain(")")
+		}
+		if n.Interval.LastRangeEnd != nil {
+			ctx.WritePlain(" FIRST PARTITION LESS THAN (")
+			(*n.Interval.LastRangeEnd).Restore(ctx)
+			ctx.WritePlain(")")
+		}
+		if n.Interval.NullPart {
+			ctx.WritePlain(" NULL PARTITION")
+		}
+		if n.Interval.MaxValPart {
+			ctx.WritePlain(" MAXVALUE PARTITION")
+		}
 	}
 
 	return nil
@@ -3830,7 +3854,13 @@ func (n *PartitionOptions) Validate() error {
 			n.Num = 1
 		}
 	case model.PartitionTypeRange, model.PartitionTypeList:
-		if len(n.Definitions) == 0 {
+		if n.Interval != nil {
+			// TODO: Add checks for INTERVAL partitioning.
+			if len(n.Definitions) > 0 {
+				// TODO: Create a new error
+				return ErrPartitionsMustBeDefined.GenWithStackByArgs(n.Tp)
+			}
+		} else if len(n.Definitions) == 0 {
 			return ErrPartitionsMustBeDefined.GenWithStackByArgs(n.Tp)
 		}
 	case model.PartitionTypeSystemTime:

@@ -3897,10 +3897,11 @@ PartitionMethod:
 	SubPartitionMethod
 |	"RANGE" '(' BitExpr ')' PartitionIntervalOpt
 	{
+		partitionInterval, _ := $5.(*ast.PartitionInterval)
 		$$ = &ast.PartitionMethod{
 			Tp:       model.PartitionTypeRange,
 			Expr:     $3.(ast.ExprNode),
-			Interval: $5.(*ast.PartitionInterval),
+			Interval: partitionInterval,
 		}
 	}
 |	"RANGE" FieldsOrColumns '(' ColumnNameList ')' PartitionIntervalOpt
@@ -3964,17 +3965,13 @@ PartitionIntervalOpt:
 	}
 
 IntervalExpr:
-	Expression
+	BitExpr
 	{
-		$$ = ast.PartitionIntervalExpr{IntervalExpr: $1, TimeUnit: ast.TimeUnitInvalid}
+		$$ = ast.PartitionIntervalExpr{Expr: $1, TimeUnit: ast.TimeUnitInvalid}
 	}
-|	Expression TimeUnit
+|	BitExpr TimeUnit
 	{
-		$$ = ast.PartitionIntervalExpr{IntervalExpr: $1, TimeUnit: $2.(ast.TimeUnitType)}
-	}
-|	"INTERVAL" Expression TimeUnit
-	{
-		$$ = ast.PartitionIntervalExpr{IntervalExpr: $2, TimeUnit: $3.(ast.TimeUnitType)}
+		$$ = ast.PartitionIntervalExpr{Expr: $1, TimeUnit: $2.(ast.TimeUnitType)}
 	}
 
 NullPartOpt:
@@ -3999,7 +3996,7 @@ FirstAndLastPartOpt:
 	{
 		$$ = ast.PartitionInterval{} // First/LastRangeEnd defaults to nil
 	}
-|	"FIRST" "PARTITION" "LESS" "THAN" '(' Expression ')' "LAST" "PARTITION" "LESS" "THAN" '(' Expression ')'
+|	"FIRST" "PARTITION" "LESS" "THAN" '(' BitExpr ')' "LAST" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
 	{
 		first := $6.(ast.ExprNode)
 		last := $13.(ast.ExprNode)
