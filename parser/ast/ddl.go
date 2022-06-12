@@ -3776,7 +3776,7 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(")")
 		}
 		if n.Interval.LastRangeEnd != nil {
-			ctx.WritePlain(" FIRST PARTITION LESS THAN (")
+			ctx.WritePlain(" LAST PARTITION LESS THAN (")
 			(*n.Interval.LastRangeEnd).Restore(ctx)
 			ctx.WritePlain(")")
 		}
