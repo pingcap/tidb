@@ -16,12 +16,13 @@ package splittest
 
 import (
 	"fmt"
+	"sync/atomic"
+	"testing"
+
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/dbterror"
-	"sync/atomic"
-	"testing"
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"

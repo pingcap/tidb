@@ -19,11 +19,12 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/domain/infosync"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pingcap/tidb/domain/infosync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
@@ -1875,6 +1876,9 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	} else {
 		// show table * region
 		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
+	}
+	if err != nil {
+		return err
 	}
 
 	err = e.fetchSchedulingInfo(ctx, regions, tb.Meta())
