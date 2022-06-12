@@ -610,22 +610,19 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 
 // RegionMeta contains a region's peer detail
 type regionMeta struct {
-	region                *metapb.Region
-	leaderID              uint64
-	storeID               uint64 // storeID is the store ID of the leader region.
-	start                 string
-	end                   string
-	scattering            bool
-	writtenBytes          uint64
-	readBytes             uint64
-	approximateSize       int64
-	approximateKeys       int64
-	schedulingConstraints string
-	schedulingState       string
-	physicalID            int64
+	region          *metapb.Region
+	leaderID        uint64
+	storeID         uint64 // storeID is the store ID of the leader region.
+	start           string
+	end             string
+	scattering      bool
+	writtenBytes    uint64
+	readBytes       uint64
+	approximateSize int64
+	approximateKeys int64
 }
 
-func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]showTableRegionRowItem, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -673,7 +670,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	return regions, nil
 }
 
-func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]showTableRegionRowItem, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -698,7 +695,7 @@ func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, 
 	return indexRegions, nil
 }
 
-func checkRegionsStatus(store kv.SplittableStore, regions []regionMeta) error {
+func checkRegionsStatus(store kv.SplittableStore, regions []showTableRegionRowItem) error {
 	for i := range regions {
 		scattering, err := store.CheckRegionInScattering(regions[i].region.Id)
 		if err != nil {
@@ -709,7 +706,7 @@ func checkRegionsStatus(store kv.SplittableStore, regions []regionMeta) error {
 	return nil
 }
 
-func decodeRegionsKey(regions []regionMeta, tablePrefix, recordPrefix, indexPrefix []byte,
+func decodeRegionsKey(regions []showTableRegionRowItem, tablePrefix, recordPrefix, indexPrefix []byte,
 	physicalTableID, indexID int64, hasUnsignedIntHandle bool) {
 	d := &regionKeyDecoder{
 		physicalTableID:      physicalTableID,
@@ -780,17 +777,19 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 
 func getRegionMeta(tikvStore helper.Storage, regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct{},
 	tablePrefix, recordPrefix, indexPrefix []byte, physicalTableID, indexID int64,
-	hasUnsignedIntHandle bool) ([]regionMeta, error) {
-	regions := make([]regionMeta, 0, len(regionMetas))
+	hasUnsignedIntHandle bool) ([]showTableRegionRowItem, error) {
+	regions := make([]showTableRegionRowItem, 0, len(regionMetas))
 	for _, r := range regionMetas {
 		if _, ok := uniqueRegionMap[r.GetID()]; ok {
 			continue
 		}
 		uniqueRegionMap[r.GetID()] = struct{}{}
-		regions = append(regions, regionMeta{
-			region:     r.GetMeta(),
-			leaderID:   r.GetLeaderPeerID(),
-			storeID:    r.GetLeaderStoreID(),
+		regions = append(regions, showTableRegionRowItem{
+			regionMeta: regionMeta{
+				region:   r.GetMeta(),
+				leaderID: r.GetLeaderPeerID(),
+				storeID:  r.GetLeaderStoreID(),
+			},
 			physicalID: physicalTableID,
 		})
 	}
@@ -803,7 +802,7 @@ func getRegionMeta(tikvStore helper.Storage, regionMetas []*tikv.Region, uniqueR
 	return regions, nil
 }
 
-func getRegionInfo(store helper.Storage, regions []regionMeta) ([]regionMeta, error) {
+func getRegionInfo(store helper.Storage, regions []showTableRegionRowItem) ([]showTableRegionRowItem, error) {
 	// check pd server exists.
 	etcd, ok := store.(kv.EtcdBackend)
 	if !ok {

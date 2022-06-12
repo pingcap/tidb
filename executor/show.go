@@ -100,6 +100,13 @@ type ShowExec struct {
 	Extended    bool // Used for `show extended columns from ...`
 }
 
+type showTableRegionRowItem struct {
+	regionMeta
+	schedulingConstraints string
+	schedulingState       string
+	physicalID            int64
+}
+
 // Next implements the Executor Next interface.
 func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
@@ -1857,73 +1864,76 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	}
 
 	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
-	var regions []regionMeta
+	var regions []showTableRegionRowItem
 	if len(e.IndexName.L) != 0 {
+		// show table * index * region
 		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
 		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
 	} else {
+		// show table * region
 		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
 	}
 
-	// not for table index
-	if len(e.IndexName.L) == 0 {
-		var scheduleState map[int64]infosync.PlacementScheduleState
-		schedulingConstraints := make(map[int64]*model.PlacementSettings)
-		tblPlacement, err := e.getTablePlacement(tb.Meta())
-		if err != nil {
-			return err
-		}
-
-		physicalIDToRegionID := make(map[int64]uint64)
-		for i := range regions {
-			physicalIDToRegionID[regions[i].physicalID] = regions[i].region.GetId()
-		}
-
-		// partitioned table
-		if tb.Meta().GetPartitionInfo() != nil {
-			for _, part := range tb.Meta().GetPartitionInfo().Definitions {
-				_, err = fetchScheduleState(ctx, scheduleState, part.ID)
-				if err != nil {
-					return err
-				}
-				placement, err := e.getPolicyPlacement(part.PlacementPolicyRef)
-				if err != nil {
-					return err
-				}
-				if placement == nil {
-					schedulingConstraints[int64(physicalIDToRegionID[part.ID])] = tblPlacement
-				} else {
-					schedulingConstraints[int64(physicalIDToRegionID[part.ID])] = placement
-				}
-			}
-		} else {
-			// un-partitioned table
-			schedulingConstraints[int64(physicalIDToRegionID[tb.Meta().ID])] = tblPlacement
-			_, err = fetchScheduleState(ctx, scheduleState, tb.Meta().ID)
-			if err != nil {
-				return err
-			}
-		}
-
-		for i := range regions {
-			constraint := schedulingConstraints[int64(regions[i].region.Id)]
-			if constraint == nil {
-				regions[i].schedulingConstraints = ""
-			} else {
-				regions[i].schedulingConstraints = constraint.String()
-			}
-			regions[i].schedulingState = scheduleState[int64(regions[i].region.Id)].String()
-		}
+	err = e.fetchSchedulingInfo(ctx, regions, tb.Meta())
+	if err != nil {
+		return err
 	}
+
 	e.fillRegionsToChunk(regions)
 	return nil
 }
 
-func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
-	regions := make([]regionMeta, 0, len(physicalIDs))
+func (e *ShowExec) fetchSchedulingInfo(ctx context.Context, regions []showTableRegionRowItem, tbInfo *model.TableInfo) error {
+	scheduleState := make(map[int64]infosync.PlacementScheduleState)
+	schedulingConstraints := make(map[int64]*model.PlacementSettings)
+	tblPlacement, err := e.getTablePlacement(tbInfo)
+	if err != nil {
+		return err
+	}
+
+	if tbInfo.GetPartitionInfo() != nil {
+		// partitioned table
+		for _, part := range tbInfo.GetPartitionInfo().Definitions {
+			_, err = fetchScheduleState(ctx, scheduleState, part.ID)
+			if err != nil {
+				return err
+			}
+			placement, err := e.getPolicyPlacement(part.PlacementPolicyRef)
+			if err != nil {
+				return err
+			}
+			if placement == nil {
+				schedulingConstraints[part.ID] = tblPlacement
+			} else {
+				schedulingConstraints[part.ID] = placement
+			}
+		}
+	} else {
+		// un-partitioned table or index
+		schedulingConstraints[tbInfo.ID] = tblPlacement
+		_, err = fetchScheduleState(ctx, scheduleState, tbInfo.ID)
+		if err != nil {
+			return err
+		}
+	}
+
+	for i := range regions {
+		constraint := schedulingConstraints[regions[i].physicalID]
+		if constraint == nil {
+			regions[i].schedulingConstraints = ""
+		} else {
+			regions[i].schedulingConstraints = constraint.String()
+		}
+		regions[i].schedulingState = scheduleState[regions[i].physicalID].String()
+	}
+	return nil
+}
+
+func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]showTableRegionRowItem, error) {
+	regions := make([]showTableRegionRowItem, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {
 		rs, err := getPhysicalTableRegions(id, tb.Meta(), tikvStore, splitStore, uniqueRegionMap)
@@ -1935,8 +1945,8 @@ func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Stora
 	return regions, nil
 }
 
-func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
-	regions := make([]regionMeta, 0, len(physicalIDs))
+func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]showTableRegionRowItem, error) {
+	regions := make([]showTableRegionRowItem, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {
 		rs, err := getPhysicalIndexRegions(id, indexInfo, tikvStore, splitStore, uniqueRegionMap)
@@ -1948,7 +1958,7 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 	return regions, nil
 }
 
-func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
+func (e *ShowExec) fillRegionsToChunk(regions []showTableRegionRowItem) {
 	for i := range regions {
 		e.result.AppendUint64(0, regions[i].region.Id)
 		e.result.AppendString(1, regions[i].start)
