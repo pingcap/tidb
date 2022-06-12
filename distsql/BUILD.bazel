@@ -6,7 +6,6 @@ go_library(
         "distsql.go",
         "request_builder.go",
         "select_result.go",
-        "stream.go",
     ],
     importpath = "github.com/pingcap/tidb/distsql",
     visibility = ["//visibility:public"],
