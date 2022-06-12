@@ -159,33 +159,17 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point session
 	}
 }
 
-// Advise is used to give advice to provider
-func (p *PessimisticRRTxnContextProvider) Advise(tp sessiontxn.AdviceType, val []any) error {
-	switch tp {
-	case sessiontxn.AdviceWarmUp:
-		return p.warmUp()
-	case sessiontxn.AdviceOptimizeWithPlan:
-		return p.optimizeWithPlan(val)
-	default:
-		return p.baseTxnContextProvider.Advise(tp, val)
-	}
-}
-
-// optimizeWithPlan optimizes for update point get related execution.
+// AdviseOptimizeWithPlan optimizes for update point get related execution.
 // Use case: In for update point get related operations, we do not fetch ts from PD but use the last ts we fetched.
 //     We expect that the data that the point get acquires has not been changed.
 // Benefit: Save the cost of acquiring ts from PD.
 // Drawbacks: If the data has been changed since the ts we used, we need to retry.
-func (p *PessimisticRRTxnContextProvider) optimizeWithPlan(val []any) (err error) {
+func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}
 
-	if len(val) == 0 {
-		return nil
-	}
-
-	plan, ok := val[0].(plannercore.Plan)
+	plan, ok := val.(plannercore.Plan)
 	if !ok {
 		return nil
 	}

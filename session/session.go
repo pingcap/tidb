@@ -1926,7 +1926,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 
-	if err = sessiontxn.OptimizeWithPlan(s, stmt.Plan); err != nil {
+	if err = sessiontxn.GetTxnManager(s).AdviseOptimizeWithPlan(stmt.Plan); err != nil {
 		return nil, err
 	}
 
@@ -2186,7 +2186,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
-	if err = sessiontxn.WarmUpTxn(s); err != nil {
+	if err = sessiontxn.GetTxnManager(s).AdviseWarmup(); err != nil {
 		return
 	}
 	prepareExec := executor.NewPrepareExec(s, sql)
@@ -2295,14 +2295,14 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		if err = sessiontxn.WarmUpTxn(s); err == nil {
+		if err = sessiontxn.GetTxnManager(s).AdviseWarmup(); err == nil {
 			stmtCtx.Priority = kv.PriorityHigh
 			resultSet, err = runStmt(ctx, s, stmt)
 		}
 	case nil:
 		// cache is invalid
 		if prepareStmt.ForUpdateRead {
-			err = sessiontxn.WarmUpTxn(s)
+			err = sessiontxn.GetTxnManager(s).AdviseWarmup()
 		}
 
 		if err == nil {

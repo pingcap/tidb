@@ -119,14 +119,6 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return p.getStmtForUpdateTSFunc()
 }
 
-func (p *baseTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
-	switch tp {
-	case sessiontxn.AdviceWarmUp:
-		return p.warmUp()
-	}
-	return nil
-}
-
 func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context) error {
 	p.ctx = ctx
 	return nil
@@ -205,10 +197,16 @@ func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
 	return staleread.IsStmtStaleness(p.sctx)
 }
 
-func (p *baseTxnContextProvider) warmUp() error {
+// AdviseWarmup provides warmup for inner state
+func (p *baseTxnContextProvider) AdviseWarmup() error {
 	if p.isBeginStmtWithStaleRead() {
 		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
 	return p.prepareTxn()
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	return nil
 }

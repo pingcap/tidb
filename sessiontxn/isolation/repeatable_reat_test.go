@@ -340,6 +340,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	se := tk.Session()
 	provider := initializeRepeatableReadProvider(t, tk)
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
+	txnManager := sessiontxn.GetTxnManager(se)
 
 	stmt, err := parser.New().ParseOneStmt("delete from t where id = 1", "", "")
 	require.NoError(t, err)
@@ -347,7 +348,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	compiler := executor.Compiler{Ctx: se}
 	execStmt, err := compiler.Compile(context.TODO(), stmt)
 	require.NoError(t, err)
-	err = sessiontxn.OptimizeWithPlan(se, execStmt.Plan)
+	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
 	require.NoError(t, err)
 	ts, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
@@ -359,7 +360,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	compiler = executor.Compiler{Ctx: se}
 	execStmt, err = compiler.Compile(context.TODO(), stmt)
 	require.NoError(t, err)
-	err = sessiontxn.OptimizeWithPlan(se, execStmt.Plan)
+	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
@@ -370,7 +371,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	compiler = executor.Compiler{Ctx: se}
 	execStmt, err = compiler.Compile(context.TODO(), stmt)
 	require.NoError(t, err)
-	err = sessiontxn.OptimizeWithPlan(se, execStmt.Plan)
+	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
@@ -383,7 +384,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	compiler = executor.Compiler{Ctx: se}
 	execStmt, err = compiler.Compile(context.TODO(), stmt)
 	require.NoError(t, err)
-	err = sessiontxn.OptimizeWithPlan(se, execStmt.Plan)
+	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)

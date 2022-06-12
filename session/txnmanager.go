@@ -114,9 +114,17 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
-func (m *txnManager) Advise(tp sessiontxn.AdviceType, val ...any) error {
+func (m *txnManager) AdviseWarmup() error {
 	if m.ctxProvider != nil {
-		return m.ctxProvider.Advise(tp, val)
+		return m.ctxProvider.AdviseWarmup()
+	}
+	return nil
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (m *txnManager) AdviseOptimizeWithPlan(plan interface{}) error {
+	if m.ctxProvider != nil {
+		return m.ctxProvider.AdviseOptimizeWithPlan(plan)
 	}
 	return nil
 }
