@@ -330,8 +330,8 @@ func cleanupStaleSocket(socket string) error {
 }
 
 func setSSLVariable(ca, key, cert string) {
-	variable.SetSysVar("have_openssl", "YES")
-	variable.SetSysVar("have_ssl", "YES")
+	variable.SetSysVar("have_openssl", variable.On)
+	variable.SetSysVar("have_ssl", variable.On)
 	variable.SetSysVar("ssl_cert", cert)
 	variable.SetSysVar("ssl_key", key)
 	variable.SetSysVar("ssl_ca", ca)
