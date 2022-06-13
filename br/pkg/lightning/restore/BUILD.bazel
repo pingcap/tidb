@@ -117,6 +117,7 @@ go_test(
         "//types",
         "//util",
         "//util/mock",
+        "//util/promutil",
         "//util/table-filter",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_docker_go_units//:go-units",
