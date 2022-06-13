@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
@@ -803,6 +804,12 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableConcurrentDDL.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableGCMemoryTrack, Value: BoolToOnOff(DefTiDBEnableGCMemoryTrack), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		memory.EnableGCMemoryTrack.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(memory.EnableGCMemoryTrack.Load()), nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */

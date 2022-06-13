@@ -82,6 +82,8 @@ type actionMu struct {
 	actionOnExceed ActionOnExceed
 }
 
+var EnableGCMemoryTrack = atomicutil.NewBool(false)
+
 // softScale means the scale of the soft limit to the hard limit.
 const softScale = 0.8
 
@@ -396,7 +398,7 @@ func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	}
 }
 
-func (t *Tracker) RecordRelease(bytes int64, objRef any) {
+func (t *Tracker) Release(bytes int64, objRef any, objInfo string) {
 	if bytes == 0 {
 		return
 	}
@@ -404,7 +406,7 @@ func (t *Tracker) RecordRelease(bytes int64, objRef any) {
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if tracker.shouldRecordRelease() {
 			runtime.SetFinalizer(objRef, func(objRef any) {
-				tracker.release(bytes)
+				tracker.release(bytes, objInfo)
 			})
 			tracker.recordRelease(bytes)
 			return
@@ -413,7 +415,7 @@ func (t *Tracker) RecordRelease(bytes int64, objRef any) {
 }
 
 func (t *Tracker) shouldRecordRelease() bool {
-	return t.label == LabelForGlobalAnalyzeMemory
+	return EnableGCMemoryTrack.Load() && t.label == LabelForGlobalAnalyzeMemory
 }
 
 func (t *Tracker) recordRelease(bytes int64) {
@@ -428,11 +430,11 @@ func (t *Tracker) recordRelease(bytes int64) {
 	}
 }
 
-func (t *Tracker) release(bytes int64) {
+func (t *Tracker) release(bytes int64, objInfo string) {
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, -bytes)
 		if tracker.label == LabelForGlobalAnalyzeMemory {
-			println("update release " + strconv.FormatInt(bytesReleased, 10))
+			println("update release " + strconv.FormatInt(bytesReleased, 10) + ", info: " + objInfo)
 		}
 		if label, ok := MetricsTypes[tracker.label]; ok {
 			metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(bytesReleased))

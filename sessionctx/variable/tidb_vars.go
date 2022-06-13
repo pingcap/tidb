@@ -706,6 +706,8 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
+	// TiDBEnableGCMemoryTrack indicates whether to enable memory track of released but non-GCed objects.
+	TiDBEnableGCMemoryTrack = "tidb_enable_gc_memory_track"
 )
 
 // TiDB intentional limits
@@ -895,6 +897,7 @@ const (
 	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 	DefTiDBEnableConcurrentDDL                   = true
+	DefTiDBEnableGCMemoryTrack                   = true
 )
 
 // Process global variables.
@@ -942,7 +945,7 @@ var (
 	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
 	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
-	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
+	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableGCMemoryTrack)
 )
 
 var (
