@@ -119,13 +119,8 @@ func TestInvalidDefault(t *testing.T) {
 
 	tk.MustExec("USE test;")
 
-	_, err := tk.Exec("create table t(c1 decimal default 1.7976931348623157E308)")
-	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, types.ErrInvalidDefault), "err %v", err)
-
-	_, err = tk.Exec("create table t( c1 varchar(2) default 'TiDB');")
-	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, types.ErrInvalidDefault), "err %v", err)
+	tk.MustGetDBError("create table t(c1 decimal default 1.7976931348623157E308)", types.ErrInvalidDefault)
+	tk.MustGetDBError("create table t( c1 varchar(2) default 'TiDB');", types.ErrInvalidDefault)
 }
 
 // TestKeyWithoutLength for issue #13452
@@ -133,12 +128,9 @@ func TestKeyWithoutLengthCreateTable(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec("USE test")
-
-	_, err := tk.Exec("create table t_without_length (a text primary key)")
-	require.Error(t, err)
-	require.Regexp(t, ".*BLOB/TEXT column 'a' used in key specification without a key length", err.Error())
+	tk.MustMatchErrMsg("create table t_without_length (a text primary key)",
+		".*BLOB/TEXT column 'a' used in key specification without a key length")
 }
 
 // TestInvalidNameWhenCreateTable for issue #3848
@@ -3371,19 +3363,15 @@ func TestAvoidCreateViewOnLocalTemporaryTable(t *testing.T) {
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v5", "[schema:1146]Table 'test.v5' doesn't exist")
 
-		_, err = tk.Exec("create view v6 as select * from tt0 where tt0.a=(select max(tt1.b) from tt1)")
+		err = tk.ExecToErr("create view v6 as select * from tt0 where tt0.a=(select max(tt1.b) from tt1)")
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
-		_, err = tk.Exec("select * from v6")
-		require.Error(t, err)
-		require.Equal(t, "[schema:1146]Table 'test.v6' doesn't exist", err.Error())
+		tk.MustGetErrMsg("select * from v6", "[schema:1146]Table 'test.v6' doesn't exist")
 
-		_, err = tk.Exec("create view v7 as select * from tt0 where tt0.b=(select max(tt1.b) from tt1 where tt0.a=tt1.a)")
+		err = tk.ExecToErr("create view v7 as select * from tt0 where tt0.b=(select max(tt1.b) from tt1 where tt0.a=tt1.a)")
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
-		_, err = tk.Exec("select * from v7")
-		require.Error(t, err)
-		require.Equal(t, "[schema:1146]Table 'test.v7' doesn't exist", err.Error())
+		tk.MustGetErrMsg("select * from v7", "[schema:1146]Table 'test.v7' doesn't exist")
 
-		_, err = tk.Exec("create or replace view v0 as select * from tt1")
+		err = tk.ExecToErr("create or replace view v0 as select * from tt1")
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
 	}
 
@@ -3413,8 +3401,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
 	tk.MustQuery("select * from b_local_temp_table").Check(testkit.Rows())
 	tk.MustExec("drop table b_local_temp_table")
-	_, err := tk.Exec("select * from b_local_temp_table")
-	require.Equal(t, "[schema:1146]Table 'test.b_local_temp_table' doesn't exist", err.Error())
+	tk.MustGetErrMsg("select * from b_local_temp_table", "[schema:1146]Table 'test.b_local_temp_table' doesn't exist")
 	// TODO: test drop real data
 
 	// Check if we have a normal and local temporary table in the same db with the same name,
@@ -3427,8 +3414,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	sequenceTable := external.GetTableByName(t, tk, "test", "b_table_local_and_normal")
 	require.Equal(t, model.TempTableNone, sequenceTable.Meta().TempTableType)
 	tk.MustExec("drop table if exists b_table_local_and_normal")
-	_, err = tk.Exec("select * from b_table_local_and_normal")
-	require.Equal(t, "[schema:1146]Table 'test.b_table_local_and_normal' doesn't exist", err.Error())
+	tk.MustGetErrMsg("select * from b_table_local_and_normal", "[schema:1146]Table 'test.b_table_local_and_normal' doesn't exist")
 
 	// Check dropping local temporary tables should not commit current transaction implicitly.
 	tk.MustExec("drop table if exists check_data_normal_table")
@@ -3473,21 +3459,19 @@ func TestDropTemporaryTable(t *testing.T) {
 	tk.MustExec("drop table if exists a_normal_table_2")
 	tk.MustExec("create table a_normal_table_2 (id int)")
 	defer tk.MustExec("drop table if exists a_normal_table_2")
-	_, err = tk.Exec("drop table a_local_temp_table_3, a_local_temp_table_4, a_local_temp_table_5, a_normal_table_2, a_local_temp_table_6")
-	require.Equal(t, "[schema:1051]Unknown table 'test.a_local_temp_table_6'", err.Error())
+	tk.MustGetErrMsg("drop table a_local_temp_table_3, a_local_temp_table_4, a_local_temp_table_5, a_normal_table_2, a_local_temp_table_6", "[schema:1051]Unknown table 'test.a_local_temp_table_6'")
 
 	tk.MustExec("drop table if exists check_data_normal_table_3")
 	tk.MustExec("create table check_data_normal_table_3 (id int)")
 	defer tk.MustExec("drop table if exists check_data_normal_table_3")
 	tk.MustExec("create temporary table a_local_temp_table_6 (id int)")
-	_, err = tk.Exec("drop table check_data_normal_table_3, check_data_normal_table_7, a_local_temp_table_6")
-	require.Equal(t, "[schema:1051]Unknown table 'test.check_data_normal_table_7'", err.Error())
+	tk.MustGetErrMsg("drop table check_data_normal_table_3, check_data_normal_table_7, a_local_temp_table_6", "[schema:1051]Unknown table 'test.check_data_normal_table_7'")
 
 	// Check filter out data from removed local temp tables
 	tk.MustExec("create temporary table a_local_temp_table_7 (id int)")
 	ctx := tk.Session()
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
-	_, err = ctx.Txn(true)
+	_, err := ctx.Txn(true)
 	require.NoError(t, err)
 	sessionVars := tk.Session().GetSessionVars()
 	sessVarsTempTable := sessionVars.LocalTemporaryTables
@@ -3505,8 +3489,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	tk.MustExec("drop table if exists a_local_temp_table_7")
 	tk.MustExec("commit")
 
-	_, err = tk.Exec("select * from a_local_temp_table_7")
-	require.Equal(t, "[schema:1146]Table 'test.a_local_temp_table_7' doesn't exist", err.Error())
+	tk.MustGetErrMsg("select * from a_local_temp_table_7", "[schema:1146]Table 'test.a_local_temp_table_7' doesn't exist")
 	memData := sessionVars.TemporaryTableData
 	iter, err := memData.Iter(tablePrefix, endTablePrefix)
 	require.NoError(t, err)
@@ -3524,8 +3507,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	// Check drop not exists table in transaction.
 	tk.MustExec("begin")
 	tk.MustExec("create temporary table a_local_temp_table_8 (id int)")
-	_, err = tk.Exec("drop table a_local_temp_table_8, a_local_temp_table_9_not_exist")
-	require.Equal(t, "[schema:1051]Unknown table 'test.a_local_temp_table_9_not_exist'", err.Error())
+	tk.MustGetErrMsg("drop table a_local_temp_table_8, a_local_temp_table_9_not_exist", "[schema:1051]Unknown table 'test.a_local_temp_table_9_not_exist'")
 	tk.MustQuery("select * from a_local_temp_table_8").Check(testkit.Rows())
 }
 
@@ -3973,18 +3955,11 @@ func TestInvalidPartitionNameWhenCreateTable(t *testing.T) {
 	defer tk.MustExec("drop database invalidPartitionNames")
 	tk.MustExec("USE invalidPartitionNames")
 
-	_, err := tk.Exec("create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3))")
-	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
-
-	_, err = tk.Exec("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))")
-	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
+	tk.MustGetDBError("create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3))", dbterror.ErrWrongPartitionName)
+	tk.MustGetDBError("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))", dbterror.ErrWrongPartitionName)
 
 	tk.MustExec("create table t(a int) partition by range (a) (partition `p0` values less than (0), partition `p1` values less than (3))")
-	_, err = tk.Exec("alter table t add partition (partition `p2 ` values less than (5))")
-	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
+	tk.MustGetDBError("alter table t add partition (partition `p2 ` values less than (5))", dbterror.ErrWrongPartitionName)
 }
 
 func TestDDLLastInfo(t *testing.T) {
