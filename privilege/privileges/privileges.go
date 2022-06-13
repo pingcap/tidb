@@ -24,7 +24,12 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/infoschema/perfschema"
+=======
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+>>>>>>> 395ccbe22... privilege: limit the privileges in memory schemas (#35260)
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -118,13 +123,14 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		}
 	}
 
-	switch dbLowerName {
-	case util.InformationSchemaName.L:
+	if util.IsMemDB(dbLowerName) {
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
-			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv, mysql.ReferencesPriv, mysql.ExecutePriv,
+			mysql.ShowViewPriv, mysql.LockTablesPriv:
 			return false
 		}
+<<<<<<< HEAD
 		return true
 	// We should be very careful of limiting privileges, so ignore `mysql` for now.
 	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
@@ -135,6 +141,14 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 				return false
 			case mysql.SelectPriv:
 				return true
+=======
+		if dbLowerName == util.InformationSchemaName.L {
+			return true
+		} else if dbLowerName == util.MetricSchemaName.L {
+			// PROCESS is the same with SELECT for metrics_schema.
+			if priv == mysql.SelectPriv && infoschema.IsMetricTable(table) {
+				priv |= mysql.ProcessPriv
+>>>>>>> 395ccbe22... privilege: limit the privileges in memory schemas (#35260)
 			}
 		}
 	}
