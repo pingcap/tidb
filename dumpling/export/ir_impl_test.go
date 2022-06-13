@@ -99,7 +99,7 @@ func TestChunkRowIter(t *testing.T) {
 	sqlRowIter := newRowIter(rows, 2)
 
 	res := newSimpleRowReceiver(2)
-	metrics := newMetrics(&promutil.PlainNoAutoRegisterFactory{}, []string{})
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 	wp := newWriterPipe(nil, testFileSize, testStatementSize, metrics, nil)
 
 	var resSize [][]uint64

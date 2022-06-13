@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -47,6 +46,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -60,7 +60,6 @@ var (
 
 var (
 	_ SelectResult = (*selectResult)(nil)
-	_ SelectResult = (*streamResult)(nil)
 	_ SelectResult = (*serialSelectResults)(nil)
 )
 
@@ -140,7 +139,6 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
-	encodeType   tipb.EncodeType
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
@@ -269,13 +267,14 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 	// TODO(Shenghui Wu): add metrics
-	switch r.selectResp.GetEncodeType() {
+	encodeType := r.selectResp.GetEncodeType()
+	switch encodeType {
 	case tipb.EncodeType_TypeDefault:
 		return r.readFromDefault(ctx, chk)
 	case tipb.EncodeType_TypeChunk:
 		return r.readFromChunk(ctx, chk)
 	}
-	return errors.Errorf("unsupported encode type:%v", r.encodeType)
+	return errors.Errorf("unsupported encode type:%v", encodeType)
 }
 
 // NextRaw returns the next raw partial result.
@@ -539,9 +538,7 @@ func (s *selectResultRuntimeStats) String() string {
 		if size == 1 {
 			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0]))
 		} else {
-			sort.Slice(s.copRespTime, func(i, j int) bool {
-				return s.copRespTime[i] < s.copRespTime[j]
-			})
+			slices.Sort(s.copRespTime)
 			vMax, vMin := s.copRespTime[size-1], s.copRespTime[0]
 			vP95 := s.copRespTime[size*19/20]
 			sum := 0.0
@@ -550,9 +547,7 @@ func (s *selectResultRuntimeStats) String() string {
 			}
 			vAvg := time.Duration(sum / float64(size))
 
-			sort.Slice(s.procKeys, func(i, j int) bool {
-				return s.procKeys[i] < s.procKeys[j]
-			})
+			slices.Sort(s.procKeys)
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
 			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,

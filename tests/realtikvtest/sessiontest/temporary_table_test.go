@@ -301,8 +301,7 @@ func TestTemporaryTableInterceptor(t *testing.T) {
 
 	initTxnFuncs := []func() error{
 		func() error {
-			tk.Session().PrepareTSFuture(context.Background())
-			return nil
+			return sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup()
 		},
 		func() error {
 			return sessiontxn.NewTxn(context.Background(), tk.Session())
