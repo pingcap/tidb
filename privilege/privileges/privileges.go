@@ -135,18 +135,20 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		}
 	}
 
-	if util.IsMemDB(dbLowerName) {
+	if util.IsMemOrSysDB(dbLowerName) {
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
-			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv, mysql.ReferencesPriv, mysql.ExecutePriv,
+			mysql.ShowViewPriv, mysql.LockTablesPriv:
 			return false
 		}
 		if dbLowerName == util.InformationSchemaName.L {
 			return true
-		}
-		// PROCESS is the same with SELECT for metrics_schema.
-		if priv == mysql.SelectPriv && dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table) {
-			priv |= mysql.ProcessPriv
+		} else if dbLowerName == util.MetricSchemaName.L {
+			// PROCESS is the same with SELECT for metrics_schema.
+			if priv == mysql.SelectPriv && infoschema.IsMetricTable(table) {
+				priv |= mysql.ProcessPriv
+			}
 		}
 	}
 
