@@ -345,6 +345,8 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	stmt, err := parser.New().ParseOneStmt("delete from t where id = 1", "", "")
 	require.NoError(t, err)
 	compareTs := getOracleTS(t, se)
+	err = provider.OnStmtStart(context.TODO())
+	require.NoError(t, err)
 	compiler := executor.Compiler{Ctx: se}
 	execStmt, err := compiler.Compile(context.TODO(), stmt)
 	require.NoError(t, err)
@@ -357,6 +359,8 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 
 	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
 	require.NoError(t, err)
+	err = provider.OnStmtStart(context.TODO())
+	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
 	execStmt, err = compiler.Compile(context.TODO(), stmt)
 	require.NoError(t, err)
@@ -368,6 +372,8 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 
 	stmt, err = parser.New().ParseOneStmt("select * from (select * from t where id = 1 for update) as t1 for update", "", "")
 	require.NoError(t, err)
+	err = provider.OnStmtStart(context.TODO())
+	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
 	execStmt, err = compiler.Compile(context.TODO(), stmt)
 	require.NoError(t, err)
@@ -377,9 +383,33 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ts, forUpdateTS)
 
+	stmt, err = parser.New().ParseOneStmt("select * from t where id = 1 for update", "", "")
+	require.NoError(t, err)
+	err = provider.OnStmtStart(context.TODO())
+	require.NoError(t, err)
+	compiler = executor.Compiler{Ctx: se}
+	execStmt, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Equal(t, ts, forUpdateTS)
+	compareTs = getOracleTS(t, se)
+	// After retry, the ts should be larger than compareTs
+	action, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
+	require.NoError(t, err)
+	require.Equal(t, sessiontxn.StmtActionRetryReady, action)
+	err = provider.OnStmtRetry(context.TODO())
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.Greater(t, ts, compareTs)
+
 	// Now, test for one that does not use the optimization
 	stmt, err = parser.New().ParseOneStmt("select * from t for update", "", "")
 	compareTs = getOracleTS(t, se)
+	require.NoError(t, err)
+	err = provider.OnStmtStart(context.TODO())
 	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
 	execStmt, err = compiler.Compile(context.TODO(), stmt)

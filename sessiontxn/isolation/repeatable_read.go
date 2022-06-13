@@ -35,7 +35,8 @@ type PessimisticRRTxnContextProvider struct {
 	baseTxnContextProvider
 
 	// Used for ForUpdateRead statement
-	forUpdateTS uint64
+	forUpdateTS       uint64
+	latestForUpdateTS uint64
 	// It may decide whether to update forUpdateTs when calling provider's getForUpdateTs
 	// See more details in the comments of optimizeWithPlan
 	followingOperatorIsPointGetForUpdate bool
@@ -69,7 +70,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	}
 
 	if p.followingOperatorIsPointGetForUpdate {
-		return p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS(), nil
+		return p.getTxnStartTS()
 	}
 
 	var txn kv.Transaction
@@ -112,7 +113,8 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 		return err
 	}
 
-	sctx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
+	//sctx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
+	p.latestForUpdateTS = version.Ver
 	txn.SetOption(kv.SnapshotTS, sctx.GetSessionVars().TxnCtx.GetForUpdateTS())
 
 	return nil
@@ -136,10 +138,9 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 		return err
 	}
 
-	txnCtxForUpdateTS := p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	// If TxnCtx.forUpdateTS is updated in OnStmtErrorForNextAction, we assign the value to the provider
-	if txnCtxForUpdateTS > p.forUpdateTS {
-		p.forUpdateTS = txnCtxForUpdateTS
+	if p.latestForUpdateTS > p.forUpdateTS {
+		p.forUpdateTS = p.latestForUpdateTS
 	} else {
 		p.forUpdateTS = 0
 	}
@@ -191,6 +192,8 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
 			mayOptimizeForPointGet = true
 		}
+	} else if _, ok := plan.(*plannercore.PointGetPlan); ok {
+		mayOptimizeForPointGet = true
 	}
 
 	p.followingOperatorIsPointGetForUpdate = mayOptimizeForPointGet
