@@ -238,11 +238,11 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 	})
 
 	ctx = a.observeStmtBeginForTopSQL(ctx)
-	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 	startTs, err := sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
 	if err != nil {
 		return nil, err
 	}
+	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 
 	// try to reuse point get executor
 	if a.PsStmt.Executor != nil {
