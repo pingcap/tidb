@@ -114,6 +114,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
+	txnManger := sessiontxn.GetTxnManager(sctx)
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp plannercore.Plan
 		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {
@@ -124,14 +125,14 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 		if fp != nil {
 			if !useMaxTS(sctx, fp) {
-				if err := sessiontxn.WarmUpTxn(sctx); err != nil {
+				if err := txnManger.AdviseWarmup(); err != nil {
 					return nil, nil, err
 				}
 			}
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	if err := sessiontxn.WarmUpTxn(sctx); err != nil {
+	if err := txnManger.AdviseWarmup(); err != nil {
 		return nil, nil, err
 	}
 

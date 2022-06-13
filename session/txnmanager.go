@@ -114,9 +114,17 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
-func (m *txnManager) Advise(tp sessiontxn.AdviceType) error {
+func (m *txnManager) AdviseWarmup() error {
 	if m.ctxProvider != nil {
-		return m.ctxProvider.Advise(tp)
+		return m.ctxProvider.AdviseWarmup()
+	}
+	return nil
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (m *txnManager) AdviseOptimizeWithPlan(plan interface{}) error {
+	if m.ctxProvider != nil {
+		return m.ctxProvider.AdviseOptimizeWithPlan(plan)
 	}
 	return nil
 }
@@ -139,6 +147,12 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
 		case ast.ReadCommitted:
 			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+		case ast.Serializable:
+			// todo: Add pessimistic serializable transaction context provider
+			break
+		default:
+			// We use Repeatable read for all other cases.
+			return isolation.NewPessimisticRRTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
 		}
 	}
 
