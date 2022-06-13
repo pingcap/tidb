@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
 )
 
@@ -118,14 +119,6 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return p.getStmtForUpdateTSFunc()
 }
 
-func (p *baseTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
-	switch tp {
-	case sessiontxn.AdviceWarmUp:
-		return p.warmUp()
-	}
-	return nil
-}
-
 func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context) error {
 	p.ctx = ctx
 	return nil
@@ -197,9 +190,23 @@ func (p *baseTxnContextProvider) isTidbSnapshotEnabled() bool {
 	return p.sctx.GetSessionVars().SnapshotTS != 0
 }
 
-func (p *baseTxnContextProvider) warmUp() error {
-	if p.isTidbSnapshotEnabled() {
+// isBeginStmtWithStaleRead indicates whether the current statement is `BeginStmt` type with stale read
+// Because stale read will use `staleread.StalenessTxnContextProvider` for query, so if `staleread.IsStmtStaleness()`
+// returns true in other providers, it means the current statement is `BeginStmt` with stale read
+func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
+	return staleread.IsStmtStaleness(p.sctx)
+}
+
+// AdviseWarmup provides warmup for inner state
+func (p *baseTxnContextProvider) AdviseWarmup() error {
+	if p.isBeginStmtWithStaleRead() {
+		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
 	return p.prepareTxn()
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	return nil
 }

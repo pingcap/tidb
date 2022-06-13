@@ -44,13 +44,13 @@ type subStates = []model.SchemaState
 func testMatchCancelState(t *testing.T, job *model.Job, cancelState interface{}, sql string) bool {
 	switch v := cancelState.(type) {
 	case model.SchemaState:
-		if job.MultiSchemaInfo != nil && job.Type == model.ActionMultiSchemaChange {
+		if job.Type == model.ActionMultiSchemaChange {
 			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s)", sql, v)
 			assert.Failf(t, msg, "use []model.SchemaState as cancel states instead")
 			return false
 		}
 		return job.SchemaState == v
-	case []model.SchemaState: // For multi-schema change sub-jobs.
+	case subStates: // For multi-schema change sub-jobs.
 		if job.MultiSchemaInfo == nil {
 			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v)", sql, v)
 			assert.Failf(t, msg, "use model.SchemaState as the cancel state instead")

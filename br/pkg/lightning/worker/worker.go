@@ -25,6 +25,7 @@ type Pool struct {
 	limit   int
 	workers chan *Worker
 	name    string
+	metrics *metric.Metrics
 }
 
 type Worker struct {
@@ -37,19 +38,25 @@ func NewPool(ctx context.Context, limit int, name string) *Pool {
 		workers <- &Worker{ID: int64(i + 1)}
 	}
 
-	metric.IdleWorkersGauge.WithLabelValues(name).Set(float64(limit))
+	metrics, ok := metric.FromContext(ctx)
+	if ok {
+		metrics.IdleWorkersGauge.WithLabelValues(name).Set(float64(limit))
+	}
 	return &Pool{
 		limit:   limit,
 		workers: workers,
 		name:    name,
+		metrics: metrics,
 	}
 }
 
 func (pool *Pool) Apply() *Worker {
 	start := time.Now()
 	worker := <-pool.workers
-	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
-	metric.ApplyWorkerSecondsHistogram.WithLabelValues(pool.name).Observe(time.Since(start).Seconds())
+	if pool.metrics != nil {
+		pool.metrics.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+		pool.metrics.ApplyWorkerSecondsHistogram.WithLabelValues(pool.name).Observe(time.Since(start).Seconds())
+	}
 	return worker
 }
 
@@ -58,7 +65,9 @@ func (pool *Pool) Recycle(worker *Worker) {
 		panic("invalid restore worker")
 	}
 	pool.workers <- worker
-	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+	if pool.metrics != nil {
+		pool.metrics.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+	}
 }
 
 func (pool *Pool) HasWorker() bool {

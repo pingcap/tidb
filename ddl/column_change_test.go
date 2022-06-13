@@ -64,7 +64,6 @@ func TestColumnAdd(t *testing.T) {
 	var jobID int64
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		jobID = job.ID
-		require.NoError(t, dom.Reload())
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
 		switch job.SchemaState {
