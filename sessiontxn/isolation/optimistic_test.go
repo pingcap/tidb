@@ -83,7 +83,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	// if the oracle future is prepared fist, `math.MaxUint64` should still be used after plan
 	provider = initializeOptimisticProvider(t, tk, false)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	require.NoError(t, provider.Advise(sessiontxn.AdviceWarmUp, nil))
+	require.NoError(t, provider.AdviseWarmup())
 	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
 	readTS, err = provider.GetStmtReadTS()

@@ -190,15 +190,6 @@ func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context) error {
 	return nil
 }
 
-// Advise is used to give advice to provider
-func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
-	switch tp {
-	case sessiontxn.AdviceWarmUp:
-		return p.prepareTSFuture()
-	}
-	return nil
-}
-
 func (p *SimpleTxnContextProvider) prepareTSFuture() error {
 	if p.Sctx.GetSessionVars().SnapshotTS != 0 || staleread.IsStmtStaleness(p.Sctx) || p.Sctx.GetPreparedTSFuture() != nil {
 		return nil

@@ -93,18 +93,6 @@ func NoIdea() (StmtErrorAction, error) {
 	return StmtActionNoIdea, nil
 }
 
-// AdviceType is the option for advice
-type AdviceType int
-
-const (
-	// AdviceWarmUp indicates to warm up the provider's inner state.
-	// For most TxnContextProviders, it will start fetching transaction's timestamp
-	// from PD asynchronously after `AdviceWarmUp` is advised.
-	AdviceWarmUp AdviceType = iota
-	// AdviceOptimizeWithPlan indicates to do some optimizations with the given plan
-	AdviceOptimizeWithPlan
-)
-
 // TxnAdvisable providers a collection of optimizations within transaction
 type TxnAdvisable interface {
 	// AdviseWarmup provides warmup for inner state

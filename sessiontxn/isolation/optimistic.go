@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -45,17 +44,7 @@ func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyO
 	return provider
 }
 
-// Advise is used to give advice to provider
-func (p *OptimisticTxnContextProvider) Advise(tp sessiontxn.AdviceType, val []any) error {
-	switch tp {
-	case sessiontxn.AdviceOptimizeWithPlan:
-		return p.optimizeWithPlan(val)
-	default:
-		return p.baseTxnContextProvider.Advise(tp, val)
-	}
-}
-
-func (p *OptimisticTxnContextProvider) optimizeWithPlan(val []any) (err error) {
+func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(val []any) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}
