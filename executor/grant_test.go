@@ -17,9 +17,13 @@ import (
 	"fmt"
 	"strings"
 
+<<<<<<< HEAD
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+=======
+	"github.com/pingcap/tidb/errno"
+>>>>>>> 395ccbe22... privilege: limit the privileges in memory schemas (#35260)
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/testkit"
@@ -417,8 +421,46 @@ func (s *testSuite3) TestIssue22721(c *C) {
 	tk.MustExec("GRANT USAGE ON test.xx TO 'sync_ci_data'@'%';")
 }
 
+<<<<<<< HEAD
 func (s *testSuite3) TestGrantDynamicPrivs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+=======
+func TestPerformanceSchemaPrivGrant(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create user issue27867;")
+	defer func() {
+		tk.MustExec("drop user issue27867;")
+	}()
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	tk.MustGetErrCode("grant all on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	// Check case insensitivity
+	tk.MustGetErrCode("grant all on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
+	// Check other database privileges
+	tk.MustExec("grant select on performance_schema.* to issue27867;")
+	tk.MustGetErrCode("grant insert on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant update on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant delete on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant drop on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant lock tables on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant create on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant references on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant alter on PERFormAnCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant execute on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant index on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant create view on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant show view on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+}
+
+func TestGrantDynamicPrivs(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+>>>>>>> 395ccbe22... privilege: limit the privileges in memory schemas (#35260)
 	tk.MustExec("create user dyn")
 
 	_, err := tk.Exec("GRANT BACKUP_ADMIN ON test.* TO dyn")

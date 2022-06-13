@@ -1101,6 +1101,26 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	_, err = se.ExecuteInternal(context.Background(), "analyze table t1")
 	c.Assert(err, IsNil)
 
+<<<<<<< HEAD
+=======
+	// Test metric_schema.
+	tk.MustExec(`select * from metrics_schema.tidb_query_duration`)
+	err = tk.ExecToErr("drop table metrics_schema.tidb_query_duration")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	err = tk.ExecToErr("update metrics_schema.tidb_query_duration set instance = 'tst'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
+	err = tk.ExecToErr("delete from metrics_schema.tidb_query_duration")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	err = tk.ExecToErr("create table metric_schema.t(a int)")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	tk.MustGetErrCode("create table metrics_schema.t (id int);", errno.ErrTableaccessDenied)
+	tk.MustGetErrCode("create table performance_schema.t (id int);", errno.ErrTableaccessDenied)
+>>>>>>> 395ccbe22... privilege: limit the privileges in memory schemas (#35260)
 }
 
 func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
