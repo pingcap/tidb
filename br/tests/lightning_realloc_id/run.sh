@@ -20,6 +20,15 @@ set -eu
 check_cluster_version 4 0 0 'local backend'
 LOG_FILE1="$TEST_DIR/lightning-realloc-import1.log"
 LOG_FILE2="$TEST_DIR/lightning-realloc-import2.log"
+LOG_FILE3="$TEST_DIR/lightning-realloc-import3.log"
+
+function run_lightning_expecting_fail() {
+  set +e
+  run_lightning "$@"
+  ERRCODE=$?
+  set -e
+  [ "$ERRCODE" != 0 ]
+}
 
 function check_result() {
   run_sql 'SHOW DATABASES;'
@@ -47,6 +56,18 @@ function parallel_import() {
   wait "$pid1" "$pid2"
 }
 
+function overflow_import() {
+  run_sql 'create database if not exists db'
+  run_sql 'create table db.test(id int auto_increment primary key, a int)'
+  run_sql 'alter table db.test auto_increment=2147483640' # too few available rowID
+  echo "lightning stdout:" > "$TEST_DIR/sql_res.$TEST_NAME.txt"
+  run_lightning_expecting_fail -d "tests/$TEST_NAME/data2" \
+    --sorted-kv-dir "$TEST_DIR/lightning_realloc_import.sorted3" \
+    --log-file "$LOG_FILE3" \
+    --config "tests/$TEST_NAME/config2.toml" | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
+  check_contains 'out of range'
+}
+
 function check_parallel_result() {
   run_sql 'SHOW DATABASES;'
   check_contains 'Database: db';
@@ -63,5 +84,7 @@ check_result
 run_sql 'DROP DATABASE IF EXISTS db;'
 parallel_import
 check_parallel_result
+run_sql 'DROP DATABASE IF EXISTS db;'
+overflow_import
 run_sql 'DROP DATABASE IF EXISTS db;'
 unset GO_FAILPOINTS
