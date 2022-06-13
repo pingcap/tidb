@@ -17,9 +17,13 @@ import (
 	"fmt"
 	"strings"
 
+<<<<<<< HEAD
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+=======
+	"github.com/pingcap/tidb/errno"
+>>>>>>> 395ccbe22... privilege: limit the privileges in memory schemas (#35260)
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/testkit"
@@ -403,3 +407,84 @@ func (s *testSuite3) TestIssue22721(c *C) {
 	tk.MustExec("GRANT USAGE ON test.* TO 'sync_ci_data'@'%';")
 	tk.MustExec("GRANT USAGE ON test.xx TO 'sync_ci_data'@'%';")
 }
+<<<<<<< HEAD
+=======
+
+func TestPerformanceSchemaPrivGrant(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create user issue27867;")
+	defer func() {
+		tk.MustExec("drop user issue27867;")
+	}()
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	tk.MustGetErrCode("grant all on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	// Check case insensitivity
+	tk.MustGetErrCode("grant all on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
+	// Check other database privileges
+	tk.MustExec("grant select on performance_schema.* to issue27867;")
+	tk.MustGetErrCode("grant insert on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant update on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant delete on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant drop on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant lock tables on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant create on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant references on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant alter on PERFormAnCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant execute on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant index on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant create view on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant show view on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+}
+
+func TestGrantDynamicPrivs(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user dyn")
+
+	_, err := tk.Exec("GRANT BACKUP_ADMIN ON test.* TO dyn")
+	require.True(t, terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel))
+	_, err = tk.Exec("GRANT BOGUS_GRANT ON *.* TO dyn")
+	require.True(t, terror.ErrorEqual(err, executor.ErrDynamicPrivilegeNotRegistered))
+
+	tk.MustExec("GRANT BACKUP_Admin ON *.* TO dyn") // grant one priv
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))
+
+	tk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, BACKUP_ADMIN ON *.* TO dyn") // grant multiple
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(
+		testkit.Rows("dyn % BACKUP_ADMIN N", "dyn % SYSTEM_VARIABLES_ADMIN N"),
+	)
+
+	tk.MustExec("GRANT ROLE_ADMIN, BACKUP_ADMIN ON *.* TO dyn WITH GRANT OPTION") // grant multiple with GRANT option.
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(
+		testkit.Rows("dyn % BACKUP_ADMIN Y", "dyn % ROLE_ADMIN Y", "dyn % SYSTEM_VARIABLES_ADMIN N"),
+	)
+
+	tk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, Select, ROLE_ADMIN ON *.* TO dyn") // grant mixed dynamic/non dynamic
+	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("N"))
+	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='SYSTEM_VARIABLES_ADMIN'").Check(testkit.Rows("N"))
+
+	tk.MustExec("GRANT CONNECTION_ADMIN, Insert ON *.* TO dyn WITH GRANT OPTION") // grant mixed dynamic/non dynamic with GRANT option.
+	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("Y"))
+	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN'").Check(testkit.Rows("Y"))
+}
+
+func TestNonExistTableIllegalGrant(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user u29302")
+	defer tk.MustExec("drop user u29302")
+	// Table level, not existing table, illegal privilege
+	tk.MustGetErrCode("grant create temporary tables on NotExistsD29302.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
+	tk.MustGetErrCode("grant lock tables on test.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
+	// Column level, not existing table, illegal privilege
+	tk.MustGetErrCode("grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;", mysql.ErrWrongUsage)
+}
+>>>>>>> 395ccbe22... privilege: limit the privileges in memory schemas (#35260)

@@ -1024,6 +1024,43 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	_, err = se.ExecuteInternal(context.Background(), "analyze table t1")
 	c.Assert(err, IsNil)
 
+<<<<<<< HEAD
+=======
+	// This test tests no privilege check for INFORMATION_SCHEMA database.
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER 'u1'@'localhost';`)
+	tk.MustExec(`GRANT SELECT ON *.* TO 'u1'@'localhost';`)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	tk.MustExec(`select * from information_schema.tables`)
+	tk.MustExec(`select * from information_schema.key_column_usage`)
+	err := tk.ExecToErr("create table information_schema.t(a int)")
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "denied to user"))
+	err = tk.ExecToErr("drop table information_schema.tables")
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "denied to user"))
+	err = tk.ExecToErr("update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
+
+	// Test metric_schema.
+	tk.MustExec(`select * from metrics_schema.tidb_query_duration`)
+	err = tk.ExecToErr("drop table metrics_schema.tidb_query_duration")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	err = tk.ExecToErr("update metrics_schema.tidb_query_duration set instance = 'tst'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
+	err = tk.ExecToErr("delete from metrics_schema.tidb_query_duration")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	err = tk.ExecToErr("create table metric_schema.t(a int)")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	tk.MustGetErrCode("create table metrics_schema.t (id int);", errno.ErrTableaccessDenied)
+	tk.MustGetErrCode("create table performance_schema.t (id int);", errno.ErrTableaccessDenied)
+>>>>>>> 395ccbe22... privilege: limit the privileges in memory schemas (#35260)
 }
 
 func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
