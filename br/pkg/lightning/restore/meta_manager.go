@@ -78,8 +78,10 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 type tableMetaMgr interface {
 	InitTableMeta(ctx context.Context) error
 	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
-	// ReallocTableRowIDs: re-allocate rowIDs across lightning instances. only parallel import needs this
-	// returns: prevMaxRowID, newlyAllocatedMaxRowID, error
+	// ReallocTableRowIDs reallocates the row IDs of a table.
+	// It returns new rowIDBase and maxRowID or any error it encounters.
+	// Note that noopTableMetaMgr has a noop implementation of this function.
+	// If maxRowID is 0, caller should maintain rowIDBase and maxRowID itself.
 	ReallocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
@@ -178,8 +180,8 @@ func (m *dbTableMetaMgr) ReallocTableRowIDs(ctx context.Context, newRowIDCount i
 		return 0, 0, errors.Annotate(err, "enable pessimistic transaction failed")
 	}
 	var (
-		newRowIDBase int64
-		newRowIDMax  int64
+		maxRowIDMax int64
+		newRowIDMax int64
 	)
 	err = exec.Transact(ctx, "realloc table rowID", func(ctx context.Context, tx *sql.Tx) error {
 		row := tx.QueryRowContext(
@@ -190,10 +192,10 @@ func (m *dbTableMetaMgr) ReallocTableRowIDs(ctx context.Context, newRowIDCount i
 		if row.Err() != nil {
 			return errors.Trace(err)
 		}
-		if err := row.Scan(&newRowIDBase); err != nil {
+		if err := row.Scan(&maxRowIDMax); err != nil {
 			return errors.Trace(err)
 		}
-		newRowIDMax = newRowIDBase + newRowIDCount
+		newRowIDMax = maxRowIDMax + newRowIDCount
 		// nolint:gosec
 		query := fmt.Sprintf("UPDATE %s SET row_id_max = ? WHERE table_id = ? AND task_id = ?", m.tableName)
 		if _, err := tx.ExecContext(ctx, query, newRowIDMax, m.tr.tableInfo.ID, m.taskID); err != nil {
@@ -204,7 +206,8 @@ func (m *dbTableMetaMgr) ReallocTableRowIDs(ctx context.Context, newRowIDCount i
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	return newRowIDBase, newRowIDMax, nil
+	// newRowIDBase = maxRowIDMax + 1
+	return maxRowIDMax + 1, newRowIDMax, nil
 }
 
 func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {

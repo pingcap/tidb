@@ -2034,8 +2034,8 @@ type chunkRestore struct {
 	curRowIDMax      int64
 	tableRestore     *TableRestore
 
-	rowCount   int
-	avgRowSize int
+	rowCount       int
+	curAccmRowSize uint64 // has a maximum of 18446744.07370955 TB
 }
 
 func newChunkRestore(
@@ -2162,7 +2162,8 @@ func (cr *chunkRestore) adjustRowID(rowID int64, rc *Controller) (int64, error) 
 		// 2. curRowIDBase > curRowIDMax -> run out of allocated IDs
 		pos, _ := cr.parser.Pos()
 		leftFileSize := cr.chunk.Chunk.EndOffset - pos
-		newRowIDCount := leftFileSize/int64(cr.avgRowSize) + 1 // plus the current row
+		avgRowSize := cr.curAccmRowSize / uint64(cr.rowCount)
+		newRowIDCount := leftFileSize/int64(avgRowSize) + 1 // plus the current row
 		newBase, newMax, err := cr.tableRestore.allocateRowIDs(newRowIDCount, rc)
 		if err != nil {
 			logger := cr.tableRestore.logger.With(
@@ -2183,7 +2184,7 @@ func (cr *chunkRestore) adjustRowID(rowID int64, rc *Controller) (int64, error) 
 }
 
 func (cr *chunkRestore) updateRowStats(rowSize int) {
-	cr.avgRowSize = (cr.avgRowSize*cr.rowCount + rowSize) / (cr.rowCount + 1)
+	cr.curAccmRowSize += uint64(rowSize)
 	cr.rowCount++
 }
 

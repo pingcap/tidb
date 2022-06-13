@@ -1061,13 +1061,12 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		kvs = newKvs
 	}
-	tempKvs := make([]common.KvPair, 0)
-	tempKvs = append(tempKvs, kvs[0])
-	w.prevRowID = kvs[0].RowID
+	startIdx := 0
+	w.prevRowID = kvs[len(kvs)-1].RowID
 	for i := 1; i < len(kvs); i++ {
 		if kvs[i].RowID > kvs[i-1].RowID+1 {
 			// leap id
-			err := w.writer.writeKVs(tempKvs)
+			err := w.writer.writeKVs(kvs[startIdx:i])
 			if err != nil {
 				return err
 			}
@@ -1075,17 +1074,11 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 			if err != nil {
 				return err
 			}
-			tempKvs = make([]common.KvPair, 0)
-			tempKvs = append(tempKvs, kvs[i])
-		} else {
-			tempKvs = append(tempKvs, kvs[i])
-		}
-		if i == len(kvs)-1 {
-			w.prevRowID = kvs[i].RowID
+			startIdx = i
 		}
 	}
-	if len(tempKvs) > 0 {
-		return w.writer.writeKVs(tempKvs)
+	if startIdx < len(kvs) {
+		return w.writer.writeKVs(kvs[startIdx:])
 	}
 	return nil
 }

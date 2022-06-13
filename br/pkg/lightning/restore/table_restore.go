@@ -1034,7 +1034,7 @@ func (tr *TableRestore) allocateRowIDs(newRowCount int64, rc *Controller) (int64
 	// try to re-allocate from downstream
 	// if we are using parallel import, rowID should be reconciled globally.
 	// Otherwise, this function will simply return 0.
-	preRowIDMax, newRowIDMax, err := metaMgr.ReallocTableRowIDs(context.Background(), newRowCount)
+	newRowIDBase, newRowIDMax, err := metaMgr.ReallocTableRowIDs(context.Background(), newRowCount)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1045,7 +1045,7 @@ func (tr *TableRestore) allocateRowIDs(newRowCount int64, rc *Controller) (int64
 	var rowIDBase int64
 	if newRowIDMax != 0 {
 		// re-alloc from downstream
-		rowIDBase = preRowIDMax + 1
+		rowIDBase = newRowIDBase
 		tr.curMaxRowID = newRowIDMax
 	} else {
 		// single import mode: re-allocate rowID from memory
