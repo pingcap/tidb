@@ -276,16 +276,16 @@ func TestIssue19229(t *testing.T) {
 	_, err := tk.Exec("insert into enumt values('xxx');")
 	terr := errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(errno.WarnDataTruncated), terr.Code())
-	_, err = tk.Exec("insert into enumt values(-1);")
+	err = tk.ExecToErr("insert into enumt values(-1);")
 	terr = errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(errno.WarnDataTruncated), terr.Code())
 	tk.MustExec("drop table enumt")
 
 	tk.MustExec("CREATE TABLE sett (type set('a', 'b') );")
-	_, err = tk.Exec("insert into sett values('xxx');")
+	err = tk.ExecToErr("insert into sett values('xxx');")
 	terr = errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(errno.WarnDataTruncated), terr.Code())
-	_, err = tk.Exec("insert into sett values(-1);")
+	err = tk.ExecToErr("insert into sett values(-1);")
 	terr = errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(errno.WarnDataTruncated), terr.Code())
 	tk.MustExec("drop table sett")
@@ -935,14 +935,10 @@ func TestModifyColumnOption(t *testing.T) {
 	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
 	_, err := tk.Exec("alter table t1 change a a varchar(16)")
 	require.NoError(t, err)
-	_, err = tk.Exec("alter table t1 change a a varchar(10)")
-	require.NoError(t, err)
-	_, err = tk.Exec("alter table t1 change a a datetime")
-	require.NoError(t, err)
-	_, err = tk.Exec("alter table t1 change a a int(11) unsigned")
-	require.NoError(t, err)
-	_, err = tk.Exec("alter table t2 change b b int(11) unsigned")
-	require.NoError(t, err)
+	tk.MustExec("alter table t1 change a a varchar(10)")
+	tk.MustExec("alter table t1 change a a datetime")
+	tk.MustExec("alter table t1 change a a int(11) unsigned")
+	tk.MustExec("alter table t2 change b b int(11) unsigned")
 }
 
 func TestIndexOnMultipleGeneratedColumn(t *testing.T) {
@@ -1635,9 +1631,9 @@ func TestAlterColumn(t *testing.T) {
 	// is forbidden as expected.
 	tk.MustExec("drop table if exists mc")
 	tk.MustExec("create table mc(a int key nonclustered, b int, c int)")
-	_, err = tk.Exec("alter table mc modify column a int key") // Adds a new primary key
+	err = tk.ExecToErr("alter table mc modify column a int key") // Adds a new primary key
 	require.Error(t, err)
-	_, err = tk.Exec("alter table mc modify column c int unique") // Adds a new unique key
+	err = tk.ExecToErr("alter table mc modify column c int unique") // Adds a new unique key
 	require.Error(t, err)
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
@@ -1663,7 +1659,7 @@ func TestAlterColumn(t *testing.T) {
 	createSQL = result.Rows()[0][1]
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	require.Equal(t, expected, createSQL)
-	_, err = tk.Exec("alter table mc modify column a bigint") // Droppping auto_increment is not allow when @@tidb_allow_remove_auto_inc == 'off'
+	err = tk.ExecToErr("alter table mc modify column a bigint") // Droppping auto_increment is not allow when @@tidb_allow_remove_auto_inc == 'off'
 	require.Error(t, err)
 	tk.MustExec("set @@tidb_allow_remove_auto_inc = on")
 	tk.MustExec("alter table mc modify column a bigint") // Dropping auto_increment is ok when @@tidb_allow_remove_auto_inc == 'on'
@@ -1672,7 +1668,7 @@ func TestAlterColumn(t *testing.T) {
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	require.Equal(t, expected, createSQL)
 
-	_, err = tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
+	err = tk.ExecToErr("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
 	require.Error(t, err)
 
 	tk.MustExec("drop table if exists t")
@@ -2660,14 +2656,10 @@ func TestCreateTableWithAutoIdCache(t *testing.T) {
 
 	// Test auto_id_cache overflows int64.
 	tk.MustExec("drop table if exists t;")
-	_, err = tk.Exec("create table t(a int) auto_id_cache = 9223372036854775808")
-	require.Error(t, err)
-	require.Equal(t, "table option auto_id_cache overflows int64", err.Error())
+	tk.MustGetErrMsg("create table t(a int) auto_id_cache = 9223372036854775808", "table option auto_id_cache overflows int64")
 
 	tk.MustExec("create table t(a int) auto_id_cache = 9223372036854775807")
-	_, err = tk.Exec("alter table t auto_id_cache = 9223372036854775808")
-	require.Error(t, err)
-	require.Equal(t, "table option auto_id_cache overflows int64", err.Error())
+	tk.MustGetErrMsg("alter table t auto_id_cache = 9223372036854775808", "table option auto_id_cache overflows int64")
 }
 
 func TestAlterIndexVisibility(t *testing.T) {
@@ -2804,10 +2796,7 @@ func TestDropLastVisibleColumnOrColumns(t *testing.T) {
 	require.Equal(t, "[ddl:1113]A table must have at least 1 column", err.Error())
 	// for visible columns
 	tk.MustExec("create table t_drop_last_columns(x int, y int, key((1+1)))")
-	_, err = tk.Exec("alter table t_drop_last_columns drop column x, drop column y")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1113]A table must have at least 1 column", err.Error())
-
+	tk.MustGetErrMsg("alter table t_drop_last_columns drop column x, drop column y", "[ddl:1113]A table must have at least 1 column")
 	tk.MustExec("drop table if exists t_drop_last_column, t_drop_last_columns")
 }
 
@@ -3092,8 +3081,7 @@ func TestIssue22028(t *testing.T) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a double);")
-	_, err = tk.Exec("ALTER TABLE t MODIFY COLUMN a DOUBLE(0,0);")
-	require.Equal(t, "[types:1439]Display width out of range for column 'a' (max = 255)", err.Error())
+	tk.MustGetErrMsg("ALTER TABLE t MODIFY COLUMN a DOUBLE(0,0);", "[types:1439]Display width out of range for column 'a' (max = 255)")
 }
 
 func TestIssue21835(t *testing.T) {
@@ -3102,8 +3090,7 @@ func TestIssue21835(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
-	_, err := tk.Exec("create table t( col decimal(1,2) not null default 0);")
-	require.Equal(t, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column 'col').", err.Error())
+	tk.MustGetErrMsg("create table t( col decimal(1,2) not null default 0);", "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column 'col').")
 }
 
 func TestCreateTemporaryTable(t *testing.T) {
@@ -3147,7 +3134,7 @@ func TestCreateTemporaryTable(t *testing.T) {
 	tk.MustExec("create temporary table tmp_db.t2 (id int)")
 	tk.MustQuery("select * from t1") // No error
 	tk.MustExec("drop database tmp_db")
-	_, err := tk.Exec("select * from t1")
+	err := tk.ExecToErr("select * from t1")
 	require.Error(t, err)
 	// In MySQL, drop DB does not really drop the table, it's back!
 	tk.MustExec("create database tmp_db")
@@ -3157,7 +3144,7 @@ func TestCreateTemporaryTable(t *testing.T) {
 	// When local temporary table overlap the normal table, it takes a higher priority.
 	tk.MustExec("create table overlap (id int)")
 	tk.MustExec("create temporary table overlap (a int, b int)")
-	_, err = tk.Exec("insert into overlap values (1)") // column not match
+	err = tk.ExecToErr("insert into overlap values (1)") // column not match
 	require.Error(t, err)
 	tk.MustExec("insert into overlap values (1, 1)")
 
@@ -3174,7 +3161,7 @@ func TestCreateTemporaryTable(t *testing.T) {
 
 	// Check create temporary table for if not exists
 	tk.MustExec("create temporary table b_local_temp_table (id int)")
-	_, err = tk.Exec("create temporary table b_local_temp_table (id int)")
+	err = tk.ExecToErr("create temporary table b_local_temp_table (id int)")
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
 
@@ -3356,41 +3343,33 @@ func TestAvoidCreateViewOnLocalTemporaryTable(t *testing.T) {
 	tk.MustExec("create temporary table tt2 (c int, d int)")
 
 	checkCreateView := func() {
-		_, err := tk.Exec("create view v1 as select * from tt1")
+		err := tk.ExecToErr("create view v1 as select * from tt1")
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
-		_, err = tk.Exec("select * from v1")
-		require.Error(t, err)
-		require.Equal(t, "[schema:1146]Table 'test.v1' doesn't exist", err.Error())
+		tk.MustGetErrMsg("select * from v1", "[schema:1146]Table 'test.v1' doesn't exist")
 
-		_, err = tk.Exec("create view v1 as select * from (select * from tt1) as tt")
+		err = tk.ExecToErr("create view v1 as select * from (select * from tt1) as tt")
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
-		_, err = tk.Exec("select * from v1")
-		require.Error(t, err)
-		require.Equal(t, "[schema:1146]Table 'test.v1' doesn't exist", err.Error())
+		tk.MustGetErrMsg("select * from v1", "[schema:1146]Table 'test.v1' doesn't exist")
 
-		_, err = tk.Exec("create view v2 as select * from tt0 union select * from tt1")
+		err = tk.ExecToErr("create view v2 as select * from tt0 union select * from tt1")
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
-		_, err = tk.Exec("select * from v2")
+		err = tk.ExecToErr("select * from v2")
 		require.Error(t, err)
 		require.Equal(t, "[schema:1146]Table 'test.v2' doesn't exist", err.Error())
 
-		_, err = tk.Exec("create view v3 as select * from tt0, tt1 where tt0.a = tt1.a")
+		err = tk.ExecToErr("create view v3 as select * from tt0, tt1 where tt0.a = tt1.a")
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
-		_, err = tk.Exec("select * from v3")
+		err = tk.ExecToErr("select * from v3")
 		require.Error(t, err)
 		require.Equal(t, "[schema:1146]Table 'test.v3' doesn't exist", err.Error())
 
-		_, err = tk.Exec("create view v4 as select a, (select count(1) from tt1 where tt1.a = tt0.a) as tt1a from tt0")
+		err = tk.ExecToErr("create view v4 as select a, (select count(1) from tt1 where tt1.a = tt0.a) as tt1a from tt0")
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
-		_, err = tk.Exec("select * from v4")
-		require.Error(t, err)
-		require.Equal(t, "[schema:1146]Table 'test.v4' doesn't exist", err.Error())
+		tk.MustGetErrMsg("select * from v4", "[schema:1146]Table 'test.v4' doesn't exist")
 
-		_, err = tk.Exec("create view v5 as select a, (select count(1) from tt1 where tt1.a = 1) as tt1a from tt0")
+		err = tk.ExecToErr("create view v5 as select a, (select count(1) from tt1 where tt1.a = 1) as tt1a from tt0")
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
-		_, err = tk.Exec("select * from v5")
-		require.Error(t, err)
-		require.Equal(t, "[schema:1146]Table 'test.v5' doesn't exist", err.Error())
+		tk.MustGetErrMsg("select * from v5", "[schema:1146]Table 'test.v5' doesn't exist")
 
 		_, err = tk.Exec("create view v6 as select * from tt0 where tt0.a=(select max(tt1.b) from tt1)")
 		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))

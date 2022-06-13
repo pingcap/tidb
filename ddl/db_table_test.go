@@ -530,7 +530,7 @@ func TestTableLocksLostCommit(t *testing.T) {
 	tk.MustExec("LOCK TABLES t1 WRITE")
 	tk.MustExec("INSERT INTO t1 VALUES(10)")
 
-	_, err := tk2.Exec("SELECT * FROM t1")
+	err := tk2.ExecToErr("SELECT * FROM t1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 
 	tk.Session().Close()
@@ -578,32 +578,32 @@ func TestWriteLocal(t *testing.T) {
 
 	// Test: forbid write
 	tk.MustExec("lock tables t1 write local")
-	_, err := tk2.Exec("insert into t1 values(NULL)")
+	err := tk2.ExecToErr("insert into t1 values(NULL)")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
 
 	// Test mutex: lock write local first
 	tk.MustExec("lock tables t1 write local")
-	_, err = tk2.Exec("lock tables t1 write local")
+	err = tk2.ExecToErr("lock tables t1 write local")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("lock tables t1 write")
+	err = tk2.ExecToErr("lock tables t1 write")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("lock tables t1 read")
+	err = tk2.ExecToErr("lock tables t1 read")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
 
 	// Test mutex: lock write first
 	tk.MustExec("lock tables t1 write")
-	_, err = tk2.Exec("lock tables t1 write local")
+	err = tk2.ExecToErr("lock tables t1 write local")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
 
 	// Test mutex: lock read first
 	tk.MustExec("lock tables t1 read")
-	_, err = tk2.Exec("lock tables t1 write local")
+	err = tk2.ExecToErr("lock tables t1 write local")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
@@ -655,14 +655,14 @@ func TestLockTables(t *testing.T) {
 	_, err = tk.Exec("delete from t1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite))
 
-	_, err = tk2.Exec("insert into t1 set a=1")
+	err = tk2.ExecToErr("insert into t1 set a=1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("update t1 set a=1")
+	err = tk2.ExecToErr("update t1 set a=1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("delete from t1")
+	err = tk2.ExecToErr("delete from t1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 	tk2.MustExec("lock tables t1 read")
-	_, err = tk2.Exec("insert into t1 set a=1")
+	err = tk2.ExecToErr("insert into t1 set a=1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite))
 
 	// Test write lock.
@@ -674,11 +674,11 @@ func TestLockTables(t *testing.T) {
 	tk.MustExec("delete from t1")
 	tk.MustExec("insert into t1 set a=1")
 
-	_, err = tk2.Exec("select * from t1")
+	err = tk2.ExecToErr("select * from t1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("insert into t1 set a=1")
+	err = tk2.ExecToErr("insert into t1 set a=1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("lock tables t1 write")
+	err = tk2.ExecToErr("lock tables t1 write")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 
 	// Test write local lock.
@@ -688,13 +688,13 @@ func TestLockTables(t *testing.T) {
 	tk.MustExec("insert into t1 set a=1")
 
 	tk2.MustQuery("select * from t1")
-	_, err = tk2.Exec("delete from t1")
+	err = tk2.ExecToErr("delete from t1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("insert into t1 set a=1")
+	err = tk2.ExecToErr("insert into t1 set a=1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("lock tables t1 write")
+	err = tk2.ExecToErr("lock tables t1 write")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("lock tables t1 read")
+	err = tk2.ExecToErr("lock tables t1 read")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 
 	// Test none unique table.
@@ -748,15 +748,15 @@ func TestLockTables(t *testing.T) {
 	tk.MustExec("lock tables t1 write, t2 read")
 	tk.MustExec("truncate table t1")
 	tk.MustExec("insert into t1 set a=1")
-	_, err = tk2.Exec("insert into t1 set a=1")
+	err = tk2.ExecToErr("insert into t1 set a=1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 
 	// Test for lock unsupported schema tables.
-	_, err = tk2.Exec("lock tables performance_schema.global_status write")
+	err = tk2.ExecToErr("lock tables performance_schema.global_status write")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrAccessDenied))
-	_, err = tk2.Exec("lock tables information_schema.tables write")
+	err = tk2.ExecToErr("lock tables information_schema.tables write")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrAccessDenied))
-	_, err = tk2.Exec("lock tables mysql.db write")
+	err = tk2.ExecToErr("lock tables mysql.db write")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrAccessDenied))
 
 	// Test create table/view when session is holding the table locks.
@@ -791,15 +791,15 @@ func TestLockTables(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, table.ErrLockOrActiveTransaction))
 	// Test alter/drop database when other session is holding the table locks of the database.
 	tk2.MustExec("create database test_lock2")
-	_, err = tk2.Exec("drop database test")
+	err = tk2.ExecToErr("drop database test")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("alter database test charset='utf8mb4'")
+	err = tk2.ExecToErr("alter database test charset='utf8mb4'")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 
 	// Test for admin cleanup table locks.
 	tk.MustExec("unlock tables")
 	tk.MustExec("lock table t1 write, t2 write")
-	_, err = tk2.Exec("lock tables t1 write, t2 read")
+	err = tk2.ExecToErr("lock tables t1 write, t2 read")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 	tk2.MustExec("admin cleanup table lock t1,t2")
 	checkTableLock(t, tk, "test", "t1", model.TableLockNone)
