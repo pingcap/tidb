@@ -107,31 +107,6 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	return p.prepareStmt(false)
 }
 
-// Advise is used to give advice to provider
-func (p *PessimisticRCTxnContextProvider) Advise(tp sessiontxn.AdviceType, val []any) error {
-	switch tp {
-	case sessiontxn.AdviceWarmUp:
-		return p.warmUp()
-	default:
-		return p.baseTxnContextProvider.Advise(tp, val)
-	}
-}
-
-func (p *PessimisticRCTxnContextProvider) warmUp() error {
-	if err := p.baseTxnContextProvider.warmUp(); err != nil {
-		return err
-	}
-
-	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
-		// When @@tidb_snapshot_ts is set or the current stmt is `BeginStmt` with stale read
-		// stmtTS will never be used so no need to continue to prepare it
-		return nil
-	}
-
-	p.prepareStmtTS()
-	return nil
-}
-
 func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	if p.stmtTSFuture != nil {
 		return
@@ -218,4 +193,17 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 	}
 
 	return sessiontxn.ErrorAction(lockErr)
+}
+
+// AdviseWarmup provides warmup for inner state
+func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
+	if p.isTidbSnapshotEnabled() {
+		return nil
+	}
+
+	if err := p.prepareTxn(); err != nil {
+		return err
+	}
+	p.prepareStmtTS()
+	return nil
 }

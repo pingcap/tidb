@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -270,6 +271,19 @@ func TestRCProviderInitialize(t *testing.T) {
 	provider := assert.CheckAndGetProvider(t)
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	ts, err := provider.GetStmtReadTS()
+	require.NoError(t, err)
+	assertAfterActive.Check(t)
+	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+	tk.MustExec("rollback")
+
+	// Case Pessimistic Autocommit
+	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+	assert = inActiveRCTxnAssert(se)
+	assertAfterActive = activeRCTxnAssert(t, se, true)
+	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+	provider = assert.CheckAndGetProvider(t)
+	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	assertAfterActive.Check(t)
 	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)

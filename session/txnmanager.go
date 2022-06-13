@@ -129,9 +129,17 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
-func (m *txnManager) Advise(tp sessiontxn.AdviceType, val ...any) error {
+func (m *txnManager) AdviseWarmup() error {
 	if m.ctxProvider != nil {
-		return m.ctxProvider.Advise(tp, val)
+		return m.ctxProvider.AdviseWarmup()
+	}
+	return nil
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (m *txnManager) AdviseOptimizeWithPlan(plan interface{}) error {
+	if m.ctxProvider != nil {
+		return m.ctxProvider.AdviseOptimizeWithPlan(plan)
 	}
 	return nil
 }
@@ -161,13 +169,18 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 		switch sessVars.IsolationLevelForNewTxn() {
 		case ast.ReadCommitted:
 			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
-		default:
+		case ast.Serializable:
+			// todo: Add pessimistic serializable transaction context provider
 			return &legacy.SimpleTxnContextProvider{
 				Sctx:                  m.sctx,
 				Pessimistic:           txnMode == ast.Pessimistic,
 				CausalConsistencyOnly: r.CausalConsistencyOnly,
 				UpdateForUpdateTS:     executor.UpdateForUpdateTS,
 			}, nil
+		default:
+			// When the isolation level is 'REPEATABLE-READ' or other un-implement isolation levels, just use
+			// `PessimisticRRTxnContextProvider`
+			return isolation.NewPessimisticRRTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
 		}
 	default:
 		return nil, errors.Errorf("Invalid txn mode '%s'", txnMode)

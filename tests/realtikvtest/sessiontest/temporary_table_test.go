@@ -303,7 +303,7 @@ func TestTemporaryTableInterceptor(t *testing.T) {
 		func() error {
 			err := tk.Session().PrepareTxnCtx(context.TODO())
 			if err == nil {
-				err = sessiontxn.WarmUpTxn(tk.Session())
+				err = sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup()
 			}
 			return err
 		},
