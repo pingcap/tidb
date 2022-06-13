@@ -434,8 +434,10 @@ func searchStreamBackupCommand() *cobra.Command {
 			if err = cfg.ParseFromFlags(cmd.Flags()); err != nil {
 				return errors.Trace(err)
 			}
-
 			_, s, err := task.GetStorage(ctx, cfg.Storage, &cfg)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			comparator := restore.NewStartWithComparator()
 			bs := restore.NewStreamBackupSearch(s, comparator, keyBytes)
 			bs.SetStartTS(startTs)
