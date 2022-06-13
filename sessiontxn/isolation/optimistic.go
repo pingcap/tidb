@@ -44,6 +44,8 @@ func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyO
 	return provider
 }
 
+// AdviseOptimizeWithPlan providers optimization according to the plan
+// It will use MaxTS as the startTS in autocommit txn for some plans.
 func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil

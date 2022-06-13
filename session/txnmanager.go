@@ -178,8 +178,7 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 				UpdateForUpdateTS:     executor.UpdateForUpdateTS,
 			}, nil
 		default:
-			// When the isolation level is 'REPEATABLE-READ' or other un-implement isolation levels, just use
-			// `PessimisticRRTxnContextProvider`
+			// We use Repeatable read for all other cases.
 			return isolation.NewPessimisticRRTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
 		}
 	default:

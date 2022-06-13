@@ -101,6 +101,8 @@ type TxnAdvisable interface {
 	AdviseOptimizeWithPlan(plan interface{}) error
 }
 
+// OptimizeWithPlanAndThenWarmUp first do `AdviseOptimizeWithPlan` to optimize the txn with plan
+// and then do `AdviseWarmup` to do some tso fetch if necessary
 func OptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan interface{}) error {
 	txnManager := GetTxnManager(sctx)
 	if err := txnManager.AdviseOptimizeWithPlan(plan); err != nil {
