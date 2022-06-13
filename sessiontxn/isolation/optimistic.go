@@ -44,25 +44,21 @@ func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyO
 	return provider
 }
 
-func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(val []any) (err error) {
+func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}
 
-	if len(val) == 0 {
-		return nil
-	}
-
-	plan, ok := val[0].(plannercore.Plan)
+	realPlan, ok := plan.(plannercore.Plan)
 	if !ok {
 		return nil
 	}
 
 	if execute, ok := plan.(*plannercore.Execute); ok {
-		plan = execute.Plan
+		realPlan = execute.Plan
 	}
 
-	ok, err = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx, plan)
+	ok, err = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx, realPlan)
 	if err != nil {
 		return err
 	}
