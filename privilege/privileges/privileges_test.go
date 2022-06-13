@@ -1251,6 +1251,9 @@ func TestSystemSchema(t *testing.T) {
 	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	tk.MustGetErrCode("create table metrics_schema.t (id int);", errno.ErrTableaccessDenied)
+	tk.MustGetErrCode("create table performance_schema.t (id int);", errno.ErrTableaccessDenied)
 }
 
 func TestPerformanceSchema(t *testing.T) {
