@@ -501,7 +501,7 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 
 func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error) {
 	failpoint.Inject("no-leader-error", func(_ failpoint.Value) {
-		log.Info("failpoint pd no leader error")
+		logutil.CL(ctx).Debug("failpoint no-leader-error injected.")
 		failpoint.Return(nil, status.Error(codes.Unavailable, "not leader"))
 	})
 
