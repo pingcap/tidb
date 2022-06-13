@@ -789,7 +789,6 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 			colExec.memTracker.Release(colExec.memTracker.BytesConsumed(), &hists, "all")
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
-		logutil.BgLogger().Info("Still have memory not released:", zap.Int64("", colExec.memTracker.BytesConsumed()))
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
 		colGroupResult := &statistics.AnalyzeResult{
 			Hist:    hists[cLen:],
@@ -1076,6 +1075,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		rootRowCollector.MergeCollector(mergeResult.collector)
 		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 	}
+	defer e.memTracker.Release(rootRowCollector.Base().MemSize, &rootRowCollector, "rootCollector")
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -1186,6 +1186,15 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			continue
 		}
 	}
+	defer func() {
+		totalSampleCollectorSize := int64(0)
+		for _, sampleCollector := range sampleCollectors {
+			if sampleCollector != nil {
+				totalSampleCollectorSize += sampleCollector.MemSize
+			}
+		}
+		e.memTracker.Release(totalSampleCollectorSize, &sampleCollectors, "sampleCollectors")
+	}()
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -1197,13 +1206,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			return 0, nil, nil, nil, nil, err
 		}
 	}
-	totalSampleCollectorSize := int64(0)
-	for _, sampleCollector := range sampleCollectors {
-		if sampleCollector != nil {
-			totalSampleCollectorSize += sampleCollector.MemSize
-		}
-	}
-	e.memTracker.Release(rootRowCollector.Base().MemSize+totalSampleCollectorSize, &rootRowCollector, "collectors")
 	return
 }
 
