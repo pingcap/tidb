@@ -9,7 +9,6 @@ import (
 	"io"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -35,8 +34,8 @@ type TaskStatus struct {
 	Info backuppb.StreamBackupTaskInfo
 	// paused checks whether the task is paused.
 	paused bool
-	// Progress maps the StoreID to NextBackupTs.
-	Progress map[uint64]uint64
+	// Checkpoints collects the checkpoints.
+	Checkpoints []Checkpoint
 	// Total QPS of the task in recent seconds.
 	QPS float64
 	// Last error reported by the store.
@@ -95,13 +94,15 @@ func (t *TaskStatus) colorfulStatusString() string {
 }
 
 // GetCheckpoint calculates the checkpoint of the task.
-func (t TaskStatus) GetCheckpoint() uint64 {
+func (t TaskStatus) GetMinStoreCheckpoint() Checkpoint {
 	initialized := false
-	checkpoint := t.Info.StartTs
-	for _, ts := range t.Progress {
-		if !initialized || ts < checkpoint {
+	checkpoint := Checkpoint{
+		TS: t.Info.StartTs,
+	}
+	for _, cp := range t.Checkpoints {
+		if cp.Type() == CheckpointTypeStore && (!initialized || cp.TS < checkpoint.TS) {
 			initialized = true
-			checkpoint = ts
+			checkpoint = cp
 		}
 	}
 	return checkpoint
@@ -130,16 +131,23 @@ func (p *printByTable) AddTask(task TaskStatus) {
 		info := fmt.Sprintf("%s; gap=%s", pTime, gapColor.Sprint(gap))
 		return info
 	}
-	table.Add("checkpoint[global]", formatTS(task.GetCheckpoint()))
-	for store, p := range task.Progress {
-		table.Add(fmt.Sprintf("checkpoint[store=%d]", store), formatTS(p))
-	}
+	table.Add("checkpoint[global]", formatTS(task.GetMinStoreCheckpoint().TS))
+	p.addCheckpoints(&task, table, formatTS)
 	for store, e := range task.LastErrors {
 		table.Add(fmt.Sprintf("error[store=%d]", store), e.ErrorCode)
 		table.Add(fmt.Sprintf("error-happen-at[store=%d]", store), formatTS(oracle.ComposeTS(int64(e.HappenAt), 0)))
 		table.Add(fmt.Sprintf("error-message[store=%d]", store), e.ErrorMessage)
 	}
 	p.pendingTables = append(p.pendingTables, table)
+}
+
+func (p *printByTable) addCheckpoints(task *TaskStatus, table *glue.Table, formatTS func(uint64) string) {
+	for _, cp := range task.Checkpoints {
+		switch cp.Type() {
+		case CheckpointTypeStore:
+			table.Add(fmt.Sprintf("checkpoint[store=%d]", cp.ID), formatTS(cp.TS))
+		}
+	}
 }
 
 func (p *printByTable) PrintTasks() {
@@ -173,24 +181,27 @@ func (p *printByJSON) PrintTasks() {
 		LastError backuppb.StreamBackupError `json:"last_error"`
 	}
 	type jsonTask struct {
-		Name        string           `json:"name"`
-		StartTS     uint64           `json:"start_ts,omitempty"`
-		EndTS       uint64           `json:"end_ts,omitempty"`
-		TableFilter []string         `json:"table_filter"`
-		Progress    []storeProgress  `json:"progress"`
-		Storage     string           `json:"storage"`
-		Checkpoint  uint64           `json:"checkpoint"`
-		EstQPS      float64          `json:"estimate_qps"`
-		LastErrors  []storeLastError `json:"last_errors"`
+		Name           string           `json:"name"`
+		StartTS        uint64           `json:"start_ts,omitempty"`
+		EndTS          uint64           `json:"end_ts,omitempty"`
+		TableFilter    []string         `json:"table_filter"`
+		Progress       []storeProgress  `json:"progress"`
+		Storage        string           `json:"storage"`
+		CheckpointTS   uint64           `json:"checkpoint"`
+		EstQPS         float64          `json:"estimate_qps"`
+		LastErrors     []storeLastError `json:"last_errors"`
+		AllCheckpoints []Checkpoint     `json:"all_checkpoints"`
 	}
 	taskToJSON := func(t TaskStatus) jsonTask {
 		s := storage.FormatBackendURL(t.Info.GetStorage())
-		sp := make([]storeProgress, 0, len(t.Progress))
-		for store, checkpoint := range t.Progress {
-			sp = append(sp, storeProgress{
-				StoreID:    store,
-				Checkpoint: checkpoint,
-			})
+		sp := make([]storeProgress, 0, len(t.Checkpoints))
+		for _, checkpoint := range t.Checkpoints {
+			if checkpoint.Type() == CheckpointTypeStore {
+				sp = append(sp, storeProgress{
+					StoreID:    checkpoint.ID,
+					Checkpoint: checkpoint.TS,
+				})
+			}
 		}
 		se := make([]storeLastError, 0, len(t.LastErrors))
 		for store, lastError := range t.LastErrors {
@@ -199,16 +210,18 @@ func (p *printByJSON) PrintTasks() {
 				LastError: lastError,
 			})
 		}
+		cp := t.GetMinStoreCheckpoint()
 		return jsonTask{
-			Name:        t.Info.GetName(),
-			StartTS:     t.Info.GetStartTs(),
-			EndTS:       t.Info.GetEndTs(),
-			TableFilter: t.Info.GetTableFilter(),
-			Progress:    sp,
-			Storage:     s.String(),
-			Checkpoint:  t.GetCheckpoint(),
-			EstQPS:      t.QPS,
-			LastErrors:  se,
+			Name:           t.Info.GetName(),
+			StartTS:        t.Info.GetStartTs(),
+			EndTS:          t.Info.GetEndTs(),
+			TableFilter:    t.Info.GetTableFilter(),
+			Progress:       sp,
+			Storage:        s.String(),
+			CheckpointTS:   cp.TS,
+			EstQPS:         t.QPS,
+			LastErrors:     se,
+			AllCheckpoints: t.Checkpoints,
 		}
 	}
 	mustMarshal := func(i interface{}) string {
@@ -316,15 +329,6 @@ func NewStatusController(meta *MetaDataClient, mgr *conn.Mgr, view TaskPrinter) 
 	}
 }
 
-func isTiFlash(store *metapb.Store) bool {
-	for _, l := range store.GetLabels() {
-		if strings.EqualFold(l.Key, "engine") && strings.EqualFold(l.Value, "tiflash") {
-			return true
-		}
-	}
-	return false
-}
-
 // fillTask queries and fills the extra information for a raw task.
 func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatus, error) {
 	var err error
@@ -336,21 +340,8 @@ func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatu
 		return s, errors.Annotatef(err, "failed to get pause status of task %s", s.Info.Name)
 	}
 
-	if s.Progress, err = task.NextBackupTSList(ctx); err != nil {
+	if s.Checkpoints, err = task.NextBackupTSList(ctx); err != nil {
 		return s, errors.Annotatef(err, "failed to get progress of task %s", s.Info.Name)
-	}
-
-	stores, err := ctl.mgr.GetPDClient().GetAllStores(ctx)
-	if err != nil {
-		return s, errors.Annotate(err, "failed to get stores from PD")
-	}
-	for _, store := range stores {
-		if isTiFlash(store) {
-			continue
-		}
-		if _, ok := s.Progress[store.GetId()]; !ok {
-			s.Progress[store.GetId()] = s.Info.StartTs
-		}
 	}
 
 	s.LastErrors, err = task.LastError(ctx)
