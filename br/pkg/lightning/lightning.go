@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
@@ -102,9 +103,6 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 
 	promFactory := promutil.NewDefaultFactory()
 	promRegistry := promutil.NewDefaultRegistry()
-	if gatherer, ok := promRegistry.(prometheus.Gatherer); ok {
-		prometheus.DefaultGatherer = gatherer
-	}
 	ctx, shutdown := context.WithCancel(context.Background())
 	return &Lightning{
 		globalCfg:    globalCfg,
@@ -194,7 +192,16 @@ func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
-	mux.Handle("/metrics", promhttp.Handler())
+
+	registry := l.promRegistry
+	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	registry.MustRegister(collectors.NewGoCollector())
+	if gatherer, ok := registry.(prometheus.Gatherer); ok {
+		handler := promhttp.InstrumentMetricHandler(
+			registry, promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}),
+		)
+		mux.Handle("/metrics", handler)
+	}
 
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
