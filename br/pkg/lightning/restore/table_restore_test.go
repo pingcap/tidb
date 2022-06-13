@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/promutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -879,12 +880,13 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 
-	chunkPendingBase := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
-	chunkFinishedBase := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
-	engineFinishedBase := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
-	tableFinishedBase := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
+	metrics := metric.NewMetrics(promutil.NewDefaultFactory())
+	chunkPendingBase := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	chunkFinishedBase := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	engineFinishedBase := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
+	tableFinishedBase := metric.ReadCounter(metrics.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 
-	ctx := context.Background()
+	ctx := metric.NewContext(context.Background(), metrics)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
 	cfg := config.NewConfig()
@@ -956,15 +958,15 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	err = rc.restoreTables(ctx)
 	require.NoError(s.T(), err)
 
-	chunkPending := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
-	chunkFinished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	chunkPending := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	chunkFinished := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 	require.Equal(s.T(), float64(7), chunkPending-chunkPendingBase)
 	require.Equal(s.T(), chunkPending-chunkPendingBase, chunkFinished-chunkFinishedBase)
 
-	engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
+	engineFinished := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
 	require.Equal(s.T(), float64(8), engineFinished-engineFinishedBase)
 
-	tableFinished := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
+	tableFinished := metric.ReadCounter(metrics.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 	require.Equal(s.T(), float64(1), tableFinished-tableFinishedBase)
 }
 
@@ -1328,7 +1330,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 		SQLMode:        s.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		AutoRandomSeed: 0,
-	})).AnyTimes()
+	}, nil)).AnyTimes()
 	importer := backend.MakeBackend(mockBackend)
 	s.cfg.TikvImporter.Backend = config.BackendLocal
 
