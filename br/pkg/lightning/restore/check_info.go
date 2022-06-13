@@ -615,12 +615,12 @@ func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.Sour
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 	case mydump.SourceTypeSQL:
-		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
+		parser = mydump.NewChunkParser(ctx, rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, rc.store, reader, dataFileMeta.Path)
 		if err != nil {
@@ -976,12 +976,12 @@ func (rc *Controller) sampleDataFromTable(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	case mydump.SourceTypeSQL:
-		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
+		parser = mydump.NewChunkParser(ctx, rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, rc.store, reader, sampleFile.Path)
 		if err != nil {
