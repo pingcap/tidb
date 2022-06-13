@@ -278,7 +278,7 @@ func TestRCProviderInitialize(t *testing.T) {
 
 	// Case Pessimistic Autocommit
 	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
-	assert = inActiveRCTxnAssert(se)
+	assert = inactiveRCTxnAssert(se)
 	assertAfterActive = activeRCTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)

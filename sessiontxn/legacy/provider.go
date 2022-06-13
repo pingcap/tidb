@@ -234,22 +234,7 @@ func (p *SimpleTxnContextProvider) activateTxn() (kv.Transaction, error) {
 
 // AdviseWarmup provides warmup for inner state
 func (p *SimpleTxnContextProvider) AdviseWarmup() error {
-	if p.Sctx.GetSessionVars().SnapshotTS != 0 || staleread.IsStmtStaleness(p.Sctx) || p.Sctx.GetPreparedTSFuture() != nil {
-		return nil
-	}
-
-	txn, err := p.Sctx.Txn(false)
-	if err != nil {
-		return err
-	}
-
-	if txn.Valid() {
-		return nil
-	}
-
-	txnScope := p.Sctx.GetSessionVars().CheckAndGetTxnScope()
-	future := sessiontxn.NewOracleFuture(p.Ctx, p.Sctx, txnScope)
-	return p.Sctx.PrepareTSFuture(p.Ctx, future, txnScope)
+	return p.prepareTSFuture()
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
