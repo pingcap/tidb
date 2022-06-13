@@ -44,7 +44,7 @@ go_test(
     ],
     embed = [":table"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 50,
     deps = [
         "//errno",
         "//expression",
