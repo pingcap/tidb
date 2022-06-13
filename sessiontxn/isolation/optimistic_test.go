@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/config"
+
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -350,16 +352,27 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	checkUseTxn()
 
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
-	tk.MustExec("rollback")
-	tk.MustExec("set @@autocommit=0")
-	tk.MustExec("set @@tidb_snapshot=@a")
-	assert = inactiveOptimisticTxnAssert(se)
-	assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "")
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	checkUseSnapshot()
-	assertAfterUseSnapshot.Check(t)
+	for _, autocommit := range []int{0, 1} {
+		func() {
+			tk.MustExec("rollback")
+			tk.MustExec(fmt.Sprintf("set @@autocommit=%d", autocommit))
+			tk.MustExec("set @@tidb_snapshot=@a")
+			if autocommit == 1 {
+				origPessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+				config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+				defer func() {
+					config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
+				}()
+			}
+			assert = inactiveOptimisticTxnAssert(se)
+			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "")
+			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+			provider = assert.CheckAndGetProvider(t)
+			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			checkUseSnapshot()
+			assertAfterUseSnapshot.Check(t)
+		}()
+	}
 }
 
 func activeOptimisticTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.OptimisticTxnContextProvider] {
