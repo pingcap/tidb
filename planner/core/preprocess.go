@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
@@ -1682,23 +1681,8 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 //    - session variable
 //    - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
-	if p.InfoSchema != nil {
-		return p.InfoSchema
-	}
-
-	txnManager := sessiontxn.GetTxnManager(p.ctx)
-	if provider, ok := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
-		// When the current provider is `legacy.SimpleTxnContextProvider` it should to keep the logic equals to the old implement.
-		// In old implement we should reset the information schema here because `legacy.SimpleTxnContextProvider` cannot handle the `tidb_snapshot` in itself.
-		// After refactoring, the `legacy.SimpleTxnContextProvider` will be removed, and this code will be removed too.
-		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
-		if p.flag&initTxnContextProvider != 0 {
-			provider.InfoSchema = p.InfoSchema
-		}
-	} else {
-		// When the current provider is not `legacy.SimpleTxnContextProvider`. It means the current provider is the refactored one.
-		// It can handle the `tidb_snapshot` in itself. So just use `txnManager.GetTxnInfoSchema()` as the information schema.
-		p.InfoSchema = txnManager.GetTxnInfoSchema()
+	if p.InfoSchema == nil {
+		p.InfoSchema = sessiontxn.GetTxnManager(p.ctx).GetTxnInfoSchema()
 	}
 	return p.InfoSchema
 }
