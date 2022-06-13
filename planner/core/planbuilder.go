@@ -717,7 +717,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt, *ast.NonTransactionalDeleteStmt:
+		*ast.RenameUserStmt, *ast.NonTransactionalDeleteStmt, *ast.SetSessionStatesStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -3233,6 +3233,7 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	}
 	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
+	authErr := genAuthErrForGrantStmt(sctx, dbName)
 	for _, item := range stmt.Privs {
 		if item.Priv == mysql.ExtendedPriv {
 			// The observed MySQL behavior is that the error is:
@@ -3262,18 +3263,35 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 			}
 			break
 		}
-		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
+		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", authErr)
 	}
 
 	for _, priv := range allPrivs {
-		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
+		vi = appendVisitInfo(vi, priv, dbName, tableName, "", authErr)
 	}
 	if nonDynamicPrivilege {
 		// Dynamic privileges use their own GRANT OPTION. If there were any non-dynamic privilege requests,
 		// we need to attach the "GLOBAL" version of the GRANT OPTION.
-		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
+		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", authErr)
 	}
 	return vi, nil
+}
+
+func genAuthErrForGrantStmt(sctx sessionctx.Context, dbName string) error {
+	if !strings.EqualFold(dbName, variable.PerformanceSchema) {
+		return nil
+	}
+	user := sctx.GetSessionVars().User
+	if user == nil {
+		return nil
+	}
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrDBaccessDenied.FastGenByArgs(u, h, dbName)
 }
 
 func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
@@ -4754,6 +4772,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowPlacement, ast.ShowPlacementForDatabase, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		names = []string{"Target", "Placement", "Scheduling_State"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowSessionStates:
+		names = []string{"Session_states", "Session_token"}
+		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
