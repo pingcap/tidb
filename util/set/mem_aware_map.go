@@ -23,7 +23,7 @@ import (
 // MemAwareMap is a map which is aware of its memory usage. It's adapted from SetWithMemoryUsage.
 // It doesn't support delete.
 // The estimate usage of memory is usually smaller than the real usage.
-// According to experiments with SetWithMemoryUsage, in worst case the maximum bias is 50%, i.e. real usage <= 1.5 * estimated usage.
+// According to experiments with SetWithMemoryUsage, 2/3 * estimated usage <= real usage <= estimated usage.
 type MemAwareMap[K comparable, V any] struct {
 	M                 map[K]V // it's public, when callers want to directly access it, e.g. use in a for-range-loop
 	bInMap            int64
