@@ -302,6 +302,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	return hists, cms, topNs, fms, extStats, nil
 }
 
+// AnalyzeColumnsExecV1 is used to maintain v1 analyze process
 type AnalyzeColumnsExecV1 struct {
 	*AnalyzeColumnsExec
 }
@@ -381,6 +382,7 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 	}
 }
 
+// AnalyzeColumnsExecV2 is used to maintain v2 analyze process
 type AnalyzeColumnsExecV2 struct {
 	*AnalyzeColumnsExec
 }
