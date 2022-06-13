@@ -1917,6 +1917,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
+	if err == nil {
+		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
+	}
+
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -1925,10 +1929,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		if !s.sessionVars.InRestrictedSQL {
 			logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", stmtNode.Text()))
 		}
-		return nil, err
-	}
-
-	if err = sessiontxn.GetTxnManager(s).AdviseOptimizeWithPlan(stmt.Plan); err != nil {
 		return nil, err
 	}
 
@@ -2257,7 +2257,7 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		return nil, false, err
 	}
 
-	if err = sessiontxn.OptimizeWithPlan(s, execPlan); err != nil {
+	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, execPlan); err != nil {
 		return nil, false, err
 	}
 
@@ -2301,19 +2301,10 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		if err = sessiontxn.GetTxnManager(s).AdviseWarmup(); err == nil {
-			stmtCtx.Priority = kv.PriorityHigh
-			resultSet, err = runStmt(ctx, s, stmt)
-		}
+		stmtCtx.Priority = kv.PriorityHigh
+		resultSet, err = runStmt(ctx, s, stmt)
 	case nil:
-		// cache is invalid
-		if prepareStmt.ForUpdateRead {
-			err = sessiontxn.GetTxnManager(s).AdviseWarmup()
-		}
-
-		if err == nil {
-			resultSet, err = runStmt(ctx, s, stmt)
-		}
+		resultSet, err = runStmt(ctx, s, stmt)
 	default:
 		prepared.CachedPlan = nil
 		return nil, false, nil

@@ -113,6 +113,14 @@ type TxnAdvisable interface {
 	AdviseOptimizeWithPlan(plan interface{}) error
 }
 
+func OptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan interface{}) error {
+	txnManager := GetTxnManager(sctx)
+	if err := txnManager.AdviseOptimizeWithPlan(plan); err != nil {
+		return err
+	}
+	return txnManager.AdviseWarmup()
+}
+
 // TxnContextProvider provides txn context
 type TxnContextProvider interface {
 	TxnAdvisable
