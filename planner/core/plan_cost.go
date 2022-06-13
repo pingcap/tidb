@@ -1203,6 +1203,9 @@ func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType, costF
 }
 
 func getOperatorActRows(operator PhysicalPlan) float64 {
+	if operator == nil {
+		return 0
+	}
 	runtimeInfo := operator.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl
 	id := operator.ID()
 	actRows := 0.0
@@ -1217,6 +1220,9 @@ func getOperatorActRows(operator PhysicalPlan) float64 {
 }
 
 func updateEstRows(operator PhysicalPlan, costFlag uint64) {
+	if operator == nil {
+		return
+	}
 	if !hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
 		return
 	}
@@ -1228,6 +1234,9 @@ func updateEstRows(operator PhysicalPlan, costFlag uint64) {
 }
 
 func getCardinality(operator PhysicalPlan, costFlag uint64) float64 {
+	if operator == nil {
+		return 0
+	}
 	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
 		return getOperatorActRows(operator)
 	}
