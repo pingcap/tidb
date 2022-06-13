@@ -1,3 +1,5 @@
+// Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
+
 package restore
 
 import (
@@ -21,26 +23,25 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const (
-	encodeMarker   = byte(0xFF)
-	encodePadding  = byte(0x0)
-	encodeGroupLen = 8
-)
-
+// Comparator is used for comparing the relationship of src and dst
 type Comparator interface {
 	Compare(src, dst []byte) bool
 }
 
+// startWithComparator is used for comparing whether src starts with dst
 type startWithComparator struct{}
 
+// NewStartWithComparator create a comparator to compare whether src starts with dst
 func NewStartWithComparator() Comparator {
 	return new(startWithComparator)
 }
 
+// Compare whether src starts with dst
 func (ec *startWithComparator) Compare(src, dst []byte) bool {
 	return bytes.HasPrefix(src, dst)
 }
 
+// StreamKVInfo stores kv info searched from log data files
 type StreamKVInfo struct {
 	Key        string `json:"key"`
 	EncodedKey string `json:"-"`
@@ -52,14 +53,16 @@ type StreamKVInfo struct {
 	ShortValue string `json:"short_value,omitempty"`
 }
 
+// StreamBackupSearch is used for searching key from log data files
 type StreamBackupSearch struct {
 	storage    storage.ExternalStorage
 	comparator Comparator
-	searchKey  []byte
+	searchKey  []byte // hex string
 	startTs    uint64
 	endTs      uint64
 }
 
+// NewStreamBackupSearch creates an instance of StreamBackupSearch
 func NewStreamBackupSearch(storage storage.ExternalStorage, comparator Comparator, searchKey []byte) *StreamBackupSearch {
 	bs := &StreamBackupSearch{
 		storage:    storage,
@@ -70,64 +73,28 @@ func NewStreamBackupSearch(storage storage.ExternalStorage, comparator Comparato
 	return bs
 }
 
+// SetStartTS set start timestamp searched from
 func (s *StreamBackupSearch) SetStartTS(startTs uint64) {
 	s.startTs = startTs
 }
 
+// SetEndTs set end timestamp searched to
 func (s *StreamBackupSearch) SetEndTs(endTs uint64) {
 	s.endTs = endTs
-}
-
-func (s *StreamBackupSearch) decodeToRawKey(key []byte) ([]byte, error) {
-	decodedKey := make([]byte, 0, len(key))
-	for len(key) > encodeGroupLen {
-		group := key[:encodeGroupLen+1]
-		key = key[encodeGroupLen+1:]
-		paddingNum := int(encodeMarker - group[encodeGroupLen])
-		if paddingNum < 0 || paddingNum >= encodeGroupLen {
-			return nil, errors.New("invalid padding number")
-		}
-
-		decodedKey = append(decodedKey, group[:encodeGroupLen-paddingNum]...)
-		if paddingNum > 0 {
-			break
-		}
-	}
-
-	decodedKey = append(decodedKey, key...)
-	return decodedKey, nil
-}
-
-func (s *StreamBackupSearch) encodeRawKey(key []byte) []byte {
-	encodedKey := make([]byte, 0, (len(key)/8+1)*9)
-	for len(key) > encodeGroupLen {
-		group := key[:encodeGroupLen]
-		key = key[encodeGroupLen:]
-		encodedKey = append(encodedKey, group...)
-		encodedKey = append(encodedKey, encodeMarker)
-	}
-
-	paddingNum := encodeGroupLen - len(key)
-	encodedKey = append(encodedKey, key...)
-	for i := 0; i < paddingNum; i++ {
-		encodedKey = append(encodedKey, encodePadding)
-	}
-	encodedKey = append(encodedKey, encodeMarker-byte(paddingNum))
-	return encodedKey
 }
 
 func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backuppb.DataFileInfo) error {
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	pool := utils.NewWorkerPool(64, "read backup meta")
-	eg, _ := errgroup.WithContext(ctx)
-	err := s.storage.WalkDir(ctx, opt, func(path string, size int64) error {
+	eg, egCtx := errgroup.WithContext(ctx)
+	err := s.storage.WalkDir(egCtx, opt, func(path string, size int64) error {
 		if !strings.Contains(path, streamBackupMetaPrefix) {
 			return nil
 		}
 
 		pool.ApplyOnErrorGroup(eg, func() error {
 			m := &backuppb.Metadata{}
-			b, err := s.storage.ReadFile(ctx, path)
+			b, err := s.storage.ReadFile(egCtx, path)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -136,7 +103,7 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 				return errors.Trace(err)
 			}
 
-			s.resolveMetaData(ctx, m, ch)
+			s.resolveMetaData(egCtx, m, ch)
 			log.Debug("read backup meta file", zap.String("path", path))
 			return nil
 		})
@@ -161,7 +128,6 @@ func (s *StreamBackupSearch) resolveMetaData(ctx context.Context, metaData *back
 		if bytes.Compare(s.searchKey, file.StartKey) < 0 {
 			continue
 		}
-
 		if bytes.Compare(s.searchKey, file.EndKey) > 0 {
 			continue
 		}
@@ -171,7 +137,6 @@ func (s *StreamBackupSearch) resolveMetaData(ctx context.Context, metaData *back
 				continue
 			}
 		}
-
 		if s.endTs > 0 {
 			if file.MinTs > s.endTs {
 				continue
@@ -182,6 +147,7 @@ func (s *StreamBackupSearch) resolveMetaData(ctx context.Context, metaData *back
 	}
 }
 
+// Search kv entries from log data files
 func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error) {
 	dataFilesCh := make(chan *backuppb.DataFileInfo, 32)
 	go func() {
@@ -192,16 +158,8 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 	}()
 
 	pool := utils.NewWorkerPool(16, "search key")
-	var wg, errWg sync.WaitGroup
+	var wg sync.WaitGroup
 	entriesCh, errCh := make(chan *StreamKVInfo, 64), make(chan error, 8)
-
-	errWg.Add(1)
-	go func() {
-		defer errWg.Done()
-		for err := range errCh {
-			log.Warn("error happened when search data file", zap.Error(err))
-		}
-	}()
 
 	for dataFile := range dataFilesCh {
 		wg.Add(1)
@@ -220,6 +178,10 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 		close(errCh)
 	}()
 
+	for err := range errCh {
+		log.Error("error happened when search data file", zap.Error(err))
+	}
+
 	defaultCFEntries := make(map[string]*StreamKVInfo, 64)
 	writeCFEntries := make(map[string]*StreamKVInfo, 64)
 
@@ -232,9 +194,6 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 	}
 
 	entries := s.mergeCFEntries(defaultCFEntries, writeCFEntries)
-
-	errWg.Wait()
-
 	return entries, nil
 }
 
@@ -256,27 +215,25 @@ func (s *StreamBackupSearch) searchFromDataFile(ctx context.Context, dataFile *b
 		}
 
 		k, v := iter.Key(), iter.Value()
-
 		if !s.comparator.Compare(k, s.searchKey) {
 			continue
 		}
 
 		_, ts, err := codec.DecodeUintDesc(k[len(k)-8:])
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Annotatef(err, "decode ts from key error, file: %s", dataFile.Path)
 		}
 
 		k = k[:len(k)-8]
 		_, rawKey, err := codec.DecodeBytes(k, nil)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Annotatef(err, "decode raw key error, file: %s", dataFile.Path)
 		}
 
 		if dataFile.Cf == writeCFName {
 			rawWriteCFValue := new(stream.RawWriteCFValue)
-			rawWriteCFValue.HasShortValue()
 			if err := rawWriteCFValue.ParseFrom(v); err != nil {
-				return errors.Trace(err)
+				return errors.Annotatef(err, "parse raw write cf value error, file: %s", dataFile.Path)
 			}
 
 			valueStr := ""

@@ -461,7 +461,7 @@ func searchStreamBackupCommand() *cobra.Command {
 	flags := searchBackupCMD.Flags()
 	flags.String("search-key", "", "hex encoded key")
 	flags.Uint64("start-ts", 0, "search from start TSO, default is no start TSO limit")
-	flags.Uint64("end-ts", 0, "search from end TSO, default is no end TSO limit")
+	flags.Uint64("end-ts", 0, "search to end TSO, default is no end TSO limit")
 
 	return searchBackupCMD
 }
