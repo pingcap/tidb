@@ -451,8 +451,9 @@ func PaginateScanRegion(
 			var batch []*RegionInfo
 			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
 			if err != nil {
-				return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
+				err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
 					redact.Key(scanStartKey), err.Error())
+				return err
 			}
 			regions = append(regions, batch...)
 			if len(batch) < limit {
