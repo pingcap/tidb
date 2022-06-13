@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -1666,12 +1668,14 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
+			logutil.BgLogger().Warn("create pd server info request error", zap.String("url", url), zap.Error(err))
 			errs = append(errs, err)
 			continue
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
 		if err != nil {
+			logutil.BgLogger().Warn("request pd server info error", zap.String("url", url), zap.Error(err))
 			errs = append(errs, err)
 			continue
 		}
@@ -1683,6 +1687,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		err = json.NewDecoder(resp.Body).Decode(&content)
 		terror.Log(resp.Body.Close())
 		if err != nil {
+			logutil.BgLogger().Warn("close pd server info request error", zap.String("url", url), zap.Error(err))
 			errs = append(errs, err)
 			continue
 		}
