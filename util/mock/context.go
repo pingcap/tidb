@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/session_states"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
@@ -384,6 +385,16 @@ func (c *Context) ReleaseAdvisoryLock(lockName string) bool {
 // ReleaseAllAdvisoryLocks releases all advisory locks
 func (c *Context) ReleaseAllAdvisoryLocks() int {
 	return 0
+}
+
+// EncodeSessionStates implements sessionctx.Context EncodeSessionStates interface.
+func (c *Context) EncodeSessionStates(context.Context, sessionctx.Context, *session_states.SessionStates) error {
+	return errors.Errorf("Not Supported")
+}
+
+// DecodeSessionStates implements sessionctx.Context DecodeSessionStates interface.
+func (c *Context) DecodeSessionStates(context.Context, sessionctx.Context, *session_states.SessionStates) error {
+	return errors.Errorf("Not Supported")
 }
 
 // Close implements the sessionctx.Context interface.
