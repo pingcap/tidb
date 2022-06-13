@@ -148,8 +148,12 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		case ast.ReadCommitted:
 			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
 		case ast.Serializable:
-			// todo: Add pessimistic serializable transaction context provider
-			break
+			// The Oracle serializable isolation is actually SI in pessimistic mode.
+			// Do not update ForUpdateTS when the user is using the Serializable isolation level.
+			// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
+			// Support for this does not mean that TiDB supports serializable isolation of MySQL.
+			// tidb_skip_isolation_level_check should still be disabled by default.
+			return isolation.NewPessimisticSerializableTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
 		default:
 			// We use Repeatable read for all other cases.
 			return isolation.NewPessimisticRRTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
