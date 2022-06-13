@@ -3282,6 +3282,9 @@ func genAuthErrForGrantStmt(sctx sessionctx.Context, dbName string) error {
 		return nil
 	}
 	user := sctx.GetSessionVars().User
+	if user == nil {
+		return nil
+	}
 	u := user.Username
 	h := user.Hostname
 	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
