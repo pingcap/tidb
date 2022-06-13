@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
@@ -51,6 +52,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/promutil"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
@@ -68,6 +72,9 @@ type Lightning struct {
 	serverAddr net.Addr
 	serverLock sync.Mutex
 	status     restore.LightningStatus
+
+	promFactory  promutil.Factory
+	promRegistry promutil.Registry
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -94,12 +101,16 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 
 	redact.InitRedact(globalCfg.Security.RedactInfoLog)
 
+	promFactory := promutil.NewDefaultFactory()
+	promRegistry := promutil.NewDefaultRegistry()
 	ctx, shutdown := context.WithCancel(context.Background())
 	return &Lightning{
-		globalCfg: globalCfg,
-		globalTLS: tls,
-		ctx:       ctx,
-		shutdown:  shutdown,
+		globalCfg:    globalCfg,
+		globalTLS:    tls,
+		ctx:          ctx,
+		shutdown:     shutdown,
+		promFactory:  promFactory,
+		promRegistry: promRegistry,
 	}
 }
 
@@ -181,7 +192,16 @@ func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
-	mux.Handle("/metrics", promhttp.Handler())
+
+	registry := l.promRegistry
+	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	registry.MustRegister(collectors.NewGoCollector())
+	if gatherer, ok := registry.(prometheus.Gatherer); ok {
+		handler := promhttp.InstrumentMetricHandler(
+			registry, promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}),
+		)
+		mux.Handle("/metrics", handler)
+	}
 
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -242,8 +262,12 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
 	})
-
-	return l.run(taskCtx, taskCfg, &options{glue: glue})
+	o := &options{
+		glue:         glue,
+		promFactory:  l.promFactory,
+		promRegistry: l.promRegistry,
+	}
+	return l.run(taskCtx, taskCfg, o)
 }
 
 func (l *Lightning) RunServer() error {
@@ -260,7 +284,10 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
-		o := &options{}
+		o := &options{
+			promFactory:  l.promFactory,
+			promRegistry: l.promRegistry,
+		}
 		err = l.run(context.Background(), task, o)
 		if err != nil && !common.IsContextCanceledError(err) {
 			restore.DeliverPauser.Pause() // force pause the progress on error
@@ -280,7 +307,10 @@ func (l *Lightning) RunServer() error {
 //   - WithCheckpointStorage: caller has opened an external storage for lightning and want to save checkpoint
 //     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
 func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
-	o := &options{}
+	o := &options{
+		promFactory:  l.promFactory,
+		promRegistry: l.promRegistry,
+	}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -331,7 +361,14 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	utils.LogEnvVariables()
 
-	ctx, cancel := context.WithCancel(taskCtx)
+	metrics := metric.NewMetrics(o.promFactory)
+	metrics.RegisterTo(o.promRegistry)
+	defer func() {
+		metrics.UnregisterFrom(o.promRegistry)
+	}()
+
+	ctx := metric.NewContext(taskCtx, metrics)
+	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
 	l.curTask = taskCfg
