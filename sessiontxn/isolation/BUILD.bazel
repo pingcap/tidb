@@ -5,6 +5,8 @@ go_library(
     srcs = [
         "base.go",
         "readcommitted.go",
+        "repeatable_read.go",
+        "serializable.go",
     ],
     importpath = "github.com/pingcap/tidb/sessiontxn/isolation",
     visibility = ["//visibility:public"],
@@ -14,9 +16,11 @@ go_library(
         "//kv",
         "//parser/ast",
         "//parser/terror",
+        "//planner/core",
         "//sessionctx",
         "//sessionctx/variable",
         "//sessiontxn",
+        "//sessiontxn/staleread",
         "//table/temptable",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
@@ -31,9 +35,12 @@ go_test(
     srcs = [
         "main_test.go",
         "readcommitted_test.go",
+        "repeatable_reat_test.go",
+        "serializable_test.go",
     ],
     deps = [
         ":isolation",
+        "//config",
         "//executor",
         "//infoschema",
         "//kv",
