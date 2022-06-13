@@ -1681,9 +1681,11 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 //    - session variable
 //    - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
-	if p.InfoSchema == nil {
-		p.InfoSchema = sessiontxn.GetTxnManager(p.ctx).GetTxnInfoSchema()
+	if p.InfoSchema != nil {
+		return p.InfoSchema
 	}
+
+	p.InfoSchema = sessiontxn.GetTxnManager(p.ctx).GetTxnInfoSchema()
 	return p.InfoSchema
 }
 
