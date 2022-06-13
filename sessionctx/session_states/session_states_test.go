@@ -16,12 +16,12 @@ package session_states_test
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGrammar(t *testing.T) {
