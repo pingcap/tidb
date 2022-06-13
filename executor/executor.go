@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessiontxn"
 	"math"
 	"runtime/pprof"
 	"runtime/trace"
@@ -1042,12 +1043,20 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for id := range e.tblID2Handle {
 		e.updateDeltaForTableID(id)
 	}
-
-	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime, len(e.keys)), e.keys...)
+	lockCtx, err := newLockCtx(e.ctx, lockWaitTime, len(e.keys))
+	if err != nil {
+		return err
+	}
+	return doLockKeys(ctx, e.ctx, lockCtx, e.keys...)
 }
 
-func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *tikvstore.LockCtx {
-	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
+func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
+	seVars := sctx.GetSessionVars()
+	forUpdateTs, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+	lockCtx := tikvstore.NewLockCtx(forUpdateTs, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.Killed
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
@@ -1082,7 +1091,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *
 	if lockCtx.ForUpdateTS > 0 && seVars.AssertionLevel != variable.AssertionLevelOff {
 		lockCtx.InitCheckExistence(numKeys)
 	}
-	return lockCtx
+	return lockCtx, nil
 }
 
 // doLockKeys is the main entry for pessimistic lock keys

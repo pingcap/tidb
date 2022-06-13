@@ -398,9 +398,12 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	}
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
-		lockCtx := newLockCtx(seVars, e.lockWaitTime, 1)
+		lockCtx, err := newLockCtx(e.ctx, e.lockWaitTime, 1)
+		if err != nil {
+			return err
+		}
 		lockCtx.InitReturnValues(1)
-		err := doLockKeys(ctx, e.ctx, lockCtx, key)
+		err = doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
 			return err
 		}
