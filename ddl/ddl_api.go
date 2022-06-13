@@ -3263,13 +3263,12 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 			return err
 		}
 		if newBase != newBaseTemp {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(
-				fmt.Errorf("Can't reset AUTO_INCREMENT to %d without FORCE option, using %d instead",
-					newBase, newBaseTemp,
-				))
+			ctx.GetSessionVars().StmtCtx.AppendNote(
+				fmt.Errorf("Can't reset AUTO_INCREMENT to %d without FORCE option", newBase))
+			return nil
 		}
-		newBase = newBaseTemp
 	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,

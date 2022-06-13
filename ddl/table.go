@@ -760,16 +760,16 @@ func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, t
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return ver, nil
+	}
+
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-	// No need to check `newBase` again, because `RebaseAutoID` will do this check.
-	if tp == autoid.RowIDAllocType {
-		tblInfo.AutoIncID = newBase
-	} else {
-		tblInfo.AutoRandID = newBase
 	}
 
 	tbl, err := getTable(store, schemaID, tblInfo)
@@ -778,9 +778,23 @@ func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, t
 		return ver, errors.Trace(err)
 	}
 
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
-		job.MarkNonRevertible()
-		return ver, nil
+	if !force {
+		newBaseTemp, err := adjustNewBaseToNextGlobalID(nil, tbl, tp, newBase)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if newBase != newBaseTemp {
+			job.Warning = toTError(fmt.Errorf("Can't reset AUTO_INCREMENT to %d without FORCE option, using %d instead",
+				newBase, newBaseTemp,
+			))
+		}
+		newBase = newBaseTemp
+	}
+
+	if tp == autoid.RowIDAllocType {
+		tblInfo.AutoIncID = newBase
+	} else {
+		tblInfo.AutoRandID = newBase
 	}
 
 	if alloc := tbl.Allocators(nil).Get(tp); alloc != nil {

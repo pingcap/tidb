@@ -2872,7 +2872,7 @@ func TestAutoIncrementForce(t *testing.T) {
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
 	tk.MustExec("alter table t auto_increment=100;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 5201 instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option"))
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
