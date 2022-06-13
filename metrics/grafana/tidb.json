@@ -6108,7 +6108,7 @@
             "x": 12,
             "y": 98
           },
-          "id": 249,
+          "id": 250,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -12568,7 +12568,7 @@
             "y": 28
           },
           "hiddenSeries": false,
-          "id": 250,
+          "id": 251,
           "legend": {
             "alignAsTable": true,
             "avg": false,
@@ -12602,15 +12602,24 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{type}}",
+              "legendFormat": "99-{{type}}",
               "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_tikvclient_load_region_cache_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type) / sum(rate(tidb_tikvclient_load_region_cache_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type)",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "avg-{{type}}",
+              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Load Region Duration 99",
+          "title": "Load Region Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
