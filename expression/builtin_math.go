@@ -1239,7 +1239,7 @@ func (b *builtinConvSig) conv(str string, fromBase, toBase int64) (res string, i
 		ignoreSign = true
 	}
 
-	if fromBase > 36 || fromBase < 2 || toBase > 36 || toBase < 2 {
+	if fromBase > 36 || fromBase < 2 || toBase > 36 || toBase < 2 || len(str) == 0 {
 		return res, true, nil
 	}
 
