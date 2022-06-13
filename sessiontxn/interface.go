@@ -100,10 +100,21 @@ const (
 	// AdviceWarmUp indicates to warm up the provider's inner state.
 	// For example, the provider can prefetch tso when it is advised.
 	AdviceWarmUp AdviceType = iota
+	// AdviceOptimizeWithPlan indicates to do some optimizations with the given plan
+	AdviceOptimizeWithPlan
 )
+
+// TxnAdvisable providers a collection of optimizations within transaction
+type TxnAdvisable interface {
+	// AdviseWarmup provides warmup for inner state
+	AdviseWarmup() error
+	// AdviseOptimizeWithPlan providers optimization according to the plan
+	AdviseOptimizeWithPlan(plan interface{}) error
+}
 
 // TxnContextProvider provides txn context
 type TxnContextProvider interface {
+	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
@@ -119,12 +130,11 @@ type TxnContextProvider interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
-	// Advise is used to give advice to provider
-	Advise(tp AdviceType) error
 }
 
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
+	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
@@ -145,9 +155,6 @@ type TxnManager interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
-	// Advise is used to give advice to provider.
-	// For example, `AdviceWarmUp` can tell the provider to warm up its inner state.
-	Advise(tp AdviceType) error
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:
@@ -169,11 +176,6 @@ func NewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
 		return err
 	}
 	return GetTxnManager(sctx).OnStmtStart(ctx)
-}
-
-// WarmUpTxn gives the `AdviceWarmUp` advise to the provider
-func WarmUpTxn(sctx sessionctx.Context) error {
-	return GetTxnManager(sctx).Advise(AdviceWarmUp)
 }
 
 // GetTxnManager returns the TxnManager object from session context
