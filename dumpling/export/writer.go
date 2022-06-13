@@ -194,7 +194,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		defer func() {
 			lastErr = err
 			if err != nil {
-				IncCounter(w.metrics.errorCount, conf.Labels)
+				IncCounter(w.metrics.errorCount)
 			}
 		}()
 		retryTime++

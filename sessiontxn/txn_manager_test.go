@@ -136,7 +136,7 @@ func TestEnterNewTxn(t *testing.T) {
 				})
 				require.NoError(t, err)
 				require.NoError(t, mgr.OnStmtStart(context.TODO()))
-				tk.Session().PrepareTSFuture(context.TODO())
+				require.NoError(t, mgr.AdviseWarmup())
 			},
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnWithBeginStmt,
@@ -270,7 +270,7 @@ func checkTxnBeforeStmt(t *testing.T, sctx sessionctx.Context) {
 }
 
 func checkStmtTxnAfterActive(t *testing.T, sctx sessionctx.Context) {
-	sctx.PrepareTSFuture(context.TODO())
+	require.NoError(t, sessiontxn.GetTxnManager(sctx).AdviseWarmup())
 	_, err := sctx.Txn(true)
 	require.NoError(t, err)
 	txn := checkBasicActiveTxn(t, sctx)
