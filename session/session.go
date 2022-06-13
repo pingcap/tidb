@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
+	"math/rand"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -2743,7 +2744,17 @@ func (s *session) RefreshVars(ctx context.Context) error {
 
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (Session, error) {
-	return CreateSession4TestWithOpt(store, nil)
+	se, err := CreateSession4TestWithOpt(store, nil)
+	if err == nil {
+		// Cover both chunk rpc encoding and default encoding.
+		// nolint:gosec
+		if rand.Intn(2) == 0 {
+			se.GetSessionVars().EnableChunkRPC = false
+		} else {
+			se.GetSessionVars().EnableChunkRPC = true
+		}
+	}
+	return se, err
 }
 
 // Opt describes the option for creating session
@@ -3229,12 +3240,16 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 }
 
 // GetStartTSFromSession returns the startTS in the session `se`
-func GetStartTSFromSession(se interface{}) uint64 {
-	var startTS uint64
+func GetStartTSFromSession(se interface{}) (uint64, uint64) {
+	var startTS, processInfoID uint64
 	tmp, ok := se.(*session)
 	if !ok {
 		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
-		return 0
+		return 0, 0
+	}
+	processInfo := tmp.ShowProcess()
+	if processInfo != nil {
+		processInfoID = processInfo.ID
 	}
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
@@ -3245,7 +3260,7 @@ func GetStartTSFromSession(se interface{}) uint64 {
 		"GetStartTSFromSession getting startTS of internal session",
 		zap.Uint64("startTS", startTS), zap.Time("start time", oracle.GetTimeFromTS(startTS)))
 
-	return startTS
+	return startTS, processInfoID
 }
 
 // logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL
@@ -3299,8 +3314,9 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
 			zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
-			zap.String("current_db", vars.CurrentDB),
-			zap.String("txn_mode", vars.GetReadableTxnMode()),
+			zap.String("currentDB", vars.CurrentDB),
+			zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
+			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
 			zap.String("sql", query))
 	}
 }
