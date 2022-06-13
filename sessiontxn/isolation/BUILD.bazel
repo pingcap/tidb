@@ -6,6 +6,7 @@ go_library(
         "base.go",
         "readcommitted.go",
         "repeatable_read.go",
+        "serializable.go",
     ],
     importpath = "github.com/pingcap/tidb/sessiontxn/isolation",
     visibility = ["//visibility:public"],
@@ -35,6 +36,7 @@ go_test(
         "main_test.go",
         "readcommitted_test.go",
         "repeatable_reat_test.go",
+        "serializable_test.go",
     ],
     deps = [
         ":isolation",
