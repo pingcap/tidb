@@ -932,7 +932,17 @@ func RunStreamRestore(
 	g glue.Glue,
 	cmdName string,
 	cfg *RestoreConfig,
-) error {
+) (err error) {
+	startTime := time.Now()
+	defer func() {
+		dur := time.Since(startTime)
+		if err != nil {
+			summary.Log(cmdName+" failed summary", zap.Error(err))
+		} else {
+			summary.Log(cmdName+" success summary", zap.Duration("total-take", dur),
+				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS))
+		}
+	}()
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 

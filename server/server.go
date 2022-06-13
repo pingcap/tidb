@@ -833,8 +833,12 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.sessionMapMutex.Lock()
 	defer s.sessionMapMutex.Unlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
+	analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
 	for se := range s.internalSessions {
-		if ts := session.GetStartTSFromSession(se); ts != 0 {
+		if ts, processInfoID := session.GetStartTSFromSession(se); ts != 0 {
+			if processInfoID == analyzeProcID {
+				continue
+			}
 			tsList = append(tsList, ts)
 		}
 	}

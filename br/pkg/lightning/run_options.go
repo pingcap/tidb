@@ -17,6 +17,7 @@ package lightning
 import (
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/util/promutil"
 )
 
 type options struct {
@@ -24,6 +25,8 @@ type options struct {
 	dumpFileStorage   storage.ExternalStorage
 	checkpointStorage storage.ExternalStorage
 	checkpointName    string
+	promFactory       promutil.Factory
+	promRegistry      promutil.Registry
 }
 
 type Option func(*options)
@@ -50,5 +53,21 @@ func WithCheckpointStorage(s storage.ExternalStorage, cpName string) Option {
 	return func(o *options) {
 		o.checkpointStorage = s
 		o.checkpointName = cpName
+	}
+}
+
+// WithPromFactory sets the prometheus factory to a lightning task.
+func WithPromFactory(f promutil.Factory) Option {
+	return func(o *options) {
+		o.promFactory = f
+	}
+}
+
+// WithPromRegistry sets the prometheus registry to a lightning task.
+// The task metrics will be registered to the registry before the task starts
+// and unregistered after the task ends.
+func WithPromRegistry(r promutil.Registry) Option {
+	return func(o *options) {
+		o.promRegistry = r
 	}
 }

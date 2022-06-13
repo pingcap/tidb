@@ -27,6 +27,7 @@ go_test(
         "filter_test.go",
         "log_test.go",
     ],
+    importpath = "github.com/pingcap/tidb/br/pkg/lightning/log_test",
     deps = [
         ":log",
         "@com_github_stretchr_testify//require",

@@ -643,6 +643,15 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("60"))
 	tk.MustExec("set global tidb_max_auto_analyze_time = -1")
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("0"))
+
+	// test variables for cost model ver2
+	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_cost_model_version=3")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_cost_model_version value: '3'"))
+	tk.MustExec("set tidb_cost_model_version=0")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_cost_model_version value: '0'"))
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows("2"))
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
