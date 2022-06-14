@@ -3615,3 +3615,19 @@ func TestDuplicatePartitionNames(t *testing.T) {
 		"(PARTITION `p2` VALUES IN (2),\n" +
 		" PARTITION `p3` VALUES IN (3))"))
 }
+
+func TestPartitionTableWithAnsiQuotes(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database partitionWithAnsiQuotes")
+	defer tk.MustExec("drop database partitionWithAnsiQuotes")
+	tk.MustExec("use partitionWithAnsiQuotes")
+	tk.MustExec("SET SESSION sql_mode='ANSI_QUOTES'")
+	tk.MustExec(`create table t1(created_at datetime) PARTITION BY RANGE COLUMNS(created_at) (
+		PARTITION p0 VALUES LESS THAN ('2021-12-01 00:00:00'),
+		PARTITION p1 VALUES LESS THAN ('2022-01-01 00:00:00'))`)
+	tk.MustExec(`create table t2(created_at timestamp) PARTITION BY RANGE (unix_timestamp(created_at)) (
+		PARTITION p0 VALUES LESS THAN (unix_timestamp('2021-12-01 00:00:00')),
+		PARTITION p1 VALUES LESS THAN (unix_timestamp('2022-01-01 00:00:00')))`)
+}
