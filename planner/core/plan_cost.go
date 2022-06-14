@@ -848,7 +848,7 @@ func (p *PhysicalMergeJoin) GetPlanCost(taskType property.TaskType, costFlag uin
 }
 
 // GetCost computes cost of hash join operator itself.
-func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64 {
+func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, isMPP bool, costFlag uint64) float64 {
 	buildCnt, probeCnt := lCnt, rCnt
 	build := p.children[0]
 	// Taking the right as the inner for right join or using the outer to build a hash table.
@@ -862,7 +862,13 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64 
 	rowSize := getAvgRowSize(build.statsInfo(), build.Schema())
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota) && p.storeTp != kv.TiFlash
 	// Cost of building hash table.
-	cpuCost := buildCnt * sessVars.GetCPUFactor()
+	var cpuFactor float64
+	if !isMPP {
+		cpuFactor = sessVars.GetCPUFactor()
+	} else {
+		cpuFactor = sessVars.GetTiFlashCPUFactor()
+	}
+	cpuCost := buildCnt * cpuFactor
 	memoryCost := buildCnt * sessVars.GetMemoryFactor()
 	diskCost := buildCnt * sessVars.GetDiskFactor() * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
@@ -898,14 +904,14 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64 
 	}
 	// Cost of querying hash table is cheap actually, so we just compute the cost of
 	// evaluating `OtherConditions` and joining row pairs.
-	probeCost := numPairs * sessVars.GetCPUFactor()
+	probeCost := numPairs * cpuFactor
 	probeDiskCost := numPairs * sessVars.GetDiskFactor() * rowSize
 	// Cost of evaluating outer filter.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		// Input outer count for the above compution should be adjusted by SelectionFactor.
 		probeCost *= SelectionFactor
 		probeDiskCost *= SelectionFactor
-		probeCost += probeCnt * sessVars.GetCPUFactor()
+		probeCost += probeCnt * cpuFactor
 	}
 	diskCost += probeDiskCost
 	probeCost /= float64(p.Concurrency)
@@ -915,9 +921,9 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64 
 	if p.UseOuterToBuild {
 		if spill {
 			// It runs in sequence when build data is on disk. See handleUnmatchedRowsFromHashTableInDisk
-			cpuCost += buildCnt * sessVars.GetCPUFactor()
+			cpuCost += buildCnt * cpuFactor
 		} else {
-			cpuCost += buildCnt * sessVars.GetCPUFactor() / float64(p.Concurrency)
+			cpuCost += buildCnt * cpuFactor / float64(p.Concurrency)
 		}
 		diskCost += buildCnt * sessVars.GetDiskFactor() * rowSize
 	}
@@ -944,7 +950,7 @@ func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, costFlag uint
 		}
 		p.planCost += childCost
 	}
-	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag), costFlag)
+	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag), taskType == property.MppTaskType, costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
