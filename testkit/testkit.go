@@ -259,6 +259,15 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	return err
 }
 
+// MustExecToErr executes a sql statement and must return Error.
+func (tk *TestKit) MustExecToErr(sql string, args ...interface{}) {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.require.NoError(res.Close())
+	}
+	tk.require.Error(err)
+}
+
 func newSession(t testing.TB, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
