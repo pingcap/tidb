@@ -1001,6 +1001,12 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFla
 			// Cost of additional goroutines.
 			cpuCost += (con + 1) * sessVars.GetConcurrencyFactor()
 		}
+	} else if isMPP {
+		if p.ctx.GetSessionVars().CostModelVersion == CostModelV1 {
+			cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
+		} else {
+			cpuCost = inputRows * sessVars.GetTiFlashCPUFactor() * aggFuncFactor
+		}
 	} else {
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 	}
