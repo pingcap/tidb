@@ -813,26 +813,26 @@ func intersectionRange(start, end, newStart, newEnd int) (int, int) {
 }
 
 func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, tbl table.PartitionedTable, conds []expression.Expression,
-	columns []*expression.Column, names types.NameSlice, condsToBePruned *[]expression.Expression) (partitionRangeOR, []expression.Expression, error) {
+	columns []*expression.Column, names types.NameSlice) (partitionRangeOR, error) {
 	partExpr, err := tbl.(partitionTable).PartitionExpr()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Partition by range columns.
 	if len(pi.Columns) > 0 {
 		result, err := s.pruneRangeColumnsPartition(ctx, conds, pi, partExpr, columns, names)
-		return result, nil, err
+		return result, err
 	}
 
 	// Partition by range.
 	col, fn, mono, err := makePartitionByFnCol(ctx, columns, names, pi.Expr)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	result := fullRange(len(pi.Definitions))
 	if col == nil {
-		return result, nil, nil
+		return result, nil
 	}
 
 	// Extract the partition column, if the column is not null, it's possible to prune.
@@ -847,6 +847,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 	}
 	result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
 
+<<<<<<< HEAD
 	if condsToBePruned == nil {
 		return result, nil, nil
 	}
@@ -872,15 +873,15 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 	}
 
 	return result, newConds, nil
+=======
+	return result, nil
+>>>>>>> 2ba2a9ef5... planner: Manual revert of #24282 (#35298)
 }
 
 func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	used, prunedConds, err := s.pruneRangePartition(ds.ctx, pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names, &ds.pushedDownConds)
+	used, err := s.pruneRangePartition(ds.ctx, pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names)
 	if err != nil {
 		return nil, err
-	}
-	if prunedConds != nil {
-		ds.pushedDownConds = prunedConds
 	}
 	return s.makeUnionAllChildren(ds, pi, used, opt)
 }
@@ -1228,11 +1229,13 @@ func relaxOP(op string) string {
 	return op
 }
 
+// pruneUseBinarySearch returns the start and end of which partitions will match.
+// If no match (i.e. value > last partition) the start partition will be the number of partition, not the first partition!
 func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned bool) (start int, end int) {
 	length := lessThan.length()
 	switch data.op {
 	case ast.EQ:
-		// col = 66, lessThan = [4 7 11 14 17] => [5, 6)
+		// col = 66, lessThan = [4 7 11 14 17] => [5, 5)
 		// col = 14, lessThan = [4 7 11 14 17] => [4, 5)
 		// col = 10, lessThan = [4 7 11 14 17] => [2, 3)
 		// col = 3, lessThan = [4 7 11 14 17] => [0, 1)
@@ -1529,7 +1532,13 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 	return start, end, true
 }
 
+<<<<<<< HEAD
 func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant, f *expression.ScalarFunction) (start int, end int) {
+=======
+// pruneUseBinarySearch returns the start and end of which partitions will match.
+// If no match (i.e. value > last partition) the start partition will be the number of partition, not the first partition!
+func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
+>>>>>>> 2ba2a9ef5... planner: Manual revert of #24282 (#35298)
 	var err error
 	var isNull bool
 	compare := func(ith int, op string, v *expression.Constant) bool {
