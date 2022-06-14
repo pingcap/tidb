@@ -62,17 +62,8 @@ type Client struct {
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 
-<<<<<<< HEAD
 	databases  map[string]*utils.Database
 	ddlJobs    []*model.Job
-=======
-	databases map[string]*utils.Database
-	ddlJobs   []*model.Job
-
-	// store tables need to rebase info like auto id and random id and so on after create table
-	rebasedTablesMap map[UniqueTableName]bool
-
->>>>>>> 654e3d834... br: modify tables that should be altered auto id or random id (#33719)
 	backupMeta *backuppb.BackupMeta
 	// TODO Remove this field or replace it with a []*DB,
 	// since https://github.com/pingcap/br/pull/377 needs more DBs to speed up DDL execution.
@@ -123,38 +114,11 @@ func NewRestoreClient(
 
 	var statsHandle *handle.Handle
 	// tikv.Glue will return nil, tidb.Glue will return available domain
-<<<<<<< HEAD
 	if dom != nil {
 		statsHandle = dom.StatsHandle()
-=======
-	if rc.dom != nil {
-		rc.statsHandler = rc.dom.StatsHandle()
 	}
 	// init backupMeta only for passing unit test
-	if rc.backupMeta == nil {
-		rc.backupMeta = new(backuppb.BackupMeta)
-	}
-
-	// Only in binary we can use multi-thread sessions to create tables.
-	// so use OwnStorage() to tell whether we are use binary or SQL.
-	if g.OwnsStorage() {
-		// Maybe allow user modify the DDL concurrency isn't necessary,
-		// because executing DDL is really I/O bound (or, algorithm bound?),
-		// and we cost most of time at waiting DDL jobs be enqueued.
-		// So these jobs won't be faster or slower when machine become faster or slower,
-		// hence make it a fixed value would be fine.
-		rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
-			db, _, err := NewDB(g, store, rc.policyMode)
-			return db, err
-		})
-		if err != nil {
-			log.Warn("create session pool failed, we will send DDLs only by created sessions",
-				zap.Error(err),
-				zap.Int("sessionCount", len(rc.dbPool)),
-			)
-		}
->>>>>>> 654e3d834... br: modify tables that should be altered auto id or random id (#33719)
-	}
+	backupMeta := new(backuppb.BackupMeta)
 
 	return &Client{
 		pdClient:      pdClient,
@@ -165,6 +129,7 @@ func NewRestoreClient(
 		switchCh:      make(chan struct{}),
 		dom:           dom,
 		statsHandler:  statsHandle,
+		backupMeta:    backupMeta,
 	}, nil
 }
 
@@ -438,49 +403,6 @@ func (rc *Client) CreateTables(
 	}
 	return rewriteRules, newTables, nil
 }
-<<<<<<< HEAD
-=======
-func (rc *Client) createTables(
-	ctx context.Context,
-	db *DB,
-	dom *domain.Domain,
-	tables []*metautil.Table,
-	newTS uint64,
-) ([]CreatedTable, error) {
-	log.Info("client to create tables")
-	if rc.IsSkipCreateSQL() {
-		log.Info("skip create table and alter autoIncID")
-	} else {
-		err := db.CreateTables(ctx, tables, rc.GetRebasedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	cts := make([]CreatedTable, 0, len(tables))
-	for _, table := range tables {
-		newTableInfo, err := rc.GetTableSchema(dom, table.DB.Name, table.Info.Name)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if newTableInfo.IsCommonHandle != table.Info.IsCommonHandle {
-			return nil, errors.Annotatef(berrors.ErrRestoreModeMismatch,
-				"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
-				transferBoolToValue(table.Info.IsCommonHandle),
-				table.Info.IsCommonHandle,
-				newTableInfo.IsCommonHandle)
-		}
-		rules := GetRewriteRules(newTableInfo, table.Info, newTS)
-		ct := CreatedTable{
-			RewriteRule: rules,
-			Table:       newTableInfo,
-			OldTable:    table,
-		}
-		log.Debug("new created tables", zap.Any("table", ct))
-		cts = append(cts, ct)
-	}
-	return cts, nil
-}
->>>>>>> 654e3d834... br: modify tables that should be altered auto id or random id (#33719)
 
 func (rc *Client) createTable(
 	ctx context.Context,
@@ -493,11 +415,7 @@ func (rc *Client) createTable(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-<<<<<<< HEAD
 		err := db.CreateTable(ctx, table, ddlTables)
-=======
-		err := db.CreateTable(ctx, table, rc.GetRebasedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
->>>>>>> 654e3d834... br: modify tables that should be altered auto id or random id (#33719)
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -535,12 +453,7 @@ func (rc *Client) GoCreateTables(
 ) <-chan CreatedTable {
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
-
-<<<<<<< HEAD
-	ddlTables := rc.DDLJobsMap()
-=======
-	rc.GenerateRebasedTables(tables)
->>>>>>> 654e3d834... br: modify tables that should be altered auto id or random id (#33719)
+	ddlTables := rc.GenerateRebasedTables(tables)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1207,46 +1120,24 @@ func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
 }
 
-<<<<<<< HEAD
-// DDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
-// if we execute some DDLs before create table.
-// we may get two situation that need to rebase auto increment/random id.
-// 1. truncate table: truncate will generate new id cache.
-// 2. create table/create and rename table: the first create table will lock down the id cache.
-// because we cannot create onExistReplace table.
-// so the final create DDL with the correct auto increment/random id won't be executed.
-func (rc *Client) DDLJobsMap() map[UniqueTableName]bool {
-	m := make(map[UniqueTableName]bool)
-	for _, job := range rc.ddlJobs {
-		switch job.Type {
-		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
-			m[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
-		}
-	}
-	return m
-=======
 // GenerateRebasedTables generate a map[UniqueTableName]bool to represent tables that haven't updated table info.
 // there are two situations:
 // 1. tables that already exists in the restored cluster.
 // 2. tables that are created by executing ddl jobs.
 // so, only tables in incremental restoration will be added to the map
-func (rc *Client) GenerateRebasedTables(tables []*metautil.Table) {
+func (rc *Client) GenerateRebasedTables(tables []*metautil.Table) (rebasedTablesMap map[UniqueTableName]bool) {
 	if !rc.IsIncremental() {
 		// in full restoration, all tables are created by Session.CreateTable, and all tables' info is updated.
-		rc.rebasedTablesMap = make(map[UniqueTableName]bool)
+		rebasedTablesMap = make(map[UniqueTableName]bool)
 		return
 	}
 
-	rc.rebasedTablesMap = make(map[UniqueTableName]bool, len(tables))
+	rebasedTablesMap = make(map[UniqueTableName]bool, len(tables))
 	for _, table := range tables {
-		rc.rebasedTablesMap[UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}] = true
+		rebasedTablesMap[UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}] = true
 	}
-}
 
-// GetRebasedTables returns tables that may need to be rebase auto increment id or auto random id
-func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
-	return rc.rebasedTablesMap
->>>>>>> 654e3d834... br: modify tables that should be altered auto id or random id (#33719)
+	return
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
