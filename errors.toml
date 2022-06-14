@@ -1231,6 +1231,11 @@ error = '''
 '%s' is unsupported on cache tables.
 '''
 
+["ddl:8245"]
+error = '''
+Primary key name '%s' is ignored and converted to 'PRIMARY'
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
