@@ -1668,6 +1668,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			logutil.BgLogger().Warn("create pd server info request error", zap.String("url", url), zap.Error(err))
 			errs = append(errs, err)
 			continue
@@ -1675,6 +1676,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
 		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			logutil.BgLogger().Warn("request pd server info error", zap.String("url", url), zap.Error(err))
 			errs = append(errs, err)
 			continue
@@ -1687,6 +1689,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		err = json.NewDecoder(resp.Body).Decode(&content)
 		terror.Log(resp.Body.Close())
 		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			logutil.BgLogger().Warn("close pd server info request error", zap.String("url", url), zap.Error(err))
 			errs = append(errs, err)
 			continue
