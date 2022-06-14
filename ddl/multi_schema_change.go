@@ -91,7 +91,7 @@ func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
 		for _, idxName := range idxNames {
 			name := idxName.L
 			if _, ok := modifyIdx[name]; ok {
-				return dbterror.ErrOperateSameColumn.GenWithStackByArgs(name)
+				return dbterror.ErrOperateSameIndex.GenWithStackByArgs(name)
 			}
 			if addToModifyIdx {
 				modifyIdx[name] = struct{}{}
