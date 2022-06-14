@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
@@ -170,8 +169,7 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1;")
 	tk2.MustExec("alter table t1 cache;")
-	_, err = tk.Exec("commit")
-	require.True(t, terror.ErrorEqual(domain.ErrInfoSchemaChanged, err))
+	tk.MustGetDBError("commit", domain.ErrInfoSchemaChanged)
 	/* Test can skip schema checker */
 	tk.MustExec("begin")
 	tk.MustExec("alter table t1 nocache")
