@@ -1840,6 +1840,9 @@ func buildTableInfo(
 		case ast.ConstraintPrimaryKey:
 			idxInfo.Primary = true
 			idxInfo.Unique = true
+			if constr.Name != "" && !strings.EqualFold(constr.Name, mysql.PrimaryKeyName) {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrPrimaryKeyNameIsIgnored.FastGenByArgs(constr.Name))
+			}
 			idxInfo.Name = model.NewCIStr(mysql.PrimaryKeyName)
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			idxInfo.Unique = true
@@ -5597,6 +5600,9 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(mysql.PrimaryKeyName)
 	}
 
+	if indexName.L != "" && indexName.L != mysql.PrimaryKeyNameL {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrPrimaryKeyNameIsIgnored.FastGenByArgs(indexName))
+	}
 	indexName = model.NewCIStr(mysql.PrimaryKeyName)
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil ||
 		// If the table's PKIsHandle is true, it also means that this table has a primary key.

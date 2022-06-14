@@ -291,3 +291,25 @@ func TestUnsupportedAlterTableOption(t *testing.T) {
 	tk.MustExec("create table t(a char(10) not null,b char(20)) shard_row_id_bits=6")
 	tk.MustGetErrCode("alter table t pre_split_regions=6", errno.ErrUnsupportedDDLOperation)
 }
+
+// https://github.com/pingcap/tidb/issues/35121.
+func TestCreateTableWithNamedPrimaryKey(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, primary key clustered (a, b));")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 8245 Primary key name 'clustered' is ignored and converted to 'PRIMARY'"))
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int, primary key `primary` (a, b));")
+	tk.MustQuery("show warnings;").Check(testkit.Rows( /* no warnings */ ))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t add primary key `abc` (a);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 8245 Primary key name 'abc' is ignored and converted to 'PRIMARY'"))
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t add primary key `primary` (a);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows( /* no warnings */ ))
+}

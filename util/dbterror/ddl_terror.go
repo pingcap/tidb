@@ -388,4 +388,6 @@ var (
 	ErrCancelFinishedDDLJob = ClassDDL.NewStd(mysql.ErrCancelFinishedDDLJob)
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = ClassDDL.NewStd(mysql.ErrCannotCancelDDLJob)
+	// ErrPrimaryKeyNameIsIgnored is reported when the primary key name is specified.
+	ErrPrimaryKeyNameIsIgnored = ClassDDL.NewStd(mysql.ErrPrimaryKeyNameIsIgnored)
 )

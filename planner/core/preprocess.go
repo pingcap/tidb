@@ -825,7 +825,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	for _, constraint := range stmt.Constraints {
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			err := checkIndexInfo(constraint.Name, constraint.Keys)
+			err := checkIndexInfo(constraint.Name, constraint.Keys, false)
 			if err != nil {
 				p.err = err
 				return
@@ -840,7 +840,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				return
 			}
 			countPrimaryKey++
-			err := checkIndexInfo(constraint.Name, constraint.Keys)
+			err := checkIndexInfo(constraint.Name, constraint.Keys, true)
 			if err != nil {
 				p.err = err
 				return
@@ -1050,7 +1050,7 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		p.err = dbterror.ErrWrongNameForIndex.GenWithStackByArgs(stmt.IndexName)
 		return
 	}
-	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications, false)
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
@@ -1131,8 +1131,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
-				ast.ConstraintUniqKey, ast.ConstraintPrimaryKey:
-				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys)
+				ast.ConstraintUniqKey:
+				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys, false)
+				if p.err != nil {
+					return
+				}
+			case ast.ConstraintPrimaryKey:
+				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys, true)
 				if p.err != nil {
 					return
 				}
@@ -1176,8 +1181,8 @@ func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecificat
 }
 
 // checkIndexInfo checks index name, index column names and prefix lengths.
-func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
-	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
+func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification, isPK bool) error {
+	if strings.EqualFold(indexName, mysql.PrimaryKeyName) && !isPK {
 		return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
 	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
