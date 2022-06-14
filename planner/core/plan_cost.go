@@ -848,7 +848,7 @@ func (p *PhysicalMergeJoin) GetPlanCost(taskType property.TaskType, costFlag uin
 }
 
 // GetCost computes cost of hash join operator itself.
-func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
+func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64 {
 	buildCnt, probeCnt := lCnt, rCnt
 	build := p.children[0]
 	// Taking the right as the inner for right join or using the outer to build a hash table.
@@ -891,6 +891,10 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 		} else {
 			numPairs = 0
 		}
+	}
+
+	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
+		numPairs = getOperatorActRows(p)
 	}
 	// Cost of querying hash table is cheap actually, so we just compute the cost of
 	// evaluating `OtherConditions` and joining row pairs.
@@ -940,7 +944,7 @@ func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, costFlag uint
 		}
 		p.planCost += childCost
 	}
-	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag))
+	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag), costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
