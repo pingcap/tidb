@@ -138,8 +138,6 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 
 	casesIdx, ok := td.funcMap[funcName]
 	require.Truef(t, ok, "Must get test %s", funcName)
-
-	// old impl
 	err := json.Unmarshal(*td.input[casesIdx].Cases, in)
 	require.NoError(t, err)
 	if !record {
@@ -160,7 +158,6 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 func (td *TestData) GetTestCasesByName(caseName string, t *testing.T, in interface{}, out interface{}) {
 	casesIdx, ok := td.funcMap[caseName]
 	require.Truef(t, ok, "Case name: %s", caseName)
-
 	require.NoError(t, json.Unmarshal(*td.input[casesIdx].Cases, in))
 
 	if Record() {
