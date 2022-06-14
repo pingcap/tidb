@@ -66,7 +66,7 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 func (ft *FieldType) IsDecimalValid() bool {
-	if ft.tp == mysql.TypeNewDecimal && (ft.decimal < 0 || ft.decimal > mysql.MaxDecimalScale || ft.flen <= 0 || ft.flen > mysql.MaxDecimalWidth || ft.flen <= ft.decimal) {
+	if ft.tp == mysql.TypeNewDecimal && (ft.decimal < 0 || ft.decimal > mysql.MaxDecimalScale || ft.flen <= 0 || ft.flen > mysql.MaxDecimalWidth || ft.flen < ft.decimal) {
 		return false
 	}
 	return true
