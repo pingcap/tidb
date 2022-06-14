@@ -35,6 +35,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		SchemaID:        schema.ID,
 		TableID:         t.Meta().ID,
 		SchemaName:      schema.Name.L,
+		TableName:       t.Meta().Name.L,
 		Type:            model.ActionMultiSchemaChange,
 		BinlogInfo:      &model.HistoryInfo{},
 		Args:            nil,
