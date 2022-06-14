@@ -273,6 +273,7 @@ func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
 	tc.InjectErr = true
 	_, err = restore.PaginateScanRegion(ctx, tc, regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
 	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*mock scan error.*")
 
 	// make the regionMap losing some region, this will cause scan region check fails
 	delete(regionMap, uint64(3))
