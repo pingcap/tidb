@@ -57,7 +57,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 }
 
 func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
-	err := checkOperateSameColumn(info)
+	err := checkOperateSameColAndIdx(info)
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 	return checkAddColumnTooManyColumns(len(t.Cols()) + len(info.AddColumns) - len(info.DropColumns))
 }
 
-func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
+func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	modifyCols := make(map[string]struct{})
 	modifyIdx := make(map[string]struct{})
 
