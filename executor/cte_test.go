@@ -354,96 +354,6 @@ func TestCTEWithLimit(t *testing.T) {
 	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 4 offset 4) select * from cte1;")
 	rows.Check(testkit.Rows("3", "4", "3", "4"))
 }
-<<<<<<< HEAD
-=======
-
-func TestSpillToDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testCTEStorageSpill", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testCTEStorageSpill"))
-		tk.MustExec("set tidb_mem_quota_query = 1073741824;")
-	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))
-	}()
-
-	// Use duplicated rows to test UNION DISTINCT.
-	tk.MustExec("set tidb_mem_quota_query = 1073741824;")
-	insertStr := "insert into t1 values(0)"
-	rowNum := 1000
-	vals := make([]int, rowNum)
-	vals[0] = 0
-	for i := 1; i < rowNum; i++ {
-		v := rand.Intn(100)
-		vals[i] = v
-		insertStr += fmt.Sprintf(", (%d)", v)
-	}
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(c1 int);")
-	tk.MustExec(insertStr)
-	tk.MustExec("set tidb_mem_quota_query = 40000;")
-	tk.MustExec("set cte_max_recursion_depth = 500000;")
-	sql := fmt.Sprintf("with recursive cte1 as ( "+
-		"select c1 from t1 "+
-		"union "+
-		"select c1 + 1 c1 from cte1 where c1 < %d) "+
-		"select c1 from cte1 order by c1;", rowNum)
-	rows := tk.MustQuery(sql)
-
-	memTracker := tk.Session().GetSessionVars().StmtCtx.MemTracker
-	diskTracker := tk.Session().GetSessionVars().StmtCtx.DiskTracker
-	require.Greater(t, memTracker.MaxConsumed(), int64(0))
-	require.Greater(t, diskTracker.MaxConsumed(), int64(0))
-
-	sort.Ints(vals)
-	resRows := make([]string, 0, rowNum)
-	for i := vals[0]; i <= rowNum; i++ {
-		resRows = append(resRows, fmt.Sprintf("%d", i))
-	}
-	rows.Check(testkit.Rows(resRows...))
-}
-
-func TestCTEExecError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists src;")
-	tk.MustExec("create table src(first int, second int);")
-
-	insertStr := fmt.Sprintf("insert into src values (%d, %d)", rand.Intn(1000), rand.Intn(1000))
-	for i := 0; i < 1000; i++ {
-		insertStr += fmt.Sprintf(",(%d, %d)", rand.Intn(1000), rand.Intn(1000))
-	}
-	insertStr += ";"
-	tk.MustExec(insertStr)
-
-	// Increase projection concurrency and decrease chunk size
-	// to increase the probability of reproducing the problem.
-	tk.MustExec("set tidb_max_chunk_size = 32")
-	tk.MustExec("set tidb_projection_concurrency = 20")
-	for i := 0; i < 10; i++ {
-		err := tk.QueryToErr("with recursive cte(iter, first, second, result) as " +
-			"(select 1, first, second, first+second from src " +
-			" union all " +
-			"select iter+1, second, result, second+result from cte where iter < 80 )" +
-			"select * from cte")
-		require.True(t, terror.ErrorEqual(err, types.ErrOverflow))
-	}
-}
 
 // https://github.com/pingcap/tidb/issues/33965.
 func TestCTEsInView(t *testing.T) {
@@ -464,4 +374,3 @@ func TestCTEsInView(t *testing.T) {
 	tk.MustExec("use test1;")
 	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
 }
->>>>>>> 3cf6b08e6... parser: skip restoring schema name of CTE table columns (#33991)
