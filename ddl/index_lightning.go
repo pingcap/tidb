@@ -173,18 +173,14 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
-
+		
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		logSlowOperations(time.Since(oprStartTime), "AddIndexLightningfetchdata", 1000)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
-
-		err = w.batchCheckUniqueKey(txn, idxRecords)
-		if err != nil {
-			return errors.Trace(err)
-		}
 
 		for _, idxRecord := range idxRecords {
 			taskCtx.scanCount++
@@ -204,6 +200,7 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 
 			taskCtx.addedCount++
 		}
+		logSlowOperations(time.Since(oprStartTime), "AddIndexLightningWritedata", 1000)
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexLightningBackfillDataInTxn", 3000)
