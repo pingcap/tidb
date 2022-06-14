@@ -126,7 +126,6 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		defer wg.Wait()
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
-			colExec.memTracker.Consume(-colExec.memTracker.BytesConsumed())
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
@@ -389,6 +388,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		rootRowCollector.MergeCollector(mergeResult.collector)
 		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 	}
+	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -499,6 +499,15 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			continue
 		}
 	}
+	defer func() {
+		totalSampleCollectorSize := int64(0)
+		for _, sampleCollector := range sampleCollectors {
+			if sampleCollector != nil {
+				totalSampleCollectorSize += sampleCollector.MemSize
+			}
+		}
+		e.memTracker.Release(totalSampleCollectorSize)
+	}()
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -510,13 +519,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			return 0, nil, nil, nil, nil, err
 		}
 	}
-	totalSampleCollectorSize := int64(0)
-	for _, sampleCollector := range sampleCollectors {
-		if sampleCollector != nil {
-			totalSampleCollectorSize += sampleCollector.MemSize
-		}
-	}
-	e.memTracker.Consume(-rootRowCollector.Base().MemSize - totalSampleCollectorSize)
 	return
 }
 
@@ -720,7 +722,8 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		retCollector.MergeCollector(subCollector)
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
-		e.memTracker.Consume(newRetCollectorSize - dataSize - colRespSize - oldRetCollectorSize - subCollectorSize)
+		e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
+		e.memTracker.Release(dataSize + colRespSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -849,7 +852,7 @@ workLoop:
 			}
 			releaseCollectorMemory := func() {
 				if !task.isColumn {
-					e.memTracker.Consume(-collector.MemSize)
+					e.memTracker.Release(collector.MemSize)
 				}
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
