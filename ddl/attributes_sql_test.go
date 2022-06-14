@@ -73,7 +73,7 @@ func (s *testDBSuite8) TestAlterTablePartitionAttributes(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table alter_p (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11),
@@ -82,21 +82,21 @@ PARTITION BY RANGE (c) (
 );`)
 
 	// normal cases
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="merge_option=allow";`)
+	_, err = tk.Exec(`alter table alter_p partition p0 attributes="merge_option=allow";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p1 attributes="merge_option=allow,key=value";`)
+	_, err = tk.Exec(`alter table alter_p partition p1 attributes="merge_option=allow,key=value";`)
 	c.Assert(err, IsNil)
 
 	// space cases
-	_, err = tk.Exec(`alter table t1 partition p2 attributes=" merge_option=allow ";`)
+	_, err = tk.Exec(`alter table alter_p partition p2 attributes=" merge_option=allow ";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p3 attributes=" merge_option = allow , key = value ";`)
+	_, err = tk.Exec(`alter table alter_p partition p3 attributes=" merge_option = allow , key = value ";`)
 	c.Assert(err, IsNil)
 
 	// without equal
-	_, err = tk.Exec(`alter table t1 partition p1 attributes " merge_option=allow ";`)
+	_, err = tk.Exec(`alter table alter_p partition p1 attributes " merge_option=allow ";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p1 attributes " merge_option=allow , key=value ";`)
+	_, err = tk.Exec(`alter table alter_p partition p1 attributes " merge_option=allow , key=value ";`)
 	c.Assert(err, IsNil)
 
 	// reset all
@@ -227,7 +227,7 @@ PARTITION BY RANGE (c) (
 	// check table t2's attribute
 	c.Assert(rows1[0][0], Equals, "schema/test/t2")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
-	c.Assert(rows1[0][3], Not(Equals), rows[0][3])
+	c.Assert(rows1[0][3], Equals, rows[0][3])
 	// check partition p0's attribute
 	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
@@ -549,7 +549,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(len(rows2), Equals, 2)
 	c.Assert(rows2[0][0], Equals, "schema/test/t1")
 	c.Assert(rows2[0][2], Equals, `"key=value"`)
-	c.Assert(rows2[0][3], Equals, rows1[0][3])
+	c.Assert(rows2[0][3], Not(Equals), rows1[0][3])
 	c.Assert(rows2[1][0], Equals, "schema/test/t1/p1")
 	c.Assert(rows2[1][2], Equals, `"key2=value2"`)
 	c.Assert(rows2[1][3], Not(Equals), rows1[1][3])
