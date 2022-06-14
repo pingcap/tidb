@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"golang.org/x/exp/slices"
 )
 
 // FullRange represent used all partitions.
@@ -235,7 +236,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
 		return s.convertToIntSlice(or, pi, partitionNames), nil, nil
 	}
-	sort.Ints(used)
+	slices.Sort(used)
 	ret := used[:0]
 	for i := 0; i < len(used); i++ {
 		if i == 0 || used[i] != used[i-1] {
@@ -617,7 +618,7 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 	for k := range used {
 		ret = append(ret, k)
 	}
-	sort.Ints(ret)
+	slices.Sort(ret)
 	return ret, nil
 }
 
@@ -1646,8 +1647,8 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 	for _, def := range usedMap {
 		used = append(used, def)
 	}
-	sort.Slice(used, func(i, j int) bool {
-		return used[i].ID < used[j].ID
+	slices.SortFunc(used, func(i, j model.PartitionDefinition) bool {
+		return i.ID < j.ID
 	})
 	if len(children) == 1 {
 		action = func() string {

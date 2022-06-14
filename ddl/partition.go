@@ -1166,14 +1166,15 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 				}
 			}
-			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, t, job, tbl, physicalTableIDs, elements)
+			rh := newReorgHandler(t)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, tbl, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
 				// and then run the reorg next time.
 				return ver, errors.Trace(err)
 			}
-			err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
+			err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
 				defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 					func() {
 						dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")

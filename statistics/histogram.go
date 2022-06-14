@@ -1338,7 +1338,12 @@ func (idx *Index) DropEvicted() {
 
 // IsEvicted returns whether index statistics got evicted
 func (idx *Index) IsEvicted() bool {
-	return idx.CMSketch == nil
+	switch idx.StatsVer {
+	case Version1:
+		return idx.CMSketch == nil
+	default:
+		return false
+	}
 }
 
 func (idx *Index) String() string {

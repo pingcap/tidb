@@ -1626,6 +1626,12 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			return
 		}
 	}
+	if node.Tp.EvalType() == types.ETDatetime {
+		if node.Tp.GetDecimal() > types.MaxFsp {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.GetDecimal(), "CAST", types.MaxFsp)
+			return
+		}
+	}
 }
 
 func (p *preprocessor) updateStateFromStaleReadProcessor() error {

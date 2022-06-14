@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -32,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
 )
 
@@ -286,6 +290,12 @@ func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
 	tk.require.EqualError(err, errStr)
 }
 
+// MustGetDBError executes a sql statement and assert its terror.
+func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
+	err := tk.ExecToErr(sql)
+	tk.require.Truef(terror.ErrorEqual(err, dberr), "err %v", err)
+}
+
 // MustContainErrMsg executes a sql statement and assert its error message containing errStr.
 func (tk *TestKit) MustContainErrMsg(sql string, errStr interface{}) {
 	err := tk.ExecToErr(sql)
@@ -389,4 +399,29 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 // CheckLastMessage checks last message after executing MustExec
 func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
+}
+
+// RegionProperityClient is to get region properties.
+type RegionProperityClient struct {
+	tikv.Client
+	mu struct {
+		sync.Mutex
+		failedOnce bool
+		count      int64
+	}
+}
+
+// SendRequest is to mock send request.
+func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdDebugGetRegionProperties {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.mu.count++
+		// Mock failure once.
+		if !c.mu.failedOnce {
+			c.mu.failedOnce = true
+			return &tikvrpc.Response{}, nil
+		}
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }

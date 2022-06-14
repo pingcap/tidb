@@ -149,9 +149,9 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 			resp.OtherError = err.Error()
 			return resp
 		}
-		return buildRespWithMPPExec(nil, nil, nil, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+		return genRespWithMPPExec(nil, nil, nil, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
-	return buildRespWithMPPExec(chunks, counts, ndvs, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+	return genRespWithMPPExec(chunks, counts, ndvs, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }
 
 func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (mppExec, []tipb.Chunk, []int64, []int64, error) {
@@ -194,8 +194,7 @@ func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest) (chun
 	if err != nil {
 		return
 	}
-	var buf []byte
-	var datums []types.Datum
+
 	var chk *chunk.Chunk
 	fields := exec.getFieldTypes()
 	for {
@@ -203,25 +202,66 @@ func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest) (chun
 		if err != nil || chk == nil || chk.NumRows() == 0 {
 			return
 		}
-		numRows := chk.NumRows()
-		for i := 0; i < numRows; i++ {
-			datums = datums[:0]
-			if dagReq.OutputOffsets != nil {
-				for _, j := range dagReq.OutputOffsets {
-					datums = append(datums, chk.GetRow(i).GetDatum(int(j), fields[j]))
-				}
-			} else {
-				for j, ft := range fields {
-					datums = append(datums, chk.GetRow(i).GetDatum(j, ft))
-				}
-			}
-			buf, err = codec.EncodeValue(dagCtx.sc, buf[:0], datums...)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			chunks = appendRow(chunks, buf, i)
+
+		switch dagReq.EncodeType {
+		case tipb.EncodeType_TypeDefault:
+			chunks, err = useDefaultEncoding(chk, dagCtx, dagReq, fields, chunks)
+		case tipb.EncodeType_TypeChunk:
+			chunks = useChunkEncoding(chk, dagReq, fields, chunks)
+		default:
+			err = fmt.Errorf("unsupported DAG request encode type %s", dagReq.EncodeType)
+		}
+		if err != nil {
+			return
 		}
 	}
+}
+
+func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRequest,
+	fields []*types.FieldType, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
+	var buf []byte
+	var datums []types.Datum
+	var err error
+	numRows := chk.NumRows()
+	for i := 0; i < numRows; i++ {
+		datums = datums[:0]
+		if dagReq.OutputOffsets != nil {
+			for _, j := range dagReq.OutputOffsets {
+				datums = append(datums, chk.GetRow(i).GetDatum(int(j), fields[j]))
+			}
+		} else {
+			for j, ft := range fields {
+				datums = append(datums, chk.GetRow(i).GetDatum(j, ft))
+			}
+		}
+		buf, err = codec.EncodeValue(dagCtx.sc, buf[:0], datums...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		chunks = appendRow(chunks, buf, i)
+	}
+	return chunks, nil
+}
+
+func useChunkEncoding(chk *chunk.Chunk, dagReq *tipb.DAGRequest, fields []*types.FieldType, chunks []tipb.Chunk) []tipb.Chunk {
+	if dagReq.OutputOffsets != nil {
+		offsets := make([]int, len(dagReq.OutputOffsets))
+		newFields := make([]*types.FieldType, len(dagReq.OutputOffsets))
+		for i := 0; i < len(dagReq.OutputOffsets); i++ {
+			offset := dagReq.OutputOffsets[i]
+			offsets[i] = int(offset)
+			newFields[i] = fields[offset]
+		}
+		chk = chk.Prune(offsets)
+		fields = newFields
+	}
+
+	c := chunk.NewCodec(fields)
+	buffer := c.Encode(chk)
+	chunks = append(chunks, tipb.Chunk{
+		RowsData: buffer,
+	})
+	return chunks
 }
 
 func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (*dagContext, *tipb.DAGRequest, error) {
@@ -238,7 +278,17 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		return nil, nil, errors.Trace(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	switch dagReq.TimeZoneName {
+	case "":
+		sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	case "System":
+		sc.TimeZone = time.Local
+	default:
+		sc.TimeZone, err = time.LoadLocation(dagReq.TimeZoneName)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+	}
 	ctx := &dagContext{
 		evalContext:   &evalContext{sc: sc},
 		dbReader:      reader,
@@ -394,13 +444,14 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func buildRespWithMPPExec(chunks []tipb.Chunk, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
+func genRespWithMPPExec(chunks []tipb.Chunk, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		Chunks:       chunks,
 		OutputCounts: counts,
 		Ndvs:         ndvs,
+		EncodeType:   dagReq.EncodeType,
 	}
 	executors := dagReq.Executors
 	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {

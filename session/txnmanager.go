@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 )
@@ -113,6 +114,21 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
+func (m *txnManager) AdviseWarmup() error {
+	if m.ctxProvider != nil {
+		return m.ctxProvider.AdviseWarmup()
+	}
+	return nil
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (m *txnManager) AdviseOptimizeWithPlan(plan interface{}) error {
+	if m.ctxProvider != nil {
+		return m.ctxProvider.AdviseOptimizeWithPlan(plan)
+	}
+	return nil
+}
+
 func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) sessiontxn.TxnContextProvider {
 	if r.Provider != nil {
 		return r.Provider
@@ -125,6 +141,23 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 
 	if r.StaleReadTS > 0 {
 		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil)
+	}
+
+	if txnMode == ast.Pessimistic {
+		switch m.sctx.GetSessionVars().IsolationLevelForNewTxn() {
+		case ast.ReadCommitted:
+			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+		case ast.Serializable:
+			// The Oracle serializable isolation is actually SI in pessimistic mode.
+			// Do not update ForUpdateTS when the user is using the Serializable isolation level.
+			// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
+			// Support for this does not mean that TiDB supports serializable isolation of MySQL.
+			// tidb_skip_isolation_level_check should still be disabled by default.
+			return isolation.NewPessimisticSerializableTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+		default:
+			// We use Repeatable read for all other cases.
+			return isolation.NewPessimisticRRTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+		}
 	}
 
 	return &legacy.SimpleTxnContextProvider{

@@ -498,7 +498,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
 	if err != nil {
 		return err
 	}
-	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIterator(m)
 	if err != nil {
 		return err
 	}

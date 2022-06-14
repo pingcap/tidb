@@ -151,6 +151,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeRenameUser(x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(ctx, x)
+	case *ast.SetSessionStatesStmt:
+		err = e.executeSetSessionStates(ctx, x)
 	case *ast.KillStmt:
 		err = e.executeKillStmt(ctx, x)
 	case *ast.BinlogStmt:
@@ -626,7 +628,7 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 }
 
 func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error {
-	deleted := e.ctx.GetSessionVars().TxnCtx.DeleteSavepoint(s.Name)
+	deleted := e.ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(s.Name)
 	if !deleted {
 		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
 	}
@@ -1293,6 +1295,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			break
 		}
 
+		// delete privileges from mysql.columns_priv
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.ColumnPrivTable, user.Hostname, user.Username)
+		if _, err = sqlExecutor.ExecuteInternal(context.TODO(), sql.String()); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
 		// delete relationship from mysql.role_edges
 		sql.Reset()
 		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE TO_HOST = %? and TO_USER = %?;`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
@@ -1674,6 +1684,10 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSessionStatesStmt) error {
+	return nil
 }
 
 func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {

@@ -166,7 +166,6 @@ func TestTestDataLockWaits(t *testing.T) {
 		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
 		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
-
 	tk := s.newTestKitWithRoot(t)
 
 	// Execute one of the query once, so it's stored into statements_summary.
