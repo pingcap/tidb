@@ -63,19 +63,29 @@ func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 	if err != nil {
 		return res, err
 	}
-	if record {
-		res.output = make([]testCases, len(res.input))
-		for i := range res.input {
-			res.output[i].Name = res.input[i].Name
-		}
-	} else {
-		res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
-		if err != nil {
-			return res, err
-		}
-		if len(res.input) != len(res.output) {
-			return res, errors.New(fmt.Sprintf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output)))
-		}
+	// old impl
+	//if record {
+	//	res.output = make([]testCases, len(res.input))
+	//	for i := range res.input {
+	//		res.output[i].Name = res.input[i].Name
+	//	}
+	//} else {
+	//	res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
+	//	if err != nil {
+	//		return res, err
+	//	}
+	//	if len(res.input) != len(res.output) {
+	//		return res, errors.New(fmt.Sprintf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output)))
+	//	}
+	//}
+
+	// new impl
+	res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
+	if err != nil {
+		return res, err
+	}
+	if len(res.input) != len(res.output) {
+		return res, errors.New(fmt.Sprintf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output)))
 	}
 	res.funcMap = make(map[string]int, len(res.input))
 	for i, test := range res.input {
@@ -144,6 +154,8 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 
 	casesIdx, ok := td.funcMap[funcName]
 	require.Truef(t, ok, "Must get test %s", funcName)
+
+	// old impl
 	err := json.Unmarshal(*td.input[casesIdx].Cases, in)
 	require.NoError(t, err)
 	if !record {
@@ -158,12 +170,33 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 		}
 	}
 	td.output[casesIdx].decodedOut = out
+
+	// mew impl
+	//testNum := len(td.funcMap)
+	//for idx := 0; idx < testNum; idx++ {
+	//	err := json.Unmarshal(*td.input[idx].Cases, in)
+	//	require.NoError(t, err)
+	//	if idx == casesIdx && record {
+	//		// Init for generate output file.
+	//		inputLen := reflect.ValueOf(in).Elem().Len()
+	//		v := reflect.ValueOf(out).Elem()
+	//		if v.Kind() == reflect.Slice {
+	//			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
+	//		}
+	//		td.output[idx].decodedOut = out
+	//	} else {
+	//		err = json.Unmarshal(*td.output[idx].Cases, out)
+	//		require.NoError(t, err)
+	//	}
+	//}
 }
 
 // GetTestCasesByName gets the test cases for a test function by its name.
 func (td *TestData) GetTestCasesByName(caseName string, t *testing.T, in interface{}, out interface{}) {
 	casesIdx, ok := td.funcMap[caseName]
 	require.Truef(t, ok, "Case name: %s", caseName)
+
+	// the old impl
 	require.NoError(t, json.Unmarshal(*td.input[casesIdx].Cases, in))
 
 	if Record() {
@@ -177,6 +210,22 @@ func (td *TestData) GetTestCasesByName(caseName string, t *testing.T, in interfa
 	}
 
 	td.output[casesIdx].decodedOut = out
+
+	// the new impl
+	//testNum := len(td.funcMap)
+	//for idx := 0; idx < testNum; idx++ {
+	//	require.NoError(t, json.Unmarshal(*td.input[idx].Cases, in))
+	//	if idx == casesIdx && Record() {
+	//		inputLen := reflect.ValueOf(in).Elem().Len()
+	//		v := reflect.ValueOf(out).Elem()
+	//		if v.Kind() == reflect.Slice {
+	//			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
+	//		}
+	//		td.output[idx].decodedOut = out
+	//	} else {
+	//		require.NoError(t, json.Unmarshal(*td.output[idx].Cases, out))
+	//	}
+	//}
 }
 
 func (td *TestData) generateOutputIfNeeded() error {
@@ -188,16 +237,23 @@ func (td *TestData) generateOutputIfNeeded() error {
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
+	isRecord4ThisSuite := false
 	for i, test := range td.output {
-		err := enc.Encode(test.decodedOut)
-		if err != nil {
-			return err
+		if test.decodedOut != nil {
+			isRecord4ThisSuite = true
+			err := enc.Encode(test.decodedOut)
+			if err != nil {
+				return err
+			}
+			res := make([]byte, len(buf.Bytes()))
+			copy(res, buf.Bytes())
+			buf.Reset()
+			rm := json.RawMessage(res)
+			td.output[i].Cases = &rm
 		}
-		res := make([]byte, len(buf.Bytes()))
-		copy(res, buf.Bytes())
-		buf.Reset()
-		rm := json.RawMessage(res)
-		td.output[i].Cases = &rm
+	}
+	if !isRecord4ThisSuite {
+		return nil
 	}
 	err := enc.Encode(td.output)
 	if err != nil {
