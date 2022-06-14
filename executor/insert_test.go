@@ -22,11 +22,8 @@ import (
 	"sync"
 	"time"
 
-<<<<<<< HEAD
 	. "github.com/pingcap/check"
-=======
 	"github.com/pingcap/failpoint"
->>>>>>> b86050098... executor: do not append extra cols to the old row when `updateDupRow` (#33656)
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -41,28 +38,19 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-<<<<<<< HEAD
 func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-=======
-func TestInsertOnDuplicateKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	testInsertOnDuplicateKey(t, tk)
+	testInsertOnDuplicateKey(c, tk)
 }
 
-func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite8) TestInsertOnDuplicateKeyWithBinlog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	failpoint.Enable("github.com/pingcap/tidb/table/tables/forceWriteBinlog", "return")
 	defer failpoint.Disable("github.com/pingcap/tidb/table/tables/forceWriteBinlog")
-	testInsertOnDuplicateKey(t, tk)
+	testInsertOnDuplicateKey(c, tk)
 }
 
-func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
->>>>>>> b86050098... executor: do not append extra cols to the old row when `updateDupRow` (#33656)
+func testInsertOnDuplicateKey(c *C, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 
 	tk.MustExec(`drop table if exists t1, t2;`)
