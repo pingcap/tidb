@@ -390,11 +390,9 @@ func TestTruncateSequence(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create sequence if not exists seq")
-	_, err := tk.Exec("truncate table seq")
-	require.EqualError(t, err, "[schema:1146]Table 'test.seq' doesn't exist")
+	tk.MustGetErrMsg("truncate table seq", "[schema:1146]Table 'test.seq' doesn't exist")
 	tk.MustExec("create sequence if not exists seq1 start 10 increment 2 maxvalue 10000 cycle")
-	_, err = tk.Exec("truncate table seq1")
-	require.EqualError(t, err, "[schema:1146]Table 'test.seq1' doesn't exist")
+	tk.MustGetErrMsg("truncate table seq1", "[schema:1146]Table 'test.seq1' doesn't exist")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop sequence if exists seq1")
 }
@@ -457,12 +455,10 @@ func TestCreateDropDatabase(t *testing.T) {
 	tk.MustExec("create database drop_test;")
 	tk.MustExec("use drop_test;")
 	tk.MustExec("drop database drop_test;")
-	_, err := tk.Exec("drop table t;")
-	require.Equal(t, plannercore.ErrNoDB.Error(), err.Error())
-	err = tk.ExecToErr("select * from t;")
-	require.Equal(t, plannercore.ErrNoDB.Error(), err.Error())
+	tk.MustGetDBError("drop table t;", plannercore.ErrNoDB)
+	tk.MustGetDBError("select * from t;", plannercore.ErrNoDB)
 
-	_, err = tk.Exec("drop database mysql")
+	err := tk.ExecToErr("drop database mysql")
 	require.Error(t, err)
 
 	tk.MustExec("create database charset_test charset ascii;")
@@ -518,7 +514,7 @@ func TestCreateDropTable(t *testing.T) {
 	tk.MustExec("create table drop_test (a int)")
 	tk.MustExec("drop table drop_test")
 
-	_, err := tk.Exec("drop table mysql.gc_delete_range")
+	err := tk.ExecToErr("drop table mysql.gc_delete_range")
 	require.Error(t, err)
 }
 
@@ -528,21 +524,14 @@ func TestCreateDropView(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create or replace view drop_test as select 1,2")
-
-	_, err := tk.Exec("drop table drop_test")
-	require.EqualError(t, err, "[schema:1051]Unknown table 'test.drop_test'")
+	tk.MustGetErrMsg("drop table drop_test", "[schema:1051]Unknown table 'test.drop_test'")
 
 	tk.MustExec("drop view if exists drop_test")
 
-	_, err = tk.Exec("drop view mysql.gc_delete_range")
-	require.EqualError(t, err, "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
-
-	_, err = tk.Exec("drop view drop_test")
-	require.EqualError(t, err, "[schema:1051]Unknown table 'test.drop_test'")
-
+	tk.MustGetErrMsg("drop view mysql.gc_delete_range", "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
+	tk.MustGetErrMsg("drop view drop_test", "[schema:1051]Unknown table 'test.drop_test'")
 	tk.MustExec("create table t_v(a int)")
-	_, err = tk.Exec("drop view t_v")
-	require.EqualError(t, err, "[ddl:1347]'test.t_v' is not VIEW")
+	tk.MustGetErrMsg("drop view t_v", "[ddl:1347]'test.t_v' is not VIEW")
 
 	tk.MustExec("create table t_v1(a int, b int);")
 	tk.MustExec("create table t_v2(a int, b int);")
@@ -652,15 +641,14 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists mc")
 	tk.MustExec("create table mc(c1 int, c2 varchar(10), c3 bit)")
-	_, err := tk.Exec("alter table mc modify column c1 short")
+	err := tk.ExecToErr("alter table mc modify column c1 short")
 	require.Error(t, err)
 	tk.MustExec("alter table mc modify column c1 bigint")
 
-	_, err = tk.Exec("alter table mc modify column c2 blob")
+	err = tk.ExecToErr("alter table mc modify column c2 blob")
 	require.Error(t, err)
 
-	_, err = tk.Exec("alter table mc modify column c2 varchar(8)")
-	require.NoError(t, err)
+	tk.MustExec("alter table mc modify column c2 varchar(8)")
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
 	tk.MustExec("alter table mc modify column c2 text(13)")
 	tk.MustExec("alter table mc modify column c2 text")
@@ -670,11 +658,11 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL,\n  `c3` bit(1) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	require.Equal(t, expected, createSQL)
 	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
-	_, err = tk.Exec("alter table alter_view modify column c2 text")
+	err = tk.ExecToErr("alter table alter_view modify column c2 text")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
-	_, err = tk.Exec("alter table alter_seq modify column c int")
+	err = tk.ExecToErr("alter table alter_seq modify column c int")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop sequence alter_seq")
 
@@ -795,7 +783,7 @@ func TestColumnCharsetAndCollate(t *testing.T) {
 			require.Equalf(t, tt.exptCharset, tb.Meta().Columns[0].GetCharset(), sql)
 			require.Equalf(t, tt.exptCollate, tb.Meta().Columns[0].GetCollate(), sql)
 		} else {
-			_, err := tk.Exec(sql)
+			err := tk.ExecToErr(sql)
 			require.Errorf(t, err, sql)
 		}
 	}
@@ -811,37 +799,32 @@ func TestTooLargeIdentifierLength(t *testing.T) {
 	dbName1, dbName2 := strings.Repeat("a", mysql.MaxDatabaseNameLength), strings.Repeat("a", mysql.MaxDatabaseNameLength+1)
 	tk.MustExec(fmt.Sprintf("create database %s", dbName1))
 	tk.MustExec(fmt.Sprintf("drop database %s", dbName1))
-	_, err := tk.Exec(fmt.Sprintf("create database %s", dbName2))
-	require.Equal(t, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", dbName2), err.Error())
+	tk.MustGetErrMsg(fmt.Sprintf("create database %s", dbName2), fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", dbName2))
 
 	// for table.
 	tk.MustExec("use test")
 	tableName1, tableName2 := strings.Repeat("b", mysql.MaxTableNameLength), strings.Repeat("b", mysql.MaxTableNameLength+1)
 	tk.MustExec(fmt.Sprintf("create table %s(c int)", tableName1))
 	tk.MustExec(fmt.Sprintf("drop table %s", tableName1))
-	_, err = tk.Exec(fmt.Sprintf("create table %s(c int)", tableName2))
-	require.Equal(t, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", tableName2), err.Error())
+	tk.MustGetErrMsg(fmt.Sprintf("create table %s(c int)", tableName2), fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", tableName2))
 
 	// for column.
 	tk.MustExec("drop table if exists t;")
 	columnName1, columnName2 := strings.Repeat("c", mysql.MaxColumnNameLength), strings.Repeat("c", mysql.MaxColumnNameLength+1)
 	tk.MustExec(fmt.Sprintf("create table t(%s int)", columnName1))
 	tk.MustExec("drop table t")
-	_, err = tk.Exec(fmt.Sprintf("create table t(%s int)", columnName2))
-	require.Equal(t, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", columnName2), err.Error())
+	tk.MustGetErrMsg(fmt.Sprintf("create table t(%s int)", columnName2), fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", columnName2))
 
 	// for index.
 	tk.MustExec("create table t(c int);")
 	indexName1, indexName2 := strings.Repeat("d", mysql.MaxIndexIdentifierLen), strings.Repeat("d", mysql.MaxIndexIdentifierLen+1)
 	tk.MustExec(fmt.Sprintf("create index %s on t(c)", indexName1))
 	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
-	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
-	require.Equal(t, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2), err.Error())
+	tk.MustGetErrMsg(fmt.Sprintf("create index %s on t(c)", indexName2), fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 
 	// for create table with index.
 	tk.MustExec("drop table t;")
-	_, err = tk.Exec(fmt.Sprintf("create table t(c int, index %s(c));", indexName2))
-	require.Equal(t, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2), err.Error())
+	tk.MustGetErrMsg(fmt.Sprintf("create table t(c int, index %s(c));", indexName2), fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 }
 
 func TestShardRowIDBits(t *testing.T) {
@@ -1013,9 +996,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 	for i := -10; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i+autoRandBitsUpperBound, i))
 	}
-	_, err := tk.Exec("insert into t (b) values (0)")
-	require.Error(t, err)
-	require.Equal(t, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error(), err.Error())
+	tk.MustGetErrMsg("insert into t (b) values (0)", autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
 	// Test overflow.
@@ -1023,17 +1004,13 @@ func TestAutoRandomBitsData(t *testing.T) {
 	// Here we cannot fill the all values for a `bigint` column,
 	// so firstly we rebase auto_rand to the position before overflow.
 	tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", autoRandBitsUpperBound, 1))
-	_, err = tk.Exec("insert into t (b) values (0)")
-	require.Error(t, err)
-	require.Equal(t, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error(), err.Error())
+	tk.MustGetErrMsg("insert into t (b) values (0)", autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
 	tk.MustExec("insert into t values (1, 2)")
 	tk.MustExec(fmt.Sprintf("update t set a = %d where a = 1", autoRandBitsUpperBound))
-	_, err = tk.Exec("insert into t (b) values (0)")
-	require.Error(t, err)
-	require.Equal(t, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error(), err.Error())
+	tk.MustGetErrMsg("insert into t (b) values (0)", autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
 	// Test insert negative integers explicitly won't trigger rebase.
