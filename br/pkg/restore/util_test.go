@@ -233,7 +233,10 @@ func TestPaginateScanRegion(t *testing.T) {
 	require.Regexp(t, ".*scan region return empty result.*", err.Error())
 
 	regionMap, regions = makeRegions(1)
-	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	tc := NewTestClient(stores, regionMap, 0)
+	tc.InjectErr = true
+	tc.InjectTimes = 10
+	batch, err = restore.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
 	require.NoError(t, err)
 	require.Equal(t, regions, batch)
 
@@ -273,11 +276,12 @@ func TestPaginateScanRegion(t *testing.T) {
 	require.True(t, berrors.ErrRestoreInvalidRange.Equal(err))
 	require.Regexp(t, ".*startKey > endKey.*", err.Error())
 
-	tc := NewTestClient(stores, regionMap, 0)
+	tc = NewTestClient(stores, regionMap, 0)
 	tc.InjectErr = true
-	_, err = restore.PaginateScanRegion(ctx, tc, regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	tc.InjectTimes = 65
+	_, err = restore.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
 	require.Error(t, err)
-	require.Regexp(t, ".*mock scan error.*", err.Error())
+	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 
 	// make the regionMap losing some region, this will cause scan region check fails
 	delete(regionMap, uint64(3))
