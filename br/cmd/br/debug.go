@@ -402,8 +402,8 @@ func setPDConfigCommand() *cobra.Command {
 
 func searchStreamBackupCommand() *cobra.Command {
 	searchBackupCMD := &cobra.Command{
-		Use:   "search-stream",
-		Short: "search stream backup by key",
+		Use:   "search-log-backup",
+		Short: "search log backup by key",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithCancel(GetDefaultContext())

@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
+// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
 package restore
 
@@ -45,12 +45,12 @@ func (ec *startWithComparator) Compare(src, dst []byte) bool {
 type StreamKVInfo struct {
 	Key        string `json:"key"`
 	EncodedKey string `json:"-"`
-	WriteType  byte   `json:"write_type"`
-	StartTs    uint64 `json:"start_ts"`
-	CommitTs   uint64 `json:"commit_ts"`
-	CFName     string `json:"cf_name"`
+	WriteType  byte   `json:"write-type"`
+	StartTs    uint64 `json:"start-ts"`
+	CommitTs   uint64 `json:"commit-ts"`
+	CFName     string `json:"cf-name"`
 	Value      string `json:"value,omitempty"`
-	ShortValue string `json:"short_value,omitempty"`
+	ShortValue string `json:"short-value,omitempty"`
 }
 
 // StreamBackupSearch is used for searching key from log data files
@@ -150,16 +150,16 @@ func (s *StreamBackupSearch) resolveMetaData(ctx context.Context, metaData *back
 // Search kv entries from log data files
 func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error) {
 	dataFilesCh := make(chan *backuppb.DataFileInfo, 32)
+	entriesCh, errCh := make(chan *StreamKVInfo, 64), make(chan error, 8)
 	go func() {
 		defer close(dataFilesCh)
 		if err := s.readDataFiles(ctx, dataFilesCh); err != nil {
-			log.Error("read data files error", zap.Error(err))
+			errCh <- err
 		}
 	}()
 
 	pool := utils.NewWorkerPool(16, "search key")
 	var wg sync.WaitGroup
-	entriesCh, errCh := make(chan *StreamKVInfo, 64), make(chan error, 8)
 
 	for dataFile := range dataFilesCh {
 		wg.Add(1)
@@ -179,7 +179,7 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 	}()
 
 	for err := range errCh {
-		log.Error("error happened when search data file", zap.Error(err))
+		return nil, errors.Trace(err)
 	}
 
 	defaultCFEntries := make(map[string]*StreamKVInfo, 64)
