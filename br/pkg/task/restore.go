@@ -214,8 +214,6 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	return nil
 }
 
-<<<<<<< HEAD
-=======
 func CheckNewCollationEnable(
 	backupNewCollationEnable string,
 	g glue.Glue,
@@ -252,11 +250,6 @@ func CheckNewCollationEnable(
 	return nil
 }
 
-func isFullRestore(cmdName string) bool {
-	return cmdName == FullRestoreCmd
-}
-
->>>>>>> 8f8dfafc1... br: Fix new collaction enable check (#33500)
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.adjustRestoreConfig()
