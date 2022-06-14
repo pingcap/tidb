@@ -16,7 +16,7 @@ package storage
 import (
 	"bytes"
 	"context"
-	"io/ioutil"
+	"io"
 	"path"
 	"strings"
 	"sync"
@@ -26,12 +26,21 @@ import (
 )
 
 type mapFile struct {
-	sync.RWMutex
-	Data []byte
+	Data atomic.Value // the atomic value is a byte slice, which can only be get/set atomically
+}
+
+// GetData gets the underlying byte slice of the atomic value
+func (f *mapFile) GetData() []byte {
+	var fileData []byte
+	fileDataVal := f.Data.Load()
+	if fileDataVal != nil {
+		fileData = fileDataVal.([]byte)
+	}
+	return fileData
 }
 
 type mapStorage struct {
-	sync.RWMutex
+	rwm       sync.RWMutex
 	dataStore map[string]*mapFile
 }
 
@@ -41,7 +50,15 @@ func NewMapStorage() *mapStorage {
 	}
 }
 
+func (s *mapStorage) loadMap(name string) (*mapFile, bool) {
+	s.rwm.RLock()
+	defer s.rwm.RUnlock()
+	theFile, ok := s.dataStore[name]
+	return theFile, ok
+}
+
 // DeleteFile delete the file in storage
+// It implements the `ExternalStorage` interface
 func (s *mapStorage) DeleteFile(ctx context.Context, name string) error {
 	select {
 	case <-ctx.Done():
@@ -52,8 +69,8 @@ func (s *mapStorage) DeleteFile(ctx context.Context, name string) error {
 	if !path.IsAbs(name) {
 		return errors.Errorf("file name is not an absolute path: %s", name)
 	}
-	s.Lock()
-	defer s.Unlock()
+	s.rwm.Lock()
+	defer s.rwm.Unlock()
 	if _, ok := s.dataStore[name]; !ok {
 		return errors.Errorf("cannot find the file: %s", name)
 	}
@@ -62,6 +79,7 @@ func (s *mapStorage) DeleteFile(ctx context.Context, name string) error {
 }
 
 // WriteFile file to storage.
+// It implements the `ExternalStorage` interface
 func (s *mapStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	select {
 	case <-ctx.Done():
@@ -72,27 +90,22 @@ func (s *mapStorage) WriteFile(ctx context.Context, name string, data []byte) er
 	if !path.IsAbs(name) {
 		return errors.Errorf("file name is not an absolute path: %s", name)
 	}
-	r := bytes.NewReader(data)
-	fileData, err := ioutil.ReadAll(r)
-	if err != nil {
-		return err
-	}
-	s.Lock()
-	defer s.Unlock()
+	fileData := append([]byte{}, data...)
+	s.rwm.Lock()
+	defer s.rwm.Unlock()
 	theFile, ok := s.dataStore[name]
 	if ok {
-		theFile.Lock()
-		theFile.Data = fileData
-		theFile.Unlock()
+		theFile.Data.Store(fileData)
 	} else {
-		s.dataStore[name] = &mapFile{
-			Data: fileData,
-		}
+		theFile := new(mapFile)
+		theFile.Data.Store(fileData)
+		s.dataStore[name] = theFile
 	}
 	return nil
 }
 
-// ReadFile storage file.
+// ReadFile reads the storage file.
+// It implements the `ExternalStorage` interface
 func (s *mapStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	select {
 	case <-ctx.Done():
@@ -103,23 +116,16 @@ func (s *mapStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 	if !path.IsAbs(name) {
 		return nil, errors.Errorf("file name is not an absolute path: %s", name)
 	}
-	s.RLock()
-	defer s.RUnlock()
-	theFile, ok := s.dataStore[name]
+	theFile, ok := s.loadMap(name)
 	if !ok {
 		return nil, errors.Errorf("cannot find the file: %s", name)
 	}
-	theFile.RLock()
-	defer theFile.RUnlock()
-	r := bytes.NewReader(theFile.Data)
-	retData, err := ioutil.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	return retData, nil
+	fileData := theFile.GetData()
+	return append([]byte{}, fileData...), nil
 }
 
 // FileExists return true if file exists.
+// It implements the `ExternalStorage` interface
 func (s *mapStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	select {
 	case <-ctx.Done():
@@ -130,13 +136,12 @@ func (s *mapStorage) FileExists(ctx context.Context, name string) (bool, error) 
 	if !path.IsAbs(name) {
 		return false, errors.Errorf("file name is not an absolute path: %s", name)
 	}
-	s.RLock()
-	defer s.RUnlock()
-	_, ok := s.dataStore[name]
+	_, ok := s.loadMap(name)
 	return ok, nil
 }
 
-// Open a Reader by file path.
+// Open opens a Reader by file path.
+// It implements the `ExternalStorage` interface
 func (s *mapStorage) Open(ctx context.Context, filePath string) (ExternalFileReader, error) {
 	select {
 	case <-ctx.Done():
@@ -147,47 +152,54 @@ func (s *mapStorage) Open(ctx context.Context, filePath string) (ExternalFileRea
 	if !path.IsAbs(filePath) {
 		return nil, errors.Errorf("file name is not an absolute path: %s", filePath)
 	}
-	s.RLock()
-	defer s.RUnlock()
-	theFile, ok := s.dataStore[filePath]
+	theFile, ok := s.loadMap(filePath)
 	if !ok {
 		return nil, errors.Errorf("cannot find the file: %s", filePath)
 	}
-	theFile.RLock()
-	defer theFile.RUnlock()
-	r := bytes.NewReader(theFile.Data)
+	r := bytes.NewReader(theFile.GetData())
 	return &mapFileReader{
-		Reader: r,
+		br: r,
 	}, nil
 }
 
 // WalkDir traverse all the files in a dir.
+// It implements the `ExternalStorage` interface
 func (s *mapStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
-	s.RLock()
-	defer s.RUnlock()
-	for fileName, file := range s.dataStore {
+	allFileNames := func() []string {
+		fileNames := []string{}
+		s.rwm.RLock()
+		defer s.rwm.RUnlock()
+		for fileName := range s.dataStore {
+			if opt != nil {
+				if len(opt.SubDir) > 0 {
+					if !strings.HasPrefix(fileName, opt.SubDir) {
+						continue
+					}
+				}
+				if len(opt.ObjPrefix) > 0 {
+					baseName := path.Base(fileName)
+					if !strings.HasPrefix(baseName, opt.ObjPrefix) {
+						continue
+					}
+				}
+			}
+			fileNames = append(fileNames, fileName)
+		}
+		return fileNames
+	}()
+
+	for _, fileName := range allFileNames {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 			// continue on
 		}
-		if opt != nil {
-			if len(opt.SubDir) > 0 {
-				if !strings.HasPrefix(fileName, opt.SubDir) {
-					continue
-				}
-			}
-			if len(opt.ObjPrefix) > 0 {
-				baseName := path.Base(fileName)
-				if !strings.HasPrefix(baseName, opt.ObjPrefix) {
-					continue
-				}
-			}
+		theFile, ok := s.loadMap(fileName)
+		if !ok {
+			continue
 		}
-		file.RLock()
-		fileSize := len(file.Data)
-		file.RUnlock()
+		fileSize := len(theFile.GetData())
 		if err := fn(fileName, int64(fileSize)); err != nil {
 			return err
 		}
@@ -199,7 +211,9 @@ func (s *mapStorage) URI() string {
 	return "mapstore://"
 }
 
-// Create implements ExternalStorage interface.
+// Create creates a file and returning a writer to write data into.
+// When the writer is closed, the data is stored in the file.
+// It implements the `ExternalStorage` interface
 func (s *mapStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
 	select {
 	case <-ctx.Done():
@@ -210,19 +224,20 @@ func (s *mapStorage) Create(ctx context.Context, name string) (ExternalFileWrite
 	if !path.IsAbs(name) {
 		return nil, errors.Errorf("file name is not an absolute path: %s", name)
 	}
-	s.Lock()
-	defer s.Unlock()
+	s.rwm.Lock()
+	defer s.rwm.Unlock()
 	if _, ok := s.dataStore[name]; ok {
 		return nil, errors.Errorf("the file already exists: %s", name)
 	}
-	theFile := &mapFile{}
+	theFile := new(mapFile)
 	s.dataStore[name] = theFile
 	return &mapFileWriter{
 		file: theFile,
 	}, nil
 }
 
-// Rename implements ExternalStorage interface.
+// Rename renames a file name to another file name.
+// It implements the `ExternalStorage` interface
 func (s *mapStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	select {
 	case <-ctx.Done():
@@ -233,55 +248,66 @@ func (s *mapStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	if !path.IsAbs(newFileName) {
 		return errors.Errorf("new file name is not an absolute path: %s", newFileName)
 	}
-	s.Lock()
-	defer s.Unlock()
+	s.rwm.Lock()
+	defer s.rwm.Unlock()
 	theFile, ok := s.dataStore[oldFileName]
 	if !ok {
 		return errors.Errorf("the file doesn't exist: %s", oldFileName)
-	}
-	if _, ok := s.dataStore[newFileName]; ok {
-		return errors.Errorf("the new file has already existed: %s", newFileName)
 	}
 	s.dataStore[newFileName] = theFile
 	delete(s.dataStore, oldFileName)
 	return nil
 }
 
+// mapFileReader is the struct to read data from an opend map storage file
 type mapFileReader struct {
-	*bytes.Reader
+	br       *bytes.Reader
 	isClosed atomic.Bool
 }
 
+// Read reads the map storage file data
+// It implements the `io.Reader` interface
 func (r *mapFileReader) Read(p []byte) (int, error) {
 	if r.isClosed.Load() {
-		return -1, errors.New("reader closed")
+		return 0, io.EOF
 	}
-	return r.Reader.Read(p)
+	return r.br.Read(p)
 }
 
+// Close closes the map storage file data
+// It implements the `io.Closer` interface
 func (r *mapFileReader) Close() error {
 	r.isClosed.Store(true)
 	return nil
 }
 
+// Seeker seekds the offset inside the map storage file
+// It implements the `io.Seeker` interface
 func (r *mapFileReader) Seek(offset int64, whence int) (int64, error) {
 	if r.isClosed.Load() {
 		return -1, errors.New("reader closed")
 	}
-	return r.Reader.Seek(offset, whence)
+	return r.br.Seek(offset, whence)
 }
 
+// mapFileReader is the struct to write data into the opened map storage file
 type mapFileWriter struct {
-	buf  bytes.Buffer
-	file *mapFile
+	buf      bytes.Buffer
+	file     *mapFile
+	isClosed atomic.Bool
 }
 
+// Write writes the data into the map storage file buffer.
+// It implements the `ExternalFileWriter` interface
 func (w *mapFileWriter) Write(ctx context.Context, p []byte) (int, error) {
 	select {
 	case <-ctx.Done():
 		return -1, ctx.Err()
 	default:
 		// continue on
+	}
+	if w.isClosed.Load() {
+		return -1, errors.New("writer closed")
 	}
 	return w.buf.Write(p)
 }
@@ -293,12 +319,8 @@ func (w *mapFileWriter) Close(ctx context.Context) error {
 	default:
 		// continue on
 	}
-	fileData, err := ioutil.ReadAll(&w.buf)
-	if err != nil {
-		return err
-	}
-	w.file.Lock()
-	w.file.Data = fileData
-	w.file.Unlock()
+	fileData := append([]byte{}, w.buf.Bytes()...)
+	w.file.Data.Store(fileData)
+	w.isClosed.Store(true)
 	return nil
 }

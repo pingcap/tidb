@@ -18,8 +18,11 @@ import (
 	"context"
 	"io"
 	"io/ioutil"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,6 +31,7 @@ func TestMapStoreBasic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var err error
 	// write and then read
 	require.Nil(t, store.WriteFile(ctx, "/hello.txt", []byte("hello world")))
 	fileContent, err := store.ReadFile(ctx, "/hello.txt")
@@ -84,12 +88,27 @@ func TestMapStoreBasic(t *testing.T) {
 	require.True(t, bytes.Equal([]byte(" world 3"), fileContent))
 
 	// rename the file
+	var exists bool
 	require.Nil(t, store.WriteFile(ctx, "/hello.txt", []byte("hello world 3")))
 	require.Nil(t, store.WriteFile(ctx, "/hello2.txt", []byte("hello world 2")))
+	exists, err = store.FileExists(ctx, "/hello.txt")
+	require.Nil(t, err)
+	require.True(t, exists)
+	exists, err = store.FileExists(ctx, "/hello2.txt")
+	require.Nil(t, err)
+	require.True(t, exists)
 	require.NotNil(t, store.Rename(ctx, "/NOT_EXIST.txt", "/NEW_FILE.txt"))
-	require.NotNil(t, store.Rename(ctx, "/hello.txt", "/hello2.txt"))
+	require.Nil(t, store.Rename(ctx, "/hello2.txt", "/hello3.txt"))
 	require.Nil(t, store.Rename(ctx, "/hello.txt", "/hello3.txt"))
-
+	exists, err = store.FileExists(ctx, "/hello.txt")
+	require.Nil(t, err)
+	require.False(t, exists)
+	exists, err = store.FileExists(ctx, "/hello2.txt")
+	require.Nil(t, err)
+	require.False(t, exists)
+	exists, err = store.FileExists(ctx, "/hello3.txt")
+	require.Nil(t, err)
+	require.True(t, exists)
 }
 
 type iterFileInfo struct {
@@ -166,4 +185,84 @@ func TestMapStoreWalkDir(t *testing.T) {
 		require.Equal(t, int64(len(info.Content)), info.Size, info.Name)
 		require.True(t, bytes.Equal(expectContent, info.Content), info.Name)
 	}
+}
+
+func TestMapStoreManipulateBytes(t *testing.T) {
+	store := NewMapStorage()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	testStr := "aaa1"
+	testBytes := []byte(testStr)
+	require.Nil(t, store.WriteFile(ctx, "/aaa.txt", testBytes))
+	testBytes[3] = '2'
+	require.Equal(t, testStr, string(store.dataStore["/aaa.txt"].Data.Load().([]byte)))
+
+	readBytes, err := store.ReadFile(ctx, "/aaa.txt")
+	require.Nil(t, err)
+	require.Equal(t, testStr, string(readBytes))
+	readBytes[3] = '2'
+	require.Equal(t, testStr, string(store.dataStore["/aaa.txt"].Data.Load().([]byte)))
+}
+
+func TestMapStoreWriteDuringWalkDir(t *testing.T) {
+	store := NewMapStorage()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var deleteFileName string
+	allTestFiles := map[string][]byte{
+		"/hello1.txt": []byte("hello world 1"),
+		"/hello2.txt": []byte("hello world 2"),
+		"/hello3.txt": []byte("hello world 3"),
+	}
+	var remainFilesMap sync.Map
+	for fileName, content := range allTestFiles {
+		require.Nil(t, store.WriteFile(ctx, fileName, content))
+		remainFilesMap.Store(fileName, true)
+	}
+
+	pendingCh := make(chan struct{})
+	ch1 := make(chan error)
+	ch2 := make(chan error)
+	go func() {
+		<-pendingCh
+		ch1 <- store.WalkDir(ctx, nil, func(fileName string, size int64) error {
+			t.Logf("iterating: %s", fileName)
+			remainFilesMap.Delete(fileName)
+			time.Sleep(1 * time.Second)
+			return nil
+		})
+		close(ch1)
+	}()
+	go func() {
+		defer close(ch2)
+		<-pendingCh
+		time.Sleep(100 * time.Millisecond) // set some lag, to let 'WalkDir' go-routine run first
+		err := store.WriteFile(ctx, "/hello4.txt", []byte("hello world4"))
+		if err != nil {
+			ch2 <- err
+			return
+		}
+		t.Log("new file written")
+		remainFilesMap.Range(func(k any, v any) bool {
+			deleteFileName = k.(string)
+			return false
+		})
+		ch2 <- store.DeleteFile(ctx, deleteFileName)
+		t.Logf("%s deleted", deleteFileName)
+	}()
+	close(pendingCh)
+	// see how long does the write returns
+	var err error
+	select {
+	case <-time.After(1 * time.Second):
+		err = errors.New("writing file timeout")
+	case err = <-ch2:
+		//continue on
+	}
+	require.Nil(t, err)
+	require.Nil(t, <-ch1)
+	_, ok := remainFilesMap.Load(deleteFileName)
+	require.True(t, ok)
 }
