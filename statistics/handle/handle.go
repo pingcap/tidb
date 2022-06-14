@@ -657,15 +657,22 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
-		hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		var hg *statistics.Histogram
+		var cms *statistics.CMSketch
+		var topN *statistics.TopN
 		var fms *statistics.FMSketch
+		if !c.IsHistogramLoaded() {
+			hg, err = h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		if !c.IsCMSketchLoaded() || !c.IsTopNLoaded() {
+			cms, topN, err = h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 		if loadFMSketch {
 			fms, err = h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
 			if err != nil {
@@ -831,7 +838,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 		// 4. loadAll is false.
 		notNeedLoad := h.Lease() > 0 &&
 			!isHandle &&
-			(col == nil || !col.IsLoaded() && col.LastUpdateVersion < histVer) &&
+			(col == nil || !col.IsHistogramLoaded() && col.LastUpdateVersion < histVer) &&
 			!loadAll
 		if notNeedLoad {
 			count, err := h.columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
