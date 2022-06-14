@@ -3610,6 +3610,26 @@ func TestDateTimeAddReal(t *testing.T) {
 	}
 }
 
+func TestIssue30253(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{`SELECT INTERVAL 1.123456789e3 SECOND + "1900-01-01 00:00:00"`, "1900-01-01 00:18:43.456789"},
+		{`SELECT INTERVAL 1 Year + 19000101000000`, "1901-01-01 00:00:00"},
+		{`select interval 6 month + date("1900-01-01")`, "1900-07-01"},
+		{`select interval "5:2" MINUTE_SECOND + "1900-01-01"`, "1900-01-01 00:05:02"},
+	}
+
+	for _, c := range cases {
+		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
+	}
+}
 func TestIssue10181(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
