@@ -10561,15 +10561,12 @@ func (s *testIntegrationSuite) TestIssue30326(c *C) {
 	c.Assert(err.Error(), Equals, "[executor:1242]Subquery returns more than 1 row")
 }
 
-func TestIssue33397(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
+func (s *testIntegrationSuite) TestIssue33397(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;")
 	tk.MustExec("insert into t values(''), ('');")
 	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
 	result := tk.MustQuery("select compress(a) from t").Rows()
-	require.Equal(t, [][]interface{}{{""}, {""}}, result)
+	c.Assert(result, Equals, [][]interface{}{{""}, {""}})
 }
