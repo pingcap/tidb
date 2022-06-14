@@ -84,6 +84,10 @@ type actionMu struct {
 
 var EnableGCMemoryTrack = atomicutil.NewBool(false)
 
+type finalizerRef struct {
+	val byte
+}
+
 // softScale means the scale of the soft limit to the hard limit.
 const softScale = 0.8
 
@@ -405,7 +409,8 @@ func (t *Tracker) Release(bytes int64, objRef any, objInfo string) {
 	defer t.Consume(-bytes)
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if tracker.shouldRecordRelease() {
-			runtime.SetFinalizer(objRef, func(objRef any) {
+			newRef := &finalizerRef{}
+			runtime.SetFinalizer(newRef, func(ref *finalizerRef) {
 				tracker.release(bytes, objInfo)
 			})
 			tracker.recordRelease(bytes)
