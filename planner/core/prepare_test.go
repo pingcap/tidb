@@ -17,6 +17,7 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/types"
 	"math"
 	"math/rand"
 	"strconv"
@@ -2373,88 +2374,23 @@ func (s *testPlanSerialSuite) TestPartitionWithVariedDatasources(c *C) {
 		}
 	}
 }
-<<<<<<< HEAD
-=======
 
-func TestCachedTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-
-	tk.MustExec("create table t (a int, b int, index i_b(b))")
-	tk.MustExec("insert into t values (1, 1), (2, 2)")
-	tk.MustExec("alter table t cache")
-
-	tk.MustExec("prepare tableScan from 'select * from t where a>=?'")
-	tk.MustExec("prepare indexScan from 'select b from t use index(i_b) where b>?'")
-	tk.MustExec("prepare indexLookup from 'select a from t use index(i_b) where b>? and b<?'")
-	tk.MustExec("prepare pointGet from 'select b from t use index(i_b) where b=?'")
-	tk.MustExec("set @a=1, @b=3")
-
-	lastReadFromCache := func(tk *testkit.TestKit) bool {
-		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
-	}
-
-	var cacheLoaded bool
-	for i := 0; i < 50; i++ {
-		tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
-		if lastReadFromCache(tk) {
-			cacheLoaded = true
-			break
-		}
-	}
-	require.True(t, cacheLoaded)
-
-	// Cache the plan.
-	tk.MustQuery("execute tableScan using @a").Check(testkit.Rows("1 1", "2 2"))
-	tk.MustQuery("execute indexScan using @a").Check(testkit.Rows("2"))
-	tk.MustQuery("execute indexLookup using @a, @b").Check(testkit.Rows("2"))
-	tk.MustQuery("execute pointGet using @a").Check(testkit.Rows("1"))
-
-	// Table Scan
-	tk.MustQuery("execute tableScan using @a").Check(testkit.Rows("1 1", "2 2"))
-	require.True(t, lastReadFromCache(tk))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	// Index Scan
-	tk.MustQuery("execute indexScan using @a").Check(testkit.Rows("2"))
-	require.True(t, lastReadFromCache(tk))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	// IndexLookup
-	tk.MustQuery("execute indexLookup using @a, @b").Check(testkit.Rows("2"))
-	require.True(t, lastReadFromCache(tk))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	// PointGet
-	tk.MustQuery("execute pointGet using @a").Check(testkit.Rows("1"))
-	require.True(t, lastReadFromCache(tk))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-}
-
-func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
+func (s *testPlanSerialSuite) TestPlanCacheWithRCWhenInfoSchemaChange(c *C) {
+	store, dom, err := newStoreWithBootstrap()
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
 
 	ctx := context.Background()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	defer store.Close()
 
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(c, store)
+	tk2 := testkit.NewTestKit(c, store)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t1")
@@ -2462,18 +2398,18 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	// prepare text protocol
 	tk1.MustExec("prepare s from 'select /*+use_index(t1, ic)*/ * from t1 where 1'")
 	// prepare binary protocol
-	stmtID, _, _, err := tk2.Session().PrepareStmt("select /*+use_index(t1, ic)*/ * from t1 where 1")
-	require.Nil(t, err)
+	stmtID, _, _, err := tk2.Se.PrepareStmt("select /*+use_index(t1, ic)*/ * from t1 where 1")
+	c.Assert(err, IsNil)
 	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
 	tk1.MustExec("begin pessimistic")
 	tk2.MustExec("set tx_isolation='READ-COMMITTED'")
 	tk2.MustExec("begin pessimistic")
 	tk1.MustQuery("execute s").Check(testkit.Rows())
-	rs, err := tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
-	require.Nil(t, err)
-	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
+	rs, err := tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	c.Assert(err, IsNil)
+	tk2.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
 
-	tk3 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(c, store)
 	tk3.MustExec("use test")
 	tk3.MustExec("alter table t1 drop index ic")
 	tk3.MustExec("insert into t1 values(1, 0)")
@@ -2483,9 +2419,8 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	tk1.MustQuery("execute s").Check(testkit.Rows("1 0"))
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	// execute binary protocol
-	rs, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
-	require.Nil(t, err)
-	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 0"))
+	rs, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	c.Assert(err, IsNil)
+	tk2.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 0"))
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
->>>>>>> 0703a64f7... planner: plan cache always check scheme valid in RC isolation level (#34523)
