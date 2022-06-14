@@ -332,12 +332,12 @@ func GetSampledAvgRowSize(
 		if err != nil {
 			return 0, err
 		}
-		parser, err = NewCSVParser(&cfg.Mydumper.CSV, reader, int64(cfg.Mydumper.ReadBlockSize), ioWorkers, hasHeader, charsetConvertor)
+		parser, err = NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, int64(cfg.Mydumper.ReadBlockSize), ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return 0, err
 		}
 	case SourceTypeSQL:
-		parser = NewChunkParser(cfg.TiDB.SQLMode, reader, int64(cfg.Mydumper.ReadBlockSize), ioWorkers)
+		parser = NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, int64(cfg.Mydumper.ReadBlockSize), ioWorkers)
 	default:
 		return 0, errors.Errorf("source file %s is none of csv, sql, or parquet file", fileInfo.FileMeta.Path)
 	}
