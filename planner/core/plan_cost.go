@@ -950,13 +950,19 @@ func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, costFlag uint
 }
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
-func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool, costFlag uint64) float64 {
+func (p *PhysicalStreamAgg) GetCost(inputRows float64, taskType property.TaskType, costFlag uint64) float64 {
 	aggFuncFactor := p.getAggFuncCostFactor(false)
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
-	if isRoot {
+	if taskType == property.RootTaskType {
 		cpuCost = inputRows * sessVars.GetCPUFactor() * aggFuncFactor
-	} else {
+	} else if taskType == property.MppTaskType {
+		if p.ctx.GetSessionVars().CostModelVersion == CostModelV1 {
+			cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
+		} else {
+			cpuCost = inputRows * sessVars.GetTiFlashCPUFactor() * aggFuncFactor
+		}
+	} else { // TiKV task
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 	}
 	rowsPerGroup := inputRows / getCardinality(p, costFlag)
@@ -975,7 +981,7 @@ func (p *PhysicalStreamAgg) GetPlanCost(taskType property.TaskType, costFlag uin
 		return 0, err
 	}
 	p.planCost = childCost
-	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), taskType == property.RootTaskType, costFlag)
+	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), taskType, costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
