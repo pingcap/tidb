@@ -2172,7 +2172,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
 	//if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
-		return nil
+		//return nil
 	//}
 	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
