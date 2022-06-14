@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
@@ -232,20 +233,21 @@ func TestInitFullClusterRestore(t *testing.T) {
 	require.NoError(t, err)
 
 	// explicit filter
-	client.InitFullClusterRestore(true, false, "")
-	require.False(t, client.IsFullClusterRestore())
-	// point restore cmd, but full backup strorage is empty
-	client.InitFullClusterRestore(false, false, "")
+	client.InitFullClusterRestore(true)
 	require.False(t, client.IsFullClusterRestore())
 
-	client.InitFullClusterRestore(false, true, "")
+	client.InitFullClusterRestore(false)
 	require.True(t, client.IsFullClusterRestore())
 	// set it to false again
-	client.InitFullClusterRestore(true, false, "")
+	client.InitFullClusterRestore(true)
 	require.False(t, client.IsFullClusterRestore())
 
-	client.InitFullClusterRestore(false, false, "xxx")
-	require.True(t, client.IsFullClusterRestore())
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data"))
+	}()
+	client.InitFullClusterRestore(false)
+	require.False(t, client.IsFullClusterRestore())
 }
 
 func TestPreCheckTableClusterIndex(t *testing.T) {

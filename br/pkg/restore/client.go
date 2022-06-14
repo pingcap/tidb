@@ -1546,6 +1546,9 @@ func (rc *Client) getRuleID(tableID int64) string {
 
 // IsFull returns whether this backup is full.
 func (rc *Client) IsFull() bool {
+	failpoint.Inject("mock-incr-backup-data", func() {
+		failpoint.Return(false)
+	})
 	return !rc.IsIncremental()
 }
 
@@ -2158,12 +2161,8 @@ func (rc *Client) SaveSchemas(
 }
 
 // InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
-func (rc *Client) InitFullClusterRestore(explicitFilter, isFullRestoreCmd bool, fullBackupStorage string) {
-	if isFullRestoreCmd {
-		rc.fullClusterRestore = !explicitFilter && rc.IsFull()
-	} else {
-		rc.fullClusterRestore = !explicitFilter && rc.IsFull() && len(fullBackupStorage) > 0
-	}
+func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
+	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
 
 	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
 

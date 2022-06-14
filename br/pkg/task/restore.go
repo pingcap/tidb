@@ -469,11 +469,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	// todo: it's ugly to init like this, we should move restore config into a separate package
+	// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
 	// to avoid import cycle problem which we won't do it in this pr, then refactor this
-	// move InitFullClusterRestore into this pkg won't work since ut will cause import cycle too.
-	if cmdName == FullRestoreCmd || cmdName == PointRestoreCmd {
-		client.InitFullClusterRestore(cfg.ExplicitFilter, cmdName == FullRestoreCmd, cfg.FullBackupStorage)
+	//
+	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+	if cmdName == FullRestoreCmd {
+		client.InitFullClusterRestore(cfg.ExplicitFilter)
 	}
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
 		if err = client.CheckTargetClusterFresh(ctx); err != nil {
