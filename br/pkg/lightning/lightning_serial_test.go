@@ -61,7 +61,11 @@ func TestRun(t *testing.T) {
 	path, _ := filepath.Abs(".")
 	ctx := context.Background()
 	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
-	o := &options{glue: invalidGlue}
+	o := &options{
+		glue:         invalidGlue,
+		promRegistry: lightning.promRegistry,
+		promFactory:  lightning.promFactory,
+	}
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),

@@ -23,11 +23,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/terror",
+        "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_prometheus_client_model//go",
         "@com_github_tikv_client_go_v2//metrics",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
