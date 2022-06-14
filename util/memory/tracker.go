@@ -409,6 +409,7 @@ func (t *Tracker) Release(bytes int64) {
 	defer t.Consume(-bytes)
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if tracker.shouldRecordRelease() {
+			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
 			runtime.SetFinalizer(newRef, func(ref *finalizerRef) {
 				tracker.release(bytes)
