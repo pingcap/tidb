@@ -852,7 +852,8 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 		statsTbl.Columns[int64(i)] = &statistics.Column{
 			Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
 			Info:      tbl.Columns[i-1],
-			Loaded:    true,
+			CMSketch:  statistics.NewCMSketch(0, 0),
+			TopN:      statistics.NewTopN(0),
 		}
 	}
 
