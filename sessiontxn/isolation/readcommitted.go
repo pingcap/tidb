@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -31,10 +32,11 @@ import (
 )
 
 type stmtState struct {
-	stmtTS            uint64
-	stmtTSFuture      oracle.Future
-	stmtUseStartTS    bool
-	onNextRetryOrStmt func() error
+	stmtTS                         uint64
+	stmtTSFuture                   oracle.Future
+	stmtUseStartTS                 bool
+	optimizeForNotFetchingLatestTS bool
+	onNextRetryOrStmt              func() error
 }
 
 func (s *stmtState) prepareStmt(useStartTS bool) error {
@@ -81,6 +83,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
 		return err
 	}
+	p.optimizeForNotFetchingLatestTS = false
 	return p.prepareStmt(!p.isTxnPrepared)
 }
 
@@ -104,6 +107,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
+	p.optimizeForNotFetchingLatestTS = false
 	return p.prepareStmt(false)
 }
 
@@ -129,6 +133,10 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	if p.stmtTS != 0 {
 		return p.stmtTS, nil
+	}
+
+	if p.optimizeForNotFetchingLatestTS {
+		return p.getTxnStartTS()
 	}
 
 	var txn kv.Transaction
@@ -205,5 +213,34 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 		return err
 	}
 	p.prepareStmtTS()
+	return nil
+}
+
+// AdviseOptimizeWithPlan in RC covers much fewer cases compared with pessimistic repeatable read.
+// We only optimize with insert operator with no selection in that we do not fetch latest ts immediately.
+// We only update ts if write conflict is incurred.
+func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
+	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+		return nil
+	}
+
+	plan, ok := val.(plannercore.Plan)
+	if !ok {
+		return nil
+	}
+
+	if execute, ok := plan.(*plannercore.Execute); ok {
+		plan = execute.Plan
+	}
+
+	optimizeForNotFetchingLatestTS := false
+	if v, ok := plan.(*plannercore.Insert); ok {
+		if v.SelectPlan == nil {
+			optimizeForNotFetchingLatestTS = true
+		}
+	}
+
+	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS
+
 	return nil
 }

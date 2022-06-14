@@ -39,7 +39,7 @@ type PessimisticRRTxnContextProvider struct {
 	latestForUpdateTS uint64
 	// It may decide whether to update forUpdateTs when calling provider's getForUpdateTs
 	// See more details in the comments of optimizeWithPlan
-	followingOperatorDoesNotUpdateForUpdateTS bool
+	optimizeForNotFetchingLatestTS bool
 }
 
 // NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
@@ -69,7 +69,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 		return p.forUpdateTS, nil
 	}
 
-	if p.followingOperatorDoesNotUpdateForUpdateTS {
+	if p.optimizeForNotFetchingLatestTS {
 		return p.getTxnStartTS()
 	}
 
@@ -127,7 +127,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error
 	}
 
 	p.forUpdateTS = 0
-	p.followingOperatorDoesNotUpdateForUpdateTS = false
+	p.optimizeForNotFetchingLatestTS = false
 
 	return nil
 }
@@ -145,7 +145,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 		p.forUpdateTS = 0
 	}
 
-	p.followingOperatorDoesNotUpdateForUpdateTS = false
+	p.optimizeForNotFetchingLatestTS = false
 
 	return nil
 }
@@ -165,6 +165,8 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point session
 //     We expect that the data that the point get acquires has not been changed.
 // Benefit: Save the cost of acquiring ts from PD.
 // Drawbacks: If the data has been changed since the ts we used, we need to retry.
+// One exception is insert operation, when it does not fetch data, we do not fetch the latest ts immediately. We only update ts
+// if write conflict is incurred.
 func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
@@ -179,30 +181,29 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	mayOptimizeForPointGet := false
-	if v, ok := plan.(*plannercore.PhysicalLock); ok {
+	optimizeForNotFetchingLatestTS := false
+	switch v := plan.(type) {
+	case *plannercore.PhysicalLock:
 		if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
-			mayOptimizeForPointGet = true
+			optimizeForNotFetchingLatestTS = true
 		}
-	} else if v, ok := plan.(*plannercore.Update); ok {
+	case *plannercore.Update:
 		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
-			mayOptimizeForPointGet = true
+			optimizeForNotFetchingLatestTS = true
 		}
-	} else if v, ok := plan.(*plannercore.Delete); ok {
+	case *plannercore.Delete:
 		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
-			mayOptimizeForPointGet = true
+			optimizeForNotFetchingLatestTS = true
 		}
-	} else if v, ok := plan.(*plannercore.Insert); ok {
+	case *plannercore.Insert:
 		if v.SelectPlan == nil {
-			mayOptimizeForPointGet = true
+			optimizeForNotFetchingLatestTS = true
 		}
-	} else if _, ok := plan.(*plannercore.PointGetPlan); ok {
-		mayOptimizeForPointGet = true
-	} else if _, ok := plan.(*plannercore.BatchPointGetPlan); ok {
-		mayOptimizeForPointGet = true
+	case *plannercore.PointGetPlan, *plannercore.BatchPointGetPlan:
+		optimizeForNotFetchingLatestTS = true
 	}
 
-	p.followingOperatorDoesNotUpdateForUpdateTS = mayOptimizeForPointGet
+	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS
 
 	return nil
 }

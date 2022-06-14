@@ -85,8 +85,11 @@ func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
 	}
 }
 
+// AssertLockErr is used to record the lock errors we encountered
+// Only for test
 var AssertLockErr stringutil.StringerStr = "assertLockError"
 
+// AddEntrance is used only for test
 func AddEntrance(sctx sessionctx.Context, name string) {
 	records, ok := sctx.Value(AssertLockErr).(map[string]int)
 	if !ok {

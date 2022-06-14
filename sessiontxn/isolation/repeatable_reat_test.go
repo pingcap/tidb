@@ -17,11 +17,11 @@ package isolation_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
@@ -404,6 +404,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	err = provider.OnStmtRetry(context.TODO())
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
 	require.Greater(t, ts, compareTs)
 
 	provider = initializeRepeatableReadProvider(t, tk)
@@ -430,6 +431,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	err = provider.OnStmtRetry(context.TODO())
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
 	require.Greater(t, ts, compareTs)
 
 	// Now, test for one that does not use the optimization
@@ -453,7 +455,7 @@ var errorsInInsert = []string{
 	"insertDuplicateKey",
 }
 
-func TestErrorInInsert(t *testing.T) {
+func TestErrorInInsertInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -471,10 +473,8 @@ func TestErrorInInsert(t *testing.T) {
 	se.SetValue(sessiontxn.AssertLockErr, nil)
 	_, err := tk.Exec("insert into t values (1, 1), (2, 2)")
 	require.Error(t, err)
-
 	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.True(t, ok)
-
 	for _, name := range errorsInInsert {
 		require.Equal(t, records[name], 1)
 	}
@@ -484,10 +484,9 @@ func TestErrorInInsert(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
 
-func TestErrorInPointGetForUpdate(t *testing.T) {
+func TestErrorInPointGetForUpdateInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -524,10 +523,9 @@ func TestErrorInPointGetForUpdate(t *testing.T) {
 }
 
 // Delete should get the latest ts and thus does not incur write conflict
-func TestErrorInDelete(t *testing.T) {
+func TestErrorInDeleteInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -544,10 +542,8 @@ func TestErrorInDelete(t *testing.T) {
 
 	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustExec("delete from t where v = 1")
-
 	_, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.False(t, ok)
-
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 2"))
 	tk.MustExec("commit")
 
@@ -566,10 +562,9 @@ func TestErrorInDelete(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
 
-func TestErrorInUpdate(t *testing.T) {
+func TestErrorInUpdateInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -586,7 +581,6 @@ func TestErrorInUpdate(t *testing.T) {
 
 	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustExec("update t set v = v + 10")
-
 	_, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.False(t, ok)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 21", "2 22"))
@@ -596,7 +590,6 @@ func TestErrorInUpdate(t *testing.T) {
 	// However, if the sub select plan is point get, we should incur one write conflict
 	tk2.MustExec("update t set v = v + 10 where id = 1")
 	tk.MustExec("update t set v = v + 10 where id = 1")
-
 	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.True(t, ok)
 	require.Equal(t, records["insertWriteConflict"], 1)
