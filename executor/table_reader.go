@@ -262,20 +262,13 @@ func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID in
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-<<<<<<< HEAD
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
-		return nil
-	}
-
-=======
->>>>>>> 64b057dea... executor: reset all state when table reader executor close (#33219)
 	var err error
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
 	}
 	e.kvRanges = e.kvRanges[:0]
-	if e.dummy {
-		return nil
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		return err
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
