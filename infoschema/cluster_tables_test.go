@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -304,6 +305,7 @@ select * from t3;
 	}
 }
 
+<<<<<<< HEAD
 func SubTestStmtSummaryEvictedCountTable(s *clusterTablesSuite) func(*testing.T) {
 	return func(t *testing.T) {
 		tk := s.newTestKitWithRoot(t)
@@ -357,6 +359,93 @@ func SubTestStmtSummaryEvictedCountTable(s *clusterTablesSuite) func(*testing.T)
 		}, nil, nil))
 		require.NoError(t, tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED"))
 	}
+=======
+func TestStmtSummaryIssue35340(t *testing.T) {
+	var clean func()
+	s := new(clusterTablesSuite)
+	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
+	for i := 0; i < 100; i++ {
+		user := "user" + strconv.Itoa(i)
+		tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
+	}
+	tk.MustExec("flush privileges")
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := s.newTestKitWithRoot(t)
+			for j := 0; j < 100; j++ {
+				user := "user" + strconv.Itoa(j)
+				require.True(t, tk.Session().Auth(&auth.UserIdentity{
+					Username: user,
+					Hostname: "localhost",
+				}, nil, nil))
+				tk.MustQuery("select count(*) from information_schema.statements_summary;")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {
+	// setup suite
+	var clean func()
+	s := new(clusterTablesSuite)
+	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("drop table if exists test_summary")
+	tk.MustExec("create table test_summary(a int, b varchar(10), key k(a))")
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+
+	// Create a new session to test.
+	tk = s.newTestKitWithRoot(t)
+	tk.MustExec("use test;")
+	tk.MustExec("set time_zone = '+08:00';")
+	tk.MustExec("select sleep(0.1);")
+	r := tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
+	date8First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
+	require.NoError(t, err)
+	date8Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
+	require.NoError(t, err)
+	date8Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	require.NoError(t, err)
+	date8End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	require.NoError(t, err)
+	tk.MustExec("set time_zone = '+01:00';")
+	r = tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
+	date1First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
+	require.NoError(t, err)
+	date1Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
+	require.NoError(t, err)
+	date1Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	require.NoError(t, err)
+	date1End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	require.NoError(t, err)
+
+	require.Less(t, date1First.Unix(), date8First.Unix())
+	require.Less(t, date1Last.Unix(), date8Last.Unix())
+	require.Less(t, date1Begin.Unix(), date8Begin.Unix())
+	require.Less(t, date1End.Unix(), date8End.Unix())
+>>>>>>> f8a00f33e... stmtsummary: fix issue of concurrent map read and write (#35367)
 }
 
 func SubTestStmtSummaryHistoryTable(s *clusterTablesSuite) func(*testing.T) {
