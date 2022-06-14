@@ -251,10 +251,7 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 		}
 	})
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-	var hg *statistics.Histogram
-	var cms *statistics.CMSketch
-	var topN *statistics.TopN
-	var fms *statistics.FMSketch
+	hg, cms, topN, fms := &c.Histogram, c.CMSketch, c.TopN, c.FMSketch
 	var err error
 	if !c.IsHistogramLoaded() {
 		hg, err = h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
