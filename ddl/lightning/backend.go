@@ -73,9 +73,9 @@ func generateLightningConfig(ctx context.Context, unique bool, bcKey string) (*c
 	cfg.TiDB.Host = "127.0.0.1"
 	cfg.TiDB.StatusPort = int(GlobalLightningEnv.Status)
 	cfg.Security.CAPath = tidbconf.GetGlobalConfig().Security.ClusterSSLCA
-	cfg.Security.CertPath = tidbconf.GetGlobalConfig().Security.SSLCert
+	cfg.Security.CertPath = tidbconf.GetGlobalConfig().Security.ClusterSSLCert
 	cfg.Security.KeyPath = tidbconf.GetGlobalConfig().Security.ClusterSSLKey
-	
+
 	return cfg, err
 }
 
