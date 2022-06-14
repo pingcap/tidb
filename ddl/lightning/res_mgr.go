@@ -161,7 +161,7 @@ func (m *LightningMemoryRoot) RegistBackendContext(ctx context.Context, unique b
 		bd, err = createLocalBackend(ctx, cfg, glue)
 		if err != nil {
 			log.L().Error(LERR_CREATE_BACKEND_FAILED, zap.String("backend key", key),
-		                zap.String("Error", err.Error()))
+		                zap.String("Error", err.Error()), zap.Stack("stack trace"))
 			return err
 		}
 
