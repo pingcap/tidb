@@ -786,7 +786,6 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		defer wg.Wait()
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
-			colExec.memTracker.Release(colExec.memTracker.BytesConsumed(), &hists, "all")
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
@@ -1075,7 +1074,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		rootRowCollector.MergeCollector(mergeResult.collector)
 		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 	}
-	defer e.memTracker.Release(rootRowCollector.Base().MemSize, &rootRowCollector, "rootCollector")
+	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -1193,7 +1192,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 				totalSampleCollectorSize += sampleCollector.MemSize
 			}
 		}
-		e.memTracker.Release(totalSampleCollectorSize, &sampleCollectors, "sampleCollectors")
+		e.memTracker.Release(totalSampleCollectorSize)
 	}()
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -1420,7 +1419,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
 		e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
-		e.memTracker.Release(dataSize+colRespSize, &data, "data")
+		e.memTracker.Release(dataSize + colRespSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -1557,7 +1556,7 @@ workLoop:
 			}
 			releaseCollectorMemory := func() {
 				if !task.isColumn {
-					e.memTracker.Release(collector.MemSize, &collector, "collector")
+					e.memTracker.Release(collector.MemSize)
 				}
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)

@@ -37,7 +37,7 @@ var (
 			Subsystem: "server",
 			Name:      "memory_usage",
 			Help:      "Memory Usage",
-		}, []string{LblType})
+		}, []string{LblModule, LblType})
 )
 
 // metrics labels.

@@ -368,7 +368,7 @@ func (t *Tracker) Consume(bytes int64) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
-				metrics.MemoryUsage.WithLabelValues(label[0]).Set(float64(consumed))
+				metrics.MemoryUsage.WithLabelValues(label[0], label[1]).Set(float64(consumed))
 			}
 			break
 		}
@@ -402,7 +402,7 @@ func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	}
 }
 
-func (t *Tracker) Release(bytes int64, objRef any, objInfo string) {
+func (t *Tracker) Release(bytes int64) {
 	if bytes == 0 {
 		return
 	}
@@ -411,7 +411,7 @@ func (t *Tracker) Release(bytes int64, objRef any, objInfo string) {
 		if tracker.shouldRecordRelease() {
 			newRef := &finalizerRef{}
 			runtime.SetFinalizer(newRef, func(ref *finalizerRef) {
-				tracker.release(bytes, objInfo)
+				tracker.release(bytes)
 			})
 			tracker.recordRelease(bytes)
 			return
@@ -426,23 +426,17 @@ func (t *Tracker) shouldRecordRelease() bool {
 func (t *Tracker) recordRelease(bytes int64) {
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, bytes)
-		if tracker.label == LabelForGlobalAnalyzeMemory {
-			println("record release " + strconv.FormatInt(bytesReleased, 10))
-		}
 		if label, ok := MetricsTypes[tracker.label]; ok {
-			metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(bytesReleased))
+			metrics.MemoryUsage.WithLabelValues(label[0], label[2]).Set(float64(bytesReleased))
 		}
 	}
 }
 
-func (t *Tracker) release(bytes int64, objInfo string) {
+func (t *Tracker) release(bytes int64) {
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, -bytes)
-		if tracker.label == LabelForGlobalAnalyzeMemory {
-			println("update release " + strconv.FormatInt(bytesReleased, 10) + ", info: " + objInfo)
-		}
 		if label, ok := MetricsTypes[tracker.label]; ok {
-			metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(bytesReleased))
+			metrics.MemoryUsage.WithLabelValues(label[0], label[2]).Set(float64(bytesReleased))
 		}
 	}
 }
@@ -675,6 +669,7 @@ const (
 )
 
 // MetricsTypes is used to get label for metrics
+// string[0] is LblModule, string[1] is heap-in-use type, string[2] is released type
 var MetricsTypes = map[int][]string{
-	LabelForGlobalAnalyzeMemory: {"analyze", "analyze-released"},
+	LabelForGlobalAnalyzeMemory: {"analyze", "inuse", "released"},
 }

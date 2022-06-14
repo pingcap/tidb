@@ -165,4 +165,5 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
+	LblModule      = "module"
 )
