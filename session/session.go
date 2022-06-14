@@ -1957,7 +1957,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if !ok {
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
-
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
 	if err != nil {
