@@ -545,7 +545,7 @@ func (hg *Histogram) BetweenRowCount(a, b types.Datum) float64 {
 // BetweenRowCount estimates the row count for interval [l, r).
 func (c *Column) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
 	histBetweenCnt := c.Histogram.BetweenRowCount(l, r)
-	if c.StatsVer <= Version1 || c.TopN == nil {
+	if c.StatsVer <= Version1 {
 		return histBetweenCnt
 	}
 	return float64(c.TopN.BetweenCount(lowEncoded, highEncoded)) + histBetweenCnt
@@ -1046,7 +1046,7 @@ func (e *ErrorRate) Merge(rate *ErrorRate) {
 type Column struct {
 	Histogram
 	*CMSketch
-	TopN *TopN
+	*TopN
 	*FMSketch
 	PhysicalID int64
 	Count      int64
@@ -1075,17 +1075,17 @@ func (c *Column) String() string {
 
 // TotalRowCount returns the total count of this column.
 func (c *Column) TotalRowCount() float64 {
-	if c.StatsVer <= Version1 || c.TopN == nil {
-		return c.Histogram.TotalRowCount()
+	if c.StatsVer >= Version2 {
+		return c.Histogram.TotalRowCount() + float64(c.TopN.TotalCount())
 	}
-	return c.Histogram.TotalRowCount() + float64(c.TopN.TotalCount())
+	return c.Histogram.TotalRowCount()
 }
 
 func (c *Column) notNullCount() float64 {
-	if c.StatsVer <= Version1 || c.TopN == nil {
-		return c.Histogram.notNullCount()
+	if c.StatsVer >= Version2 {
+		return c.Histogram.notNullCount() + float64(c.TopN.TotalCount())
 	}
-	return c.Histogram.notNullCount() + float64(c.TopN.TotalCount())
+	return c.Histogram.notNullCount()
 }
 
 // GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.
@@ -1168,7 +1168,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 		if c.Histogram.NDV > 0 && c.outOfRange(val) {
 			return outOfRangeEQSelectivity(c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
-		if c.CMSketch != nil && c.TopN != nil {
+		if c.CMSketch != nil {
 			count, err := queryValue(sctx.GetSessionVars().StmtCtx, c.CMSketch, c.TopN, val)
 			return float64(count), errors.Trace(err)
 		}
@@ -1183,7 +1183,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 	}
 	// 1. try to find this value in TopN
 	if c.TopN != nil {
-		rowcount, ok := c.TopN.QueryTopN(encodedVal)
+		rowcount, ok := c.QueryTopN(encodedVal)
 		if ok {
 			return float64(rowcount), nil
 		}
