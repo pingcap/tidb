@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	tidbconf "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"go.uber.org/zap"
@@ -71,6 +72,10 @@ func generateLightningConfig(ctx context.Context, unique bool, bcKey string) (*c
 	cfg.TiDB.PdAddr = GlobalLightningEnv.PdAddr
 	cfg.TiDB.Host = "127.0.0.1"
 	cfg.TiDB.StatusPort = int(GlobalLightningEnv.Status)
+	cfg.Security.CAPath = tidbconf.GetGlobalConfig().Security.ClusterSSLCA
+	cfg.Security.CertPath = tidbconf.GetGlobalConfig().Security.SSLCert
+	cfg.Security.KeyPath = tidbconf.GetGlobalConfig().Security.ClusterSSLKey
+	
 	return cfg, err
 }
 
