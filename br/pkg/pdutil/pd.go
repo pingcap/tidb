@@ -224,6 +224,9 @@ func NewPdController(
 		versionBytes, failure = pdRequest(ctx, addr, clusterVersionPrefix, cli, http.MethodGet, nil)
 		if failure == nil {
 			break
+		} else {
+			log.Error("Lightning: pdRequest:", zap.String("addr:", addr), zap.String("processdAddrs", addr),
+		        zap.String("Error:", failure.Error()))
 		}
 	}
 	if failure != nil {
