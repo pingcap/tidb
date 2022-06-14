@@ -772,6 +772,13 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if lockErr == nil {
 		return nil, nil
 	}
+	failpoint.Inject("assertPessimisticLockErr", func() {
+		if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+			sessiontxn.AddEntrance(a.Ctx, "insertWriteConflict")
+		} else if terror.ErrorEqual(kv.ErrKeyExists, lockErr) {
+			sessiontxn.AddEntrance(a.Ctx, "insertDuplicateKey")
+		}
+	})
 
 	defer func() {
 		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {

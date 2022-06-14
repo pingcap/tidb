@@ -98,7 +98,7 @@ func (a *txnAssert[T]) CheckAndGetProvider(t *testing.T) T {
 	return sessiontxn.GetTxnManager(a.sctx).GetContextProvider().(T)
 }
 
-func TestGetForUpdateTS(t *testing.T) {
+func TestGetForUpdateTS2(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -114,6 +114,26 @@ func TestGetForUpdateTS(t *testing.T) {
 
 	tk2.MustExec("update t set v = v + 10 where id = 1")
 
-	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 11", "2 2"))
+	tk.MustExec("commit")
+}
+
+func TestGetForUpdateTS3(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+
+	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 11", "2 2"))
 	tk.MustExec("commit")
 }

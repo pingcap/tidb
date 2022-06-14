@@ -39,7 +39,7 @@ type PessimisticRRTxnContextProvider struct {
 	latestForUpdateTS uint64
 	// It may decide whether to update forUpdateTs when calling provider's getForUpdateTs
 	// See more details in the comments of optimizeWithPlan
-	followingOperatorIsPointGetForUpdate bool
+	followingOperatorDoesNotUpdateForUpdateTS bool
 }
 
 // NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
@@ -69,7 +69,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 		return p.forUpdateTS, nil
 	}
 
-	if p.followingOperatorIsPointGetForUpdate {
+	if p.followingOperatorDoesNotUpdateForUpdateTS {
 		return p.getTxnStartTS()
 	}
 
@@ -115,7 +115,7 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 
 	//sctx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
 	p.latestForUpdateTS = version.Ver
-	txn.SetOption(kv.SnapshotTS, p.latestForUpdateTS)
+	txn.SetOption(kv.SnapshotTS, version.Ver)
 
 	return nil
 }
@@ -127,7 +127,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error
 	}
 
 	p.forUpdateTS = 0
-	p.followingOperatorIsPointGetForUpdate = false
+	p.followingOperatorDoesNotUpdateForUpdateTS = false
 
 	return nil
 }
@@ -145,7 +145,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 		p.forUpdateTS = 0
 	}
 
-	p.followingOperatorIsPointGetForUpdate = false
+	p.followingOperatorDoesNotUpdateForUpdateTS = false
 
 	return nil
 }
@@ -192,11 +192,17 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
 			mayOptimizeForPointGet = true
 		}
+	} else if v, ok := plan.(*plannercore.Insert); ok {
+		if v.SelectPlan == nil {
+			mayOptimizeForPointGet = true
+		}
 	} else if _, ok := plan.(*plannercore.PointGetPlan); ok {
+		mayOptimizeForPointGet = true
+	} else if _, ok := plan.(*plannercore.BatchPointGetPlan); ok {
 		mayOptimizeForPointGet = true
 	}
 
-	p.followingOperatorIsPointGetForUpdate = mayOptimizeForPointGet
+	p.followingOperatorDoesNotUpdateForUpdateTS = mayOptimizeForPointGet
 
 	return nil
 }

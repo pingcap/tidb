@@ -101,9 +101,6 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	sessVars := e.ctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 	stmtCtx := sessVars.StmtCtx
-	if e.lock {
-		e.snapshotTS = txnCtx.GetForUpdateTS()
-	}
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err

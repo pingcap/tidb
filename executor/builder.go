@@ -657,9 +657,9 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		defer func() { b.inSelectLockStmt = false }()
 	}
 	b.hasLock = true
-	if b.err = b.updateForUpdateTSIfNeeded(v.Children()[0]); b.err != nil {
-		return nil
-	}
+	//if b.err = b.updateForUpdateTSIfNeeded(v.Children()[0]); b.err != nil {
+	//	return nil
+	//}
 	// Build 'select for update' using the 'for update' ts.
 	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 
@@ -4615,18 +4615,12 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		return nil
 	}
 
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		b.err = err
-		return nil
-	}
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
 		tblInfo:          plan.TblInfo,
 		idxInfo:          plan.IndexInfo,
 		rowDecoder:       decoder,
-		startTS:          startTS,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 		keepOrder:        plan.KeepOrder,
@@ -4639,18 +4633,30 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:        plan.PartTblID,
 		columns:          plan.Columns,
 	}
-	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(plan.TblInfo, startTS)
-	}
+
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
 		e.lock = false
 		e.waitTime = 0
 	}
 
+	txnManager := sessiontxn.GetTxnManager(b.ctx)
+	var err error
 	if e.lock {
 		b.hasLock = true
+		e.startTS, err = txnManager.GetStmtForUpdateTS()
+	} else {
+		e.startTS, err = txnManager.GetStmtReadTS()
 	}
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
+	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.getCacheTable(plan.TblInfo, e.startTS)
+	}
+
 	var capacity int
 	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
 		e.idxVals = plan.IndexValues

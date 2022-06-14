@@ -84,3 +84,18 @@ func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
 		panic(fmt.Sprintf("Txn read ts not match, expect:%d, got:%d", expected, actual))
 	}
 }
+
+var AssertInsertErr stringutil.StringerStr = "assertInsertErrors"
+
+func AddEntrance(sctx sessionctx.Context, name string) {
+	records, ok := sctx.Value(AssertInsertErr).(map[string]int)
+	if !ok {
+		records = make(map[string]int)
+		sctx.SetValue(AssertInsertErr, records)
+	}
+	if v, ok := records[name]; ok {
+		records[name] = v + 1
+	} else {
+		records[name] = 1
+	}
+}

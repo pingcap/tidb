@@ -17,6 +17,7 @@ package isolation_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"testing"
 	"time"
 
@@ -405,6 +406,32 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	ts, err = provider.GetStmtForUpdateTS()
 	require.Greater(t, ts, compareTs)
 
+	provider = initializeRepeatableReadProvider(t, tk)
+	forUpdateTS = se.GetSessionVars().TxnCtx.GetForUpdateTS()
+	txnManager = sessiontxn.GetTxnManager(se)
+	// test for batch point get for update
+	stmt, err = parser.New().ParseOneStmt("select * from t where id = 1 or id = 2 for update", "", "")
+	require.NoError(t, err)
+	err = provider.OnStmtStart(context.TODO())
+	require.NoError(t, err)
+	compiler = executor.Compiler{Ctx: se}
+	execStmt, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Equal(t, ts, forUpdateTS)
+	compareTs = getOracleTS(t, se)
+	// After retry, the ts should be larger than compareTs
+	action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
+	require.NoError(t, err)
+	require.Equal(t, sessiontxn.StmtActionRetryReady, action)
+	err = provider.OnStmtRetry(context.TODO())
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.Greater(t, ts, compareTs)
+
 	// Now, test for one that does not use the optimization
 	stmt, err = parser.New().ParseOneStmt("select * from t for update", "", "")
 	compareTs = getOracleTS(t, se)
@@ -419,6 +446,71 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTs)
+}
+
+var errorsInInsert = []string{
+	"insertWriteConflict",
+	"insertDuplicateKey",
+}
+
+func TestErrorInInsert(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	se.SetValue(sessiontxn.AssertInsertErr, nil)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 2)")
+	_, err := tk.Exec("insert into t values (1, 1), (2, 2)")
+	require.Error(t, err)
+
+	records, ok := se.Value(sessiontxn.AssertInsertErr).(map[string]int)
+	require.True(t, ok)
+
+	for _, name := range errorsInInsert {
+		records[name] = 1
+	}
+
+	se.SetValue(sessiontxn.AssertInsertErr, nil)
+	tk.MustExec("rollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
+}
+
+func TestErrorInPointGetForUpdate(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	se.SetValue(sessiontxn.AssertInsertErr, nil)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 11"))
+
+	records, ok := se.Value(sessiontxn.AssertInsertErr).(map[string]int)
+	require.True(t, ok)
+	records["insertWriteConflict"] = 1
+
+	se.SetValue(sessiontxn.AssertInsertErr, nil)
+	tk.MustExec("rollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
 
 func activePessimisticRRAssert(t *testing.T, sctx sessionctx.Context,
