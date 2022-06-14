@@ -290,6 +290,12 @@ func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
 	tk.require.EqualError(err, errStr)
 }
 
+// MustGetDBError executes a sql statement and assert its terror.
+func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
+	err := tk.ExecToErr(sql)
+	tk.require.Truef(terror.ErrorEqual(err, dberr), "err %v", err)
+}
+
 // MustContainErrMsg executes a sql statement and assert its error message containing errStr.
 func (tk *TestKit) MustContainErrMsg(sql string, errStr interface{}) {
 	err := tk.ExecToErr(sql)
