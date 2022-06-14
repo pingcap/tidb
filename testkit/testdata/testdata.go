@@ -63,23 +63,7 @@ func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 	if err != nil {
 		return res, err
 	}
-	// old impl
-	//if record {
-	//	res.output = make([]testCases, len(res.input))
-	//	for i := range res.input {
-	//		res.output[i].Name = res.input[i].Name
-	//	}
-	//} else {
-	//	res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
-	//	if err != nil {
-	//		return res, err
-	//	}
-	//	if len(res.input) != len(res.output) {
-	//		return res, errors.New(fmt.Sprintf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output)))
-	//	}
-	//}
 
-	// new impl
 	res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
 	if err != nil {
 		return res, err
@@ -170,25 +154,6 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 		}
 	}
 	td.output[casesIdx].decodedOut = out
-
-	// mew impl
-	//testNum := len(td.funcMap)
-	//for idx := 0; idx < testNum; idx++ {
-	//	err := json.Unmarshal(*td.input[idx].Cases, in)
-	//	require.NoError(t, err)
-	//	if idx == casesIdx && record {
-	//		// Init for generate output file.
-	//		inputLen := reflect.ValueOf(in).Elem().Len()
-	//		v := reflect.ValueOf(out).Elem()
-	//		if v.Kind() == reflect.Slice {
-	//			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
-	//		}
-	//		td.output[idx].decodedOut = out
-	//	} else {
-	//		err = json.Unmarshal(*td.output[idx].Cases, out)
-	//		require.NoError(t, err)
-	//	}
-	//}
 }
 
 // GetTestCasesByName gets the test cases for a test function by its name.
@@ -196,7 +161,6 @@ func (td *TestData) GetTestCasesByName(caseName string, t *testing.T, in interfa
 	casesIdx, ok := td.funcMap[caseName]
 	require.Truef(t, ok, "Case name: %s", caseName)
 
-	// the old impl
 	require.NoError(t, json.Unmarshal(*td.input[casesIdx].Cases, in))
 
 	if Record() {
@@ -210,22 +174,6 @@ func (td *TestData) GetTestCasesByName(caseName string, t *testing.T, in interfa
 	}
 
 	td.output[casesIdx].decodedOut = out
-
-	// the new impl
-	//testNum := len(td.funcMap)
-	//for idx := 0; idx < testNum; idx++ {
-	//	require.NoError(t, json.Unmarshal(*td.input[idx].Cases, in))
-	//	if idx == casesIdx && Record() {
-	//		inputLen := reflect.ValueOf(in).Elem().Len()
-	//		v := reflect.ValueOf(out).Elem()
-	//		if v.Kind() == reflect.Slice {
-	//			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
-	//		}
-	//		td.output[idx].decodedOut = out
-	//	} else {
-	//		require.NoError(t, json.Unmarshal(*td.output[idx].Cases, out))
-	//	}
-	//}
 }
 
 func (td *TestData) generateOutputIfNeeded() error {
