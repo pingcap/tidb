@@ -778,7 +778,7 @@ func (p *PhysicalApply) GetPlanCost(taskType property.TaskType, costFlag uint64)
 }
 
 // GetCost computes cost of merge join operator itself.
-func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
+func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64 {
 	outerCnt := lCnt
 	innerCnt := rCnt
 	innerKeys := p.RightJoinKeys
@@ -808,6 +808,9 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 		} else {
 			numPairs = 0
 		}
+	}
+	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
+		numPairs = getOperatorActRows(p)
 	}
 	sessVars := p.ctx.GetSessionVars()
 	probeCost := numPairs * sessVars.GetCPUFactor()
@@ -839,7 +842,7 @@ func (p *PhysicalMergeJoin) GetPlanCost(taskType property.TaskType, costFlag uin
 		}
 		p.planCost += childCost
 	}
-	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag))
+	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag), costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }

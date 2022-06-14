@@ -591,7 +591,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	p.SetChildren(lTask.plan(), rTask.plan())
 	t := &rootTask{
 		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
+		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count(), 0),
 	}
 	p.cost = t.cost()
 	return t
