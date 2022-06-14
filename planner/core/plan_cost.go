@@ -1203,8 +1203,13 @@ func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType, costF
 	}
 	p.planCost = childCost
 	// accumulate net cost
-	// TODO: this formula is wrong since it doesn't consider tableRowSize, fix it later
-	p.planCost += getCardinality(p.children[0], costFlag) * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	if p.ctx.GetSessionVars().CostModelVersion == CostModelV1 {
+		// TODO: this formula is wrong since it doesn't consider tableRowSize, fix it later
+		p.planCost += getCardinality(p.children[0], costFlag) * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	} else {
+		rowSize := getTblStats(p.children[0]).GetAvgRowSize(p.ctx, p.children[0].Schema().Columns, false, false)
+		p.planCost += getCardinality(p.children[0], costFlag) * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	}
 	p.planCostInit = true
 	return p.planCost, nil
 }
