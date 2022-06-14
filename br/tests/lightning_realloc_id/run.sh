@@ -64,8 +64,11 @@ function overflow_import() {
   run_lightning_expecting_fail -d "tests/$TEST_NAME/data2" \
     --sorted-kv-dir "$TEST_DIR/lightning_realloc_import.sorted3" \
     --log-file "$LOG_FILE3" \
-    --config "tests/$TEST_NAME/config2.toml" | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
-  check_contains 'out of range'
+    --config "tests/$TEST_NAME/config2.toml" 2>&1 | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
+  if ! grep -q "out of range" "$TEST_DIR/sql_res.$TEST_NAME.txt"; then
+    echo "TEST FAILED: OUTPUT DOES NOT CONTAIN 'out of range'"
+    exit 1
+  fi
 }
 
 function check_parallel_result() {
