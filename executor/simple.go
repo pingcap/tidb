@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/session_states"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
@@ -1690,7 +1690,7 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 }
 
 func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSessionStatesStmt) error {
-	var sessionStates session_states.SessionStates
+	var sessionStates sessionstates.SessionStates
 	decoder := json.NewDecoder(bytes.NewReader([]byte(s.SessionStates)))
 	decoder.UseNumber()
 	if err := decoder.Decode(&sessionStates); err != nil {

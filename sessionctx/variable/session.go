@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	ptypes "github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/sessionctx/session_states"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
@@ -1838,7 +1838,7 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 }
 
 // EncodeSessionStates saves session states into SessionStates.
-func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *session_states.SessionStates) (err error) {
+func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
 	func() {
 		s.UsersLock.RLock()
@@ -1857,7 +1857,7 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 }
 
 // DecodeSessionStates restores session states from SessionStates.
-func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *session_states.SessionStates) (err error) {
+func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
 	func() {
 		s.UsersLock.Lock()

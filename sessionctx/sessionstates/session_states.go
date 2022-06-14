@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session_states
+package sessionstates
 
 import (
 	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/types"
 )
 
+// SessionStates contains all the states in the session that should be migrated when the session
+// is migrated to another server. It is shown by `show session_states` and recovered by `set session_states`.
 type SessionStates struct {
 	UserVars     map[string]*types.Datum      `json:"user-var-values,omitempty"`
 	UserVarTypes map[string]*ptypes.FieldType `json:"user-var-types,omitempty"`

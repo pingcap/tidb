@@ -1549,6 +1549,7 @@ type jsonMyDecimal struct {
 	WordBuf    [maxWordBufLen]int32
 }
 
+// MarshalJSON implements Marshaler.MarshalJSON interface.
 func (d *MyDecimal) MarshalJSON() ([]byte, error) {
 	var r jsonMyDecimal
 	r.DigitsInt = d.digitsInt
@@ -1559,6 +1560,7 @@ func (d *MyDecimal) MarshalJSON() ([]byte, error) {
 	return json.Marshal(r)
 }
 
+// UnmarshalJSON implements Unmarshaler.UnmarshalJSON interface.
 func (d *MyDecimal) UnmarshalJSON(data []byte) error {
 	var r jsonMyDecimal
 	err := json.Unmarshal(data, &r)

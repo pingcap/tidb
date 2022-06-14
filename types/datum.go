@@ -2020,6 +2020,7 @@ type jsonDatum struct {
 	MyDecimal *MyDecimal `json:"mydecimal,omitempty"`
 }
 
+// MarshalJSON implements Marshaler.MarshalJSON interface.
 func (d *Datum) MarshalJSON() ([]byte, error) {
 	jd := &jsonDatum{
 		K:         d.k,
@@ -2042,6 +2043,7 @@ func (d *Datum) MarshalJSON() ([]byte, error) {
 	return gjson.Marshal(jd)
 }
 
+// UnmarshalJSON implements Unmarshaler.UnmarshalJSON interface.
 func (d *Datum) UnmarshalJSON(data []byte) error {
 	var jd jsonDatum
 	if err := gjson.Unmarshal(data, &jd); err != nil {

@@ -546,10 +546,12 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 	return NewTime(nt, t.Type(), fsp), nil
 }
 
+// MarshalJSON implements Marshaler.MarshalJSON interface.
 func (t Time) MarshalJSON() ([]byte, error) {
 	return json.Marshal(t.coreTime)
 }
 
+// UnmarshalJSON implements Unmarshaler.UnmarshalJSON interface.
 func (t *Time) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &t.coreTime)
 }

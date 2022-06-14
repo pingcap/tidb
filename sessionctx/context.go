@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/session_states"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -45,9 +45,9 @@ type InfoschemaMetaVersion interface {
 // SessionStatesHandler is an interface for encoding and decoding session states.
 type SessionStatesHandler interface {
 	// EncodeSessionStates encodes session states into a JSON.
-	EncodeSessionStates(context.Context, Context, *session_states.SessionStates) error
+	EncodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 	// DecodeSessionStates decodes a map into session states.
-	DecodeSessionStates(context.Context, Context, *session_states.SessionStates) error
+	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 }
 
 // Context is an interface for transaction and executive args environment.

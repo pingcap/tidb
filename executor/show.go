@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/session_states"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
@@ -1931,7 +1931,7 @@ func (e *ShowExec) fetchShowBuiltins() error {
 }
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
-	sessionStates := &session_states.SessionStates{}
+	sessionStates := &sessionstates.SessionStates{}
 	err := e.ctx.EncodeSessionStates(ctx, e.ctx, sessionStates)
 	if err != nil {
 		return err
