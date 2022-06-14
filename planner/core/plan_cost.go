@@ -34,6 +34,11 @@ const (
 	CostFlagUseTrueCardinality
 )
 
+const (
+	modelVer1 = 1
+	modelVer2 = 2
+)
+
 func hasCostFlag(costFlag, flag uint64) bool {
 	return (costFlag & flag) > 0
 }
@@ -61,21 +66,42 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	var cpuFactor float64
-	switch taskType {
-	case property.RootTaskType, property.MppTaskType:
-		cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
-	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
-		cpuFactor = p.ctx.GetSessionVars().GetCopCPUFactor()
+
+	var selfCost float64
+	switch p.ctx.GetSessionVars().CostModelVersion {
+	case modelVer1: // selection cost: rows * cpu-factor
+		var cpuFactor float64
+		switch taskType {
+		case property.RootTaskType, property.MppTaskType:
+			cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
+		case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+			cpuFactor = p.ctx.GetSessionVars().GetCopCPUFactor()
+		default:
+			return 0, errors.Errorf("unknown task type %v", taskType)
+		}
+		selfCost = getCardinality(p.children[0], costFlag) * cpuFactor
+	case modelVer2: // selection cost: rows * num-filters * cpu-factor
+		var cpuFactor float64
+		switch taskType {
+		case property.RootTaskType:
+			cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
+		case property.MppTaskType: // use a dedicated cpu-factor for TiFlash
+			cpuFactor = p.ctx.GetSessionVars().GetTiFlashCPUFactor()
+		case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+			cpuFactor = p.ctx.GetSessionVars().GetCopCPUFactor()
+		default:
+			return 0, errors.Errorf("unknown task type %v", taskType)
+		}
+		selfCost = getCardinality(p.children[0], costFlag) * float64(len(p.Conditions)) * cpuFactor
 	default:
-		return 0, errors.Errorf("unknown task type %v", taskType)
+		return 0, errors.Errorf("unknown cost model version %v", p.ctx.GetSessionVars().CostModelVersion)
 	}
+
 	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
 	if err != nil {
 		return 0, err
 	}
-	p.planCost = childCost
-	p.planCost += getCardinality(p.children[0], costFlag) * cpuFactor // selection cost: rows * cpu-factor
+	p.planCost = childCost + selfCost
 	p.planCostInit = true
 	return p.planCost, nil
 }
