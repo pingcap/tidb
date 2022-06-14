@@ -411,8 +411,8 @@ func TestStmtSummaryIssue35340(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		user := "user" + strconv.Itoa(i)
 		tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
-		tk.MustExec("flush privileges")
 	}
+	tk.MustExec("flush privileges")
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
