@@ -575,15 +575,3 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 	}
 	return nil
 }
-
-// SupportStreaming returns true if a pushed down operation supports using coprocessor streaming API.
-// Note that this function handle pushed down physical plan only! It's called in constructDAGReq.
-// Some plans are difficult (if possible) to implement streaming, and some are pointless to do so.
-// TODO: Support more kinds of physical plan.
-func SupportStreaming(p PhysicalPlan) bool {
-	switch p.(type) {
-	case *PhysicalIndexScan, *PhysicalSelection, *PhysicalTableScan:
-		return true
-	}
-	return false
-}

@@ -17,7 +17,6 @@ package copr
 import (
 	"context"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,9 +92,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		// coprocessor request but type is not DAG
 		req.Paging = false
 	}
-	if req.Streaming && req.Paging {
-		return copErrorResponse{errors.New("streaming and paging are both on")}
-	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)
@@ -133,9 +129,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 			// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
 			capacity = it.concurrency * 2
 		}
-		// in streaming or paging request, a request will be returned in multi batches,
+		// in paging request, a request will be returned in multi batches,
 		// enlarge the channel size to avoid the request blocked by buffer full.
-		if req.Streaming || req.Paging {
+		if req.Paging {
 			if capacity < 2048 {
 				capacity = 2048
 			}
@@ -148,9 +144,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
 
-	if !it.req.Streaming {
-		ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
-	}
+	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
 	return it
 }
@@ -184,10 +178,6 @@ const rangesPerTask = 25000
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
 	start := time.Now()
 	cmdType := tikvrpc.CmdCop
-	if req.Streaming {
-		cmdType = tikvrpc.CmdCopStream
-	}
-
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
 	}
@@ -202,9 +192,9 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	// Channel buffer is 2 for handling region split.
 	// In a common case, two region split tasks will not be blocked.
 	chanSize := 2
-	// in streaming or paging request, a request will be returned in multi batches,
+	// in paging request, a request will be returned in multi batches,
 	// enlarge the channel size to avoid the request blocked by buffer full.
-	if req.Streaming || req.Paging {
+	if req.Paging {
 		chanSize = 128
 	}
 
@@ -255,9 +245,6 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 		return nil, err
 	}
 	cmdType := tikvrpc.CmdCop
-	if req.Streaming {
-		cmdType = tikvrpc.CmdCopStream
-	}
 	tasks := make([]*copTask, 0, len(servers))
 	for _, ser := range servers {
 		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerIDGetter() {
@@ -791,15 +778,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead)).Observe(costTime.Seconds())
 
-	if task.cmdType == tikvrpc.CmdCopStream {
-		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch, costTime)
-	}
-
 	if worker.req.Paging {
 		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, costTime)
 	}
 
-	// Handles the response for non-streaming copTask.
+	// Handles the response for non-paging copTask.
 	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, nil, costTime)
 }
 
@@ -821,12 +804,6 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		case *coprocessor.Response:
 			detailV2 = r.ExecDetailsV2
 			detail = r.ExecDetails
-		case *tikvrpc.CopStreamResponse:
-			// streaming request returns io.EOF, so the first CopStreamResponse.Response maybe nil.
-			if r.Response != nil {
-				detailV2 = r.Response.ExecDetailsV2
-				detail = r.Response.ExecDetails
-			}
 		default:
 			panic("unreachable")
 		}
@@ -871,52 +848,6 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
-func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *tikv.RPCContext, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan<- *copResponse, costTime time.Duration) ([]*copTask, error) {
-	defer stream.Close()
-	var resp *coprocessor.Response
-	var lastRange *coprocessor.KeyRange
-	resp = stream.Response
-	if resp == nil {
-		// streaming request returns io.EOF, so the first Response is nil.
-		return nil, nil
-	}
-	for {
-		remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp}, nil, nil, task, ch, lastRange, costTime)
-		if err != nil || len(remainedTasks) != 0 {
-			return remainedTasks, errors.Trace(err)
-		}
-		resp, err = stream.Recv()
-		if err != nil {
-			if errors.Cause(err) == io.EOF {
-				return nil, nil
-			}
-
-			err1 := errors.Errorf("recv stream response error: %v, task: %s", err, task)
-			if task.storeType == kv.TiFlash {
-				err1 = bo.Backoff(tikv.BoTiFlashRPC(), err1)
-			} else {
-				err1 = bo.Backoff(tikv.BoTiKVRPC(), err1)
-			}
-
-			if err1 != nil {
-				return nil, errors.Trace(err)
-			}
-
-			// No coprocessor.Response for network error, rebuild task based on the last success one.
-			if errors.Cause(err) == context.Canceled {
-				logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
-			} else {
-				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
-			}
-			task.ranges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
-			return []*copTask{task}, nil
-		}
-		if resp.Range != nil {
-			lastRange = resp.Range
-		}
-	}
-}
-
 func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, task *copTask, ch chan<- *copResponse, costTime time.Duration) ([]*copTask, error) {
 	remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, resp, nil, nil, task, ch, nil, costTime)
 	if err != nil || len(remainedTasks) != 0 {
@@ -942,7 +873,7 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 
 // handleCopResponse checks coprocessor Response for region split and lock,
 // returns more tasks when that happens, or handles the response if no error.
-// if we're handling streaming coprocessor response, lastRange is the range of last
+// if we're handling coprocessor paging response, lastRange is the range of last
 // successful response, otherwise it's nil.
 func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
 	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
@@ -982,9 +913,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 				return nil, errors.Trace(err)
 			}
 		}
-		if worker.req.Streaming {
-			task.ranges = worker.calculateRetry(task.ranges, lastRange, worker.req.Desc)
-		}
 		return []*copTask{task}, nil
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
@@ -1008,7 +936,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 		return nil, errors.Trace(err)
 	}
-	// When the request is using streaming API, the `Range` is not nil.
+	// When the request is using paging API, the `Range` is not nil.
 	if resp.pbResp.Range != nil {
 		resp.startKey = resp.pbResp.Range.Start
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
@@ -1140,7 +1068,7 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 }
 
 // calculateRetry splits the input ranges into two, and take one of them according to desc flag.
-// It's used in streaming API, to calculate which range is consumed and what needs to be retry.
+// It's used in paging API, to calculate which range is consumed and what needs to be retry.
 // For example:
 // ranges: [r1 --> r2) [r3 --> r4)
 // split:      [s1   -->   s2)
@@ -1158,7 +1086,7 @@ func (worker *copIteratorWorker) calculateRetry(ranges *KeyRanges, split *coproc
 	return right
 }
 
-// calculateRemain calculates the remain ranges to be processed, it's used in streaming and paging API.
+// calculateRemain calculates the remain ranges to be processed, it's used in paging API.
 // For example:
 // ranges: [r1 --> r2) [r3 --> r4)
 // split:      [s1   -->   s2)
