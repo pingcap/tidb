@@ -448,7 +448,7 @@ func (s *testPrepareSuite) TestPlanCacheOperators(c *C) {
 		}},
 		{"select a from t where a>? and a<?", []ExecCase{
 			{[]string{"5", "1"}, false},
-			{[]string{"1", "4"}, true},
+			{[]string{"1", "4"}, false},
 			{[]string{"3", "9"}, true},
 		}},
 		{"drop table t", nil},
@@ -775,9 +775,10 @@ func (s *testSerialSuite) TestIssue28782(c *C) {
 
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	// TODO(Reminiscent): Support cache more tableDual plan.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func (s *testSerialSuite) TestIssue29850(c *C) {
@@ -1071,7 +1072,7 @@ func (s *testSerialSuite) TestPreparePlanCache4Function(c *C) {
 	tk.MustExec("set @a = 1, @b = null;")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
