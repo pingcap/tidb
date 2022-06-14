@@ -420,11 +420,7 @@ func PaginateScanRegion(
 				break
 			}
 		}
-<<<<<<< HEAD
-		if err := checkRegionConsistency(startKey, endKey, regions); err != nil {
-=======
-		if err = CheckRegionConsistency(startKey, endKey, regions); err != nil {
->>>>>>> 9129590f5... br: fix the missing retry for pd batch scan error (#33420)
+		if err = checkRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
 			return err
 		}
