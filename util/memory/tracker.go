@@ -82,6 +82,7 @@ type actionMu struct {
 	actionOnExceed ActionOnExceed
 }
 
+// EnableGCMemoryTrack is used to turn on/off the gc memory track
 var EnableGCMemoryTrack = atomicutil.NewBool(false)
 
 type finalizerRef struct {
@@ -402,6 +403,7 @@ func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	}
 }
 
+// Release is used to release memory tracked, track the released memory until GC triggered if needed
 func (t *Tracker) Release(bytes int64) {
 	if bytes == 0 {
 		return
