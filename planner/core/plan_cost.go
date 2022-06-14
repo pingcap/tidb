@@ -93,8 +93,6 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 			return 0, errors.Errorf("unknown task type %v", taskType)
 		}
 		selfCost = getCardinality(p.children[0], costFlag) * float64(len(p.Conditions)) * cpuFactor
-	default:
-		return 0, errors.Errorf("unknown cost model version %v", p.ctx.GetSessionVars().CostModelVersion)
 	}
 
 	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
@@ -404,12 +402,27 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	// scan cost: rows * row-size * scan-factor
-	scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
-	if p.Desc {
-		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+
+	var selfCost float64
+
+	switch p.ctx.GetSessionVars().CostModelVersion {
+	case modelVer1: // scan cost: rows * row-size * scan-factor
+		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
+		if p.Desc {
+			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+		}
+		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
+	case modelVer2:
+		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
+		if p.Desc {
+			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+		}
+		rowSize := math.Max(p.getScanRowSize(), 2.0)
+		logRowSize := math.Log2(rowSize)
+		selfCost = getCardinality(p, costFlag) * logRowSize * scanFactor
 	}
-	p.planCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
+
+	p.planCost = selfCost
 	p.planCostInit = true
 	return p.planCost, nil
 }
