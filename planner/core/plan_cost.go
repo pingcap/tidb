@@ -78,7 +78,11 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 	p.planCost = childCost
 
 	// selection cost: rows * cpu-factor
-	var cpuFactor float64
+	var cpuFactor, numConds float64
+	numConds = 1.0
+	if p.ctx.GetSessionVars().CostModelVersion == CostModelV2 {
+		numConds = float64(len(p.Conditions))
+	}
 	switch taskType {
 	case property.RootTaskType:
 		cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
@@ -93,7 +97,7 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 	default:
 		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
-	p.planCost += getCardinality(p.children[0], costFlag) * cpuFactor
+	p.planCost += getCardinality(p.children[0], costFlag) * numConds * cpuFactor
 	p.planCostInit = true
 	return p.planCost, nil
 }
