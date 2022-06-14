@@ -33,9 +33,6 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		}
 	}
 
-	cfg.InitFullClusterRestore(command.Flags(), cmdName)
-	log.Info("restoring", zap.Bool("full cluster restore", cfg.FullClusterRestore))
-
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
 		var store *appdash.MemoryStore

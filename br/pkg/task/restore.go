@@ -154,17 +154,6 @@ type RestoreConfig struct {
 	StartTS     uint64 `json:"start-ts" toml:"start-ts"`
 	RestoreTS   uint64 `json:"restore-ts" toml:"restore-ts"`
 	skipTiflash bool   `json:"-" toml:"-"`
-
-	// if FullClusterRestore = true:
-	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
-	//	without user database or table. and system tables about privileges is restored together with user data.
-	// - if there no system tables in the backup(backup data from br < 5.1.0), restore all user data just like
-	//	previous version did.
-	// if FullClusterRestore = false, restore all user data just like previous version did.
-	// FullClusterRestore = true when there is no explicit filter setting, and it's full restore command or
-	// point restore command with FullBackupStorage
-	// todo: maybe change to an enum
-	FullClusterRestore bool `json:"-" toml:"-"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -249,23 +238,6 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	return nil
 }
 
-func (cfg *RestoreConfig) InitFullClusterRestore(flags *pflag.FlagSet, cmdName string) {
-	if cmdName != FullRestoreCmd && cmdName != PointRestoreCmd {
-		return
-	}
-	explicitFilter := flags.Changed(flagFilter)
-	if cmdName == FullRestoreCmd {
-		cfg.FullClusterRestore = !explicitFilter
-	} else {
-		cfg.FullClusterRestore = !explicitFilter && len(cfg.FullBackupStorage) > 0
-	}
-
-	if cfg.FullClusterRestore {
-		// have to skip grant table, in order to NotifyUpdatePrivilege
-		config.GetGlobalConfig().Security.SkipGrantTable = true
-	}
-}
-
 // adjustRestoreConfig is use for BR(binary) and BR in TiDB.
 // When new config was added and not included in parser.
 // we should set proper value in this function.
@@ -315,8 +287,6 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	client.SetFullClusterRestore(cfg.FullClusterRestore)
 
 	return nil
 }
@@ -499,7 +469,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	if cfg.FullClusterRestore && client.HasBackedUpSysDB() {
+	// todo: it's ugly to init like this, we should move restore config into a separate package
+	// to avoid import cycle problem which we won't do it in this pr, then refactor this
+	// move InitFullClusterRestore into this pkg won't work since ut will cause import cycle too.
+	if cmdName == FullRestoreCmd || cmdName == PointRestoreCmd {
+		client.InitFullClusterRestore(cfg.ExplicitFilter, cmdName == FullRestoreCmd, cfg.FullBackupStorage)
+	}
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
 		if err = client.CheckTargetClusterFresh(ctx); err != nil {
 			return errors.Trace(err)
 		}

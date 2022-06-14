@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -149,7 +150,15 @@ type Client struct {
 
 	storage storage.ExternalStorage
 
-	// see comments in RestoreConfig.FullClusterRestore
+	// if fullClusterRestore = true:
+	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
+	//	without user database or table. and system tables about privileges is restored together with user data.
+	// - if there no system tables in the backup(backup data from br < 5.1.0), restore all user data just like
+	//	previous version did.
+	// if fullClusterRestore = false, restore all user data just like previous version did.
+	// fullClusterRestore = true when there is no explicit filter setting, and it's full restore or point command
+	// 	with a full backup data.
+	// todo: maybe change to an enum
 	fullClusterRestore bool
 }
 
@@ -1535,6 +1544,11 @@ func (rc *Client) getRuleID(tableID int64) string {
 	return "restore-t" + strconv.FormatInt(tableID, 10)
 }
 
+// IsFull returns whether this backup is full.
+func (rc *Client) IsFull() bool {
+	return !rc.IsIncremental()
+}
+
 // IsIncremental returns whether this backup is incremental.
 func (rc *Client) IsIncremental() bool {
 	return !(rc.backupMeta.StartVersion == rc.backupMeta.EndVersion ||
@@ -2143,8 +2157,24 @@ func (rc *Client) SaveSchemas(
 	return nil
 }
 
-func (rc *Client) SetFullClusterRestore(fullCluster bool) {
-	rc.fullClusterRestore = fullCluster
+// InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
+func (rc *Client) InitFullClusterRestore(explicitFilter, isFullRestoreCmd bool, fullBackupStorage string) {
+	if isFullRestoreCmd {
+		rc.fullClusterRestore = !explicitFilter && rc.IsFull()
+	} else {
+		rc.fullClusterRestore = !explicitFilter && rc.IsFull() && len(fullBackupStorage) > 0
+	}
+
+	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
+
+	if rc.fullClusterRestore {
+		// have to skip grant table, in order to NotifyUpdatePrivilege
+		config.GetGlobalConfig().Security.SkipGrantTable = true
+	}
+}
+
+func (rc *Client) IsFullClusterRestore() bool {
+	return rc.fullClusterRestore
 }
 
 // MockClient create a fake client used to test.

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/keepalive"
@@ -244,48 +243,5 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 	return &backuppb.BackupMeta{
 		Files:   mockFiles,
 		Schemas: mockSchemas,
-	}
-}
-
-func TestInitFullClusterRestore(t *testing.T) {
-	command := &cobra.Command{}
-	flags := command.Flags()
-	flags.StringArrayP(flagFilter, "f", []string{}, "mock filter flag")
-
-	{
-		cfg := RestoreConfig{}
-		cfg.InitFullClusterRestore(flags, DBRestoreCmd)
-		require.False(t, cfg.FullClusterRestore)
-		cfg.InitFullClusterRestore(flags, TableRestoreCmd)
-		require.False(t, cfg.FullClusterRestore)
-		cfg.InitFullClusterRestore(flags, RawRestoreCmd)
-		require.False(t, cfg.FullClusterRestore)
-	}
-	{
-		cfg := RestoreConfig{}
-		cfg.InitFullClusterRestore(flags, FullRestoreCmd)
-		require.True(t, cfg.FullClusterRestore)
-	}
-	{
-		cfg := RestoreConfig{}
-		cfg.InitFullClusterRestore(flags, PointRestoreCmd)
-		require.False(t, cfg.FullClusterRestore)
-		cfg.FullBackupStorage = "mock"
-		cfg.InitFullClusterRestore(flags, PointRestoreCmd)
-		require.True(t, cfg.FullClusterRestore)
-	}
-
-	// now we have explicit filter
-	require.NoError(t, flags.Parse([]string{"-f", "x"}))
-	{
-		cfg := RestoreConfig{}
-		cfg.InitFullClusterRestore(flags, FullRestoreCmd)
-		require.False(t, cfg.FullClusterRestore)
-	}
-	{
-		cfg := RestoreConfig{}
-		cfg.FullBackupStorage = "mock"
-		cfg.InitFullClusterRestore(flags, PointRestoreCmd)
-		require.False(t, cfg.FullClusterRestore)
 	}
 }

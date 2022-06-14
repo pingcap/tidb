@@ -224,6 +224,30 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestInitFullClusterRestore(t *testing.T) {
+	cluster := mc
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(cluster.PDClient, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, cluster.Storage)
+	require.NoError(t, err)
+
+	// explicit filter
+	client.InitFullClusterRestore(true, false, "")
+	require.False(t, client.IsFullClusterRestore())
+	// point restore cmd, but full backup strorage is empty
+	client.InitFullClusterRestore(false, false, "")
+	require.False(t, client.IsFullClusterRestore())
+
+	client.InitFullClusterRestore(false, true, "")
+	require.True(t, client.IsFullClusterRestore())
+	// set it to false again
+	client.InitFullClusterRestore(true, false, "")
+	require.False(t, client.IsFullClusterRestore())
+
+	client.InitFullClusterRestore(false, false, "xxx")
+	require.True(t, client.IsFullClusterRestore())
+}
+
 func TestPreCheckTableClusterIndex(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
