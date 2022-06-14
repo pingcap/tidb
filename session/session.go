@@ -1908,7 +1908,6 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 	if !plannercore.IsAutoCommitTxn(s) {
 		return false, nil
 	}
-<<<<<<< HEAD
 	// SnapshotTSEvaluator != nil, it is stale read
 	// stale read expect a stale infoschema
 	// so skip infoschema check
@@ -1917,15 +1916,9 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		is := s.GetInfoSchema().(infoschema.InfoSchema)
 		if prepared.SchemaVersion != is.SchemaMetaVersion() {
 			prepared.CachedPlan = nil
+			preparedStmt.ColumnInfos = nil
 			return false, nil
 		}
-=======
-	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	if prepared.SchemaVersion != is.SchemaMetaVersion() {
-		prepared.CachedPlan = nil
-		preparedStmt.ColumnInfos = nil
-		return false, nil
->>>>>>> 1f9d34aee... *: Revert #33519 for performance fallback and fix the #33509 in another way (#34425)
 	}
 	// maybe we'd better check cached plan type here, current
 	// only point select/update will be cached, see "getPhysicalPlan" func
