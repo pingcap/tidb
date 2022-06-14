@@ -1966,8 +1966,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	defer s.txn.onStmtEnd()
 	var is infoschema.InfoSchema
 	var snapshotTS uint64
-	if preparedStmt.ForUpdateRead {
+	if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
+		is = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 	} else if preparedStmt.SnapshotTSEvaluator != nil {
 		snapshotTS, err = preparedStmt.SnapshotTSEvaluator(s)
 		if err != nil {
