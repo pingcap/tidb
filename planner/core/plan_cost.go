@@ -404,7 +404,6 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	}
 
 	var selfCost float64
-
 	switch p.ctx.GetSessionVars().CostModelVersion {
 	case modelVer1: // scan cost: rows * row-size * scan-factor
 		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
