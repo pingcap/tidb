@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -164,7 +165,10 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 			panic("panic test")
 		}
 	})
-
+    fetchTag := "AddIndexLightningFetchdata" + strconv.Itoa(w.id)
+	writeTag := "AddIndexLightningWritedata" + strconv.Itoa(w.id)
+    txnTag := "AddIndexLightningBackfillDataInTxn" + strconv.Itoa(w.id)
+	
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
@@ -175,7 +179,7 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 		}
 		
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
-		logSlowOperations(time.Since(oprStartTime), "AddIndexLightningfetchdata", 1000)
+		logSlowOperations(time.Since(oprStartTime), fetchTag, 1000)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -200,9 +204,9 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 
 			taskCtx.addedCount++
 		}
-		logSlowOperations(time.Since(oprStartTime), "AddIndexLightningWritedata", 1000)
+		logSlowOperations(time.Since(oprStartTime), writeTag, 1000)
 		return nil
 	})
-	logSlowOperations(time.Since(oprStartTime), "AddIndexLightningBackfillDataInTxn", 3000)
+	logSlowOperations(time.Since(oprStartTime), txnTag, 3000)
 	return
 }
