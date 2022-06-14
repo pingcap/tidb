@@ -64,6 +64,7 @@ func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 		return res, err
 	}
 
+	// Load all test cases result in order to keep the unrelated test results.
 	res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
 	if err != nil {
 		return res, err
@@ -185,6 +186,7 @@ func (td *TestData) generateOutputIfNeeded() error {
 	isRecord4ThisSuite := false
 	for i, test := range td.output {
 		if test.decodedOut != nil {
+			// Only update the results for the related test cases.
 			isRecord4ThisSuite = true
 			err := enc.Encode(test.decodedOut)
 			if err != nil {
@@ -197,6 +199,7 @@ func (td *TestData) generateOutputIfNeeded() error {
 			td.output[i].Cases = &rm
 		}
 	}
+	// Skip the record for the unrelated test files.
 	if !isRecord4ThisSuite {
 		return nil
 	}
