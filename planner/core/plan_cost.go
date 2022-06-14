@@ -339,7 +339,11 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag u
 			concurrency = float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 			rowSize = getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 			seekCost = estimateNetSeekCost(p.tablePlan)
-			childCost, err := p.tablePlan.GetPlanCost(property.CopSingleReadTaskType, costFlag)
+			taskType := property.CopSingleReadTaskType
+			if p.ctx.GetSessionVars().CostModelVersion == CostModelV2 {
+				taskType = property.MppTaskType
+			}
+			childCost, err := p.tablePlan.GetPlanCost(taskType, costFlag)
 			if err != nil {
 				return 0, err
 			}
