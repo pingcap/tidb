@@ -330,5 +330,5 @@ func TestLeadingJoinHint4OuterJoin(t *testing.T) {
 	tk.MustExec("create table t6(a int, b int, key(a));")
 	tk.MustExec("create table t7(a int, b int, key(a));")
 	tk.MustExec("create table t8(a int, b int, key(a));")
-	// runJoinReorderTestData(t, tk, "TestLeadingJoinHint4OuterJoin")
+	runJoinReorderTestData(t, tk, "TestLeadingJoinHint4OuterJoin")
 }
