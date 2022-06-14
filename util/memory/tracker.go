@@ -86,7 +86,7 @@ type actionMu struct {
 var EnableGCMemoryTrack = atomicutil.NewBool(false)
 
 type finalizerRef struct {
-	val byte
+	byte
 }
 
 // softScale means the scale of the soft limit to the hard limit.
