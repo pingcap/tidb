@@ -653,24 +653,17 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			continue
 		}
 		c, ok := tbl.Columns[col.ColumnID]
-		if !ok || c.IsAllLoaded() {
+		if !ok || c.IsLoaded() {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
-		var hg *statistics.Histogram
-		if !c.IsHistogramLoaded() {
-			hg, err = h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		var cms *statistics.CMSketch
-		var topN *statistics.TopN
-		if !c.IsCMSketchLoaded() || !c.IsTopNLoaded() {
-			cms, topN, err = h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		var fms *statistics.FMSketch
 		if loadFMSketch {
@@ -695,6 +688,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			FMSketch:   fms,
 			IsHandle:   c.IsHandle,
 			StatsVer:   rows[0].GetInt64(0),
+			Loaded:     true,
 		}
 		// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 		colHist.Count = int64(colHist.TotalRowCount())
@@ -837,7 +831,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 		// 4. loadAll is false.
 		notNeedLoad := h.Lease() > 0 &&
 			!isHandle &&
-			(col == nil || !col.IsHistogramLoaded() && col.LastUpdateVersion < histVer) &&
+			(col == nil || !col.IsLoaded() && col.LastUpdateVersion < histVer) &&
 			!loadAll
 		if notNeedLoad {
 			count, err := h.columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
@@ -884,6 +878,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
 				StatsVer:   statsVer,
+				Loaded:     true,
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())

@@ -3354,14 +3354,13 @@ func TestEvictedColumnLoadedStatus(t *testing.T) {
 	require.Nil(t, err)
 	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
 	for _, col := range tblStats.Columns {
-		require.True(t, col.IsAllLoaded())
+		require.True(t, col.IsLoaded())
 	}
 
 	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
 	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
 	for _, col := range tblStats.Columns {
-		require.False(t, col.IsAllLoaded())
-		require.False(t, col.IsCMSketchLoaded())
+		require.False(t, col.IsLoaded())
 	}
 }
 
