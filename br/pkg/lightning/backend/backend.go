@@ -340,17 +340,23 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 		return nil, err
 	}
 
-	openCounter := metric.ImporterEngineCounter.WithLabelValues("open")
-	openCounter.Inc()
+	if m, ok := metric.FromContext(ctx); ok {
+		openCounter := m.ImporterEngineCounter.WithLabelValues("open")
+		openCounter.Inc()
+	}
 
 	logger.Info("open engine")
 
 	failpoint.Inject("FailIfEngineCountExceeds", func(val failpoint.Value) {
-		closedCounter := metric.ImporterEngineCounter.WithLabelValues("closed")
-		openCount := metric.ReadCounter(openCounter)
-		closedCount := metric.ReadCounter(closedCounter)
-		if injectValue := val.(int); openCount-closedCount > float64(injectValue) {
-			panic(fmt.Sprintf("forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d", openCount, closedCount, injectValue))
+		if m, ok := metric.FromContext(ctx); ok {
+			closedCounter := m.ImporterEngineCounter.WithLabelValues("closed")
+			openCounter := m.ImporterEngineCounter.WithLabelValues("open")
+			openCount := metric.ReadCounter(openCounter)
+
+			closedCount := metric.ReadCounter(closedCounter)
+			if injectValue := val.(int); openCount-closedCount > float64(injectValue) {
+				panic(fmt.Sprintf("forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d", openCount, closedCount, injectValue))
+			}
 		}
 	})
 
@@ -380,7 +386,9 @@ func (be Backend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tab
 func (engine *OpenedEngine) Close(ctx context.Context, cfg *EngineConfig) (*ClosedEngine, error) {
 	closedEngine, err := engine.unsafeClose(ctx, cfg)
 	if err == nil {
-		metric.ImporterEngineCounter.WithLabelValues("closed").Inc()
+		if m, ok := metric.FromContext(ctx); ok {
+			m.ImporterEngineCounter.WithLabelValues("closed").Inc()
+		}
 	}
 	return closedEngine, err
 }
