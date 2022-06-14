@@ -85,13 +85,13 @@ func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
 	}
 }
 
-var AssertInsertErr stringutil.StringerStr = "assertInsertErrors"
+var AssertLockErr stringutil.StringerStr = "assertLockError"
 
 func AddEntrance(sctx sessionctx.Context, name string) {
-	records, ok := sctx.Value(AssertInsertErr).(map[string]int)
+	records, ok := sctx.Value(AssertLockErr).(map[string]int)
 	if !ok {
 		records = make(map[string]int)
-		sctx.SetValue(AssertInsertErr, records)
+		sctx.SetValue(AssertLockErr, records)
 	}
 	if v, ok := records[name]; ok {
 		records[name] = v + 1

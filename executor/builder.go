@@ -865,13 +865,13 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	b.inInsertStmt = true
-	if v.SelectPlan != nil {
-		// Try to update the forUpdateTS for insert/replace into select statements.
-		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
-		if b.err = b.updateForUpdateTSIfNeeded(nil); b.err != nil {
-			return nil
-		}
-	}
+	//if v.SelectPlan != nil {
+	//	// Try to update the forUpdateTS for insert/replace into select statements.
+	//	// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
+	//	if b.err = b.updateForUpdateTSIfNeeded(nil); b.err != nil {
+	//		return nil
+	//	}
+	//}
 	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
@@ -2114,9 +2114,9 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 			}
 		}
 	}
-	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
-		return nil
-	}
+	//if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+	//	return nil
+	//}
 	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
@@ -2171,13 +2171,13 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
-	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+	//if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
-	}
+	//}
 	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
-		return nil
+	//	return nil
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity

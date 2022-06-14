@@ -460,7 +460,6 @@ func TestErrorInInsert(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
-	se.SetValue(sessiontxn.AssertInsertErr, nil)
 	tk2 := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -469,17 +468,18 @@ func TestErrorInInsert(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("insert into t values (1, 2)")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
 	_, err := tk.Exec("insert into t values (1, 1), (2, 2)")
 	require.Error(t, err)
 
-	records, ok := se.Value(sessiontxn.AssertInsertErr).(map[string]int)
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.True(t, ok)
 
 	for _, name := range errorsInInsert {
-		records[name] = 1
+		require.Equal(t, records[name], 1)
 	}
 
-	se.SetValue(sessiontxn.AssertInsertErr, nil)
+	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustExec("rollback")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
@@ -492,7 +492,6 @@ func TestErrorInPointGetForUpdate(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
-	se.SetValue(sessiontxn.AssertInsertErr, nil)
 	tk2 := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -502,13 +501,107 @@ func TestErrorInPointGetForUpdate(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("update t set v = v + 10 where id = 1")
+
+	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 11"))
-
-	records, ok := se.Value(sessiontxn.AssertInsertErr).(map[string]int)
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.True(t, ok)
-	records["insertWriteConflict"] = 1
+	require.Equal(t, records["insertWriteConflict"], 1)
+	tk.MustExec("commit")
 
-	se.SetValue(sessiontxn.AssertInsertErr, nil)
+	// batch point get
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustQuery("select * from t where id = 1 or id = 2 for update").Check(testkit.Rows("1 21", "2 2"))
+	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["insertWriteConflict"], 1)
+	tk.MustExec("commit")
+
+	tk.MustExec("rollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
+}
+
+// Delete should get the latest ts and thus does not incur write conflict
+func TestErrorInDelete(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (3, 1)")
+
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("delete from t where v = 1")
+
+	_, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.False(t, ok)
+
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 2"))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin pessimistic")
+	// However, if sub select in delete is point get, we will incur one write conflict
+	tk2.MustExec("update t set id = 1 where id = 2")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("delete from t where id = 1")
+
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["insertWriteConflict"], 1)
+	tk.MustQuery("select * from t for update").Check(testkit.Rows())
+
+	tk.MustExec("rollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
+}
+
+func TestErrorInUpdate(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 10")
+
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("update t set v = v + 10")
+
+	_, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.False(t, ok)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 21", "2 22"))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin pessimistic")
+	// However, if the sub select plan is point get, we should incur one write conflict
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+	tk.MustExec("update t set v = v + 10 where id = 1")
+
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["insertWriteConflict"], 1)
+	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 41", "2 22"))
+
 	tk.MustExec("rollback")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
