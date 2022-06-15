@@ -193,18 +193,20 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 		p.planCost += childCost
 	}
 
-	// to keep compatible with the previous cost implementation, re-calculate table-scan cost by using index stats-count again (see copTask.finishIndexPlan).
-	// TODO: amend table-side cost here later
-	var tmp PhysicalPlan
-	for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
+		// to keep compatible with the previous cost implementation, re-calculate table-scan cost by using index stats-count again (see copTask.finishIndexPlan).
+		// TODO: amend table-side cost here later
+		var tmp PhysicalPlan
+		for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
+		}
+		ts := tmp.(*PhysicalTableScan)
+		tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
+		if err != nil {
+			return 0, err
+		}
+		p.planCost -= tblCost
+		p.planCost += getCardinality(p.indexPlan, costFlag) * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
 	}
-	ts := tmp.(*PhysicalTableScan)
-	tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
-	if err != nil {
-		return 0, err
-	}
-	p.planCost -= tblCost
-	p.planCost += getCardinality(p.indexPlan, costFlag) * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
 
 	// index-side net I/O cost: rows * row-size * net-factor
 	netFactor := getTableNetFactor(p.tablePlan)
@@ -221,6 +223,11 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	// table-side seek cost
 	p.planCost += estimateNetSeekCost(p.tablePlan)
 
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		// accumulate the real double-read cost: numDoubleReadTasks * seekFactor
+
+	}
+
 	// consider concurrency
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
@@ -228,6 +235,15 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	p.planCost += p.GetCost(costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
+}
+
+func (p *PhysicalIndexLookUpReader) estNumDoubleReadTasks(costFlag uint64) float64 {
+	doubleReadRows := p.indexPlan.StatsCount()
+	// TODO: estimate numLookupTasks more accurately in the future, for example,
+	// 	consider the back-off strategy on Executor and correlation between this index and PK
+	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
+	magicDistRatio := 40.0 // indicate how many requests corresponding to a batch
+	return (doubleReadRows / batchSize) * magicDistRatio
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
