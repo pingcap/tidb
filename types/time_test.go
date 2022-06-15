@@ -15,6 +15,7 @@
 package types_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"testing"
@@ -2033,6 +2034,17 @@ func TestParseWithTimezone(t *testing.T) {
 		require.NoErrorf(t, err, "tidb time convert failed on %d", ith)
 		require.Equalf(t, ca.gt.In(time.UTC), t1.In(time.UTC), "parsed time mismatch on %dth case", ith)
 	}
+}
+
+func TestMarshalTime(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	v1, err := types.ParseTime(sc, "2017-01-18 01:01:01.123456", mysql.TypeDatetime, types.MaxFsp)
+	require.NoError(t, err)
+	j, err := json.Marshal(v1)
+	require.NoError(t, err)
+	var v2 types.Time
+	require.NoError(t, json.Unmarshal(j, &v2))
+	require.Equal(t, 0, v1.Compare(v2))
 }
 
 func BenchmarkFormat(b *testing.B) {
