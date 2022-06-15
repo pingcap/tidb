@@ -106,10 +106,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	//
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
 	// TODO get alloc id / cluster id from pd.
-	// allocID := 1000
-	// clusterID := 42
-	//
-	//
+	pdCli := mgr.GetPDClient()
+	clusterID := pdCli.GetClusterID(ctx)
+	allocID, err := pdCli.GetAllocID(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
 
@@ -120,7 +123,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 
-	err = backup.EBSSnapshot(ebsCfg)
+	err = backup.StartsEBSSnapshot(ebsCfg)
 	if err != nil {
 		return errors.Trace(err)
 	}

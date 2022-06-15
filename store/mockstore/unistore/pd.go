@@ -43,6 +43,10 @@ func newPDClient(pd *us.MockPD) *pdClient {
 	}
 }
 
+func (c *pdClient) GetAllocID(ctx context.Context) (uint64, error) {
+	return 0, nil
+}
+
 func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string) ([]pd.GlobalConfigItem, error) {
 	ret := make([]pd.GlobalConfigItem, len(names))
 	for i, name := range names {
