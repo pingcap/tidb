@@ -113,7 +113,7 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 		return err
 	}
 
-	//sctx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
+	sctx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
 	p.latestForUpdateTS = version.Ver
 	txn.SetOption(kv.SnapshotTS, version.Ver)
 

@@ -59,7 +59,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
-	err := e.Init(p, false)
+
+	upperLock := b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt
+
+	err := e.Init(p, false, upperLock)
 	if err != nil {
 		b.err = err
 	}
@@ -71,6 +74,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	if e.lock {
 		b.hasLock = true
 	}
+
 	return e
 }
 
@@ -108,7 +112,7 @@ type PointGetExecutor struct {
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, useMaxTs bool) error {
+func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, useMaxTs bool, upperLock bool) error {
 	decoder := NewRowDecoder(e.ctx, p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
@@ -130,7 +134,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, useMaxTs bool) erro
 		var startTs uint64
 		var err error
 		txnManager := sessiontxn.GetTxnManager(e.ctx)
-		if e.lock {
+		if e.lock || upperLock {
 			if startTs, err = txnManager.GetStmtForUpdateTS(); err != nil {
 				return err
 			}

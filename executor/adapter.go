@@ -255,7 +255,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		} else {
 			// CachedPlan type is already checked in last step
 			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
-			if err := exec.Init(pointGetPlan, true); err != nil {
+			if err := exec.Init(pointGetPlan, true, false); err != nil {
 				return nil, err
 			}
 			a.PsStmt.Executor = exec
