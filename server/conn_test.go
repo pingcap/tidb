@@ -42,8 +42,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-<<<<<<< HEAD
-=======
 type Issue33699CheckType struct {
 	name              string
 	defVal            string
@@ -88,7 +86,6 @@ func TestIssue33699(t *testing.T) {
 		collation:  mysql.DefaultCollationID,
 		peerHost:   "localhost",
 		alloc:      arena.NewAllocator(512),
-		chunkAlloc: chunk.NewAllocator(),
 		capability: mysql.ClientProtocol41,
 	}
 
@@ -173,7 +170,6 @@ func TestIssue33699(t *testing.T) {
 	}
 }
 
->>>>>>> 10461370d... server: openSession instead set nil when changeUser (#33894)
 func TestMalformHandshakeHeader(t *testing.T) {
 	t.Parallel()
 	data := []byte{0x00}
