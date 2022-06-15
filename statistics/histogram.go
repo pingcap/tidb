@@ -1065,9 +1065,8 @@ type Column struct {
 }
 
 // IsLoaded is a wrap around c.Loaded.
-// It's just for safe when we are switching from `c.notNullCount() > 0)` to `c.Loaded`.
 func (c *Column) IsLoaded() bool {
-	return c.Loaded || c.notNullCount() > 0
+	return c.Loaded
 }
 
 // IsNecessaryLoaded indicates whether the necessary statistics is loaded.
