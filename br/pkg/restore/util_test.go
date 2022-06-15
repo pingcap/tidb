@@ -5,6 +5,7 @@ package restore_test
 import (
 	"context"
 	"encoding/binary"
+
 	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
