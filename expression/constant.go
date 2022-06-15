@@ -452,20 +452,21 @@ func (c *Constant) Coercibility() Coercibility {
 	return c.collationInfo.Coercibility()
 }
 
-// Update collate based on priority #35149
+// TryUpdateCollate Update collate based on priority #35149
 func TryUpdateCollate(eq *ScalarFunction) {
 
 	if eq.FuncName.L != ast.EQ {
 		return
 	}
-	sucess := ExpressionUpdateCollate(eq, true)
+	sucess := expressionUpdateCollate(eq, true)
 	if !sucess {
-		ExpressionUpdateCollate(eq, false)
+		expressionUpdateCollate(eq, false)
 	}
 
 }
 
-func ExpressionUpdateCollate(eq *ScalarFunction, colIsLeft bool) bool {
+// ExpressionUpdateCollate checks whether the expression can be updated to the new collation.
+func expressionUpdateCollate(eq *ScalarFunction, colIsLeft bool) bool {
 	var col *Column
 	var con *Constant
 	colOk := false
