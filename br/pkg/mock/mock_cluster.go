@@ -83,29 +83,7 @@ func NewCluster() (*Cluster, error) {
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
-<<<<<<< HEAD
-	statusURL, err := url.Parse(tempurl.Alloc())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	statusPort, err := strconv.ParseInt(statusURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	addrURL, err := url.Parse(tempurl.Alloc())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	addrPort, err := strconv.ParseInt(addrURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_ = addrPort
-
-=======
 	server.RunInGoTest = true
->>>>>>> aabd4e04d... test: public RunInGoTest for mock store (#31578)
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
 	// let tidb random select a port
@@ -124,7 +102,7 @@ func (mock *Cluster) Start() error {
 			panic(err1)
 		}
 	}()
-	mock.DSN = waitUntilServerOnline(addrURL.Host, cfg.Status.StatusPort)
+	mock.DSN = waitUntilServerOnline("127.0.0.1", cfg.Status.StatusPort)
 	return nil
 }
 
