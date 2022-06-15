@@ -54,6 +54,8 @@ func (s *stmtState) prepareStmt(useStartTS bool) error {
 type PessimisticRCTxnContextProvider struct {
 	baseTxnContextProvider
 	stmtState
+	// latestStmtTS records the latest stmtTS we fetched
+	latestStmtTS       uint64
 	availableRCCheckTS uint64
 }
 
@@ -136,7 +138,11 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	}
 
 	if p.optimizeForNotFetchingLatestTS {
-		return p.getTxnStartTS()
+		if p.latestStmtTS != 0 {
+			return p.latestStmtTS, nil
+		} else {
+			return p.getTxnStartTS()
+		}
 	}
 
 	var txn kv.Transaction
@@ -155,6 +161,7 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	txn.SetOption(kv.SnapshotTS, ts)
 
 	p.stmtTS = ts
+	p.latestStmtTS = ts
 	p.availableRCCheckTS = ts
 	return
 }

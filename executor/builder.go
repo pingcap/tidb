@@ -659,11 +659,9 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 	b.hasLock = true
 
 	// Build 'select for update' using the 'for update' ts.
-	var forUpdateTS uint64
-	if forUpdateTS, b.err = sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS(); b.err != nil {
+	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = forUpdateTS
 
 	src := b.build(v.Children()[0])
 	if b.err != nil {
@@ -868,11 +866,9 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	b.inInsertStmt = true
 
-	var forUpdateTS uint64
-	if forUpdateTS, b.err = sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS(); b.err != nil {
+	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = forUpdateTS
 
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
@@ -2116,11 +2112,9 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		}
 	}
 
-	var forUpdateTS uint64
-	if forUpdateTS, b.err = sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS(); b.err != nil {
+	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = forUpdateTS
 
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
@@ -2176,11 +2170,9 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
 
-	var forUpdateTS uint64
-	if forUpdateTS, b.err = sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS(); b.err != nil {
+	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = forUpdateTS
 
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
