@@ -1016,6 +1016,9 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
+		// Chunk RPC protocol may have memory leak issue not solved.
+		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
 }
@@ -1036,6 +1039,9 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
+		// Chunk RPC protocol may have memory leak issue not solved.
+		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
 }
@@ -1966,8 +1972,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	defer s.txn.onStmtEnd()
 	var is infoschema.InfoSchema
 	var snapshotTS uint64
-	if preparedStmt.ForUpdateRead {
+	if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
+		is = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 	} else if preparedStmt.SnapshotTSEvaluator != nil {
 		snapshotTS, err = preparedStmt.SnapshotTSEvaluator(s)
 		if err != nil {
