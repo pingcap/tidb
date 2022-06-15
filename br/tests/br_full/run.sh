@@ -80,6 +80,7 @@ for ct in limit lz4 zstd; do
   # restore full
   echo "restore with $ct backup start..."
   export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/restore-storage-error=1*return(\"connection refused\");github.com/pingcap/tidb/br/pkg/restore/restore-gRPC-error=1*return(true)"
+  export GO_FAILPOINTS=$GO_FAILPOINTS";github.com/pingcap/tidb/br/pkg/restore/no-leader-error=3*return(true)"
   run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB-$ct" --pd $PD_ADDR --ratelimit 1024
   export GO_FAILPOINTS=""
 
