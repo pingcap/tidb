@@ -38,7 +38,7 @@ done
 
 # restore full, skipping genreate checksum.
 echo "restore start..."
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --ratelimit 1024 --checksum=false
+run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --ratelimit 1024 --checksum=false
 
 for i in $(seq $DB_COUNT); do
     row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
@@ -63,7 +63,7 @@ for i in $(seq $DB_COUNT); do
     run_sql "DROP DATABASE $DB${i};"
 done
 echo "restore(with checksum) start..."
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --ratelimit 1024
+run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --ratelimit 1024
 
 for i in $(seq $DB_COUNT); do
     row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
