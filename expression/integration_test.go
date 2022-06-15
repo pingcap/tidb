@@ -7824,7 +7824,7 @@ func (s *testIntegrationSuite) TestIssue17727(c *C) {
 
 	tk.MustExec("set @a = '2020-06-12 13:47:58';")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1591940878"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
