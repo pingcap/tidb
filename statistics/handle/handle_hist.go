@@ -251,20 +251,15 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 		}
 	})
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-	hg, cms, topN, fms := &c.Histogram, c.CMSketch, c.TopN, c.FMSketch
-	var err error
-	if !c.IsHistogramLoaded() {
-		hg, err = h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	if !c.IsCMSketchLoaded() || !c.IsTopNLoaded() {
-		cms, topN, err = h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	var fms *statistics.FMSketch
 	if loadFMSketch {
 		fms, err = h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
 		if err != nil {
