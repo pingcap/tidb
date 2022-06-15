@@ -241,11 +241,11 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 func (p *PhysicalIndexLookUpReader) estNumDoubleReadTasks(costFlag uint64) float64 {
 	doubleReadRows := p.indexPlan.StatsCount()
 	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
-	magicRatio := 40.0 // indicate how many requests corresponding to a batch
-	// TODO: consider correlation between index and PK to make it more accurate.
-	numDoubleReadTasks := (doubleReadRows / batchSize) * magicRatio
-	// use Float64 instead of Int like `Ceil(numDoubleReadTasks)` to make the cost continuous.
-	return numDoubleReadTasks
+	// distRatio indicates how many requests corresponding to a batch, current value is from experiments.
+	// TODO: estimate it by using index correlation or make it configurable.
+	distRatio := 40.0
+	numDoubleReadTasks := (doubleReadRows / batchSize) * distRatio
+	return numDoubleReadTasks // use Float64 instead of Int like `Ceil(...)` to make the cost continuous
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
