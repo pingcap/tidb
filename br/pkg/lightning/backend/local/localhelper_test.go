@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -291,7 +292,8 @@ func cloneRegion(region *restore.RegionInfo) *restore.RegionInfo {
 	return &restore.RegionInfo{Region: r, Leader: l}
 }
 
-// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+// For keys ["", "aay", "bba", "bbh", "cca", ""], the key ranges of
+// regions are [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, ).
 func initTestClient(keys [][]byte, hook clientHook) *testClient {
 	peers := make([]*metapb.Peer, 1)
 	peers[0] = &metapb.Peer{
@@ -560,6 +562,44 @@ func (s *localSuite) TestBatchSplitByRangesNoValidKeysOnce(c *C) {
 
 func (s *localSuite) TestBatchSplitByRangesNoValidKeys(c *C) {
 	s.doTestBatchSplitRegionByRanges(context.Background(), c, &splitRegionNoValidKeyHook{returnErrTimes: math.MaxInt32}, ".*no valid key.*", defaultHook{})
+}
+
+func (s *localSuite) TestSplitAndScatterRegionInBatches(c *C) {
+	splitHook := defaultHook{}
+	deferFunc := splitHook.setup(c)
+	defer deferFunc()
+
+	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
+	client := initTestClient(keys, nil)
+	local := &local{
+		splitCli: client,
+		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var ranges []Range
+	for i := 0; i < 20; i++ {
+		ranges = append(ranges, Range{
+			start: []byte(fmt.Sprintf("a%02d", i)),
+			end:   []byte(fmt.Sprintf("a%02d", i+1)),
+		})
+	}
+
+	err := local.SplitAndScatterRegionInBatches(ctx, ranges, nil, true, 1000, 4)
+	c.Check(err, IsNil)
+
+	rangeStart := codec.EncodeBytes([]byte{}, []byte("a"))
+	rangeEnd := codec.EncodeBytes([]byte{}, []byte("b"))
+	regions, err := restore.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	c.Check(err, IsNil)
+	result := [][]byte{[]byte("a"), []byte("a00"), []byte("a01"), []byte("a02"), []byte("a03"), []byte("a04"),
+		[]byte("a05"), []byte("a06"), []byte("a07"), []byte("a08"), []byte("a09"), []byte("a10"), []byte("a11"),
+		[]byte("a12"), []byte("a13"), []byte("a14"), []byte("a15"), []byte("a16"), []byte("a17"), []byte("a18"),
+		[]byte("a19"), []byte("a20"), []byte("b"),
+	}
+	checkRegionRanges(c, regions, result)
 }
 
 type reportAfterSplitHook struct {
