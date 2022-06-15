@@ -380,6 +380,7 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 		var scanFactor float64
 		switch taskType {
 		case property.MppTaskType: // use a dedicated scan-factor for TiFlash
+			// no need to distinguish `Scan` and `DescScan` for TiFlash for now
 			scanFactor = p.ctx.GetSessionVars().GetTiFlashScanFactor()
 		default: // for TiKV
 			scanFactor = p.ctx.GetSessionVars().GetScanFactor(p.Table)
@@ -387,7 +388,8 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 				scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 			}
 		}
-		rowSize := math.Max(p.getScanRowSize(), 2.0)
+		// the formula `log(rowSize)` is based on experiment results
+		rowSize := math.Max(p.getScanRowSize(), 2.0) // to guarantee logRowSize >= 1
 		logRowSize := math.Log2(rowSize)
 		selfCost = getCardinality(p, costFlag) * logRowSize * scanFactor
 	}
