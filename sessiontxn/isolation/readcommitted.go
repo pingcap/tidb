@@ -140,9 +140,8 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	if p.optimizeForNotFetchingLatestTS {
 		if p.latestStmtTS != 0 {
 			return p.latestStmtTS, nil
-		} else {
-			return p.getTxnStartTS()
 		}
+		return p.getTxnStartTS()
 	}
 
 	var txn kv.Transaction
