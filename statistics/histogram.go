@@ -1078,17 +1078,7 @@ func (c *Column) IsNecessaryLoaded() bool {
 	if c.IsLoaded() {
 		return true
 	}
-	return c.IsHistogramLoaded() || c.IsTopNLoaded()
-}
-
-// IsTopNLoaded indicates whether the topn is loaded
-func (c *Column) IsTopNLoaded() bool {
-	return c.TopN != nil && c.TopN.TotalCount() > 0
-}
-
-// IsHistogramLoaded indicates that whether the hitogram is loaded
-func (c *Column) IsHistogramLoaded() bool {
-	return c.Histogram.notNullCount() > 0
+	return c.notNullCount() > 0
 }
 
 func (c *Column) String() string {
