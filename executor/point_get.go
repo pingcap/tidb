@@ -17,8 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -31,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -51,25 +48,31 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 
+	if p.Lock && !b.inSelectLockStmt {
+		b.inSelectLockStmt = true
+		defer func() {
+			b.inSelectLockStmt = false
+		}()
+	}
+
+	snapshotTS, err := b.getSnapshotTS()
+	if err != nil {
+		return nil
+	}
+
 	e := &PointGetExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
 
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.getCacheTable(p.TblInfo, snapshotTS)
+	}
+
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
-
-	upperLock := b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt
-
-	err := e.Init(p, false, upperLock)
-	if err != nil {
-		b.err = err
-	}
-
-	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(p.TblInfo, e.startTS)
-	}
+	e.Init(p, snapshotTS)
 
 	if e.lock {
 		b.hasLock = true
@@ -89,7 +92,7 @@ type PointGetExecutor struct {
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
-	startTS          uint64
+	snapshotTS       uint64
 	readReplicaScope string
 	isStaleness      bool
 	txn              kv.Transaction
@@ -112,12 +115,13 @@ type PointGetExecutor struct {
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, useMaxTs bool, upperLock bool) error {
+func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, snapshotTS uint64) {
 	decoder := NewRowDecoder(e.ctx, p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
 	e.idxVals = p.IndexValues
+	e.snapshotTS = snapshotTS
 	e.done = false
 	if e.tblInfo.TempTableType == model.TempTableNone {
 		e.lock = p.Lock
@@ -127,30 +131,10 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, useMaxTs bool, uppe
 		e.lock = false
 		e.lockWaitTime = 0
 	}
-
-	if useMaxTs {
-		e.startTS = uint64(math.MaxUint64)
-	} else {
-		var startTs uint64
-		var err error
-		txnManager := sessiontxn.GetTxnManager(e.ctx)
-		if e.lock || upperLock {
-			if startTs, err = txnManager.GetStmtForUpdateTS(); err != nil {
-				return err
-			}
-		} else {
-			if startTs, err = txnManager.GetStmtReadTS(); err != nil {
-				return err
-			}
-		}
-		e.startTS = startTs
-	}
-
 	e.rowDecoder = decoder
 	e.partInfo = p.PartitionInfo
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
-	return nil
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -167,7 +151,7 @@ func (e *PointGetExecutor) buildVirtualColumnInfo() {
 // Open implements the Executor interface.
 func (e *PointGetExecutor) Open(context.Context) error {
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	snapshotTS := e.startTS
+	snapshotTS := e.snapshotTS
 	var err error
 	e.txn, err = e.ctx.Txn(false)
 	if err != nil {

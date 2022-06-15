@@ -377,7 +377,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-func TestErrorInInsertInRC(t *testing.T) {
+func TestConflictErrorsInRC(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -391,6 +391,8 @@ func TestErrorInInsertInRC(t *testing.T) {
 	tk.MustExec("create table t (id int primary key, v int)")
 
 	tk.MustExec("set tx_isolation='READ-COMMITTED'")
+
+	// Test for insert
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("insert into t values (1, 2)")
 	se.SetValue(sessiontxn.AssertLockErr, nil)
@@ -404,30 +406,17 @@ func TestErrorInInsertInRC(t *testing.T) {
 
 	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustExec("rollback")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
-}
 
-func TestErrorInDeleteInRC(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	se := tk.Session()
-	tk2 := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk2.MustExec("use test")
-	tk.MustExec("create table t (id int primary key, v int)")
+	// Test for delete
+	tk.MustExec("truncate t")
 	tk.MustExec("insert into t values (1, 1), (2, 2)")
 
-	tk.MustExec("set tx_isolation='READ-COMMITTED'")
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("insert into t values (3, 1)")
 
 	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustExec("delete from t where v = 1")
-	_, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	_, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.False(t, ok)
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 2"))
 	tk.MustExec("commit")
@@ -442,30 +431,17 @@ func TestErrorInDeleteInRC(t *testing.T) {
 	tk.MustQuery("select * from t for update").Check(testkit.Rows())
 
 	tk.MustExec("rollback")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
-}
 
-func TestErrorInUpdateInRC(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	se := tk.Session()
-	tk2 := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk2.MustExec("use test")
-	tk.MustExec("create table t (id int primary key, v int)")
+	// Test for update
+	tk.MustExec("truncate t")
 	tk.MustExec("insert into t values (1, 1), (2, 2)")
 
-	tk.MustExec("set tx_isolation='READ-COMMITTED'")
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("update t set v = v + 10")
 
 	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustExec("update t set v = v + 10")
-	_, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	_, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.False(t, ok)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 21", "2 22"))
 	tk.MustExec("commit")
@@ -479,6 +455,7 @@ func TestErrorInUpdateInRC(t *testing.T) {
 	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 41", "2 22"))
 
 	tk.MustExec("rollback")
+
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
 

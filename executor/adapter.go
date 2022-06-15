@@ -255,9 +255,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		} else {
 			// CachedPlan type is already checked in last step
 			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
-			if err := exec.Init(pointGetPlan, true, false); err != nil {
-				return nil, err
-			}
+			exec.Init(pointGetPlan, startTs)
 			a.PsStmt.Executor = exec
 		}
 	}
@@ -453,7 +451,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			curTxnStartTS = sctx.GetSessionVars().SnapshotTS
 		}
 		logutil.BgLogger().Info("Enable mockDelayInnerSessionExecute when execute statement",
-			zap.Uint64("startTS", curTxnStartTS))
+			zap.Uint64("snapshotTS", curTxnStartTS))
 		time.Sleep(200 * time.Millisecond)
 	})
 
@@ -774,9 +772,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	}
 	failpoint.Inject("assertPessimisticLockErr", func() {
 		if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
-			sessiontxn.AddEntrance(a.Ctx, "insertWriteConflict")
+			sessiontxn.AddEntrance(a.Ctx, "errWriteConflict")
 		} else if terror.ErrorEqual(kv.ErrKeyExists, lockErr) {
-			sessiontxn.AddEntrance(a.Ctx, "insertDuplicateKey")
+			sessiontxn.AddEntrance(a.Ctx, "errDuplicateKey")
 		}
 	})
 

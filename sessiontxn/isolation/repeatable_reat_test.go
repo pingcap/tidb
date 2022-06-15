@@ -451,8 +451,8 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 }
 
 var errorsInInsert = []string{
-	"insertWriteConflict",
-	"insertDuplicateKey",
+	"errWriteConflict",
+	"errDuplicateKey",
 }
 
 func TestErrorInInsertInRR(t *testing.T) {
@@ -505,7 +505,7 @@ func TestErrorInPointGetForUpdateInRR(t *testing.T) {
 	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 11"))
 	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.True(t, ok)
-	require.Equal(t, records["insertWriteConflict"], 1)
+	require.Equal(t, records["errWriteConflict"], 1)
 	tk.MustExec("commit")
 
 	// batch point get
@@ -515,7 +515,7 @@ func TestErrorInPointGetForUpdateInRR(t *testing.T) {
 	tk.MustQuery("select * from t where id = 1 or id = 2 for update").Check(testkit.Rows("1 21", "2 2"))
 	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.True(t, ok)
-	require.Equal(t, records["insertWriteConflict"], 1)
+	require.Equal(t, records["errWriteConflict"], 1)
 	tk.MustExec("commit")
 
 	tk.MustExec("rollback")
@@ -555,7 +555,7 @@ func TestErrorInDeleteInRR(t *testing.T) {
 
 	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.True(t, ok)
-	require.Equal(t, records["insertWriteConflict"], 1)
+	require.Equal(t, records["errWriteConflict"], 1)
 	tk.MustQuery("select * from t for update").Check(testkit.Rows())
 
 	tk.MustExec("rollback")
@@ -592,7 +592,7 @@ func TestErrorInUpdateInRR(t *testing.T) {
 	tk.MustExec("update t set v = v + 10 where id = 1")
 	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
 	require.True(t, ok)
-	require.Equal(t, records["insertWriteConflict"], 1)
+	require.Equal(t, records["errWriteConflict"], 1)
 	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 41", "2 22"))
 
 	tk.MustExec("rollback")

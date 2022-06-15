@@ -1052,11 +1052,11 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
 	seVars := sctx.GetSessionVars()
-	forUpdateTs, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
+	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
 	if err != nil {
 		return nil, err
 	}
-	lockCtx := tikvstore.NewLockCtx(forUpdateTs, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
+	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.Killed
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
