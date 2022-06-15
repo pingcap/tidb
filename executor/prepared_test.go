@@ -448,7 +448,7 @@ func (s *testPrepareSuite) TestPlanCacheOperators(c *C) {
 		}},
 		{"select a from t where a>? and a<?", []ExecCase{
 			{[]string{"5", "1"}, false},
-			{[]string{"1", "4"}, true},
+			{[]string{"1", "4"}, false},
 			{[]string{"3", "9"}, true},
 		}},
 		{"drop table t", nil},
