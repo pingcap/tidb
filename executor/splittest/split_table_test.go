@@ -19,18 +19,17 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/dbterror"
-
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -702,4 +701,17 @@ func TestShowTableRegion(t *testing.T) {
 		}
 		require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[i][12])
 	}
+	re = tk.MustQuery("show table t5_scheduling index idx1 regions")
+	rows = re.Rows()
+	require.Len(t, rows, 9)
+	require.Len(t, rows[0], 13)
+	for i := range rows {
+		if i < 3 {
+			require.Equal(t, "LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\"", rows[i][11])
+		} else {
+			require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[i][11])
+		}
+		require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[i][12])
+	}
+
 }
