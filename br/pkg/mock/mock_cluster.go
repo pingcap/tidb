@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/pprof"
-	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +24,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/pkg/tempurl"
 	"go.uber.org/zap"
 )
 
