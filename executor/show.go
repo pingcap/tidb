@@ -104,7 +104,6 @@ type showTableRegionRowItem struct {
 	regionMeta
 	schedulingConstraints string
 	schedulingState       string
-	physicalID            int64
 }
 
 // Next implements the Executor Next interface.
@@ -1864,7 +1863,7 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	}
 
 	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
-	var regions []showTableRegionRowItem
+	var regions []regionMeta
 	if len(e.IndexName.L) != 0 {
 		// show table * index * region
 		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
@@ -1880,21 +1879,22 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 		return err
 	}
 
-	err = e.fetchSchedulingInfo(ctx, regions, tb.Meta())
+	regionRowItem, err := e.fetchSchedulingInfo(ctx, regions, tb.Meta())
 	if err != nil {
 		return err
 	}
 
-	e.fillRegionsToChunk(regions)
+	e.fillRegionsToChunk(regionRowItem)
 	return nil
 }
 
-func (e *ShowExec) fetchSchedulingInfo(ctx context.Context, regions []showTableRegionRowItem, tbInfo *model.TableInfo) error {
+func (e *ShowExec) fetchSchedulingInfo(ctx context.Context, regions []regionMeta, tbInfo *model.TableInfo) ([]showTableRegionRowItem, error) {
 	scheduleState := make(map[int64]infosync.PlacementScheduleState)
 	schedulingConstraints := make(map[int64]*model.PlacementSettings)
+	var regionRowItem []showTableRegionRowItem
 	tblPlacement, err := e.getTablePlacement(tbInfo)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if tbInfo.GetPartitionInfo() != nil {
@@ -1902,11 +1902,11 @@ func (e *ShowExec) fetchSchedulingInfo(ctx context.Context, regions []showTableR
 		for _, part := range tbInfo.GetPartitionInfo().Definitions {
 			_, err = fetchScheduleState(ctx, scheduleState, part.ID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			placement, err := e.getPolicyPlacement(part.PlacementPolicyRef)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if placement == nil {
 				schedulingConstraints[part.ID] = tblPlacement
@@ -1919,24 +1919,27 @@ func (e *ShowExec) fetchSchedulingInfo(ctx context.Context, regions []showTableR
 		schedulingConstraints[tbInfo.ID] = tblPlacement
 		_, err = fetchScheduleState(ctx, scheduleState, tbInfo.ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
-
+	var constraintStr string
 	for i := range regions {
-		constraint := schedulingConstraints[regions[i].physicalID]
-		if constraint == nil {
-			regions[i].schedulingConstraints = ""
+		if constraint, ok := schedulingConstraints[regions[i].physicalID]; ok && constraint != nil {
+			constraintStr = constraint.String()
 		} else {
-			regions[i].schedulingConstraints = constraint.String()
+			constraintStr = ""
 		}
-		regions[i].schedulingState = scheduleState[regions[i].physicalID].String()
+		regionRowItem = append(regionRowItem, showTableRegionRowItem{
+			regionMeta:            regions[i],
+			schedulingConstraints: constraintStr,
+			schedulingState:       scheduleState[regions[i].physicalID].String(),
+		})
 	}
-	return nil
+	return regionRowItem, nil
 }
 
-func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]showTableRegionRowItem, error) {
-	regions := make([]showTableRegionRowItem, 0, len(physicalIDs))
+func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {
 		rs, err := getPhysicalTableRegions(id, tb.Meta(), tikvStore, splitStore, uniqueRegionMap)
@@ -1948,8 +1951,8 @@ func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Stora
 	return regions, nil
 }
 
-func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]showTableRegionRowItem, error) {
-	regions := make([]showTableRegionRowItem, 0, len(physicalIDs))
+func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {
 		rs, err := getPhysicalIndexRegions(id, indexInfo, tikvStore, splitStore, uniqueRegionMap)
