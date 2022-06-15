@@ -1129,7 +1129,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
 			return true
 		}
-		if c.isLoadNeeded() && stmtctx != nil {
+		if c.IsLoadNeeded() && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
@@ -1148,7 +1148,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 
 // IsHistNeeded checks if this column needs histogram to be loaded
 func (c *Column) IsHistNeeded(collPseudo bool) bool {
-	return (!collPseudo || !c.NotAccurate()) && c.isLoadNeeded()
+	return (!collPseudo || !c.NotAccurate()) && c.IsLoadNeeded()
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
@@ -2302,9 +2302,9 @@ func (s ColLoadedStatus) IsStatisticsInitialized() bool {
 	return s.statisticsInitialized
 }
 
-// isLoadNeeded indicates whether it needs load statistics during LoadNeededHistograms or sync stats
+// IsLoadNeeded indicates whether it needs load statistics during LoadNeededHistograms or sync stats
 // If the column was loaded and any statistics of it is evicting, it also needs re-load statistics.
-func (s ColLoadedStatus) isLoadNeeded() bool {
+func (s ColLoadedStatus) IsLoadNeeded() bool {
 	if s.statisticsInitialized {
 		return s.evictedStatus > allLoaded
 	}

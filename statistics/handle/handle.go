@@ -653,7 +653,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			continue
 		}
 		c, ok := tbl.Columns[col.ColumnID]
-		if !ok || !c.isLoadNeeded() {
+		if !ok || !c.IsLoadNeeded() {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
