@@ -1600,21 +1600,21 @@
   {
     "SQL": "with cte as (select /*+ MERGE()*/ * from tc where tc.a < 60) select * from cte where cte.a <18",
     "Plan": [
-      "TableReader 2.33 root  data:Selection",
-      "└─Selection_12 2.33 cop[tikv]  lt(test.tc.a, 18), lt(test.tc.a, 60)",
-      "  └─TableFullScan_11 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
+      "TableReader 4.00 root  data:Selection",
+      "└─Selection 4.00 cop[tikv]  lt(test.tc.a, 18), lt(test.tc.a, 60)",
+      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
     ],
     "Warning": null
   },
   {
     "SQL": "with cte as (select * from tc where tc.a < 60) select * from cte where cte.a <18",
     "Plan": [
-      "Selection 1.86 root  lt(test.tc.a, 18)",
-      "└─CTEFullScan 2.33 root CTE:cte data:CTE",
-      "CTE 2.33 root  Non-Recursive CTE",
-      "└─TableReader(Seed Part) 2.33 root  data:Selection_10",
-      "  └─Selection 2.33 cop[tikv]  lt(test.tc.a, 18), lt(test.tc.a, 60)",
-      "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
+      "Selection 3.20 root  lt(test.tc.a, 18)",
+      "└─CTEFullScan 4.00 root CTE:cte data:CTE",
+      "CTE 4.00 root  Non-Recursive CTE",
+      "└─TableReader(Seed Part) 4.00 root  data:Selection",
+      "  └─Selection 4.00 cop[tikv]  lt(test.tc.a, 18), lt(test.tc.a, 60)",
+      "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
     ],
     "Warning": null
   },
@@ -1624,10 +1624,10 @@
       "HashJoin 8.74 root  inner join, equal:[eq(test.tc.a, test.te.c)]",
       "├─TableReader(Build) 6.99 root  data:Selection",
       "│ └─Selection 6.99 cop[tikv]  not(isnull(test.tc.a))",
-      "│   └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo",
+      "│   └─TableFullScan 7.00 cop[tikv] table:tc keep order:false",
       "└─TableReader(Probe) 9990.00 root  data:Selection",
       "  └─Selection 9990.00 cop[tikv]  not(isnull(test.te.c))",
-      "    └─TableFullScan 10000.00 cop[tikv] table:te keep order:false, stats:pseudo"
+      "    └─TableFullScan 10000.00 cop[tikv] table:te keep order:false"
     ],
     "Warning": null
   },
@@ -1640,11 +1640,11 @@
       "  │ └─CTEFullScan 5.60 root CTE:cte1 data:CTE",
       "  └─TableReader(Probe) 6.99 root  data:Selection",
       "    └─Selection 6.99 cop[tikv]  not(isnull(test.te.c))",
-      "      └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo",
+      "      └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
       "CTE 5.60 root  Non-Recursive CTE",
       "└─Selection(Seed Part) 5.60 root  not(isnull(test.tc.a))",
       "  └─TableReader 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
+      "    └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
         ],
     "Warning": null
   },
@@ -1671,10 +1671,10 @@
       "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
       "  ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE",
       "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo",
+      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
       "CTE 7.00 root  Non-Recursive CTE",
       "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
+      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
     ],
     "Warning": null
   },
@@ -1686,10 +1686,10 @@
       "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
       "  ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE",
       "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo",
+      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false",
       "CTE 7.00 root  Non-Recursive CTE",
       "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo"
+      "  └─TableFullScan 7.00 cop[tikv] table:tc keep order:false"
     ],
     "Warning": null
   },
@@ -1700,9 +1700,9 @@
       "CTE 49.00 root  Non-Recursive CTE",
       "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
       "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
-      "  │ └─TableFullScan 7.00 cop[tikv] table:tc keep order:false, stats:pseudo",
+      "  │ └─TableFullScan 7.00 cop[tikv] table:tc keep order:false",
       "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
-      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false, stats:pseudo"
+      "    └─TableFullScan 7.00 cop[tikv] table:te keep order:false"
     ],
     "Warning": null
   }
