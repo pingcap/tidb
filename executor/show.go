@@ -1891,7 +1891,7 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 func (e *ShowExec) fetchSchedulingInfo(ctx context.Context, regions []regionMeta, tbInfo *model.TableInfo) ([]showTableRegionRowItem, error) {
 	scheduleState := make(map[int64]infosync.PlacementScheduleState)
 	schedulingConstraints := make(map[int64]*model.PlacementSettings)
-	var regionRowItem []showTableRegionRowItem
+	regionRowItem := make([]showTableRegionRowItem, 0)
 	tblPlacement, err := e.getTablePlacement(tbInfo)
 	if err != nil {
 		return nil, err
