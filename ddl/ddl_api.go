@@ -3232,6 +3232,13 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		}
 	}
 
+	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		err = d.MultiSchemaChange(sctx, ident)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	return nil
 }
 

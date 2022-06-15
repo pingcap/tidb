@@ -38,6 +38,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		SchemaID:        schema.ID,
 		TableID:         t.Meta().ID,
 		SchemaName:      schema.Name.L,
+		TableName:       t.Meta().Name.L,
 		Type:            model.ActionMultiSchemaChange,
 		BinlogInfo:      &model.HistoryInfo{},
 		Args:            nil,
@@ -247,7 +248,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		}
 		if hiddenCols, ok := job.Args[4].([]*model.ColumnInfo); ok {
 			for _, c := range hiddenCols {
-				for depColName, _ := range c.Dependences {
+				for depColName := range c.Dependences {
 					info.RelativeColumns = append(info.RelativeColumns, model.NewCIStr(depColName))
 				}
 			}
@@ -284,7 +285,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 	return nil
 }
 
-func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
+func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	modifyCols := make(map[string]struct{})
 	modifyIdx := make(map[string]struct{})
 
@@ -305,7 +306,7 @@ func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
 		for _, idxName := range idxNames {
 			name := idxName.L
 			if _, ok := modifyIdx[name]; ok {
-				return dbterror.ErrOperateSameColumn.GenWithStackByArgs(name)
+				return dbterror.ErrOperateSameIndex.GenWithStackByArgs(name)
 			}
 			if addToModifyIdx {
 				modifyIdx[name] = struct{}{}
@@ -337,7 +338,7 @@ func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
 }
 
 func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
-	err := checkOperateSameColumn(info)
+	err := checkOperateSameColAndIdx(info)
 	if err != nil {
 		return err
 	}

@@ -817,8 +817,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
 	if job.State == model.JobStateNone {
-		// In multiple schema change, we don't call the hook because
-		// the job does not run yet.
+		// We don't call the hook if the job haven't run yet.
 		return err
 	}
 	d.mu.RLock()
