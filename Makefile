@@ -430,13 +430,13 @@ bazel_prepare:
 bazel_test: failpoint-enable bazel_ci_prepare
 	bazel --output_user_root=/home/jenkins/.tidb/tmp test --config=ci  \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/lightning/log:log_test -//br/pkg/task:task_test
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 
 bazel_coverage_test: failpoint-enable bazel_ci_prepare
 	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/lightning/log:log_test -//br/pkg/task:task_test
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin

@@ -16,6 +16,7 @@ package mydump
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"regexp"
@@ -55,10 +56,11 @@ type blockParser struct {
 	appendBuf *bytes.Buffer
 
 	// the Logger associated with this parser for reporting failure
-	Logger log.Logger
+	Logger  log.Logger
+	metrics *metric.Metrics
 }
 
-func makeBlockParser(reader ReadSeekCloser, blockBufSize int64, ioWorkers *worker.Pool) blockParser {
+func makeBlockParser(reader ReadSeekCloser, blockBufSize int64, ioWorkers *worker.Pool, metrics *metric.Metrics) blockParser {
 	return blockParser{
 		reader:    MakePooledReader(reader, ioWorkers),
 		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),
@@ -70,6 +72,7 @@ func makeBlockParser(reader ReadSeekCloser, blockBufSize int64, ioWorkers *worke
 				return make([]types.Datum, 0, 16)
 			},
 		},
+		metrics: metrics,
 	}
 }
 
@@ -132,6 +135,7 @@ type Parser interface {
 
 // NewChunkParser creates a new parser which can read chunks out of a file.
 func NewChunkParser(
+	ctx context.Context,
 	sqlMode mysql.SQLMode,
 	reader ReadSeekCloser,
 	blockBufSize int64,
@@ -141,9 +145,9 @@ func NewChunkParser(
 	if sqlMode.HasNoBackslashEscapesMode() {
 		escFlavor = backslashEscapeFlavorNone
 	}
-
+	metrics, _ := metric.FromContext(ctx)
 	return &ChunkParser{
-		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers),
+		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics),
 		escFlavor:   escFlavor,
 	}
 }
@@ -261,7 +265,9 @@ func (parser *blockParser) readBlock() error {
 		parser.appendBuf.Write(parser.remainBuf.Bytes())
 		parser.appendBuf.Write(parser.blockBuf[:n])
 		parser.buf = parser.appendBuf.Bytes()
-		metric.ChunkParserReadBlockSecondsHistogram.Observe(time.Since(startTime).Seconds())
+		if parser.metrics != nil {
+			parser.metrics.ChunkParserReadBlockSecondsHistogram.Observe(time.Since(startTime).Seconds())
+		}
 		return nil
 	default:
 		return errors.Trace(err)

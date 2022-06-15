@@ -740,12 +740,10 @@ type SessionVars struct {
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
-	// CPUFactor is the CPU cost of processing one expression for one row.
-	CPUFactor float64
-	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
-	CopCPUFactor float64
-	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
-	CopTiFlashConcurrencyFactor float64
+	// cpuFactor is the CPU cost of processing one expression for one row.
+	cpuFactor float64
+	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
+	copCPUFactor float64
 	// networkFactor is the network cost of transferring 1 byte data.
 	networkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
@@ -754,12 +752,39 @@ type SessionVars struct {
 	descScanFactor float64
 	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
 	seekFactor float64
-	// MemoryFactor is the memory cost of storing one tuple.
-	MemoryFactor float64
-	// DiskFactor is the IO cost of reading/writing one byte to temporary disk.
-	DiskFactor float64
-	// ConcurrencyFactor is the CPU cost of additional one goroutine.
-	ConcurrencyFactor float64
+	// memoryFactor is the memory cost of storing one tuple.
+	memoryFactor float64
+	// diskFactor is the IO cost of reading/writing one byte to temporary disk.
+	diskFactor float64
+	// concurrencyFactor is the CPU cost of additional one goroutine.
+	concurrencyFactor float64
+
+	// factors for cost model v2
+	// cpuFactorV2 is the CPU factor for the Cost Model Ver2.
+	cpuFactorV2 float64
+	// copCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
+	copCPUFactorV2 float64
+	// tiflashCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
+	tiflashCPUFactorV2 float64
+	// networkFactorV2 is the network factor for the Cost Model Ver2.
+	networkFactorV2 float64
+	// scanFactorV2 is the scan factor for the Cost Model Ver2.
+	scanFactorV2 float64
+	// descScanFactorV2 is the desc-scan factor for the Cost Model Ver2.
+	descScanFactorV2 float64
+	// tiflashScanFactorV2 is the tiflash-scan factor for the Cost Model Ver2.
+	tiflashScanFactorV2 float64
+	// seekFactorV2 is the seek factor for the Cost Model Ver2.
+	seekFactorV2 float64
+	// memoryFactorV2 is the memory factor for the Cost Model Ver2.
+	memoryFactorV2 float64
+	// diskFactorV2 is the disk factor for the Cost Model Ver2.
+	diskFactorV2 float64
+	// concurrencyFactorV2 is the concurrency factor for the Cost Model Ver2.
+	concurrencyFactorV2 float64
+
+	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
+	CopTiFlashConcurrencyFactor float64
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
@@ -1116,6 +1141,8 @@ type SessionVars struct {
 	IgnorePreparedCacheCloseStmt bool
 	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
 	EnableNewCostInterface bool
+	// CostModelVersion is a internal switch to indicates the Cost Model Version.
+	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
@@ -1307,16 +1334,16 @@ func NewSessionVars() *SessionVars {
 		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
-		CPUFactor:                   DefOptCPUFactor,
-		CopCPUFactor:                DefOptCopCPUFactor,
+		cpuFactor:                   DefOptCPUFactor,
+		copCPUFactor:                DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
 		networkFactor:               DefOptNetworkFactor,
 		scanFactor:                  DefOptScanFactor,
 		descScanFactor:              DefOptDescScanFactor,
 		seekFactor:                  DefOptSeekFactor,
-		MemoryFactor:                DefOptMemoryFactor,
-		DiskFactor:                  DefOptDiskFactor,
-		ConcurrencyFactor:           DefOptConcurrencyFactor,
+		memoryFactor:                DefOptMemoryFactor,
+		diskFactor:                  DefOptDiskFactor,
+		concurrencyFactor:           DefOptConcurrencyFactor,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
@@ -2461,6 +2488,51 @@ func (s *SessionVars) CleanupTxnReadTSIfUsed() {
 	}
 }
 
+// GetCPUFactor returns the session variable cpuFactor
+func (s *SessionVars) GetCPUFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.cpuFactorV2
+	}
+	return s.cpuFactor
+}
+
+// GetCopCPUFactor returns the session variable copCPUFactor
+func (s *SessionVars) GetCopCPUFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.copCPUFactorV2
+	}
+	return s.copCPUFactor
+}
+
+// GetTiFlashCPUFactor returns the session
+func (s *SessionVars) GetTiFlashCPUFactor() float64 {
+	return s.tiflashCPUFactorV2
+}
+
+// GetMemoryFactor returns the session variable memoryFactor
+func (s *SessionVars) GetMemoryFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.memoryFactorV2
+	}
+	return s.memoryFactor
+}
+
+// GetDiskFactor returns the session variable diskFactor
+func (s *SessionVars) GetDiskFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.diskFactorV2
+	}
+	return s.diskFactor
+}
+
+// GetConcurrencyFactor returns the session variable concurrencyFactor
+func (s *SessionVars) GetConcurrencyFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.concurrencyFactorV2
+	}
+	return s.concurrencyFactor
+}
+
 // GetNetworkFactor returns the session variable networkFactor
 // returns 0 when tbl is a temporary table.
 func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
@@ -2468,6 +2540,9 @@ func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
+	}
+	if s.CostModelVersion == 2 {
+		return s.networkFactorV2
 	}
 	return s.networkFactor
 }
@@ -2480,6 +2555,9 @@ func (s *SessionVars) GetScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
+	if s.CostModelVersion == 2 {
+		return s.scanFactorV2
+	}
 	return s.scanFactor
 }
 
@@ -2491,7 +2569,15 @@ func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
+	if s.CostModelVersion == 2 {
+		return s.descScanFactorV2
+	}
 	return s.descScanFactor
+}
+
+// GetTiFlashScanFactor returns the session variable tiflashScanFactorV2
+func (s *SessionVars) GetTiFlashScanFactor() float64 {
+	return s.tiflashScanFactorV2
 }
 
 // GetSeekFactor returns the session variable seekFactor
@@ -2501,6 +2587,9 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
+	}
+	if s.CostModelVersion == 2 {
+		return s.seekFactorV2
 	}
 	return s.seekFactor
 }

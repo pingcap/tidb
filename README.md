@@ -26,7 +26,7 @@ For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/ti
 
 TiDB Cloud is the fully-managed service of TiDB, currently available on AWS and GCP.
 
-Quickly check out TiDB Cloud with [a free trial](https://tidbcloud.com/signup).
+Quickly check out TiDB Cloud with [a free trial](https://tidbcloud.com/free-trial).
 
 See [TiDB Cloud Quick Start Guide](https://docs.pingcap.com/tidbcloud/tidb-cloud-quickstart).
 
