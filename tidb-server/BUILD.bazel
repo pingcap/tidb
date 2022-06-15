@@ -27,6 +27,7 @@ go_library(
         "//store",
         "//store/driver",
         "//store/mockstore",
+        "//store/mockstore/unistore/metrics",
         "//tidb-binlog/pump_client",
         "//util",
         "//util/cpuprofile",
