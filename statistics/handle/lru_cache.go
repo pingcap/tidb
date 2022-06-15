@@ -137,15 +137,15 @@ func (s *statsInnerCache) Put(tblID int64, tbl *statistics.Table) {
 func (s *statsInnerCache) put(tblID int64, tbl *statistics.Table, tblMemUsage *statistics.TableMemoryUsage, needMove bool) {
 	element, exist := s.elements[tblID]
 	if exist {
-		s.updateIndices(tblID, tbl, tblMemUsage, needMove)
 		s.updateColumns(tblID, tbl, tblMemUsage, needMove)
+		s.updateIndices(tblID, tbl, tblMemUsage, needMove)
 		// idx mem usage might be changed before, thus we recalculate the tblMem usage
 		element.tbl = tbl
 		element.tblMemUsage = tbl.MemoryUsage()
 		return
 	}
-	s.updateIndices(tblID, tbl, tblMemUsage, needMove)
 	s.updateColumns(tblID, tbl, tblMemUsage, needMove)
+	s.updateIndices(tblID, tbl, tblMemUsage, needMove)
 	// mem usage might be changed due to evict, thus we recalculate the tblMem usage
 	s.elements[tblID] = &lruMapElement{
 		tbl:         tbl,
