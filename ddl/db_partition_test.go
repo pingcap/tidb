@@ -3641,6 +3641,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	tk.MustExec(`create table t(created_at timestamp) PARTITION BY RANGE (unix_timestamp(created_at)) (
 		PARTITION p0 VALUES LESS THAN (unix_timestamp('2021-12-01 00:00:00')),
 		PARTITION p1 VALUES LESS THAN (unix_timestamp('2022-01-01 00:00:00')))`)
+	// FIXME: should be "created_at" instead of `created_at`, see #35389.
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"created_at\" timestamp NULL DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
