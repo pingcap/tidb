@@ -193,13 +193,13 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 		p.planCost += childCost
 	}
 
+	// to keep compatible with the previous cost implementation, re-calculate table-scan cost by using index stats-count again (see copTask.finishIndexPlan).
+	// TODO: amend table-side cost here later
+	var tmp PhysicalPlan
+	for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
+	}
+	ts := tmp.(*PhysicalTableScan)
 	if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
-		// to keep compatible with the previous cost implementation, re-calculate table-scan cost by using index stats-count again (see copTask.finishIndexPlan).
-		// TODO: amend table-side cost here later
-		var tmp PhysicalPlan
-		for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
-		}
-		ts := tmp.(*PhysicalTableScan)
 		tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
 		if err != nil {
 			return 0, err
@@ -226,7 +226,7 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
 		// accumulate the real double-read cost: numDoubleReadTasks * seekFactor
 		numDoubleReadTasks := p.estNumDoubleReadTasks(costFlag)
-		p.planCost += numDoubleReadTasks * p.ctx.GetSessionVars().GetSeekFactor(nil)
+		p.planCost += numDoubleReadTasks * p.ctx.GetSessionVars().GetSeekFactor(ts.Table)
 	}
 
 	// consider concurrency
