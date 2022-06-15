@@ -109,7 +109,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			proxyJob := cloneFromSubJob(job, sub)
 			ver, err = w.runDDLJob(d, t, proxyJob)
 			mergeBackToSubJob(proxyJob, sub)
-			if err != nil {
+			if err != nil || proxyJob.Error != nil {
 				for j := i - 1; j >= 0; j-- {
 					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
 				}
@@ -244,6 +244,13 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		info.AddIndexes = append(info.AddIndexes, indexName)
 		for _, indexPartSpecification := range indexPartSpecifications {
 			info.RelativeColumns = append(info.RelativeColumns, indexPartSpecification.Column.Name)
+		}
+		if hiddenCols, ok := job.Args[4].([]*model.ColumnInfo); ok {
+			for _, c := range hiddenCols {
+				for depColName, _ := range c.Dependences {
+					info.RelativeColumns = append(info.RelativeColumns, model.NewCIStr(depColName))
+				}
+			}
 		}
 	case model.ActionRenameIndex:
 		from := job.Args[0].(model.CIStr)
