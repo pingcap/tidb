@@ -1045,6 +1045,8 @@ func TestCTEMergeHint(t *testing.T) {
 	tk.MustExec("create table te(c int)")
 	tk.MustExec("insert into tc values (1), (5), (10), (15), (20), (30), (50);")
 	tk.MustExec("insert into te values (1), (5), (10), (25), (40), (60), (100);")
+	tk.MustExec("analyze table tc;")
+	tk.MustExec("analyze table te;")
 
 	var (
 		input  []string
