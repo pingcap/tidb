@@ -153,7 +153,9 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
 	)
 	dur := task.End(zap.ErrorLevel, err)
-	metric.ChecksumSecondsHistogram.Observe(dur.Seconds())
+	if m, ok := metric.FromContext(ctx); ok {
+		m.ChecksumSecondsHistogram.Observe(dur.Seconds())
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -173,7 +175,9 @@ func DoChecksum(ctx context.Context, table *checkpoints.TidbTableInfo) (*RemoteC
 
 	cs, err := manager.Checksum(ctx, table)
 	dur := task.End(zap.ErrorLevel, err)
-	metric.ChecksumSecondsHistogram.Observe(dur.Seconds())
+	if m, ok := metric.FromContext(ctx); ok {
+		m.ChecksumSecondsHistogram.Observe(dur.Seconds())
+	}
 
 	return cs, err
 }

@@ -365,7 +365,7 @@ func SplitLargeFile(
 		if err != nil {
 			return 0, nil, nil, err
 		}
-		parser, err := NewCSVParser(&cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, true, charsetConvertor)
+		parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, true, charsetConvertor)
 		if err != nil {
 			return 0, nil, nil, err
 		}
@@ -392,7 +392,7 @@ func SplitLargeFile(
 			if err != nil {
 				return 0, nil, nil, err
 			}
-			parser, err := NewCSVParser(&cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false, charsetConvertor)
+			parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false, charsetConvertor)
 			if err != nil {
 				return 0, nil, nil, err
 			}
