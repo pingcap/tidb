@@ -1623,8 +1623,6 @@ func TestMathBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("10"))
 	result = tk.MustQuery("SELECT CONV(0b10, 16, 8)")
 	result.Check(testkit.Rows("2"))
-	//conv is compatible with mysql when empty string(#34994)
-	tk.MustQuery("SELECT CONV('', 16, 8)").Check(testkit.Rows("<nil>"))
 	tk.MustExec("drop table if exists bit")
 	tk.MustExec("create table bit(b bit(10))")
 	tk.MustExec(`INSERT INTO bit (b) VALUES
