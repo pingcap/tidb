@@ -187,6 +187,10 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
 			optimizeForNotFetchingLatestTS = true
 		}
+	case *plannercore.PhysicalSelection:
+		if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
+			optimizeForNotFetchingLatestTS = true
+		}
 	case *plannercore.Update:
 		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
 			optimizeForNotFetchingLatestTS = true
@@ -201,6 +205,7 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		}
 	case *plannercore.PointGetPlan, *plannercore.BatchPointGetPlan:
 		optimizeForNotFetchingLatestTS = true
+
 	}
 
 	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS

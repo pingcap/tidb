@@ -455,7 +455,7 @@ var errorsInInsert = []string{
 	"errDuplicateKey",
 }
 
-func TestErrorInInsertInRR(t *testing.T) {
+func TestConflictErrorInInsertInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -484,7 +484,7 @@ func TestErrorInInsertInRR(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
 
-func TestErrorInPointGetForUpdateInRR(t *testing.T) {
+func TestConflictErrorInPointGetForUpdateInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -500,7 +500,6 @@ func TestErrorInPointGetForUpdateInRR(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("update t set v = v + 10 where id = 1")
-
 	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 11"))
 	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
@@ -523,7 +522,7 @@ func TestErrorInPointGetForUpdateInRR(t *testing.T) {
 }
 
 // Delete should get the latest ts and thus does not incur write conflict
-func TestErrorInDeleteInRR(t *testing.T) {
+func TestConflictErrorInDeleteInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -539,7 +538,6 @@ func TestErrorInDeleteInRR(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("insert into t values (3, 1)")
-
 	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustExec("delete from t where v = 1")
 	_, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
@@ -562,7 +560,7 @@ func TestErrorInDeleteInRR(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
 
-func TestErrorInUpdateInRR(t *testing.T) {
+func TestConflictErrorInUpdateInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -578,7 +576,6 @@ func TestErrorInUpdateInRR(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("update t set v = v + 10")
-
 	se.SetValue(sessiontxn.AssertLockErr, nil)
 	tk.MustExec("update t set v = v + 10")
 	_, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
@@ -594,6 +591,32 @@ func TestErrorInUpdateInRR(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, records["errWriteConflict"], 1)
 	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 41", "2 22"))
+
+	tk.MustExec("rollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
+}
+
+func TestConflictErrorInOtherQueryContainingPointGet(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustQuery("select * from t where id=1 and v > 1 for update").Check(testkit.Rows("1 11"))
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["errWriteConflict"], 1)
 
 	tk.MustExec("rollback")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
