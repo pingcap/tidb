@@ -3344,23 +3344,25 @@ func TestEvictedColumnLoadedStatus(t *testing.T) {
 	})
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	dom.StatsHandle().SetLease(0)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10))")
+	tk.MustExec("create table t(a int)")
 	tk.MustExec("analyze table test.t")
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
 	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
 	for _, col := range tblStats.Columns {
-		require.True(t, col.IsLoaded())
+		require.True(t, col.WasLoaded())
 	}
 
 	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
 	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
 	for _, col := range tblStats.Columns {
-		require.False(t, col.IsLoaded())
+		require.True(t, col.WasLoaded())
+		require.True(t, col.IsCMSEvicting())
 	}
 }
 

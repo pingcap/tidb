@@ -1057,28 +1057,8 @@ type Column struct {
 	LastAnalyzePos types.Datum
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 
-	// Loaded means the statistics has been directly loaded from storage or json. (including the histogram, the topn
-	// and the cm sketch. In some tests, some of them are loaded, and we still set loaded is true to keep test simple.)
-	// Those three parts of a Column is loaded lazily. It will only be loaded after trying to use them.
-	// Note: Currently please use Column.IsLoaded() to check if it's loaded.
-	Loaded bool
-}
-
-// IsLoaded is a wrap around c.Loaded.
-func (c *Column) IsLoaded() bool {
-	return c.Loaded
-}
-
-// IsNecessaryLoaded indicates whether the necessary statistics is loaded.
-// If `IsLoaded` returns true, we will directly return due to they are directly loaded from outer storage and
-// keep the tests still correct.
-// If `IsLoaded` returns false, we will check whether histogram and topn are both loaded as the statistics need
-// at least one of them to do optimize.
-func (c *Column) IsNecessaryLoaded() bool {
-	if c.IsLoaded() {
-		return true
-	}
-	return c.notNullCount() > 0
+	// ColLoadedStatus indicates the status of column statistics
+	ColLoadedStatus
 }
 
 func (c *Column) String() string {
@@ -1149,7 +1129,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
 			return true
 		}
-		if !c.IsLoaded() && stmtctx != nil {
+		if c.IsNeedLoaded() && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
@@ -1168,7 +1148,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 
 // IsHistNeeded checks if this column needs histogram to be loaded
 func (c *Column) IsHistNeeded(collPseudo bool) bool {
-	return (!collPseudo || !c.NotAccurate()) && !c.IsLoaded()
+	return (!collPseudo || !c.NotAccurate()) && c.IsNeedLoaded()
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
@@ -1335,9 +1315,9 @@ func (c *Column) ItemID() int64 {
 // DropEvicted implements TableCacheItem
 // DropEvicted drops evicted structures
 func (c *Column) DropEvicted() {
-	if c.StatsVer < Version2 {
+	if c.StatsVer < Version2 && c.WasLoaded() {
 		c.CMSketch = nil
-		c.Loaded = false
+		c.cmsEvicting = true
 	}
 }
 
@@ -1786,7 +1766,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 				zap.Error(err))
 			continue
 		}
-		newCol.Loaded = oldCol.Loaded
+		newCol.ColLoadedStatus = oldCol.ColLoadedStatus
 		newColl.Columns[node.ID] = newCol
 	}
 	for id, idx := range coll.Indices {
@@ -2293,4 +2273,45 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
 	}
 	return globalHist, nil
+}
+
+// ColLoadedStatus indicates the status of column statistics
+type ColLoadedStatus struct {
+	wasLoaded         bool
+	cmsEvicting       bool
+	topnEvicting      bool
+	histogramEvicting bool
+}
+
+// NewColFullLoadStatus returns the status that the column fully loaded
+func NewColFullLoadStatus() ColLoadedStatus {
+	return ColLoadedStatus{
+		wasLoaded: true,
+	}
+}
+
+// WasLoaded indicates whether the column's statistics was loaded from storage before.
+// Note that `wasLoaded` only can be set in initializing
+func (s ColLoadedStatus) WasLoaded() bool {
+	return s.wasLoaded
+}
+
+// IsNeedLoaded indicates whether it needs load statistics during LoadNeededHistograms or sync stats
+// If the column was loaded and any statistics of it is evicting, it also needs re-load statistics.
+func (s ColLoadedStatus) IsNeedLoaded() bool {
+	if s.wasLoaded {
+		return s.cmsEvicting || s.topnEvicting || s.histogramEvicting
+	}
+	return true
+}
+
+// IsNecessaryLoaded indicates whether the necessary statistics is loaded.
+// If the column was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
+func (s ColLoadedStatus) IsNecessaryLoaded() bool {
+	return s.wasLoaded && (!s.topnEvicting || !s.histogramEvicting)
+}
+
+// IsCMSEvicting indicates whether the cms is during evicting
+func (s ColLoadedStatus) IsCMSEvicting() bool {
+	return s.wasLoaded && s.cmsEvicting
 }
