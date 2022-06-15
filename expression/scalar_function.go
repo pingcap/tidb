@@ -233,7 +233,12 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		Function: f,
 	}
 	if fold == 1 {
-		return FoldConstant(sf), nil
+		// try update collacte for foldable function
+		newsf := FoldConstant(sf)
+		if scalarFunc, ok := newsf.(*ScalarFunction); ok {
+			TryUpdateCollate(scalarFunc)
+		}
+		return newsf, nil
 	} else if fold == -1 {
 		// try to fold constants, and return the original function if errors/warnings occur
 		sc := ctx.GetSessionVars().StmtCtx
@@ -243,6 +248,10 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		if afterWarns > beforeWarns {
 			sc.TruncateWarnings(int(beforeWarns))
 			return sf, nil
+		}
+		// update collacte for foldable function
+		if scalarFunc, ok := newSf.(*ScalarFunction); ok {
+			TryUpdateCollate(scalarFunc)
 		}
 		return newSf, nil
 	}

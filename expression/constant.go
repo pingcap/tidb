@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -449,4 +450,62 @@ func (c *Constant) Coercibility() Coercibility {
 		c.SetCoercibility(deriveCoercibilityForConstant(c))
 	}
 	return c.collationInfo.Coercibility()
+}
+
+// Update collate based on priority #35149
+func TryUpdateCollate(eq *ScalarFunction) {
+
+	if eq.FuncName.L != ast.EQ {
+		return
+	}
+	sucess := ExpressionUpdateCollate(eq, true)
+	if !sucess {
+		ExpressionUpdateCollate(eq, false)
+	}
+
+}
+
+func ExpressionUpdateCollate(eq *ScalarFunction, colIsLeft bool) bool {
+	var col *Column
+	var con *Constant
+	colOk := false
+	conOk := false
+	if colIsLeft {
+		col, colOk = eq.GetArgs()[0].(*Column)
+	} else {
+		col, colOk = eq.GetArgs()[1].(*Column)
+	}
+	if !colOk {
+		return false
+	}
+	if !col.HasCoercibility() {
+		return true
+	}
+	if colIsLeft {
+		con, conOk = eq.GetArgs()[1].(*Constant)
+	} else {
+		con, conOk = eq.GetArgs()[0].(*Constant)
+	}
+	if !conOk {
+		return false
+	}
+	if !con.HasCoercibility() {
+		return true
+	}
+
+	if col.GetType().GetCharset() != con.GetType().GetCharset() {
+		// utf8 is a subset of utf8mb4
+		if con.GetType().GetCharset() == "utf8" && col.GetType().GetCharset() == "utf8mb4" {
+			if col.Coercibility() < con.Coercibility() {
+				con.GetType().SetCharset(col.GetType().GetCharset())
+				con.GetType().SetCollate(col.GetType().GetCollate())
+			}
+		}
+		return true
+	}
+
+	if col.Coercibility() < con.Coercibility() {
+		con.GetType().SetCollate(col.GetType().GetCollate())
+	}
+	return true
 }
