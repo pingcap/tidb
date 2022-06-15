@@ -1082,15 +1082,6 @@ func (c *Column) IsNecessaryLoaded() bool {
 	return c.IsHistogramLoaded() || c.IsTopNLoaded()
 }
 
-// IsCMSketchLoaded indicates whether the cmsketch is loaded
-// Note that as we don't need cmsketch in version2, so it is considered as loaded in version2.
-func (c *Column) IsCMSketchLoaded() bool {
-	if c.StatsVer >= Version2 {
-		return true
-	}
-	return c.CMSketch != nil
-}
-
 // IsTopNLoaded indicates whether the topn is loaded
 func (c *Column) IsTopNLoaded() bool {
 	return c.TopN != nil && c.TopN.TotalCount() > 0
