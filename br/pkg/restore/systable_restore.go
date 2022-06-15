@@ -5,6 +5,7 @@ package restore
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -131,7 +132,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 	for _, table := range originDatabase.Tables {
 		tableName := table.Info.Name
 		if f.MatchTable(sysDB, tableName.O) {
-			if err := rc.replaceTemporaryTableToSystable(ctx, tableName.L, db); err != nil {
+			if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, db); err != nil {
 				log.Warn("error during merging temporary tables into system tables",
 					logutil.ShortError(err),
 					zap.Stringer("table", tableName),
@@ -196,7 +197,8 @@ func (rc *Client) afterSystemTablesReplaced(tables []string) error {
 }
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
-func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, tableName string, db *database) error {
+func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+	tableName := ti.Name.L
 	execSQL := func(sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.se.Execute(ctx, sql); err != nil {
@@ -245,8 +247,15 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, tableName
 		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
-		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s SELECT * FROM %s;",
+		// target column order may different with source cluster
+		columnNames := make([]string, 0, len(ti.Columns))
+		for _, col := range ti.Columns {
+			columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+		}
+		colListStr := strings.Join(columnNames, ",")
+		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s;",
 			utils.EncloseDBAndTable(db.Name.L, tableName),
+			colListStr, colListStr,
 			utils.EncloseDBAndTable(db.TemporaryName.L, tableName))
 		return execSQL(replaceIntoSQL)
 	}

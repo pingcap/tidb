@@ -938,11 +938,25 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 				"column count mismatch, table: %s, col in cluster: %d, col in backup: %d",
 				table.Info.Name.O, len(ti.Columns), len(backupTi.Columns))
 		}
-		// order should be the same and type be compatible
+		backupColMap := make(map[string]*model.ColumnInfo)
+		for i := range backupTi.Columns {
+			col := backupTi.Columns[i]
+			backupColMap[col.Name.L] = col
+		}
+		// order can be different but type must compatible
 		for i := range ti.Columns {
-			backupCol := backupTi.Columns[i]
 			col := ti.Columns[i]
-			if col.Name != backupCol.Name || !utils.IsTypeCompatible(backupCol.FieldType, col.FieldType) {
+			backupCol := backupColMap[col.Name.L]
+			if backupCol == nil {
+				log.Error("missing column in backup data",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"missing column in backup data, table: %s, col: %s %s",
+					table.Info.Name.O,
+					col.Name, col.FieldType.String())
+			}
+			if !utils.IsTypeCompatible(backupCol.FieldType, col.FieldType) {
 				log.Error("incompatible column",
 					zap.Stringer("table", table.Info.Name),
 					zap.String("col in cluster", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())),
