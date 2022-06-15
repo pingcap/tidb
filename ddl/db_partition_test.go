@@ -1283,15 +1283,15 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	require.Equal(t, "id", part.Columns[0].O)
 	require.Equal(t, "name", part.Columns[1].O)
 	require.Len(t, part.Definitions, 5)
-	require.Equal(t, [][]string{{"1", `"a"`}, {"2", `"b"`}}, part.Definitions[0].InValues)
+	require.Equal(t, [][]string{{"1", `'a'`}, {"2", `'b'`}}, part.Definitions[0].InValues)
 	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
-	require.Equal(t, [][]string{{"3", `"a"`}, {"4", `"b"`}}, part.Definitions[1].InValues)
+	require.Equal(t, [][]string{{"3", `'a'`}, {"4", `'b'`}}, part.Definitions[1].InValues)
 	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
 	require.Equal(t, [][]string{{"5", `NULL`}}, part.Definitions[2].InValues)
 	require.Equal(t, model.NewCIStr("p3"), part.Definitions[2].Name)
-	require.Equal(t, [][]string{{"7", `"a"`}}, part.Definitions[3].InValues)
+	require.Equal(t, [][]string{{"7", `'a'`}}, part.Definitions[3].InValues)
 	require.Equal(t, model.NewCIStr("p4"), part.Definitions[3].Name)
-	require.Equal(t, [][]string{{"8", `"a"`}}, part.Definitions[4].InValues)
+	require.Equal(t, [][]string{{"8", `'a'`}}, part.Definitions[4].InValues)
 	require.Equal(t, model.NewCIStr("p5"), part.Definitions[4].Name)
 
 	errorCases := []struct {
@@ -1387,9 +1387,9 @@ func TestAlterTableDropPartitionByListColumns(t *testing.T) {
 	require.Equal(t, "id", part.Columns[0].O)
 	require.Equal(t, "name", part.Columns[1].O)
 	require.Len(t, part.Definitions, 2)
-	require.Equal(t, [][]string{{"1", `"a"`}, {"2", `"b"`}}, part.Definitions[0].InValues)
+	require.Equal(t, [][]string{{"1", `'a'`}, {"2", `'b'`}}, part.Definitions[0].InValues)
 	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
-	require.Equal(t, [][]string{{"5", `"a"`}, {"NULL", "NULL"}}, part.Definitions[1].InValues)
+	require.Equal(t, [][]string{{"5", `'a'`}, {"NULL", "NULL"}}, part.Definitions[1].InValues)
 	require.Equal(t, model.NewCIStr("p3"), part.Definitions[1].Name)
 
 	sql := "alter table t drop partition p10;"
@@ -1454,7 +1454,7 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	part := tbl.Meta().Partition
 	require.True(t, part.Type == model.PartitionTypeList)
 	require.Len(t, part.Definitions, 3)
-	require.Equal(t, [][]string{{"3", `"a"`}, {"4", `"b"`}}, part.Definitions[1].InValues)
+	require.Equal(t, [][]string{{"3", `'a'`}, {"4", `'b'`}}, part.Definitions[1].InValues)
 	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
 	require.False(t, part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID)
 
