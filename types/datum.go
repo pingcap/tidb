@@ -366,6 +366,7 @@ func (d *Datum) GetRaw() []byte {
 }
 
 // SetAutoID set the auto increment ID according to its int flag.
+// Don't use it directly, useless wrapped with setDatumAutoIDAndCast.
 func (d *Datum) SetAutoID(id int64, flag uint) {
 	if mysql.HasUnsignedFlag(flag) {
 		d.SetUint64(uint64(id))
