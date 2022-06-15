@@ -419,10 +419,28 @@ func checkPrimaryKeyNotNull(d *ddlCtx, w *worker, sqlMode mysql.SQLMode, t *meta
 	return nil, err
 }
 
-func updateHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, state model.SchemaState) {
+func updateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+	hiddenColOffset := make(map[int]struct{}, 0)
 	for _, col := range idxInfo.Columns {
 		if tblInfo.Columns[col.Offset].Hidden {
-			tblInfo.Columns[col.Offset].State = state
+			hiddenColOffset[col.Offset] = struct{}{}
+		}
+	}
+	if len(hiddenColOffset) == 0 {
+		return
+	}
+	// Find the first non-public column.
+	firstNonPublicPos := len(tblInfo.Columns) - 1
+	for i, c := range tblInfo.Columns {
+		if c.State != model.StatePublic {
+			firstNonPublicPos = i
+			break
+		}
+	}
+	for _, col := range idxInfo.Columns {
+		tblInfo.Columns[col.Offset].State = model.StatePublic
+		if _, needMove := hiddenColOffset[col.Offset]; needMove {
+			tblInfo.MoveColumnInfo(col.Offset, firstNonPublicPos)
 		}
 	}
 }
@@ -550,7 +568,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateNone:
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
-		updateHiddenColumns(tblInfo, indexInfo, model.StatePublic)
+		updateHiddenColumnsToPublic(tblInfo, indexInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err

@@ -1079,7 +1079,7 @@ func TestMultiSchemaChangeAlterIndexVisibility(t *testing.T) {
 }
 
 func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -1087,7 +1087,36 @@ func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values (1, 2), (2, 1);")
 	tk.MustGetErrCode("alter table t drop column a, add unique index idx((a + b));", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t add column c int, change column a d bigint, add index idx((a + a))", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add column c int, change column a d bigint, add index idx((a + a));", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add column c int default 10, add index idx1((a + b)), add unique index idx2((a + b));",
+		errno.ErrDupEntry)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2", "2 1"))
+
+	originHook := dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: dom}
+	var checkErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
+		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteOnly {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test;")
+			_, checkErr = tk2.Exec("update t set a = 3 where a = 1;")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk2.Exec("insert into t values (10, 10);")
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add column c int default 10, add index idx1((a + b)), add unique index idx2((a + b));")
+	require.NoError(t, checkErr)
+	dom.DDL().SetHook(originHook)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 2), (2, 1);")
+	tk.MustExec("alter table t add column c int default 10, add index idx1((a + b)), add unique index idx2((a*10 + b));")
+	tk.MustQuery("select * from t use index(idx1, idx2);").Check(testkit.Rows("1 2 10", "2 1 10"))
 }
 
 func composeHooks(dom *domain.Domain, cbs ...ddl.Callback) ddl.Callback {
