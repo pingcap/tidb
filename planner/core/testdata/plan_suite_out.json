@@ -1659,7 +1659,7 @@
       "  └─Selection 0.80 root  lt(Column#3, 100)",
       "    └─CTETable 1.00 root  Scan on CTE"
     ],
-    "Warning": null
+    "Warning": "[parser:1064]Optimizer hint syntax error at line 1 column 70 near \"\" "
   },
   {
     "SQL": "with cte1 as (select * from tc), cte2 as (with cte3 as (select /*+ MERGE() */ * from te) ,cte4 as (select * from tc) select * from cte3,cte4) select * from cte2;",
