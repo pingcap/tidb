@@ -219,7 +219,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
-		require.NoError(t, sessiontxn.WarmUpTxn(tk.Session()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
 		// extract FD to every OP
 		p, err := builder.Build(ctx, stmt)
@@ -316,7 +316,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
-		require.NoError(t, sessiontxn.WarmUpTxn(tk.Session()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
 		// extract FD to every OP
 		p, err := builder.Build(ctx, stmt)
@@ -365,7 +365,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
-		require.NoError(t, sessiontxn.WarmUpTxn(tk.Session()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
 		// extract FD to every OP
 		p, err := builder.Build(ctx, stmt)

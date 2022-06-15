@@ -253,7 +253,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567895,
-	})
+	}, nil)
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
@@ -280,7 +280,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled() {
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567896,
-	})
+	}, nil)
 	require.NoError(s.T(), err)
 
 	go cancel()
@@ -298,7 +298,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError() {
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567897,
-	})
+	}, nil)
 	require.NoError(s.T(), err)
 
 	// close the chunk so reading it will result in the "file already closed" error.
@@ -318,7 +318,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567898,
-	})
+	}, nil)
 	require.NoError(s.T(), err)
 
 	dir := s.T().TempDir()
@@ -334,7 +334,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	reader, err := store.Open(ctx, fileName)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 1, "io")
-	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
 	require.NoError(s.T(), err)
 	s.cr.parser = p
 
@@ -375,7 +375,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored() {
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567898,
-	})
+	}, nil)
 	require.NoError(s.T(), err)
 
 	go func() {
@@ -408,7 +408,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	reader, err := store.Open(ctx, fileName)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
 	require.NoError(s.T(), err)
 
 	err = s.cr.parser.Close()
@@ -502,7 +502,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	reader, err := store.Open(ctx, fileName)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
 	require.NoError(s.T(), err)
 
 	err = s.cr.parser.Close()
