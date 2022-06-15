@@ -189,16 +189,6 @@ func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context) error {
 	return nil
 }
 
-//// todo: remove
-//// Advise is used to give advice to provider
-//func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
-//	switch tp {
-//	case sessiontxn.AdviceWarmUp:
-//		p.Sctx.PrepareTSFuture(p.Ctx)
-//	}
-//	return nil
-//}
-
 // activeTxn actives the txn
 func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
 	if p.isTxnActive {
