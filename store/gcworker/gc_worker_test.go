@@ -97,16 +97,18 @@ type mockGCWorkerSuite struct {
 }
 
 func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite, clean func()) {
-	s = new(mockGCWorkerSuite)
+	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore)
+}
 
+func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType) (s *mockGCWorkerSuite, clean func()) {
+	s = new(mockGCWorkerSuite)
 	hijackClient := func(client tikv.Client) tikv.Client {
 		s.client = &mockGCWorkerClient{Client: client}
 		client = s.client
 		return client
 	}
-
 	opts := []mockstore.MockTiKVStoreOption{
-		mockstore.WithStoreType(mockstore.MockTiKV),
+		mockstore.WithStoreType(storeType),
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
@@ -943,7 +945,14 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 }
 
 func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
+	// TODO: Update the test code.
+	// This test rely on the obsolete mock tikv, but mock tikv does not implement paging.
+	// So use this failpoint to force non-paging protocol.
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/DisablePaging", `return`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/DisablePaging"))
+	}()
+	s, clean := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV)
 	defer clean()
 
 	var (
