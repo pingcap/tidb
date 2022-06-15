@@ -58,6 +58,7 @@ type mppExecBuilder struct {
 	dagCtx   *dagContext
 	counts   []int64
 	ndvs     []int64
+	paging   *coprocessor.KeyRange
 }
 
 func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, error) {
@@ -73,6 +74,7 @@ func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, 
 		counts:      b.counts,
 		ndvs:        b.ndvs,
 		desc:        pb.Desc,
+		paging:      b.paging,
 	}
 	if b.dagCtx != nil {
 		ts.lockStore = b.dagCtx.lockStore
@@ -180,6 +182,7 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		hdlStatus:       hdlStatus,
 		desc:            pb.Desc,
 		physTblIDColIdx: physTblIDColIdx,
+		paging:          b.paging,
 	}
 	return idxScan, nil
 }

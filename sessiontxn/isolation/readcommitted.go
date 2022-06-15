@@ -107,28 +107,6 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	return p.prepareStmt(false)
 }
 
-// Advise is used to give advice to provider
-func (p *PessimisticRCTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
-	switch tp {
-	case sessiontxn.AdviceWarmUp:
-		return p.warmUp()
-	default:
-		return p.baseTxnContextProvider.Advise(tp)
-	}
-}
-
-func (p *PessimisticRCTxnContextProvider) warmUp() error {
-	if p.isTidbSnapshotEnabled() {
-		return nil
-	}
-
-	if err := p.prepareTxn(); err != nil {
-		return err
-	}
-	p.prepareStmtTS()
-	return nil
-}
-
 func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	if p.stmtTSFuture != nil {
 		return
@@ -215,4 +193,17 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 	}
 
 	return sessiontxn.ErrorAction(lockErr)
+}
+
+// AdviseWarmup provides warmup for inner state
+func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
+	if p.isTidbSnapshotEnabled() {
+		return nil
+	}
+
+	if err := p.prepareTxn(); err != nil {
+		return err
+	}
+	p.prepareStmtTS()
+	return nil
 }
