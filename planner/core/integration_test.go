@@ -177,6 +177,9 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
 	tk.MustExec("analyze table tbl")
 
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -478,6 +481,9 @@ func TestVerboseExplain(t *testing.T) {
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	tk.MustExec("analyze table t3")
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -3678,6 +3684,10 @@ func TestExtendedStatsSwitch(t *testing.T) {
 	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
 		"1.000000 1",
 	))
+
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	// Estimated index scan count is 4 using extended stats.
 	tk.MustQuery("explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1").Check(testkit.Rows(
 		"Limit 1.00 root  offset:0, count:1",
@@ -4547,6 +4557,9 @@ func TestLimitIndexLookUpKeepOrder(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a,b,c));")
 
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -4744,6 +4757,9 @@ func TestMultiColMaxOneRow(t *testing.T) {
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a,b))")
+
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5394,6 +5410,9 @@ func TestIndexJoinCost(t *testing.T) {
 	tk.MustExec(`create table t_inner_pk (a int primary key)`)
 	tk.MustExec(`create table t_inner_idx (a int, b int, key(a))`)
 
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_pk) */ * from t_outer, t_inner_pk where t_outer.a=t_inner_pk.a`).Check(testkit.Rows( // IndexJoin with inner TableScan
 		`IndexJoin_11 12487.50 206368.09 root  inner join, inner:TableReader_8, outer key:test.t_outer.a, inner key:test.t_inner_pk.a, equal cond:eq(test.t_outer.a, test.t_inner_pk.a)`,
 		`├─TableReader_18(Build) 9990.00 36412.58 root  data:Selection_17`,
@@ -5448,6 +5467,9 @@ func TestHeuristicIndexSelection(t *testing.T) {
 	tk.MustExec("create table t3(a bigint, b varchar(255), c bigint, primary key(a, b) clustered)")
 	tk.MustExec("create table t4(a bigint, b varchar(255), c bigint, primary key(a, b) nonclustered)")
 
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	var input []string
 	var output []struct {
 		SQL      string
@@ -5474,6 +5496,9 @@ func TestOutputSkylinePruningInfo(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	var input []string
 	var output []struct {
@@ -5505,6 +5530,11 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 	do, _ := session.GetDomain(store)
 	require.Nil(t, do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table t")
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5543,6 +5573,9 @@ func TestIssue27083(t *testing.T) {
 	do, _ := session.GetDomain(store)
 	require.Nil(t, do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table t")
+
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {

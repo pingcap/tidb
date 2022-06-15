@@ -60,7 +60,6 @@ var (
 
 var (
 	_ SelectResult = (*selectResult)(nil)
-	_ SelectResult = (*streamResult)(nil)
 	_ SelectResult = (*serialSelectResults)(nil)
 )
 
@@ -140,7 +139,6 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
-	encodeType   tipb.EncodeType
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
@@ -269,13 +267,14 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 	// TODO(Shenghui Wu): add metrics
-	switch r.selectResp.GetEncodeType() {
+	encodeType := r.selectResp.GetEncodeType()
+	switch encodeType {
 	case tipb.EncodeType_TypeDefault:
 		return r.readFromDefault(ctx, chk)
 	case tipb.EncodeType_TypeChunk:
 		return r.readFromChunk(ctx, chk)
 	}
-	return errors.Errorf("unsupported encode type:%v", r.encodeType)
+	return errors.Errorf("unsupported encode type:%v", encodeType)
 }
 
 // NextRaw returns the next raw partial result.
