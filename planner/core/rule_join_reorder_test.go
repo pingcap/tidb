@@ -150,13 +150,6 @@ func TestJoinOrderHint(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 There are no matching table names for (t1) in optimizer hint /*+ LEADING(t2, t1) */. Maybe you can use the table alias name",
 		"Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"))
 
-	// conflict between table names
-	tk.MustExec("select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
-
-	tk.MustExec("select /*+ leading(t1, t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
-
 	// table name in leading hint cross query block
 	// Todo: Can not handle this case yet. Because when we extract the join group, it will get the join group {t1, t2, t3}.
 	// So the table 't4' can not be used.
