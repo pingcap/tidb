@@ -72,8 +72,8 @@ check_contains "count(*): 2"
 # user2 can select on db1 but not db2
 run_sql_as user2 "select count(*) from db1.t1"
 check_contains "count(*): 2"
-run_sql_as user2 "select count(*) from db2.t1"
-check_contains "SELECT command denied to user" || true
+run_sql_as user2 "select count(*) from db2.t1" || true
+check_contains "SELECT command denied to user"
 # user3 can only query db1.t1 using ssl
 run_sql_as user3 "select count(*) from db1.t1" --ssl-mode=DISABLED || true
 check_contains "Access denied for user"
