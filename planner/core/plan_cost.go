@@ -225,7 +225,8 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 
 	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
 		// accumulate the real double-read cost: numDoubleReadTasks * seekFactor
-
+		numDoubleReadTasks := p.estNumDoubleReadTasks(costFlag)
+		p.planCost += numDoubleReadTasks * p.ctx.GetSessionVars().GetSeekFactor(nil)
 	}
 
 	// consider concurrency
@@ -239,11 +240,12 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 
 func (p *PhysicalIndexLookUpReader) estNumDoubleReadTasks(costFlag uint64) float64 {
 	doubleReadRows := p.indexPlan.StatsCount()
-	// TODO: estimate numLookupTasks more accurately in the future, for example,
-	// 	consider the back-off strategy on Executor and correlation between this index and PK
 	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
-	magicDistRatio := 40.0 // indicate how many requests corresponding to a batch
-	return (doubleReadRows / batchSize) * magicDistRatio
+	magicRatio := 40.0 // indicate how many requests corresponding to a batch
+	// TODO: consider correlation between index and PK to make it more accurate.
+	numDoubleReadTasks := (doubleReadRows / batchSize) * magicRatio
+	// use Float64 instead of Int like `Ceil(numDoubleReadTasks)` to make the cost continuous.
+	return numDoubleReadTasks
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
