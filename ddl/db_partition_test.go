@@ -3624,10 +3624,53 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	defer tk.MustExec("drop database partitionWithAnsiQuotes")
 	tk.MustExec("use partitionWithAnsiQuotes")
 	tk.MustExec("SET SESSION sql_mode='ANSI_QUOTES'")
-	tk.MustExec(`create table t1(created_at datetime) PARTITION BY RANGE COLUMNS(created_at) (
+
+	// Test single quotes.
+	tk.MustExec(`create table t(created_at datetime) PARTITION BY RANGE COLUMNS(created_at) (
 		PARTITION p0 VALUES LESS THAN ('2021-12-01 00:00:00'),
 		PARTITION p1 VALUES LESS THAN ('2022-01-01 00:00:00'))`)
-	tk.MustExec(`create table t2(created_at timestamp) PARTITION BY RANGE (unix_timestamp(created_at)) (
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"created_at\" datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(\"created_at\")\n" +
+		"(PARTITION \"p0\" VALUES LESS THAN ('2021-12-01 00:00:00'),\n" +
+		" PARTITION \"p1\" VALUES LESS THAN ('2022-01-01 00:00:00'))"))
+	tk.MustExec("drop table t")
+
+	// Test expression with single quotes.
+	tk.MustExec(`create table t(created_at timestamp) PARTITION BY RANGE (unix_timestamp(created_at)) (
 		PARTITION p0 VALUES LESS THAN (unix_timestamp('2021-12-01 00:00:00')),
 		PARTITION p1 VALUES LESS THAN (unix_timestamp('2022-01-01 00:00:00')))`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"created_at\" timestamp NULL DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (UNIX_TIMESTAMP(`created_at`))\n" +
+		"(PARTITION \"p0\" VALUES LESS THAN (1638288000),\n" +
+		" PARTITION \"p1\" VALUES LESS THAN (1640966400))"))
+	tk.MustExec("drop table t")
+
+	// Test values in.
+	tk.MustExec(`CREATE TABLE t (a int DEFAULT NULL, b varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a,b) (
+		PARTITION p0 VALUES IN ((1,'1'),(2,'2')),
+ 		PARTITION p1 VALUES IN ((10,'10'),(11,'11')))`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" int(11) DEFAULT NULL,\n" +
+		"  \"b\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(\"a\",\"b\")\n" +
+		"(PARTITION \"p0\" VALUES IN ((1,'1'),(2,'2')),\n" +
+		" PARTITION \"p1\" VALUES IN ((10,'10'),(11,'11')))"))
+	tk.MustExec("drop table t")
+
+	// Test escaped characters in single quotes.
+	tk.MustExec(`CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
+		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
+ 		PARTITION p1 VALUES IN ('""','\\','\\\'\t\n'))`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(\"a\")\n" +
+		"(PARTITION \"p0\" VALUES IN ('''','''''',''''''''),\n" +
+		" PARTITION \"p1\" VALUES IN ('\"\"','\\\\','\\\\''\t\n'))"))
+	tk.MustExec("drop table t")
 }

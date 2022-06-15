@@ -167,7 +167,8 @@ func (n *ValueExpr) Format(w io.Writer) {
 	case types.KindString, types.KindBytes:
 		// If sql_mode='ANSI_QUOTES', strings with double-quotes will be taken as an identifier.
 		// See #35281.
-		s = strings.Replace(n.GetString(), `'`, `''`, -1)
+		s = strings.ReplaceAll(n.GetString(), "\\", "\\\\")
+		s = strings.ReplaceAll(s, `'`, `''`)
 		s = fmt.Sprintf("'%s'", s)
 	case types.KindMysqlDecimal:
 		s = n.GetMysqlDecimal().String()
