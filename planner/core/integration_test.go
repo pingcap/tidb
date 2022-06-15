@@ -4865,10 +4865,8 @@ func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
 	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
 }
 
-func TestIssue33042(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testIntegrationSerialSuite) TestIssue33042(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int primary key, col1 int)")

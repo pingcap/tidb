@@ -1332,11 +1332,7 @@
           "└─IndexRangeScan 20.00 cop[tikv] table:tt, index:a(a) range:[10,10], [20,20], keep order:false, stats:pseudo"
         ],
         "Warnings": [
-<<<<<<< HEAD
           "Warning 1105 IndexMerge is inapplicable or disabled"
-=======
-          "Warning 1105 IndexMerge is inapplicable"
->>>>>>> 1287eab59... planner: outer merge join cannot keep the prop of its inner child (#33359)
         ]
       },
       {
@@ -1346,11 +1342,7 @@
           "└─IndexRangeScan 6666.67 cop[tikv] table:tt, index:a(a) range:[-inf,10), [15,15], (20,+inf], keep order:false, stats:pseudo"
         ],
         "Warnings": [
-<<<<<<< HEAD
           "Warning 1105 IndexMerge is inapplicable or disabled"
-=======
-          "Warning 1105 IndexMerge is inapplicable"
->>>>>>> 1287eab59... planner: outer merge join cannot keep the prop of its inner child (#33359)
         ]
       }
     ]
