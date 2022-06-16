@@ -803,7 +803,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			continue
 		}
 		// if we already know the range of the scan is empty, just return a TableDual
-		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
+		if len(path.Ranges) == 0 {
+			// We should uncache the tableDual plan.
+			if expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
+				ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+			}
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
 			cntPlan += 1
@@ -812,10 +816,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema() &&
-			// to avoid the over-optimized risk, do not generate PointGet for plan cache, for example,
-			// `pk>=$a and pk<=$b` can be optimized to a PointGet when `$a==$b`, but it can cause wrong results when `$a!=$b`.
-			!ds.ctx.GetSessionVars().StmtCtx.UseCache
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
+
+		if canConvertPointGet && expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
+			canConvertPointGet = ds.canConvertToPointGetForPlanCache(path)
+		}
+
 		if canConvertPointGet && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
 			canConvertPointGet = path.Index.Unique && !path.Index.HasPrefixIndex()
@@ -932,6 +938,27 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	return
+}
+
+func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bool {
+	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
+	// these assumptions may be broken after parameters change.
+	// So for safety, we narrow down the scope and just generate PointGet in some particular and simple scenarios.
+
+	// scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
+	if len(path.Ranges) > 0 && path.Ranges[0].Width() == len(path.AccessConds) {
+		for _, accessCond := range path.AccessConds {
+			f, ok := accessCond.(*expression.ScalarFunction)
+			if !ok {
+				return false
+			}
+			if f.FuncName.L != ast.EQ {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
@@ -1402,15 +1429,15 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 }
 
 // SplitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
-func SplitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var filterConds []expression.Expression
-	for i := len(conds) - 1; i >= 0; i-- {
+func SplitSelCondsWithVirtualColumn(conds []expression.Expression) (withoutVirt []expression.Expression, withVirt []expression.Expression) {
+	for i := range conds {
 		if expression.ContainVirtualColumn(conds[i : i+1]) {
-			filterConds = append(filterConds, conds[i])
-			conds = append(conds[:i], conds[i+1:]...)
+			withVirt = append(withVirt, conds[i])
+		} else {
+			withoutVirt = append(withoutVirt, conds[i])
 		}
 	}
-	return conds, filterConds
+	return withoutVirt, withVirt
 }
 
 func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.SortItem) bool {

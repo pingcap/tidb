@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 
@@ -94,6 +95,31 @@ func (r *testStorageSuite) TestGCS(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(list, Equals, "keykey1key2")
 	c.Assert(totalSize, Equals, int64(42))
+
+	// test 1003 files
+	totalSize = 0
+	for i := 0; i < 1000; i += 1 {
+		err = stg.WriteFile(ctx, fmt.Sprintf("f%d", i), []byte("data"))
+		c.Assert(err, IsNil)
+	}
+	filesSet := make(map[string]struct{}, 1003)
+	err = stg.WalkDir(ctx, nil, func(name string, size int64) error {
+		filesSet[name] = struct{}{}
+		totalSize += size
+		return nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(totalSize, Equals, int64(42+4000))
+	_, ok := filesSet["key"]
+	c.Assert(ok, IsTrue)
+	_, ok = filesSet["key1"]
+	c.Assert(ok, IsTrue)
+	_, ok = filesSet["key2"]
+	c.Assert(ok, IsTrue)
+	for i := 0; i < 1000; i += 1 {
+		_, ok = filesSet[fmt.Sprintf("f%d", i)]
+		c.Assert(ok, IsTrue)
+	}
 
 	efr, err := stg.Open(ctx, "key2")
 	c.Assert(err, IsNil)

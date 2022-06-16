@@ -57,7 +57,7 @@ func (r *testStorageSuite) TestCreateStorage(c *C) {
 	c.Assert(s3, NotNil)
 	c.Assert(s3.Bucket, Equals, "bucket2")
 	c.Assert(s3.Prefix, Equals, "prefix")
-	c.Assert(s3.Endpoint, Equals, "https://s3.example.com/")
+	c.Assert(s3.Endpoint, Equals, "https://s3.example.com")
 	c.Assert(s3.ForcePathStyle, IsFalse)
 
 	// nolint:lll

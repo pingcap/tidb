@@ -121,7 +121,6 @@ func RunLogRestore(c context.Context, g glue.Glue, cfg *LogRestoreConfig) error 
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
 	}
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return errors.Trace(err)
