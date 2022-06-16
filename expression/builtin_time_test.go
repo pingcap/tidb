@@ -936,6 +936,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	}
 
 	// This is a test for issue 7334
+<<<<<<< HEAD
 	du := newDateArighmeticalUtil()
 	resetStmtContext(s.ctx)
 	now, _, err := evalNowWithFsp(s.ctx, 0)
@@ -943,6 +944,15 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	res, _, err := du.add(s.ctx, now, "1", "MICROSECOND")
 	c.Assert(err, IsNil)
 	c.Assert(res.Fsp(), Equals, int8(6))
+=======
+	du := newDateArithmeticalUtil()
+	resetStmtContext(ctx)
+	now, _, err := evalNowWithFsp(ctx, 0)
+	require.NoError(t, err)
+	res, _, err := du.add(ctx, now, "1", "MICROSECOND", 6)
+	require.NoError(t, err)
+	require.Equal(t, 6, res.Fsp())
+>>>>>>> 4ae78cdea... expression: refine date_add/sub return type and precision (#35009)
 
 	tbl = []struct {
 		Input         string
@@ -1969,84 +1979,103 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	}
 
 	testDurations := []struct {
+<<<<<<< HEAD
 		fc       functionClass
 		dur      string
 		fsp      int8
 		unit     string
 		format   interface{}
 		expected string
+=======
+		fc           functionClass
+		dur          string
+		fsp          int
+		unit         string
+		format       interface{}
+		expected     string
+		checkHmsOnly bool // Duration + day returns datetime with current date padded, only check HMS part for them.
+>>>>>>> 4ae78cdea... expression: refine date_add/sub return type and precision (#35009)
 	}{
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "MICROSECOND",
-			format:   "100",
-			expected: "00:00:00.000100",
+			fc:           fcAdd,
+			dur:          "00:00:00",
+			fsp:          0,
+			unit:         "MICROSECOND",
+			format:       "100",
+			expected:     "00:00:00.000100",
+			checkHmsOnly: false,
 		},
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "MICROSECOND",
-			format:   100.0,
-			expected: "00:00:00.000100",
+			fc:           fcAdd,
+			dur:          "00:00:00",
+			fsp:          0,
+			unit:         "MICROSECOND",
+			format:       100.0,
+			expected:     "00:00:00.000100",
+			checkHmsOnly: false,
 		},
 		{
-			fc:       fcSub,
-			dur:      "00:00:01",
-			fsp:      0,
-			unit:     "MICROSECOND",
-			format:   "100",
-			expected: "00:00:00.999900",
+			fc:           fcSub,
+			dur:          "00:00:01",
+			fsp:          0,
+			unit:         "MICROSECOND",
+			format:       "100",
+			expected:     "00:00:00.999900",
+			checkHmsOnly: false,
 		},
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   "1",
-			expected: "24:00:00",
+			fc:           fcAdd,
+			dur:          "01:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       "1",
+			expected:     "01:00:00",
+			checkHmsOnly: true,
 		},
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "SECOND",
-			format:   1,
-			expected: "00:00:01",
+			fc:           fcAdd,
+			dur:          "00:00:00",
+			fsp:          0,
+			unit:         "SECOND",
+			format:       1,
+			expected:     "00:00:01",
+			checkHmsOnly: false,
 		},
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   types.NewDecFromInt(1),
-			expected: "24:00:00",
+			fc:           fcAdd,
+			dur:          "01:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       types.NewDecFromInt(1),
+			expected:     "01:00:00",
+			checkHmsOnly: true,
 		},
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   1.0,
-			expected: "24:00:00",
+			fc:           fcAdd,
+			dur:          "01:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       1.0,
+			expected:     "01:00:00",
+			checkHmsOnly: true,
 		},
 		{
-			fc:       fcSub,
-			dur:      "26:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   "1",
-			expected: "02:00:00",
+			fc:           fcSub,
+			dur:          "26:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       "1",
+			expected:     "02:00:00",
+			checkHmsOnly: true,
 		},
 		{
-			fc:       fcSub,
-			dur:      "26:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   1,
-			expected: "02:00:00",
+			fc:           fcSub,
+			dur:          "26:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       1,
+			expected:     "02:00:00",
+			checkHmsOnly: true,
 		},
 		{
 			fc:       fcSub,
@@ -2057,12 +2086,13 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 			expected: "25:59:59",
 		},
 		{
-			fc:       fcSub,
-			dur:      "27:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   1.0,
-			expected: "03:00:00",
+			fc:           fcSub,
+			dur:          "27:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       1.0,
+			expected:     "03:00:00",
+			checkHmsOnly: true,
 		},
 	}
 	for _, tt := range testDurations {
@@ -2074,8 +2104,18 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
+<<<<<<< HEAD
 		c.Assert(err, IsNil)
 		c.Assert(v.GetMysqlDuration().String(), Equals, tt.expected)
+=======
+		require.NoError(t, err)
+		if tt.checkHmsOnly {
+			s := v.GetMysqlTime().String()
+			require.Truef(t, strings.HasSuffix(s, tt.expected), "Suffix mismatch: %v, %v", s, tt.expected)
+		} else {
+			require.Equal(t, tt.expected, v.GetMysqlDuration().String())
+		}
+>>>>>>> 4ae78cdea... expression: refine date_add/sub return type and precision (#35009)
 	}
 }
 
