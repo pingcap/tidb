@@ -479,7 +479,9 @@ func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionI
 		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
 			return true, nil
 		}
-		return false, errors.Errorf("get operator error: %s", respErr.GetType())
+		return false, errors.Errorf(
+			"failed to get region operator, error type: %s, error message: %s",
+			respErr.GetType().String(), respErr.GetMessage())
 	}
 	// If the current operator of the region is not 'scatter-region', we could assume
 	// that 'scatter-operator' has finished.

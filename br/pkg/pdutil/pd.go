@@ -753,9 +753,10 @@ func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule L
 		if lastErr == nil {
 			return nil
 		}
-		if ctx.Err() != nil {
-			return errors.Cause(ctx.Err())
+		if err := errors.Cause(err); err == context.Canceled || err == context.DeadlineExceeded {
+			return errors.Trace(err)
 		}
+
 		if i < len(p.addrs) {
 			log.Warn("failed to create or update region label rule, will try next pd address",
 				zap.Error(lastErr), zap.String("pdAddr", addr))
@@ -802,7 +803,7 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, star
 			select {
 			case <-ticker.C:
 				if err := p.CreateOrUpdateRegionLabelRule(ctx, rule); err != nil {
-					if ctx.Err() != nil {
+					if err := errors.Cause(err); err == context.Canceled || err == context.DeadlineExceeded {
 						break loop
 					}
 					log.Warn("pause scheduler by key range failed, ignore it and wait next time pause", zap.Error(err))
