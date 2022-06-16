@@ -450,6 +450,119 @@ func (kvcodec *tableKVEncoder) Encode(
 	return kvPairs, nil
 }
 
+<<<<<<< HEAD
+=======
+func isTableAutoRandom(tblMeta *model.TableInfo) bool {
+	return tblMeta.PKIsHandle && tblMeta.ContainsAutoRandomBits()
+}
+
+func isAutoIncCol(colInfo *model.ColumnInfo) bool {
+	return mysql.HasAutoIncrementFlag(colInfo.GetFlag())
+}
+
+func isPKCol(colInfo *model.ColumnInfo) bool {
+	return mysql.HasPriKeyFlag(colInfo.GetFlag())
+}
+
+func isRowIDOverflow(meta *model.ColumnInfo, rowID int64) bool {
+	isUnsigned := mysql.HasUnsignedFlag(meta.GetFlag())
+	switch meta.GetType() {
+	// MEDIUM INT
+	case mysql.TypeInt24:
+		if !isUnsigned {
+			return rowID > mysql.MaxInt24
+		}
+		return rowID > mysql.MaxUint24
+	// INT
+	case mysql.TypeLong:
+		if !isUnsigned {
+			return rowID > math.MaxInt32
+		}
+		return rowID > math.MaxUint32
+	// SMALLINT
+	case mysql.TypeShort:
+		if !isUnsigned {
+			return rowID > math.MaxInt16
+		}
+		return rowID > math.MaxUint16
+	// TINYINT
+	case mysql.TypeTiny:
+		if !isUnsigned {
+			return rowID > math.MaxInt8
+		}
+		return rowID > math.MaxUint8
+	// FLOAT
+	case mysql.TypeFloat:
+		if !isUnsigned {
+			return float32(rowID) > math.MaxFloat32
+		}
+		return float64(rowID) > math.MaxFloat32*2
+	// DOUBLE
+	case mysql.TypeDouble:
+		if !isUnsigned {
+			return float64(rowID) > math.MaxFloat64
+		}
+		// impossible for rowID exceeding MaxFloat64
+	}
+	return false
+}
+
+func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
+	var (
+		value types.Datum
+		err   error
+	)
+
+	tblMeta := kvcodec.tbl.Meta()
+	cols := kvcodec.tbl.Cols()
+
+	// Since this method is only called when iterating the columns in the `Encode()` method,
+	// we can assume that the `colIndex` always have a valid input
+	col := cols[colIndex]
+
+	isBadNullValue := false
+	if inputDatum != nil {
+		value, err = table.CastValue(kvcodec.se, *inputDatum, col.ToInfo(), false, false)
+		if err != nil {
+			return value, err
+		}
+		if err := col.CheckNotNull(&value); err == nil {
+			return value, nil // the most normal case
+		}
+		isBadNullValue = true
+	}
+	// handle special values
+	switch {
+	case isAutoIncCol(col.ToInfo()):
+		// rowID is going to auto-filled the omitted column,
+		// which should be checked before restore
+		if isRowIDOverflow(col.ToInfo(), rowID) {
+			return value, errors.Errorf("PK %d is out of range", rowID)
+		}
+		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
+		value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo(), false, false)
+	case isTableAutoRandom(tblMeta) && isPKCol(col.ToInfo()):
+		var val types.Datum
+		realRowID := kvcodec.autoIDFn(rowID)
+		if mysql.HasUnsignedFlag(col.GetFlag()) {
+			val = types.NewUintDatum(uint64(realRowID))
+		} else {
+			val = types.NewIntDatum(realRowID)
+		}
+		value, err = table.CastValue(kvcodec.se, val, col.ToInfo(), false, false)
+	case col.IsGenerated():
+		// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
+		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
+		value = types.GetMinValue(&col.FieldType)
+	case isBadNullValue:
+		err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx)
+	default:
+		value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
+	}
+	return value, err
+}
+
+>>>>>>> 674def3b7... lightning: sample files and pre-allocate rowID before restoring chunk (#34288)
 // get record value for auto-increment field
 //
 // See: https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
