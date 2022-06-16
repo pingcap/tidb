@@ -268,6 +268,7 @@ type MultiSchemaInfo struct {
 	AlterIndexes  []CIStr `json:"-"`
 
 	RelativeColumns []CIStr `json:"-"`
+	PositionColumns []CIStr `json:"-"`
 }
 
 func NewMultiSchemaInfo() *MultiSchemaInfo {

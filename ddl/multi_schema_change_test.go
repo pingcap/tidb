@@ -89,10 +89,23 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1060 Duplicate column name 'a'"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
 
+	// Test add generate column
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustExec("alter table t add column c double default 3.0, add column d double as (a + b);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3 3"))
+
 	// Test add columns with same name
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int default 1, c int default 4);")
 	tk.MustGetErrCode("alter table t add column b int default 2, add column b int default 3", errno.ErrUnsupportedDDLOperation)
+
+	// Test add generate column dependents on a modifying column
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustGetErrCode("alter table t modify column b double, add column c double as (a + b);", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
@@ -767,6 +780,24 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 		tk.MustExec("create table t (a int default 1, b int default 2, c int default 3);")
 		tk.MustExec("insert into t values ();")
 		tk.MustGetErrCode("alter table t modify column b double after c, drop column c", errno.ErrUnsupportedDDLOperation)
+
+		// Test modify column related with add index
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b int);")
+		tk.MustExec("insert into t values (1, 2);")
+		tk.MustGetErrCode("alter table t add index i(a), modify column a int null default 1 after a;", errno.ErrUnsupportedDDLOperation)
+
+		// Test modify column related with add primary index
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b int);")
+		tk.MustExec("insert into t values (1, 2);")
+		tk.MustGetErrCode("alter table t add primary key(a), modify column a int null default 1 after a;", errno.ErrUnsupportedDDLOperation)
+
+		// Test modify column related with expression index
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b int);")
+		tk.MustExec("insert into t values (1, 2);")
+		tk.MustGetErrCode("alter table t modify column b double, add index idx((a + b));", errno.ErrUnsupportedDDLOperation)
 	}
 
 	tk.MustExec("drop table if exists t;")
@@ -856,9 +887,8 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 	jobIDExt = wrapJobIDExtCallback(originHook)
 	dom.DDL().SetHook(jobIDExt)
 	tk.MustExec("insert into t values (1, 2);")
-	tk.MustGetErrCode("alter table t add index i(a), modify column a int null default 1 after a;", errno.ErrBadField)
+	tk.MustGetErrCode("alter table t add index i(b), modify column a int null default 1 after a;", errno.ErrBadField)
 	checkDelRangeCnt(tk, jobIDExt.jobID, 1)
-
 }
 
 func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
