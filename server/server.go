@@ -302,6 +302,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	variable.RegisterStatistics(s)
+	variable.SetMaxConnections = s.SetMaxConnections
 
 	return s, nil
 }
@@ -352,7 +353,7 @@ func setTxnScope() {
 // Export config-related metrics
 func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
-	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
+	metrics.ConfigStatus.WithLabelValues("max_connections").Set(float64(s.cfg.Instance.MaxConnections))
 }
 
 // Run runs the server.
@@ -605,8 +606,8 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 }
 
 func (s *Server) checkConnectionCount() error {
-	// When the value of MaxServerConnections is 0, the number of connections is unlimited.
-	if int(s.cfg.MaxServerConnections) == 0 {
+	// When the value of Instance.MaxConnections is 0, the number of connections is unlimited.
+	if int(s.cfg.Instance.MaxConnections) == 0 {
 		return nil
 	}
 
@@ -614,9 +615,28 @@ func (s *Server) checkConnectionCount() error {
 	conns := len(s.clients)
 	s.rwlock.RUnlock()
 
-	if conns >= int(s.cfg.MaxServerConnections) {
+	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
-			zap.Uint32("max connections", s.cfg.MaxServerConnections), zap.Error(errConCount))
+			zap.Uint32("max connections", s.cfg.Instance.MaxConnections), zap.Error(errConCount))
+		return errConCount
+	}
+	return nil
+}
+
+// SetMaxConnections checks and updates the value of max_connections.
+func (s *Server) SetMaxConnections(newMaxConnections uint32) error {
+	// When the value of newMaxConnections is 0, the number of connections is unlimited.
+	if int(newMaxConnections) == 0 {
+		return nil
+	}
+
+	s.rwlock.RLock()
+	conns := len(s.clients)
+	s.rwlock.RUnlock()
+
+	if conns >= int(newMaxConnections) {
+		logutil.BgLogger().Error("Current connections number exceeds the setting value",
+			zap.Uint32("max connections", newMaxConnections), zap.Error(errConCount))
 		return errConCount
 	}
 	return nil

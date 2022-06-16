@@ -994,4 +994,6 @@ var (
 	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
 	SetStatsCacheCapacity atomic.Value
+	// SetMaxConnections is the func registered by derver to set the value of max_connections.
+	SetMaxConnections func(newMaxConnections uint32) error = nil
 )
