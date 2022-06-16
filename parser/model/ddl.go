@@ -270,6 +270,7 @@ type MultiSchemaInfo struct {
 	AlterIndexes  []CIStr `json:"-"`
 
 	RelativeColumns []CIStr `json:"-"`
+	PositionColumns []CIStr `json:"-"`
 }
 
 func NewMultiSchemaInfo() *MultiSchemaInfo {
@@ -301,6 +302,7 @@ type Job struct {
 	SchemaName string        `json:"schema_name"`
 	TableName  string        `json:"table_name"`
 	State      JobState      `json:"state"`
+	Warning    *terror.Error `json:"warning"`
 	Error      *terror.Error `json:"err"`
 	// ErrorCount will be increased, every time we meet an error when running job.
 	ErrorCount int64 `json:"err_count"`
@@ -370,6 +372,14 @@ func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int6
 	job.BinlogInfo.AddDBInfo(ver, dbInfo)
 }
 
+// MarkNonRevertible mark the current job to be non-revertible.
+// It means the job cannot be cancelled or rollbacked.
+func (job *Job) MarkNonRevertible() {
+	if job.MultiSchemaInfo != nil {
+		job.MultiSchemaInfo.Revertible = false
+	}
+}
+
 // TSConvert2Time converts timestamp to time.
 func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
@@ -411,6 +421,18 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 		job.RawArgs, err = json.Marshal(job.Args)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if job.MultiSchemaInfo != nil {
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				// Only update the args of last executing sub-job.
+				if sub.Args == nil {
+					continue
+				}
+				sub.RawArgs, err = json.Marshal(sub.Args)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
 		}
 	}
 
