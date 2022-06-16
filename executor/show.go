@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
@@ -1930,6 +1931,29 @@ func (e *ShowExec) fetchShowBuiltins() error {
 }
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
+	sessionStates := &sessionstates.SessionStates{}
+	err := e.ctx.EncodeSessionStates(ctx, e.ctx, sessionStates)
+	if err != nil {
+		return err
+	}
+	stateBytes, err := gjson.Marshal(sessionStates)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	stateJSON := json.BinaryJSON{}
+	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
+		return err
+	}
+	// This will be implemented in future PRs.
+	tokenBytes, err := gjson.Marshal("")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tokenJSON := json.BinaryJSON{}
+	if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
+		return err
+	}
+	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
 }
 

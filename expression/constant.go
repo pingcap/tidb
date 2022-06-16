@@ -458,8 +458,8 @@ func TryUpdateCollate(eq *ScalarFunction) {
 	if eq.FuncName.L != ast.EQ {
 		return
 	}
-	sucess := expressionUpdateCollate(eq, true)
-	if !sucess {
+	ok := expressionUpdateCollate(eq, true)
+	if !ok {
 		expressionUpdateCollate(eq, false)
 	}
 
