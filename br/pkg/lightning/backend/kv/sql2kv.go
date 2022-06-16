@@ -472,13 +472,6 @@ func isRowIDOverflow(meta *model.ColumnInfo, rowID int64) bool {
 			return rowID > math.MaxInt8
 		}
 		return rowID > math.MaxUint8
-	// BIGINT
-	case mysql.TypeLonglong:
-		if !isUnsigned {
-			return rowID > math.MaxInt64
-		}
-		// impossible for rowID exceeding MaxUint64
-		return uint64(rowID) > math.MaxUint64
 	// FLOAT
 	case mysql.TypeFloat:
 		if !isUnsigned {

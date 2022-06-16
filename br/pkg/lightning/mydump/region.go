@@ -277,6 +277,7 @@ func makeSourceFileRegion(
 		log.L().Warn("fail to sample file", zap.String("path", fi.FileMeta.Path), zap.Error(err))
 		divisor = sizePerRow
 	}
+	log.L().Debug("avg row size", zap.String("path", fi.FileMeta.Path), zap.Int64("size per row", sizePerRow))
 	// If a csv file is overlarge, we need to split it into multiple regions.
 	// Note: We can only split a csv file whose format is strict.
 	// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
