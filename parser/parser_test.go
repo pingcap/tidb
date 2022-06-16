@@ -1037,6 +1037,13 @@ AAAAAAAAAAAA5gm5Mg==
 		{"SHOW PLACEMENT LABELS", true, "SHOW PLACEMENT LABELS"},
 		{"SHOW PLACEMENT LABELS LIKE '%zone%'", true, "SHOW PLACEMENT LABELS LIKE _UTF8MB4'%zone%'"},
 		{"SHOW PLACEMENT LABELS WHERE label='l123'", true, "SHOW PLACEMENT LABELS WHERE `label`=_UTF8MB4'l123'"},
+
+		// for show/set session_states
+		{"SHOW SESSION_STATES", true, "SHOW SESSION_STATES"},
+		{"SET SESSION_STATES 'x'", true, "SET SESSION_STATES 'x'"},
+		{"SET SESSION_STATES", false, ""},
+		{"SET SESSION_STATES 1", false, ""},
+		{"SET SESSION_STATES now()", false, ""},
 	}
 	RunTest(t, table, false)
 }

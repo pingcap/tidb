@@ -1057,16 +1057,28 @@ type Column struct {
 	LastAnalyzePos types.Datum
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 
-	// Loaded means if the histogram, the topn and the cm sketch are loaded fully.
+	// Loaded means the statistics has been directly loaded from storage or json. (including the histogram, the topn
+	// and the cm sketch. In some tests, some of them are loaded, and we still set loaded is true to keep test simple.)
 	// Those three parts of a Column is loaded lazily. It will only be loaded after trying to use them.
 	// Note: Currently please use Column.IsLoaded() to check if it's loaded.
 	Loaded bool
 }
 
 // IsLoaded is a wrap around c.Loaded.
-// It's just for safe when we are switching from `c.notNullCount() > 0)` to `c.Loaded`.
 func (c *Column) IsLoaded() bool {
-	return c.Loaded || c.notNullCount() > 0
+	return c.Loaded
+}
+
+// IsNecessaryLoaded indicates whether the necessary statistics is loaded.
+// If `IsLoaded` returns true, we will directly return due to they are directly loaded from outer storage and
+// keep the tests still correct.
+// If `IsLoaded` returns false, we will check whether histogram and topn are both loaded as the statistics need
+// at least one of them to do optimize.
+func (c *Column) IsNecessaryLoaded() bool {
+	if c.IsLoaded() {
+		return true
+	}
+	return c.notNullCount() > 0
 }
 
 func (c *Column) String() string {
@@ -1148,7 +1160,10 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 			}
 		}
 	}
-	return c.TotalRowCount() == 0 || (!c.IsLoaded() && c.Histogram.NDV > 0)
+	// In some cases, some statistics in column would be evicted
+	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
+	// In this case, we will think this column as valid due to we can still use the rest of the statistics to do optimize.
+	return c.TotalRowCount() == 0 || (!c.IsNecessaryLoaded() && c.Histogram.NDV > 0)
 }
 
 // IsHistNeeded checks if this column needs histogram to be loaded

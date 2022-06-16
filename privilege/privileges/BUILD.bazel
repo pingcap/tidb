@@ -12,7 +12,6 @@ go_library(
     deps = [
         "//errno",
         "//infoschema",
-        "//infoschema/perfschema",
         "//parser/ast",
         "//parser/auth",
         "//parser/mysql",
@@ -41,6 +40,8 @@ go_test(
         "main_test.go",
         "privileges_test.go",
     ],
+    flaky = True,
+    shard_count = 50,
     deps = [
         ":privileges",
         "//config",

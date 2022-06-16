@@ -643,6 +643,15 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("60"))
 	tk.MustExec("set global tidb_max_auto_analyze_time = -1")
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("0"))
+
+	// test variables for cost model ver2
+	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_cost_model_version=3")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_cost_model_version value: '3'"))
+	tk.MustExec("set tidb_cost_model_version=0")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_cost_model_version value: '0'"))
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows("2"))
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
@@ -1701,4 +1710,20 @@ func TestInstanceScopeSwitching(t *testing.T) {
 	// disable 'switching' to SESSION variables
 	tk.MustExec("set tidb_enable_legacy_instance_scope = 0")
 	tk.MustGetErrCode("set tidb_general_log = 1", errno.ErrGlobalVariable)
+}
+
+func TestGcMaxWaitTime(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("set global tidb_gc_max_wait_time = 1000")
+	tk.MustExec("set global tidb_gc_life_time = \"72h\"")
+	tk.MustExec("set global tidb_gc_life_time = \"24h\"")
+	tk.MustExec("set global tidb_gc_life_time = \"10m\"")
+
+	tk.MustExec("set global tidb_gc_max_wait_time = 86400")
+	tk.MustExec("set global tidb_gc_life_time = \"72h\"")
+	tk.MustExec("set global tidb_gc_max_wait_time = 1000")
 }
