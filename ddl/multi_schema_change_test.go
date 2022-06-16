@@ -1149,6 +1149,21 @@ func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 	tk.MustQuery("select * from t use index(idx1, idx2);").Check(testkit.Rows("1 2 10", "2 1 10"))
 }
 
+func TestMultiSchemaChangeNoSubJobs(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("alter table t add column if not exists a int, add column if not exists b int;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows(
+		"Note 1060 Duplicate column name 'a'", "Note 1060 Duplicate column name 'b'"))
+	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Equal(t, "create table", rs[0][3])
+}
+
 func composeHooks(dom *domain.Domain, cbs ...ddl.Callback) ddl.Callback {
 	return &ddl.TestDDLCallback{
 		Do: dom,
