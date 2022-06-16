@@ -1753,8 +1753,8 @@ def go_deps():
         name = "com_github_nxadm_tail",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/nxadm/tail",
-        sum = "h1:nPr65rt6Y5JFSKQO7qToXr7pePgD6Gwiw05lkbyAQTE=",
-        version = "v1.4.8",
+        sum = "h1:DQuhQpB1tVlglWS2hLQ5OV6B5r8aGxSrPc5Qo6uTN78=",
+        version = "v1.4.4",
     )
     go_repository(
         name = "com_github_oklog_ulid",
@@ -1781,8 +1781,8 @@ def go_deps():
         name = "com_github_onsi_ginkgo",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/onsi/ginkgo",
-        sum = "h1:8xi0RTUf59SOSfEtZMvwTvXYMzG4gV23XVHOZiXNtnE=",
-        version = "v1.16.5",
+        sum = "h1:M76yO2HkZASFjXL0HSoZJ1AYEmQxNJmY41Jx1zNUq1Y=",
+        version = "v1.13.0",
     )
     go_repository(
         name = "com_github_onsi_ginkgo_v2",
@@ -1795,8 +1795,8 @@ def go_deps():
         name = "com_github_onsi_gomega",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/onsi/gomega",
-        sum = "h1:M1GfJqGRrBrrGGsbxzV5dqM2U2ApXefZCQpkukxYRLE=",
-        version = "v1.18.1",
+        sum = "h1:o0+MgICZLuZ7xjH7Vx6zS/zcu93/BEp1VwkIW1mEXCE=",
+        version = "v1.10.1",
     )
     go_repository(
         name = "com_github_opentracing_basictracer_go",
@@ -2244,8 +2244,9 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:N5ivsNkDQDgimY0ZVqMnWqXjEnxy5uFChoB4wPIKpPI=",
-        version = "v2.0.1-0.20220613112734-be31f33ba03b",
+        replace = "github.com/hawkingrei/client-go/v2",
+        sum = "h1:K4YAqAZw80drsRSeX+mTV9ZSyJs1qI/Be6RTZI7bdrA=",
+        version = "v2.0.0-alpha.0.20220620033602-821d2266f8cc",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
