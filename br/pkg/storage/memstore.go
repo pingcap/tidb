@@ -40,18 +40,19 @@ func (f *memFile) GetData() []byte {
 	return fileData
 }
 
-type memStorage struct {
+// MemStorage represents a in-memory storage.
+type MemStorage struct {
 	rwm       sync.RWMutex
 	dataStore map[string]*memFile
 }
 
-func NewMemStorage() *memStorage {
-	return &memStorage{
+func NewMemStorage() *MemStorage {
+	return &MemStorage{
 		dataStore: make(map[string]*memFile),
 	}
 }
 
-func (s *memStorage) loadMap(name string) (*memFile, bool) {
+func (s *MemStorage) loadMap(name string) (*memFile, bool) {
 	s.rwm.RLock()
 	defer s.rwm.RUnlock()
 	theFile, ok := s.dataStore[name]
@@ -60,7 +61,7 @@ func (s *memStorage) loadMap(name string) (*memFile, bool) {
 
 // DeleteFile delete the file in storage
 // It implements the `ExternalStorage` interface
-func (s *memStorage) DeleteFile(ctx context.Context, name string) error {
+func (s *MemStorage) DeleteFile(ctx context.Context, name string) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -81,7 +82,7 @@ func (s *memStorage) DeleteFile(ctx context.Context, name string) error {
 
 // WriteFile file to storage.
 // It implements the `ExternalStorage` interface
-func (s *memStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+func (s *MemStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -107,7 +108,7 @@ func (s *memStorage) WriteFile(ctx context.Context, name string, data []byte) er
 
 // ReadFile reads the storage file.
 // It implements the `ExternalStorage` interface
-func (s *memStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+func (s *MemStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -127,7 +128,7 @@ func (s *memStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 
 // FileExists return true if file exists.
 // It implements the `ExternalStorage` interface
-func (s *memStorage) FileExists(ctx context.Context, name string) (bool, error) {
+func (s *MemStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
@@ -143,7 +144,7 @@ func (s *memStorage) FileExists(ctx context.Context, name string) (bool, error) 
 
 // Open opens a Reader by file path.
 // It implements the `ExternalStorage` interface
-func (s *memStorage) Open(ctx context.Context, filePath string) (ExternalFileReader, error) {
+func (s *MemStorage) Open(ctx context.Context, filePath string) (ExternalFileReader, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -165,7 +166,7 @@ func (s *memStorage) Open(ctx context.Context, filePath string) (ExternalFileRea
 
 // WalkDir traverse all the files in a dir.
 // It implements the `ExternalStorage` interface
-func (s *memStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (s *MemStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
 	allFileNames := func() []string {
 		fileNames := []string{}
 		s.rwm.RLock()
@@ -209,14 +210,14 @@ func (s *memStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	return nil
 }
 
-func (s *memStorage) URI() string {
+func (s *MemStorage) URI() string {
 	return "memstore://"
 }
 
 // Create creates a file and returning a writer to write data into.
 // When the writer is closed, the data is stored in the file.
 // It implements the `ExternalStorage` interface
-func (s *memStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (s *MemStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -240,7 +241,7 @@ func (s *memStorage) Create(ctx context.Context, name string) (ExternalFileWrite
 
 // Rename renames a file name to another file name.
 // It implements the `ExternalStorage` interface
-func (s *memStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
