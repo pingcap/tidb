@@ -480,13 +480,9 @@ func NeedSplit(splitKey []byte, regions []*RegionInfo, isRawKv bool) *RegionInfo
 	if len(splitKey) == 0 {
 		return nil
 	}
-<<<<<<< HEAD
-	splitKey = codec.EncodeBytes(splitKey)
-=======
 	if !isRawKv {
-		splitKey = codec.EncodeBytes(nil, splitKey)
+		splitKey = codec.EncodeBytes(splitKey)
 	}
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {

@@ -52,12 +52,8 @@ test_full_rawkv() {
 
     checksum_full=$(checksum $check_range_start $check_range_end)
     # backup current state of key-values
-<<<<<<< HEAD
-    run_br --pd $PD_ADDR backup raw -s "local://$TEST_DIR/rawkv-full" 
-=======
     # raw backup is not working with range [nil, nil]. TODO: fix it.
-    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" --start $check_range_start --format hex
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
+    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_FULL" --start $check_range_start --format hex
 
     clean $check_range_start $check_range_end
     # Ensure the data is deleted
@@ -67,11 +63,7 @@ test_full_rawkv() {
         fail_and_exit
     fi
 
-<<<<<<< HEAD
-    run_br --pd $PD_ADDR restore raw -s "local://$TEST_DIR/rawkv-full"
-=======
-    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" --start $check_range_start --format hex
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
+    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_FULL" --start $check_range_start --format hex
     checksum_new=$(checksum $check_range_start $check_range_end)
     if [ "$checksum_new" != "$checksum_full" ];then
         echo "failed to restore"
@@ -99,36 +91,24 @@ run_test() {
         --key "$TEST_DIR/certs/br.key" \
         --mode rand-gen --start-key 31 --end-key 3130303030303030 --duration 10
 
-<<<<<<< HEAD
-# backup rawkv
-echo "backup start..."
-run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --concurrency 4
-=======
     # put some keys around 311122 to check the correctness of endKey of restoring
     bin/rawkv --pd $PD_ADDR \
         --ca "$TEST_DIR/certs/ca.pem" \
         --cert "$TEST_DIR/certs/br.pem" \
         --key "$TEST_DIR/certs/br.key" \
         --mode put --put-data "311121:31, 31112100:32, 311122:33, 31112200:34, 3111220000:35, 311123:36"
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 
     checksum_ori=$(checksum 31 3130303030303030)
     checksum_partial=$(checksum 311111 311122)
 
     # backup rawkv
     echo "backup start..."
-    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --concurrency 4 --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --concurrency 4
 
-<<<<<<< HEAD
-# restore rawkv
-echo "restore start..."
-run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex
-=======
     # delete data in range[start-key, end-key)
     clean 31 3130303030303030
     # Ensure the data is deleted
     checksum_new=$(checksum 31 3130303030303030)
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 
     if [ "$checksum_new" != "$checksum_empty" ];then
         echo "failed to delete data in range"
@@ -137,7 +117,7 @@ run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 31303
 
     # restore rawkv
     echo "restore start..."
-    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex
 
     checksum_new=$(checksum 31 3130303030303030)
 
@@ -159,7 +139,7 @@ run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 31303
     fi
 
     echo "partial restore start..."
-    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 311111 --end 311122 --format hex --concurrency 4 --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 311111 --end 311122 --format hex --concurrency 4
     bin/rawkv --pd $PD_ADDR \
         --ca "$TEST_DIR/certs/ca.pem" \
         --cert "$TEST_DIR/certs/br.pem" \
@@ -175,17 +155,6 @@ run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 31303
 
     export GO_FAILPOINTS=""
 }
-
-<<<<<<< HEAD
-echo "partial restore start..."
-run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 311111 --end 311122 --format hex --concurrency 4
-bin/rawkv --pd $PD_ADDR \
-    --ca "$TEST_DIR/certs/ca.pem" \
-    --cert "$TEST_DIR/certs/br.pem" \
-    --key "$TEST_DIR/certs/br.key" \
-    --mode scan --start-key 311121 --end-key 33
-=======
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 
 run_test ""
 
