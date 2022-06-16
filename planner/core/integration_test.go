@@ -6684,3 +6684,19 @@ func TestIssue31609(t *testing.T) {
 		"      └─MemTableScan_9 10000.00 root table:TABLES ",
 	))
 }
+
+func TestIssue24667(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a int, b int, c int);")
+	tk.MustQuery("select a from t group by a having sum(b) > 0 order by 1;").Check(testkit.Rows())
+	err := tk.ExecToErr("select a from t group by a having sum(b) > 0 order by 2;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1054]Unknown column '2' in 'order clause'")
+	err = tk.ExecToErr("select a from t group by a having sum(b) > 0 order by 3;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1054]Unknown column '3' in 'order clause'")
+}
