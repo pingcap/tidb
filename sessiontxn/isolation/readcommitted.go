@@ -32,20 +32,15 @@ import (
 )
 
 type stmtState struct {
-	stmtTS                         uint64
-	stmtTSFuture                   oracle.Future
-	stmtUseStartTS                 bool
-	optimizeForNotFetchingLatestTS bool
-	onNextRetryOrStmt              func() error
+	stmtTS          uint64
+	stmtTSFuture    oracle.Future
+	stmtUseStartTS  bool
+	stmtReuseStmtTS bool
 }
 
 func (s *stmtState) prepareStmt(useStartTS bool) error {
-	onNextStmt := s.onNextRetryOrStmt
 	*s = stmtState{
 		stmtUseStartTS: useStartTS,
-	}
-	if onNextStmt != nil {
-		return onNextStmt()
 	}
 	return nil
 }
@@ -54,9 +49,9 @@ func (s *stmtState) prepareStmt(useStartTS bool) error {
 type PessimisticRCTxnContextProvider struct {
 	baseTxnContextProvider
 	stmtState
-	// latestStmtTS records the latest stmtTS we fetched
-	latestStmtTS       uint64
-	availableRCCheckTS uint64
+	// latestTS records the latest stmtTS we fetched
+	latestTS      uint64
+	latestTSValid bool
 }
 
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
@@ -69,10 +64,13 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.ReadCommitted
 			},
-			onTxnActive: func(txn kv.Transaction) {
-				txn.SetOption(kv.Pessimistic, true)
-			},
 		},
+	}
+
+	provider.onTxnActive = func(txn kv.Transaction) {
+		txn.SetOption(kv.Pessimistic, true)
+		provider.latestTS = txn.StartTS()
+		provider.latestTSValid = true
 	}
 
 	provider.getStmtReadTSFunc = provider.getStmtTS
@@ -85,14 +83,12 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
 		return err
 	}
-	p.optimizeForNotFetchingLatestTS = false
 	return p.prepareStmt(!p.isTxnPrepared)
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	// Invalid rc check for next statement or retry when error occurs
-	p.availableRCCheckTS = 0
 
 	switch point {
 	case sessiontxn.StmtErrAfterQuery:
@@ -109,7 +105,6 @@ func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
-	p.optimizeForNotFetchingLatestTS = false
 	return p.prepareStmt(false)
 }
 
@@ -123,8 +118,8 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	switch {
 	case p.stmtUseStartTS:
 		stmtTSFuture = sessiontxn.FuncFuture(p.getTxnStartTS)
-	case p.availableRCCheckTS != 0 && sessVars.StmtCtx.RCCheckTS:
-		stmtTSFuture = sessiontxn.ConstantFuture(p.availableRCCheckTS)
+	case p.latestTSValid && (sessVars.StmtCtx.RCCheckTS || p.stmtReuseStmtTS):
+		stmtTSFuture = sessiontxn.ConstantFuture(p.latestTS)
 	default:
 		stmtTSFuture = sessiontxn.NewOracleFuture(p.ctx, p.sctx, sessVars.TxnCtx.TxnScope)
 	}
@@ -135,13 +130,6 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	if p.stmtTS != 0 {
 		return p.stmtTS, nil
-	}
-
-	if p.optimizeForNotFetchingLatestTS {
-		if p.latestStmtTS != 0 {
-			return p.latestStmtTS, nil
-		}
-		return p.getTxnStartTS()
 	}
 
 	var txn kv.Transaction
@@ -157,11 +145,12 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	// forUpdateTS should exactly equal to the read ts
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	txnCtx.SetForUpdateTS(ts)
+	ts = txnCtx.GetForUpdateTS()
 	txn.SetOption(kv.SnapshotTS, ts)
 
 	p.stmtTS = ts
-	p.latestStmtTS = ts
-	p.availableRCCheckTS = ts
+	p.latestTS = ts
+	p.latestTSValid = true
 	return
 }
 
@@ -169,16 +158,18 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 // At this point the query will be retried from the beginning.
 func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) (sessiontxn.StmtErrorAction, error) {
 	sessVars := p.sctx.GetSessionVars()
-	if sessVars.StmtCtx.RCCheckTS && errors.ErrorEqual(queryErr, kv.ErrWriteConflict) {
-		logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
-			zap.String("sql", sessVars.StmtCtx.OriginalSQL))
-		return sessiontxn.RetryReady()
+	if !errors.ErrorEqual(queryErr, kv.ErrWriteConflict) || !sessVars.StmtCtx.RCCheckTS {
+		return sessiontxn.NoIdea()
 	}
 
-	return sessiontxn.NoIdea()
+	p.latestTSValid = false
+	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
+		zap.String("sql", sessVars.StmtCtx.OriginalSQL))
+	return sessiontxn.RetryReady()
 }
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
+	p.latestTSValid = false
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
@@ -194,12 +185,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
 			zap.String("err", lockErr.Error()))
 		retryable = true
-	}
-
-	// force refresh ts in next retry or statement when lock error occurs
-	p.onNextRetryOrStmt = func() error {
-		_, err := p.getStmtTS()
-		return err
 	}
 
 	if retryable {
@@ -230,6 +215,10 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		return nil
 	}
 
+	if p.stmtUseStartTS || p.stmtReuseStmtTS || !p.latestTSValid {
+		return nil
+	}
+
 	plan, ok := val.(plannercore.Plan)
 	if !ok {
 		return nil
@@ -239,14 +228,9 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	optimizeForNotFetchingLatestTS := false
-	if v, ok := plan.(*plannercore.Insert); ok {
-		if v.SelectPlan == nil {
-			optimizeForNotFetchingLatestTS = true
-		}
+	if v, ok := plan.(*plannercore.Insert); ok && v.SelectPlan == nil {
+		p.stmtReuseStmtTS = true
 	}
-
-	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS
 
 	return nil
 }

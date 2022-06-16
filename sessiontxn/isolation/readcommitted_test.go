@@ -102,14 +102,11 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, errors.New("err"))
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
-	compareTS = getOracleTS(t, se)
-	require.Greater(t, compareTS, rcCheckTS)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
-	require.Greater(t, ts, compareTS)
-	rcCheckTS = ts
+	require.Equal(t, rcCheckTS, ts)
 
 	// `StmtErrAfterPessimisticLock` will still disable rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
