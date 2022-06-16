@@ -96,7 +96,7 @@ func TestToBool(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToBool(t, t1, 1)
 
-	td, err := ParseDuration(nil, "11:11:11.999999", 6)
+	td, _, err := ParseDuration(nil, "11:11:11.999999", 6)
 	require.NoError(t, err)
 	testDatumToBool(t, td, 1)
 
@@ -139,7 +139,7 @@ func TestToInt64(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToInt64(t, t1, int64(20111110111112))
 
-	td, err := ParseDuration(nil, "11:11:11.999999", 6)
+	td, _, err := ParseDuration(nil, "11:11:11.999999", 6)
 	require.NoError(t, err)
 	testDatumToInt64(t, td, int64(111112))
 

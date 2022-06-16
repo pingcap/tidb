@@ -962,7 +962,7 @@ func TestAddTimeSig(t *testing.T) {
 		{"-110:00:00", "1 02:00:00", "-84:00:00"},
 	}
 	for _, c := range tbl {
-		dur, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, c.Input, types.GetFsp(c.Input))
+		dur, _, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, c.Input, types.GetFsp(c.Input))
 		require.NoError(t, err)
 		tmpInput := types.NewDurationDatum(dur)
 		tmpInputDuration := types.NewStringDatum(c.InputDuration)
@@ -1063,7 +1063,7 @@ func TestSubTimeSig(t *testing.T) {
 		{"235959", "00:00:01", "23:59:58"},
 	}
 	for _, c := range tbl {
-		dur, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, c.Input, types.GetFsp(c.Input))
+		dur, _, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, c.Input, types.GetFsp(c.Input))
 		require.NoError(t, err)
 		tmpInput := types.NewDurationDatum(dur)
 		tmpInputDuration := types.NewStringDatum(c.InputDuration)

@@ -1517,7 +1517,7 @@ func (d Duration) Compare(o Duration) int {
 // but parses str to Duration then compares.
 func (d Duration) CompareString(sc *stmtctx.StatementContext, str string) (int, error) {
 	// use MaxFsp to parse the string
-	o, err := ParseDuration(sc, str, MaxFsp)
+	o, _, err := ParseDuration(sc, str, MaxFsp)
 	if err != nil {
 		return 0, err
 	}
@@ -1695,7 +1695,7 @@ func matchDuration(str string, fsp int) (Duration, error) {
 
 	rest = parser.Space0(rest)
 	overflow, frac, rest, err := matchFrac(rest, fsp)
-	if err != nil || len(rest) > 0 {
+	if err != nil {
 		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
@@ -1723,6 +1723,9 @@ func matchDuration(str string, fsp int) (Duration, error) {
 		d = -d
 	}
 	d, err = TruncateOverflowMySQLTime(d)
+	if err == nil && len(rest) > 0 {
+		return Duration{d, fsp}, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	}
 	return Duration{d, fsp}, errors.Trace(err)
 }
 
@@ -1763,29 +1766,30 @@ func canFallbackToDateTime(str string) bool {
 }
 
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
-// returns the duration type Time value.
+// returns the duration type Time value and bool to indicate whether the result is null.
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration, error) {
+func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration, bool, error) {
 	rest := strings.TrimSpace(str)
 	d, err := matchDuration(rest, fsp)
 	if err == nil {
-		return d, nil
+		return d, false, nil
 	}
 	if !canFallbackToDateTime(rest) {
-		return d, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return d, false, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	datetime, err := ParseDatetime(sc, rest)
 	if err != nil {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	d, err = datetime.ConvertToDuration()
 	if err != nil {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	return d.RoundFrac(fsp, sc.TimeZone)
+	d, err = d.RoundFrac(fsp, sc.TimeZone)
+	return d, false, err
 }
 
 // TruncateOverflowMySQLTime truncates d when it overflows, and returns ErrTruncatedWrongVal.

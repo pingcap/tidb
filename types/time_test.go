@@ -333,8 +333,9 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, types.MinFsp)
+		duration, isNull, err := types.ParseDuration(sc, test.Input, types.MinFsp)
 		require.NoError(t, err)
+		require.False(t, isNull)
 		require.Equal(t, test.Expect, duration.String())
 	}
 
@@ -348,8 +349,24 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
+		duration, _, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
 		require.NoError(t, err)
+		require.Equal(t, test.Expect, duration.String())
+	}
+
+	table = []struct {
+		Input  string
+		Expect string
+	}{
+		{"0x", "00:00:00.000000"},
+		{"1x", "00:00:01.000000"},
+		{"0000-00-00", "00:00:00.000000"},
+	}
+
+	for _, test := range table {
+		duration, isNull, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
+		require.False(t, isNull)
+		require.True(t, types.ErrTruncatedWrongVal.Equal(err))
 		require.Equal(t, test.Expect, duration.String())
 	}
 
@@ -360,11 +377,11 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseDuration(sc, test, types.DefaultFsp)
+		_, _, err := types.ParseDuration(sc, test, types.DefaultFsp)
 		require.Error(t, err)
 	}
 
-	duration, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
+	duration, _, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
 	require.Error(t, err)
 	require.Equal(t, "838:59:59", duration.String())
 
@@ -407,15 +424,15 @@ func TestDurationAdd(t *testing.T) {
 		{"00:00:00.099", 3, "00:00:00.001", 3, "00:00:00.100"},
 	}
 	for _, test := range table {
-		duration, err := types.ParseDuration(nil, test.Input, test.Fsp)
+		duration, _, err := types.ParseDuration(nil, test.Input, test.Fsp)
 		require.NoError(t, err)
-		ta, err := types.ParseDuration(nil, test.InputAdd, test.FspAdd)
+		ta, _, err := types.ParseDuration(nil, test.InputAdd, test.FspAdd)
 		require.NoError(t, err)
 		result, err := duration.Add(ta)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, result.String())
 	}
-	duration, err := types.ParseDuration(nil, "00:00:00", 0)
+	duration, _, err := types.ParseDuration(nil, "00:00:00", 0)
 	require.NoError(t, err)
 	ta := new(types.Duration)
 	result, err := duration.Add(*ta)
@@ -423,7 +440,7 @@ func TestDurationAdd(t *testing.T) {
 	require.Equal(t, "00:00:00", result.String())
 
 	duration = types.Duration{Duration: math.MaxInt64, Fsp: 0}
-	tatmp, err := types.ParseDuration(nil, "00:01:00", 0)
+	tatmp, _, err := types.ParseDuration(nil, "00:01:00", 0)
 	require.NoError(t, err)
 	_, err = duration.Add(tatmp)
 	require.Error(t, err)
@@ -443,9 +460,9 @@ func TestDurationSub(t *testing.T) {
 		{"00:00:00", 0, "00:00:00.1", 1, "-00:00:00.1"},
 	}
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		duration, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.NoError(t, err)
-		ta, err := types.ParseDuration(sc, test.InputAdd, test.FspAdd)
+		ta, _, err := types.ParseDuration(sc, test.InputAdd, test.FspAdd)
 		require.NoError(t, err)
 		result, err := duration.Sub(ta)
 		require.NoError(t, err)
@@ -474,7 +491,7 @@ func TestTimeFsp(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		duration, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, duration.String())
 	}
@@ -487,7 +504,7 @@ func TestTimeFsp(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		_, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.Error(t, err)
 	}
 }
@@ -752,7 +769,7 @@ func TestToNumber(t *testing.T) {
 	}
 
 	for _, test := range tblDuration {
-		v, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		v, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.NoError(t, err)
 		// now we can only changetypes.Duration's Fsp to check ToNumber with different Fsp
 		require.Equal(t, test.Expect, v.ToNumber().String())
@@ -896,7 +913,7 @@ func TestRoundFrac(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v, err := types.ParseDuration(sc, tt.Input, types.MaxFsp)
+		v, _, err := types.ParseDuration(sc, tt.Input, types.MaxFsp)
 		require.NoError(t, err)
 		nv, err := v.RoundFrac(tt.Fsp, sc.TimeZone)
 		require.NoError(t, err)
@@ -958,7 +975,7 @@ func TestConvert(t *testing.T) {
 	// test different time zone.
 	sc.TimeZone = time.UTC
 	for _, tt := range tblDuration {
-		v, err := types.ParseDuration(sc, tt.Input, tt.Fsp)
+		v, _, err := types.ParseDuration(sc, tt.Input, tt.Fsp)
 		require.NoError(t, err)
 		year, month, day := time.Now().In(sc.TimeZone).Date()
 		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone)
@@ -1009,7 +1026,7 @@ func TestCompare(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v1, err := types.ParseDuration(nil, tt.Arg1, types.MaxFsp)
+		v1, _, err := types.ParseDuration(nil, tt.Arg1, types.MaxFsp)
 		require.NoError(t, err)
 
 		ret, err := v1.CompareString(nil, tt.Arg2)
@@ -1033,7 +1050,7 @@ func TestDurationClock(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		d, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, tt.Input, types.MaxFsp)
+		d, _, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, tt.Input, types.MaxFsp)
 		require.NoError(t, err)
 		require.Equal(t, tt.Hour, d.Hour())
 		require.Equal(t, tt.Minute, d.Minute())
@@ -1150,7 +1167,7 @@ func TestTimeAdd(t *testing.T) {
 	for _, tt := range tbl {
 		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
-		dur, err := types.ParseDuration(sc, tt.Arg2, types.MaxFsp)
+		dur, _, err := types.ParseDuration(sc, tt.Arg2, types.MaxFsp)
 		require.NoError(t, err)
 		result, err := types.ParseTime(sc, tt.Ret, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
@@ -1828,7 +1845,7 @@ func TestTimeSub(t *testing.T) {
 		require.NoError(t, err)
 		v2, err := types.ParseTime(sc, tt.Arg2, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
-		dur, err := types.ParseDuration(sc, tt.Ret, types.MaxFsp)
+		dur, _, err := types.ParseDuration(sc, tt.Ret, types.MaxFsp)
 		require.NoError(t, err)
 		rec := v1.Sub(sc, &v2)
 		require.Equal(t, dur, rec)
@@ -2050,7 +2067,7 @@ func BenchmarkTimeAdd(b *testing.B) {
 		TimeZone: time.UTC,
 	}
 	arg1, _ := types.ParseTime(sc, "2017-01-18", mysql.TypeDatetime, types.MaxFsp)
-	arg2, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
+	arg2, _, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
 	for i := 0; i < b.N; i++ {
 		_, err := arg1.Add(sc, arg2)
 		if err != nil {
