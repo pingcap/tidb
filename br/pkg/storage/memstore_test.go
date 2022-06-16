@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMapStoreBasic(t *testing.T) {
+func TestMemStoreBasic(t *testing.T) {
 	store := NewMapStorage()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -117,7 +117,7 @@ type iterFileInfo struct {
 	Content []byte
 }
 
-func TestMapStoreWalkDir(t *testing.T) {
+func TestMemStoreWalkDir(t *testing.T) {
 	store := NewMapStorage()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -187,7 +187,7 @@ func TestMapStoreWalkDir(t *testing.T) {
 	}
 }
 
-func TestMapStoreManipulateBytes(t *testing.T) {
+func TestMemStoreManipulateBytes(t *testing.T) {
 	store := NewMapStorage()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -205,7 +205,7 @@ func TestMapStoreManipulateBytes(t *testing.T) {
 	require.Equal(t, testStr, string(store.dataStore["/aaa.txt"].Data.Load().([]byte)))
 }
 
-func TestMapStoreWriteDuringWalkDir(t *testing.T) {
+func TestMemStoreWriteDuringWalkDir(t *testing.T) {
 	store := NewMapStorage()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 
@@ -25,12 +26,12 @@ import (
 	"go.uber.org/atomic"
 )
 
-type mapFile struct {
+type memFile struct {
 	Data atomic.Value // the atomic value is a byte slice, which can only be get/set atomically
 }
 
 // GetData gets the underlying byte slice of the atomic value
-func (f *mapFile) GetData() []byte {
+func (f *memFile) GetData() []byte {
 	var fileData []byte
 	fileDataVal := f.Data.Load()
 	if fileDataVal != nil {
@@ -39,18 +40,18 @@ func (f *mapFile) GetData() []byte {
 	return fileData
 }
 
-type mapStorage struct {
+type memStorage struct {
 	rwm       sync.RWMutex
-	dataStore map[string]*mapFile
+	dataStore map[string]*memFile
 }
 
-func NewMapStorage() *mapStorage {
-	return &mapStorage{
-		dataStore: make(map[string]*mapFile),
+func NewMapStorage() *memStorage {
+	return &memStorage{
+		dataStore: make(map[string]*memFile),
 	}
 }
 
-func (s *mapStorage) loadMap(name string) (*mapFile, bool) {
+func (s *memStorage) loadMap(name string) (*memFile, bool) {
 	s.rwm.RLock()
 	defer s.rwm.RUnlock()
 	theFile, ok := s.dataStore[name]
@@ -59,7 +60,7 @@ func (s *mapStorage) loadMap(name string) (*mapFile, bool) {
 
 // DeleteFile delete the file in storage
 // It implements the `ExternalStorage` interface
-func (s *mapStorage) DeleteFile(ctx context.Context, name string) error {
+func (s *memStorage) DeleteFile(ctx context.Context, name string) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -80,7 +81,7 @@ func (s *mapStorage) DeleteFile(ctx context.Context, name string) error {
 
 // WriteFile file to storage.
 // It implements the `ExternalStorage` interface
-func (s *mapStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+func (s *memStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -97,7 +98,7 @@ func (s *mapStorage) WriteFile(ctx context.Context, name string, data []byte) er
 	if ok {
 		theFile.Data.Store(fileData)
 	} else {
-		theFile := new(mapFile)
+		theFile := new(memFile)
 		theFile.Data.Store(fileData)
 		s.dataStore[name] = theFile
 	}
@@ -106,7 +107,7 @@ func (s *mapStorage) WriteFile(ctx context.Context, name string, data []byte) er
 
 // ReadFile reads the storage file.
 // It implements the `ExternalStorage` interface
-func (s *mapStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+func (s *memStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -126,7 +127,7 @@ func (s *mapStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 
 // FileExists return true if file exists.
 // It implements the `ExternalStorage` interface
-func (s *mapStorage) FileExists(ctx context.Context, name string) (bool, error) {
+func (s *memStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
@@ -142,7 +143,7 @@ func (s *mapStorage) FileExists(ctx context.Context, name string) (bool, error) 
 
 // Open opens a Reader by file path.
 // It implements the `ExternalStorage` interface
-func (s *mapStorage) Open(ctx context.Context, filePath string) (ExternalFileReader, error) {
+func (s *memStorage) Open(ctx context.Context, filePath string) (ExternalFileReader, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -157,14 +158,14 @@ func (s *mapStorage) Open(ctx context.Context, filePath string) (ExternalFileRea
 		return nil, errors.Errorf("cannot find the file: %s", filePath)
 	}
 	r := bytes.NewReader(theFile.GetData())
-	return &mapFileReader{
+	return &memFileReader{
 		br: r,
 	}, nil
 }
 
 // WalkDir traverse all the files in a dir.
 // It implements the `ExternalStorage` interface
-func (s *mapStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (s *memStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
 	allFileNames := func() []string {
 		fileNames := []string{}
 		s.rwm.RLock()
@@ -187,6 +188,7 @@ func (s *mapStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		}
 		return fileNames
 	}()
+	sort.Strings(allFileNames)
 
 	for _, fileName := range allFileNames {
 		select {
@@ -207,14 +209,14 @@ func (s *mapStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	return nil
 }
 
-func (s *mapStorage) URI() string {
-	return "mapstore://"
+func (s *memStorage) URI() string {
+	return "memstore://"
 }
 
 // Create creates a file and returning a writer to write data into.
 // When the writer is closed, the data is stored in the file.
 // It implements the `ExternalStorage` interface
-func (s *mapStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (s *memStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -229,16 +231,16 @@ func (s *mapStorage) Create(ctx context.Context, name string) (ExternalFileWrite
 	if _, ok := s.dataStore[name]; ok {
 		return nil, errors.Errorf("the file already exists: %s", name)
 	}
-	theFile := new(mapFile)
+	theFile := new(memFile)
 	s.dataStore[name] = theFile
-	return &mapFileWriter{
+	return &memFileWriter{
 		file: theFile,
 	}, nil
 }
 
 // Rename renames a file name to another file name.
 // It implements the `ExternalStorage` interface
-func (s *mapStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+func (s *memStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -259,60 +261,60 @@ func (s *mapStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return nil
 }
 
-// mapFileReader is the struct to read data from an opend map storage file
-type mapFileReader struct {
+// memFileReader is the struct to read data from an opend mem storage file
+type memFileReader struct {
 	br       *bytes.Reader
 	isClosed atomic.Bool
 }
 
-// Read reads the map storage file data
+// Read reads the mem storage file data
 // It implements the `io.Reader` interface
-func (r *mapFileReader) Read(p []byte) (int, error) {
+func (r *memFileReader) Read(p []byte) (int, error) {
 	if r.isClosed.Load() {
 		return 0, io.EOF
 	}
 	return r.br.Read(p)
 }
 
-// Close closes the map storage file data
+// Close closes the mem storage file data
 // It implements the `io.Closer` interface
-func (r *mapFileReader) Close() error {
+func (r *memFileReader) Close() error {
 	r.isClosed.Store(true)
 	return nil
 }
 
-// Seeker seekds the offset inside the map storage file
+// Seeker seekds the offset inside the mem storage file
 // It implements the `io.Seeker` interface
-func (r *mapFileReader) Seek(offset int64, whence int) (int64, error) {
+func (r *memFileReader) Seek(offset int64, whence int) (int64, error) {
 	if r.isClosed.Load() {
 		return -1, errors.New("reader closed")
 	}
 	return r.br.Seek(offset, whence)
 }
 
-// mapFileReader is the struct to write data into the opened map storage file
-type mapFileWriter struct {
+// memFileReader is the struct to write data into the opened mem storage file
+type memFileWriter struct {
 	buf      bytes.Buffer
-	file     *mapFile
+	file     *memFile
 	isClosed atomic.Bool
 }
 
-// Write writes the data into the map storage file buffer.
+// Write writes the data into the mem storage file buffer.
 // It implements the `ExternalFileWriter` interface
-func (w *mapFileWriter) Write(ctx context.Context, p []byte) (int, error) {
+func (w *memFileWriter) Write(ctx context.Context, p []byte) (int, error) {
 	select {
 	case <-ctx.Done():
-		return -1, ctx.Err()
+		return 0, ctx.Err()
 	default:
 		// continue on
 	}
 	if w.isClosed.Load() {
-		return -1, errors.New("writer closed")
+		return 0, errors.New("writer closed")
 	}
 	return w.buf.Write(p)
 }
 
-func (w *mapFileWriter) Close(ctx context.Context) error {
+func (w *memFileWriter) Close(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
