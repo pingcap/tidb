@@ -45,7 +45,7 @@ type memStorage struct {
 	dataStore map[string]*memFile
 }
 
-func NewMapStorage() *memStorage {
+func NewMemStorage() *memStorage {
 	return &memStorage{
 		dataStore: make(map[string]*memFile),
 	}

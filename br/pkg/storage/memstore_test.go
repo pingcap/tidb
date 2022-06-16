@@ -27,7 +27,7 @@ import (
 )
 
 func TestMemStoreBasic(t *testing.T) {
-	store := NewMapStorage()
+	store := NewMemStorage()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -118,7 +118,7 @@ type iterFileInfo struct {
 }
 
 func TestMemStoreWalkDir(t *testing.T) {
-	store := NewMapStorage()
+	store := NewMemStorage()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -188,7 +188,7 @@ func TestMemStoreWalkDir(t *testing.T) {
 }
 
 func TestMemStoreManipulateBytes(t *testing.T) {
-	store := NewMapStorage()
+	store := NewMemStorage()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -206,7 +206,7 @@ func TestMemStoreManipulateBytes(t *testing.T) {
 }
 
 func TestMemStoreWriteDuringWalkDir(t *testing.T) {
-	store := NewMapStorage()
+	store := NewMemStorage()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
