@@ -39,7 +39,6 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (store
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TokenLimit = 100000
 	})
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
