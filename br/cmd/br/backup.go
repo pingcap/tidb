@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -78,7 +78,7 @@ func NewBackupCommand() *cobra.Command {
 			task.LogArguments(c)
 
 			// Do not run ddl worker in BR.
-			ddl.RunWorker = false
+			config.GetGlobalConfig().Instance.EnableDDL.Store(false)
 
 			summary.SetUnit(summary.BackupUnit)
 			return nil

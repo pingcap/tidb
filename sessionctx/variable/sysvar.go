@@ -415,6 +415,15 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeInstance, Name: PluginDir, Value: "/data/deploy/plugin", ReadOnly: true, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.PluginDir, nil
 	}},
+	{Scope: ScopeInstance, Name: EnableDDL, Value: BoolToOnOff(config.GetGlobalConfig().Instance.EnableDDL.Load()), Type: TypeBool,
+		SetGlobal: func(s *SessionVars, val string) error {
+			config.GetGlobalConfig().Instance.EnableDDL.Store(TiDBOptOn(val))
+			return nil
+		},
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(config.GetGlobalConfig().Instance.EnableDDL.Load()), nil
+		},
+	},
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
@@ -1769,6 +1778,8 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
+	// EnableDDL indicates whether the tidb-server runs DDL statements,
+	EnableDDL = "enable_ddl"
 	// Port is the name for 'port' system variable.
 	Port = "port"
 	// DataDir is the name for 'datadir' system variable.

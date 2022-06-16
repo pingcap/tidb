@@ -33,7 +33,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -116,7 +116,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	// Stop current DDL worker, so that we can't be the owner now.
 	err = domain.GetDomain(s.ctx).DDL().Stop()
 	require.NoError(t, err)
-	ddl.RunWorker = false
+	config.GetGlobalConfig().Instance.EnableDDL.Store(false)
 	session.ResetStoreForWithTiKVTest(s.store)
 	s.dom.Close()
 	require.NoError(t, s.store.Close())

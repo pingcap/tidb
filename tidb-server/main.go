@@ -446,7 +446,7 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Binlog.Enable = *enableBinlog
 	}
 	if actualFlags[nmRunDDL] {
-		cfg.RunDDL = *runDDL
+		cfg.Instance.EnableDDL.Store(*runDDL)
 	}
 	if actualFlags[nmDdlLease] {
 		cfg.Lease = *ddlLease
@@ -558,6 +558,8 @@ func setGlobalVars() {
 					cfg.Instance.CheckMb4ValueInUTF8.Store(cfg.CheckMb4ValueInUTF8.Load())
 				case "enable-collect-execution-info":
 					cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
+				case "run-ddl":
+					cfg.Instance.EnableDDL.Store(cfg.RunDDL)
 				}
 			case "log":
 				switch oldName {
@@ -610,7 +612,6 @@ func setGlobalVars() {
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
 	statistics.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
-	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	}

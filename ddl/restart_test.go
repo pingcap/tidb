@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -48,7 +49,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	d.wg.Run(d.limitDDLJobs)
-	if !RunWorker {
+	if !config.GetGlobalConfig().Instance.EnableDDL.Load() {
 		return
 	}
 
