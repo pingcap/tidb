@@ -332,3 +332,198 @@ else
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
+<<<<<<< HEAD
+=======
+
+# Collect the daily benchmark data.
+# Usage:
+#	make bench-daily TO=/path/to/file.json
+bench-daily:
+	go test github.com/pingcap/tidb/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/distsql -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily -bench Ignore \
+		-date `git log -n1 --date=unix --pretty=format:%cd` \
+		-commit `git log -n1 --pretty=format:%h` \
+		-outfile $(TO)
+
+build_tools: build_br build_lightning build_lightning-ctl
+
+br_web:
+	@cd br/web && npm install && npm run build
+
+build_br:
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) br/cmd/br/*.go
+
+build_lightning_for_web:
+	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) br/cmd/tidb-lightning/main.go
+
+build_lightning:
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) br/cmd/tidb-lightning/main.go
+
+build_lightning-ctl:
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) br/cmd/tidb-lightning-ctl/main.go
+
+build_for_br_integration_test:
+	@make failpoint-enable
+	($(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(BR_BIN).test \
+		github.com/pingcap/tidb/br/cmd/br && \
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(LIGHTNING_BIN).test \
+		github.com/pingcap/tidb/br/cmd/tidb-lightning && \
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(LIGHTNING_CTL_BIN).test \
+		github.com/pingcap/tidb/br/cmd/tidb-lightning-ctl && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/locker br/tests/br_key_locked/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/oauth br/tests/br_gcs/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/rawkv br/tests/br_rawkv/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen br/tests/lightning_checkpoint_parquet/*.go \
+	) || (make failpoint-disable && exit 1)
+	@make failpoint-disable
+
+build_for_lightning_test:
+	@make failpoint-enable
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(LIGHTNING_BIN).test \
+		github.com/pingcap/tidb/br/cmd/tidb-lightning
+	@make failpoint-disable
+
+br_unit_test: export ARGS=$$($(BR_PACKAGES))
+br_unit_test:
+	@make failpoint-enable
+	@export TZ='Asia/Shanghai';
+	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+br_unit_test_in_verify_ci: export ARGS=$$($(BR_PACKAGES))
+br_unit_test_in_verify_ci: tools/bin/gotestsum
+	@make failpoint-enable
+	@export TZ='Asia/Shanghai';
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/br-junit-report.xml" -- $(RACE_FLAG) -ldflags '$(LDFLAGS)' \
+	$(ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/br_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+
+br_integration_test: br_bins build_br build_for_br_integration_test
+	@cd br && tests/run.sh
+
+br_compatibility_test_prepare:
+	@cd br && tests/run_compatible.sh prepare
+
+br_compatibility_test:
+	@cd br && tests/run_compatible.sh run
+
+# There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
+# but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
+# cgo enabled on regular builds is performance.
+ifeq ("$(GOOS)", "freebsd")
+        GOBUILD  = CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(LDFLAGS)'
+endif
+
+br_coverage:
+	tools/bin/gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go|.*__failpoint_binding__.go" > "$(TEST_DIR)/all_cov.out"
+ifeq ("$(JenkinsCI)", "1")
+	tools/bin/goveralls -coverprofile=$(TEST_DIR)/all_cov.out -service=jenkins-ci -repotoken $(COVERALLS_TOKEN)
+else
+	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
+	grep -F '<option' "$(TEST_DIR)/all_cov.html"
+endif
+
+# TODO: adjust bins when br integraion tests reformat.
+br_bins:
+	@which bin/tidb-server
+	@which bin/tikv-server
+	@which bin/pd-server
+	@which bin/pd-ctl
+	@which bin/go-ycsb
+	@which bin/minio
+	@which bin/tiflash
+	@which bin/libtiflash_proxy.so
+	@which bin/cdc
+	@which bin/fake-gcs-server
+	@which bin/tikv-importer
+	if [ ! -d bin/flash_cluster_manager ]; then echo "flash_cluster_manager not exist"; exit 1; fi
+
+%_generated.go: %.rl
+	ragel -Z -G2 -o tmp_parser.go $<
+	@echo '// Code generated by ragel DO NOT EDIT.' | cat - tmp_parser.go | sed 's|//line |//.... |g' > $@
+	@rm tmp_parser.go
+
+data_parsers: tools/bin/vfsgendev br/pkg/lightning/mydump/parser_generated.go br_web
+	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" br/pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
+	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/br/pkg/lightning/web".Res' && mv res_vfsdata.go br/pkg/lightning/web/
+
+build_dumpling:
+	$(DUMPLING_GOBUILD) $(RACE_FLAG) -tags codes -o $(DUMPLING_BIN) dumpling/cmd/dumpling/main.go
+
+dumpling_unit_test: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
+dumpling_unit_test: failpoint-enable
+	$(DUMPLING_GOTEST) $(RACE_FLAG) -coverprofile=coverage.txt -covermode=atomic $(DUMPLING_ARGS) || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+dumpling_unit_test_in_verify_ci: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
+dumpling_unit_test_in_verify_ci: failpoint-enable tools/bin/gotestsum
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/dumpling-junit-report.xml" -- $(DUMPLING_ARGS) \
+	$(RACE_FLAG) -coverprofile="$(TEST_COVERAGE_DIR)/dumpling_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+
+dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
+	@make failpoint-disable
+	./dumpling/tests/run.sh $(CASE)
+
+dumpling_bins:
+	@which bin/tidb-server
+	@which bin/minio
+	@which bin/tidb-lightning
+	@which bin/sync_diff_inspector
+
+tools/bin/gotestsum: tools/check/go.mod
+	cd tools/check && $(GO) build -o ../bin/gotestsum gotest.tools/gotestsum
+
+generate_grafana_scripts:
+	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
+
+bazel_ci_prepare:
+	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci  //:gazelle
+
+bazel_prepare:
+	bazel run  //:gazelle
+
+bazel_test: failpoint-enable bazel_ci_prepare
+	bazel --output_user_root=/home/jenkins/.tidb/tmp test --config=ci  \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+
+
+bazel_coverage_test: failpoint-enable bazel_ci_prepare
+	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+
+bazel_build: bazel_ci_prepare
+	mkdir -p bin
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //tidb-server/... //br/cmd/... //cmd/...
+	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
+	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
+	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
+
+bazel_fail_build:  failpoint-enable bazel_ci_prepare
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //...
+
+bazel_clean:
+	bazel --output_user_root=/home/jenkins/.tidb/tmp clean
+
+bazel_junit:
+	bazel_collect
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
+>>>>>>> 674def3b7... lightning: sample files and pre-allocate rowID before restoring chunk (#34288)
