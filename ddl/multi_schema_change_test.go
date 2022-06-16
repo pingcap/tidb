@@ -1079,7 +1079,7 @@ func TestMultiSchemaChangeTableOption(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("110 1"))
 
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b int) shard_row_id_bits=2;")
+	tk.MustExec("create table t (a int, b int) charset = utf8 shard_row_id_bits=2;")
 	tk.MustExec("alter table t modify column a tinyint, shard_row_id_bits = 3, comment = 'abc', charset = utf8mb4;")
 	tk.MustQuery("select TIDB_ROW_ID_SHARDING_INFO, TABLE_COMMENT, TABLE_COLLATION from information_schema.tables where table_name = 't';").
 		Check(testkit.Rows("SHARD_BITS=3 abc utf8mb4_bin"))
