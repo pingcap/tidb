@@ -431,9 +431,6 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
-	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
-	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
-
 	// TiDBEnableAutoIncrementInGenerated disables the mysql compatibility check on using auto-incremented columns in
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
@@ -832,7 +829,6 @@ const (
 	DefTiDBDDLReorgBatchSize                     = 256
 	DefTiDBDDLErrorCountLimit                    = 512
 	DefTiDBMaxDeltaSchemaCount                   = 1024
-	DefTiDBChangeMultiSchema                     = false
 	DefTiDBPointGetCache                         = false
 	DefTiDBPlacementMode                         = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated        = false
@@ -965,7 +961,6 @@ var (
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
 	EnablePointGetCache                   = atomic.NewBool(DefTiDBPointGetCache)
-	EnableChangeMultiSchema               = atomic.NewBool(DefTiDBChangeMultiSchema)
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)

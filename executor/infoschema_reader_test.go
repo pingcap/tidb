@@ -244,7 +244,6 @@ func TestDDLJobs(t *testing.T) {
 	DDLJobsTester.MustQuery("select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
 		testkit.Rows("test_ddl_jobs t"))
 
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 	tk.MustExec("create table tt (a int);")
 	tk.MustExec("alter table tt add index t(a), add column b int")
 	tk.MustQuery("select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3").Check(

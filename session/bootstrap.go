@@ -2016,13 +2016,6 @@ func doDMLWorks(s Session) {
 					vVal = variable.OOMActionLog
 				}
 			}
-			if v.Name == variable.TiDBEnableChangeMultiSchema {
-				vVal = variable.Off
-				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-					// enable change multi schema in test case for compatibility with old cases.
-					vVal = variable.On
-				}
-			}
 			if v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv" {
 				vVal = variable.On
 			}

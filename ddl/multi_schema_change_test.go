@@ -35,7 +35,6 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 
 	// Test add multiple columns in multiple specs.
 	tk.MustExec("create table t (a int);")
@@ -113,7 +112,6 @@ func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 	originHook := dom.DDL().GetHook()
 
 	tk.MustExec("create table t (a int);")
@@ -135,7 +133,6 @@ func TestMultiSchemaChangeAddColumnsParallel(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	tk.MustExec("create table t (a int default 1);")
 	tk.MustExec("insert into t values ();")
 	putTheSameDDLJobTwice(t, func() {
@@ -159,7 +156,6 @@ func TestMultiSchemaChangeDropColumns(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 
 	// Test drop all columns
 	tk.MustExec("create table t (a int, b int);")
@@ -197,7 +193,6 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 	originHook := dom.DDL().GetHook()
 
 	// Test for cancelling the job in a middle state.
@@ -233,7 +228,6 @@ func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 	originHook := dom.DDL().GetHook()
 
 	// Test for cancelling the job in a middle state.
@@ -258,7 +252,6 @@ func TestMultiSchemaChangeDropColumnsParallel(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	tk.MustExec("create table t (a int, b int, c int);")
 	putTheSameDDLJobTwice(t, func() {
 		tk.MustExec("alter table t drop column if exists b, drop column if exists c;")
@@ -278,7 +271,6 @@ func TestMultiSchemaChangeAddDropColumns(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 
 	// [a, b] -> [+c, -a, +d, -b] -> [c, d]
 	tk.MustExec("drop table if exists t;")
@@ -307,7 +299,6 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 
 	// unsupported ddl operations
 	{
@@ -382,7 +373,6 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 
 	// unsupported ddl operations
 	{
@@ -450,7 +440,6 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 
 	// unsupported ddl operations
 	{
@@ -502,7 +491,6 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 
 	// Test add multiple indexes with same column.
 	tk.MustExec("drop table if exists t;")
@@ -539,7 +527,6 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	originHook := dom.DDL().GetHook()
 
 	// Test cancel successfully.
@@ -585,7 +572,6 @@ func TestMultiSchemaChangeDropIndexes(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	originHook := dom.DDL().GetHook()
 
 	jobIDExt := wrapJobIDExtCallback(originHook)
@@ -627,7 +613,6 @@ func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	originHook := dom.DDL().GetHook()
 
 	// Test for cancelling the job in a middle state.
@@ -663,7 +648,6 @@ func TestMultiSchemaChangeDropIndexesParallel(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	tk.MustExec("create table t (a int, b int, c int, index(a), index(b), index(c));")
 	putTheSameDDLJobTwice(t, func() {
 		tk.MustExec("alter table t drop index if exists b, drop index if exists c;")
@@ -683,7 +667,6 @@ func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 
 	// Test add and drop same index.
 	tk.MustExec("drop table if exists t")
@@ -711,7 +694,6 @@ func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 	originHook := dom.DDL().GetHook()
 
 	// Test rename index.
@@ -764,7 +746,6 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	originHook := dom.DDL().GetHook()
 
 	// unsupported ddl operations
@@ -896,7 +877,6 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	originHook := dom.DDL().GetHook()
 
 	// Test for cancelling the job in a middle state.
@@ -922,7 +902,6 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 
 	// unsupported ddl operations
 	{
@@ -981,7 +960,6 @@ func TestMultiSchemaChangeMix(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 
 	tk.MustExec("create table t (a int, b int, c int, index i1(c), index i2(c));")
 	tk.MustExec("insert into t values (1, 2, 3);")
@@ -999,7 +977,6 @@ func TestMultiSchemaChangeMixCancelled(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 
 	tk.MustExec("create table t (a int, b int, c int, index i1(c), index i2(c));")
 	tk.MustExec("insert into t values (1, 2, 3);")
@@ -1027,7 +1004,6 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 	originHook := dom.DDL().GetHook()
 	hook := &ddl.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -1063,10 +1039,7 @@ func TestMultiSchemaChangeTableOption(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 0;")
 	tk.MustExec("create table t (a int auto_increment primary key, b int);")
-	tk.MustGetErrCode("alter table t modify column b tinyint, auto_increment = 100;", errno.ErrUnsupportedDDLOperation)
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	tk.MustExec("alter table t modify column b tinyint, auto_increment = 100;")
 	tk.MustExec("insert into t (b) values (1);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("100 1"))
@@ -1090,7 +1063,6 @@ func TestMultiSchemaChangeNonPublicDefaultValue(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	tk.MustExec("create table t (a tinyint);")
 	tk.MustExec("insert into t set a = 10;")
 	tk.MustExec("alter table t add column b int not null, change column a c char(5) first;")
@@ -1102,7 +1074,6 @@ func TestMultiSchemaChangeAlterIndexVisibility(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	tk.MustExec("create table t (a int, b int, index idx(b));")
 	tk.MustExec("alter table t add index idx2(a), alter index idx visible;")
 	tk.MustQuery("select * from t use index (idx, idx2);").Check(testkit.Rows( /* no rows */ ))
@@ -1113,7 +1084,6 @@ func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values (1, 2), (2, 1);")
 	tk.MustGetErrCode("alter table t drop column a, add unique index idx((a + b));", errno.ErrUnsupportedDDLOperation)
@@ -1154,7 +1124,6 @@ func TestMultiSchemaChangeNoSubJobs(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("alter table t add column if not exists a int, add column if not exists b int;")

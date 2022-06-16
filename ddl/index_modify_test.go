@@ -835,7 +835,6 @@ func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL strin
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_drop_indexes")
 	tk.MustExec(createSQL)
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	done := make(chan error, 1)
 
 	num := 100
