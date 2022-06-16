@@ -445,6 +445,49 @@ func isPKCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasPriKeyFlag(colInfo.GetFlag())
 }
 
+func isRowIDOverflow(meta *model.ColumnInfo, rowID int64) bool {
+	isUnsigned := mysql.HasUnsignedFlag(meta.GetFlag())
+	switch meta.GetType() {
+	// MEDIUM INT
+	case mysql.TypeInt24:
+		if !isUnsigned {
+			return rowID > mysql.MaxInt24
+		}
+		return rowID > mysql.MaxUint24
+	// INT
+	case mysql.TypeLong:
+		if !isUnsigned {
+			return rowID > math.MaxInt32
+		}
+		return rowID > math.MaxUint32
+	// SMALLINT
+	case mysql.TypeShort:
+		if !isUnsigned {
+			return rowID > math.MaxInt16
+		}
+		return rowID > math.MaxUint16
+	// TINYINT
+	case mysql.TypeTiny:
+		if !isUnsigned {
+			return rowID > math.MaxInt8
+		}
+		return rowID > math.MaxUint8
+	// FLOAT
+	case mysql.TypeFloat:
+		if !isUnsigned {
+			return float32(rowID) > math.MaxFloat32
+		}
+		return float64(rowID) > math.MaxFloat32*2
+	// DOUBLE
+	case mysql.TypeDouble:
+		if !isUnsigned {
+			return float64(rowID) > math.MaxFloat64
+		}
+		// impossible for rowID exceeding MaxFloat64
+	}
+	return false
+}
+
 func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
 	var (
 		value types.Datum
@@ -472,6 +515,11 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 	// handle special values
 	switch {
 	case isAutoIncCol(col.ToInfo()):
+		// rowID is going to auto-filled the omitted column,
+		// which should be checked before restore
+		if isRowIDOverflow(col.ToInfo(), rowID) {
+			return value, errors.Errorf("PK %d is out of range", rowID)
+		}
 		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
 		value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo(), false, false)
 	case isTableAutoRandom(tblMeta) && isPKCol(col.ToInfo()):
