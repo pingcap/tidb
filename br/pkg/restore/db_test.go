@@ -251,3 +251,74 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobsV2(c *C) {
 	}
 	c.Assert(len(ddlJobs), Equals, 7)
 }
+
+func (s *testRestoreSchemaSuite) TestDB_ExecDDL(c *C) {
+	ctx := context.Background()
+	ddlJobs := []*model.Job{
+		{
+			Type:       model.ActionAddIndex,
+			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionAddIndex,
+			Query:      "",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+	}
+
+	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage)
+	c.Assert(err, IsNil)
+
+	for _, ddlJob := range ddlJobs {
+		err = db.ExecDDL(ctx, ddlJob)
+		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testRestoreSchemaSuite) TestFilterDDLJobByRules(c *C) {
+	ddlJobs := []*model.Job{
+		{
+			Type: model.ActionSetTiFlashReplica,
+		},
+		{
+			Type: model.ActionAddPrimaryKey,
+		},
+		{
+			Type: model.ActionUpdateTiFlashReplicaStatus,
+		},
+		{
+			Type: model.ActionCreateTable,
+		},
+		{
+			Type: model.ActionLockTable,
+		},
+		{
+			Type: model.ActionAddIndex,
+		},
+		{
+			Type: model.ActionUnlockTable,
+		},
+		{
+			Type: model.ActionCreateSchema,
+		},
+		{
+			Type: model.ActionModifyColumn,
+		},
+	}
+
+	expectedDDLTypes := []model.ActionType{
+		model.ActionAddPrimaryKey,
+		model.ActionCreateTable,
+		model.ActionAddIndex,
+		model.ActionCreateSchema,
+		model.ActionModifyColumn,
+	}
+
+	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
+
+	c.Assert(len(ddlJobs), Equals, len(expectedDDLTypes))
+	for i, ddlJob := range ddlJobs {
+		c.Assert(ddlJob.Type, Equals, expectedDDLTypes[i])
+	}
+}
