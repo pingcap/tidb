@@ -12,17 +12,3 @@ xcode_version(
     name = "xcode_version",
     version = "10.0",
 )
-
-filegroup(
-    name = "package-srcs",
-    srcs = glob(
-        ["**"],
-        exclude = [
-            "bazel-*/**",
-            ".git/**",
-            ".idea/**",
-        ],
-    ),
-    tags = ["automanaged"],
-    visibility = ["//visibility:private"],
-)
