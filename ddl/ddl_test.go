@@ -358,7 +358,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	// Ensure that the notification is not handled in workers `start` function.
 	d.cancel()
 	for _, worker := range d.workers {
-		worker.close()
+		worker.Close()
 	}
 
 	job := &model.Job{
@@ -401,7 +401,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	// Ensure that the notification is not handled by worker's "start".
 	d1.cancel()
 	for _, worker := range d1.workers {
-		worker.close()
+		worker.Close()
 	}
 	d1.ownerManager.RetireOwner()
 	d1.asyncNotifyWorker(job)
