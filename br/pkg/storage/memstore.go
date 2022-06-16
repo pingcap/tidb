@@ -287,7 +287,7 @@ func (r *memFileReader) Close() error {
 // It implements the `io.Seeker` interface
 func (r *memFileReader) Seek(offset int64, whence int) (int64, error) {
 	if r.isClosed.Load() {
-		return -1, errors.New("reader closed")
+		return 0, errors.New("reader closed")
 	}
 	return r.br.Seek(offset, whence)
 }
