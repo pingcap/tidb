@@ -176,7 +176,13 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 		resp.OtherError = err.Error()
 		return resp
 	}
-	defer se.Close()
+	defer func() {
+		sc := se.GetSessionVars().StmtCtx
+		if sc.MemTracker != nil {
+			sc.MemTracker.DetachFromGlobalTracker()
+		}
+		se.Close()
+	}()
 
 	if p, ok := peer.FromContext(ctx); ok {
 		se.GetSessionVars().SourceAddr = *p.Addr.(*net.TCPAddr)
@@ -197,12 +203,21 @@ func (s *rpcServer) createSession() (session.Session, error) {
 		Handle: do.PrivilegeHandle(),
 	}
 	privilege.BindPrivilegeManager(se, pm)
-	se.GetSessionVars().TxnCtx.InfoSchema = is
+	vars := se.GetSessionVars()
+	vars.TxnCtx.InfoSchema = is
 	// This is for disable parallel hash agg.
 	// TODO: remove this.
-	se.GetSessionVars().SetHashAggPartialConcurrency(1)
-	se.GetSessionVars().SetHashAggFinalConcurrency(1)
-	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForCoprocessor, -1)
+	vars.SetHashAggPartialConcurrency(1)
+	vars.SetHashAggFinalConcurrency(1)
+	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+	vars.StmtCtx.MemTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+	globalConfig := config.GetGlobalConfig()
+	switch globalConfig.OOMAction {
+	case config.OOMActionCancel:
+		action := &memory.PanicOnExceed{}
+		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		vars.StmtCtx.MemTracker.SetActionOnExceed(action)
+	}
 	se.SetSessionManager(s.sm)
 	return se, nil
 }
