@@ -10568,6 +10568,5 @@ func (s *testIntegrationSuite) TestIssue33397(c *C) {
 	tk.MustExec("create table t(a varchar(32));")
 	tk.MustExec("insert into t values(''), ('');")
 	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
-	result := tk.MustQuery("select compress(a) from t").Rows()
-	c.Assert(result, Equals, [][]interface{}{{""}, {""}})
+	tk.MustQuery("select compress(a) from t").Check(testkit.Rows("", ""))
 }
