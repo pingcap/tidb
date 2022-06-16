@@ -53,8 +53,13 @@ require (
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
+<<<<<<< HEAD
 	github.com/pingcap/tipb v0.0.0-20220222072611-9b6db18731e5
 	github.com/prometheus/client_golang v1.5.1
+=======
+	github.com/pingcap/tipb v0.0.0-20220602075447-4847c5d68e73
+	github.com/prometheus/client_golang v1.12.2
+>>>>>>> 4ae78cdea... expression: refine date_add/sub return type and precision (#35009)
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
 	github.com/shirou/gopsutil v3.21.2+incompatible

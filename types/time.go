@@ -25,9 +25,11 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	tidbMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/parser"
@@ -2526,13 +2528,36 @@ func ExtractDurationValue(unit string, format string) (Duration, error) {
 	}
 }
 
-// IsClockUnit returns true when unit is interval unit with hour, minute or second.
+// IsClockUnit returns true when unit is interval unit with hour, minute, second or microsecond.
 func IsClockUnit(unit string) bool {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR",
-		"SECOND_MICROSECOND", "MINUTE_MICROSECOND", "MINUTE_SECOND",
-		"HOUR_MICROSECOND", "HOUR_SECOND", "HOUR_MINUTE",
-		"DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR":
+		"SECOND_MICROSECOND", "MINUTE_MICROSECOND", "HOUR_MICROSECOND", "DAY_MICROSECOND",
+		"MINUTE_SECOND", "HOUR_SECOND", "DAY_SECOND",
+		"HOUR_MINUTE", "DAY_MINUTE",
+		"DAY_HOUR":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsDateUnit returns true when unit is interval unit with year, quarter, month, week or day.
+func IsDateUnit(unit string) bool {
+	switch strings.ToUpper(unit) {
+	case "DAY", "WEEK", "MONTH", "QUARTER", "YEAR",
+		"DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR",
+		"YEAR_MONTH":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsMicrosecondUnit returns true when unit is interval unit with microsecond.
+func IsMicrosecondUnit(unit string) bool {
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND", "SECOND_MICROSECOND", "MINUTE_MICROSECOND", "HOUR_MICROSECOND", "DAY_MICROSECOND":
 		return true
 	default:
 		return false
@@ -2558,6 +2583,68 @@ func IsDateFormat(format string) bool {
 // ParseTimeFromInt64 parses mysql time value from int64.
 func ParseTimeFromInt64(sc *stmtctx.StatementContext, num int64) (Time, error) {
 	return parseDateTimeFromNum(sc, num)
+}
+
+// ParseTimeFromFloat64 parses mysql time value from float64.
+// It is used in scenarios that distinguish date and datetime, e.g., date_add/sub() with first argument being real.
+// For example, 20010203 parses to date (no HMS) and 20010203040506 parses to datetime (with HMS).
+func ParseTimeFromFloat64(sc *stmtctx.StatementContext, f float64) (Time, error) {
+	intPart := int64(f)
+	t, err := parseDateTimeFromNum(sc, intPart)
+	if err != nil {
+		return ZeroTime, err
+	}
+	if t.Type() == mysql.TypeDatetime {
+		// US part is only kept when the integral part is recognized as datetime.
+		fracPart := uint32((f - float64(intPart)) * 1000000.0)
+		ct := t.CoreTime()
+		ct.setMicrosecond(fracPart)
+		t.SetCoreTime(ct)
+	}
+	return t, err
+}
+
+// ParseTimeFromDecimal parses mysql time value from decimal.
+// It is used in scenarios that distinguish date and datetime, e.g., date_add/sub() with first argument being decimal.
+// For example, 20010203 parses to date (no HMS) and 20010203040506 parses to datetime (with HMS).
+func ParseTimeFromDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (t Time, err error) {
+	intPart, err := dec.ToInt()
+	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
+		return ZeroTime, err
+	}
+	fsp := mathutil.Min(MaxFsp, int(dec.GetDigitsFrac()))
+	t, err = parseDateTimeFromNum(sc, intPart)
+	if err != nil {
+		return ZeroTime, err
+	}
+	t.SetFsp(fsp)
+	if fsp == 0 || t.Type() == mysql.TypeDate {
+		// Shortcut for integer value or date value (fractional part omitted).
+		return t, err
+	}
+
+	intPartDec := new(MyDecimal).FromInt(intPart)
+	fracPartDec := new(MyDecimal)
+	err = DecimalSub(dec, intPartDec, fracPartDec)
+	if err != nil {
+		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
+	}
+	million := new(MyDecimal).FromInt(1000000)
+	msPartDec := new(MyDecimal)
+	err = DecimalMul(fracPartDec, million, msPartDec)
+	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
+		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
+	}
+	msPart, err := msPartDec.ToInt()
+	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
+		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
+	}
+
+	ct := t.CoreTime()
+	ct.setMicrosecond(uint32(msPart))
+	t.SetCoreTime(ct)
+
+	return t, nil
 }
 
 // DateFormat returns a textual representation of the time value formatted

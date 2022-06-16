@@ -1657,6 +1657,7 @@ func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result 
 func (b *builtinTimeTimeTimeDiffSig) vectorized() bool {
 	return true
 }
+<<<<<<< HEAD
 
 func (b *builtinAddDateStringStringSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -3185,3 +3186,5 @@ func (b *builtinSubDateDurationDecimalSig) vecEvalDuration(input *chunk.Chunk, r
 func (b *builtinSubDateDurationDecimalSig) vectorized() bool {
 	return true
 }
+=======
+>>>>>>> 4ae78cdea... expression: refine date_add/sub return type and precision (#35009)
