@@ -107,8 +107,10 @@ func SortRanges(ranges []rtree.Range, rewriteRules *RewriteRules) ([]rtree.Range
 
 // RegionInfo includes a region and the leader of the region.
 type RegionInfo struct {
-	Region *metapb.Region
-	Leader *metapb.Peer
+	Region       *metapb.Region
+	Leader       *metapb.Peer
+	PendingPeers []*metapb.Peer
+	DownPeers    []*metapb.Peer
 }
 
 // ContainsInterior returns whether the region contains the given key, and also

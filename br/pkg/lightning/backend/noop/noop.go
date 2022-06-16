@@ -140,7 +140,7 @@ func (b noopBackend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 // LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uuid.UUID) (backend.EngineWriter, error) {
-	return noopWriter{}, nil
+	return Writer{}, nil
 }
 
 func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
@@ -174,16 +174,23 @@ func (r noopRow) Size() uint64 {
 func (r noopRow) ClassifyAndAppend(*kv.Rows, *verification.KVChecksum, *kv.Rows, *verification.KVChecksum) {
 }
 
-type noopWriter struct{}
+// Writer define a local writer that do nothing.
+type Writer struct{}
 
-func (w noopWriter) AppendRows(context.Context, string, []string, kv.Rows) error {
+func (w Writer) AppendRows(context.Context, string, []string, kv.Rows) error {
 	return nil
 }
 
-func (w noopWriter) IsSynced() bool {
+func (w Writer) IsSynced() bool {
 	return true
 }
 
-func (w noopWriter) Close(context.Context) (backend.ChunkFlushStatus, error) {
-	return nil, nil
+func (w Writer) Close(context.Context) (backend.ChunkFlushStatus, error) {
+	return trueStatus{}, nil
+}
+
+type trueStatus struct{}
+
+func (s trueStatus) Flushed() bool {
+	return true
 }

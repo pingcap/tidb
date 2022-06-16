@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -848,6 +849,9 @@ func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
 // See https://dev.mysql.com/doc/refman/5.7/en/account-names.html
 func (record *baseRecord) hostMatch(s string) bool {
 	if record.hostIPNet == nil {
+		if record.Host == "localhost" && net.ParseIP(s).IsLoopback() {
+			return true
+		}
 		return false
 	}
 	ip := net.ParseIP(s).To4()
@@ -890,12 +894,52 @@ func patternMatch(str string, patChars, patTypes []byte) bool {
 	return stringutil.DoMatchBytes(str, patChars, patTypes)
 }
 
-// connectionVerification verifies the connection have access to TiDB server.
-func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
+// matchIdentity finds an identity to match a user + host
+// using the correct rules according to MySQL.
+func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) *UserRecord {
 	for i := 0; i < len(p.User); i++ {
 		record := &p.User[i]
 		if record.match(user, host) {
 			return record
+		}
+	}
+
+	// If skip-name resolve is not enabled, and the host is not localhost
+	// we can fallback and try to resolve with all addrs that match.
+	// TODO: this is imported from previous code in session.Auth(), and can be improved in future.
+	if !skipNameResolve && host != variable.DefHostname {
+		addrs, err := net.LookupAddr(host)
+		if err != nil {
+			logutil.BgLogger().Warn(
+				"net.LookupAddr returned an error during auth check",
+				zap.String("host", host),
+				zap.Error(err),
+			)
+			return nil
+		}
+		for _, addr := range addrs {
+			for i := 0; i < len(p.User); i++ {
+				record := &p.User[i]
+				if record.match(user, addr) {
+					return record
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// connectionVerification verifies the username + hostname according to exact
+// match from the mysql.user privilege table. call matchIdentity() first if you
+// do not have an exact match yet.
+func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
+	records, exists := p.UserMap[user]
+	if exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.Host == host { // exact match
+				return record
+			}
 		}
 	}
 	return nil

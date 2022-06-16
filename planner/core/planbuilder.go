@@ -949,10 +949,13 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
-	var tablePath *util.AccessPath
+	var primaryIdxPath *util.AccessPath
 	for _, path := range paths {
+		if path.StoreType == kv.TiFlash {
+			continue
+		}
 		if path.IsTablePath() {
-			tablePath = path
+			primaryIdxPath = path
 			continue
 		}
 		if path.Index.Name.L == idxName.L {
@@ -960,7 +963,7 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 		}
 	}
 	if isPrimaryIndex(idxName) && (tblInfo.PKIsHandle || tblInfo.IsCommonHandle) {
-		return tablePath
+		return primaryIdxPath
 	}
 	return nil
 }
@@ -1044,6 +1047,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 
+	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
@@ -1545,7 +1549,8 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 	indexInfos := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	indexLookUpReaders := make([]Plan, 0, len(tblInfo.Indices))
 
-	check := b.isForUpdateRead && b.ctx.GetSessionVars().ConnectionID > 0
+	check := b.isForUpdateRead || b.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
+	check = check && b.ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
 
