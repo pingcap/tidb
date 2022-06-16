@@ -2299,8 +2299,14 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 	}
-	err = cc.openSessionAndDoAuth(pass, "")
+
+	// session was closed by `ctx.Close` and should `openSession` explicitly to renew session.
+	// `openSession` won't run again in `openSessionAndDoAuth` because ctx is not nil.
+	err = cc.openSession()
 	if err != nil {
+		return err
+	}
+	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
 		return err
 	}
 	return cc.handleCommonConnectionReset(ctx)
