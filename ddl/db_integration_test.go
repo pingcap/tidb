@@ -450,8 +450,8 @@ func TestIssue5092(t *testing.T) {
 	tk.MustExec("create table t_issue_5092 (a int)")
 	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
 	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists a, drop column b, drop column c", errno.ErrCantRemoveAllFields)
-	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t_issue_5092 drop column c, drop column if exists c", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("alter table t_issue_5092 drop column c, drop column if exists c")
 	tk.MustExec("drop table t_issue_5092")
 }
 
