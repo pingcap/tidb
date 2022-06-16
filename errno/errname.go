@@ -1043,6 +1043,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidWildCard:                     mysql.Message("Wildcard fields without any table name appears in wrong place", nil),
 	ErrMixOfGroupFuncAndFieldsIncompatible: mysql.Message("In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by", nil),
 	ErrUnsupportedSecondArgumentType:       mysql.Message("JSON_OBJECTAGG: unsupported second argument type %v", nil),
+	ErrColumnNotMatched:                    mysql.Message("Load data: unmatched columns", nil),
 	ErrLockExpire:                          mysql.Message("TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction", nil),
 	ErrTableOptionUnionUnsupported:         mysql.Message("CREATE/ALTER table with union option is not supported", nil),
 	ErrTableOptionInsertMethodUnsupported:  mysql.Message("CREATE/ALTER table with insert method option is not supported", nil),

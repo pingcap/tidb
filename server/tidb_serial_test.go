@@ -41,6 +41,7 @@ func TestLoadData1(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
+	ts.runTestLoadDataWithColumnList(t, ts.server)
 	ts.runTestLoadData(t, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(t, ts.server)
 	ts.runTestLoadDataForSlowLog(t, ts.server)
