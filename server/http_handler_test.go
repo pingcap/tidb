@@ -483,6 +483,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
+	cfg.Socket = ""
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
