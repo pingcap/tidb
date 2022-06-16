@@ -1612,7 +1612,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
 			setEmptyConstraintName(fkNames, constr, true)
-		} else {
+		} else if constr.Tp != ast.ConstraintPrimaryKey {
 			setEmptyConstraintName(constrNames, constr, false)
 		}
 	}
