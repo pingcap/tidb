@@ -208,6 +208,7 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 type CachedPrepareStmt struct {
 	PreparedAst         *ast.Prepared
 	VisitInfos          []visitInfo
+	ColumnInfos         interface{}
 	Executor            interface{}
 	NormalizedSQL       string
 	NormalizedPlan      string
