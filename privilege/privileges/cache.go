@@ -1060,14 +1060,14 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 	// This may be changed in future, but will require a bootstrap task to assign all dynamic privileges
 	// to users with SUPER, otherwise tasks such as BACKUP and ROLE_ADMIN will start to fail.
 	// The visitInfo system will also need modification to support OR conditions.
-	if withGrant && !p.RequestVerification(activeRoles, user, host, "", "", "", mysql.GrantPriv) {
+	if withGrant && !p.RequestVerification(activeRoles, user, host, "", "", "", mysql.GrantPriv, nil) {
 		return false
 	}
-	return p.RequestVerification(activeRoles, user, host, "", "", "", mysql.SuperPriv)
+	return p.RequestVerification(activeRoles, user, host, "", "", "", mysql.SuperPriv, nil)
 }
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
-func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
+func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType, err error) bool {
 	if priv == mysql.UsagePriv {
 		return true
 	}
@@ -1471,7 +1471,7 @@ func (p *MySQLPrivilege) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, u
 	// Seeing all users requires SELECT ON * FROM mysql.*
 	// The SUPER privilege (or any other dynamic privilege) doesn't help here.
 	// This is verified against MySQL.
-	showOtherUsers := p.RequestVerification(activeRoles, user, host, mysql.SystemDB, "", "", mysql.SelectPriv)
+	showOtherUsers := p.RequestVerification(activeRoles, user, host, mysql.SystemDB, "", "", mysql.SelectPriv, nil)
 	var rows [][]types.Datum
 	for _, u := range p.User {
 		if showOtherUsers || u.match(user, host) {

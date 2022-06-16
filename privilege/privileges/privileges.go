@@ -153,7 +153,7 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv)
+	return mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv, nil)
 }
 
 // RequestVerificationWithUser implements the Manager interface.
@@ -174,7 +174,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
-	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
+	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv, nil)
 }
 
 func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
