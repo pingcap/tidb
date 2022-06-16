@@ -199,12 +199,14 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
 	}
 	ts := tmp.(*PhysicalTableScan)
-	tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
-	if err != nil {
-		return 0, err
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
+		tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
+		if err != nil {
+			return 0, err
+		}
+		p.planCost -= tblCost
+		p.planCost += getCardinality(p.indexPlan, costFlag) * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
 	}
-	p.planCost -= tblCost
-	p.planCost += getCardinality(p.indexPlan, costFlag) * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
 
 	// index-side net I/O cost: rows * row-size * net-factor
 	netFactor := getTableNetFactor(p.tablePlan)
@@ -221,6 +223,12 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	// table-side seek cost
 	p.planCost += estimateNetSeekCost(p.tablePlan)
 
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		// accumulate the real double-read cost: numDoubleReadTasks * seekFactor
+		numDoubleReadTasks := p.estNumDoubleReadTasks(costFlag)
+		p.planCost += numDoubleReadTasks * p.ctx.GetSessionVars().GetSeekFactor(ts.Table)
+	}
+
 	// consider concurrency
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
@@ -228,6 +236,16 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	p.planCost += p.GetCost(costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
+}
+
+func (p *PhysicalIndexLookUpReader) estNumDoubleReadTasks(costFlag uint64) float64 {
+	doubleReadRows := p.indexPlan.StatsCount()
+	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
+	// distRatio indicates how many requests corresponding to a batch, current value is from experiments.
+	// TODO: estimate it by using index correlation or make it configurable.
+	distRatio := 40.0
+	numDoubleReadTasks := (doubleReadRows / batchSize) * distRatio
+	return numDoubleReadTasks // use Float64 instead of Int like `Ceil(...)` to make the cost continuous
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
