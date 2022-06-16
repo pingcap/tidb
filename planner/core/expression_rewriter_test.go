@@ -455,3 +455,17 @@ func TestMultiColInExpression(t *testing.T) {
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
+
+func TestSingleColInExpressionBinaryCollation(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1(a binary(20));")
+	tk.MustExec("create table t2(b char(20)) default charset=utf8mb4 collate=utf8mb4_bin;")
+	tk.MustExec("insert into t1 values (0x2d31);")
+	tk.MustExec("insert into t2 values ('-1');")
+	tk.MustQuery("select * from t1, t2 where t1.a in (t2.b, 3);").Check(testkit.Rows())
+}
