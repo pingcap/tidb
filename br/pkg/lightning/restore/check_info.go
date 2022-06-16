@@ -17,6 +17,7 @@ package restore
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -24,10 +25,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"modernc.org/mathutil"
+
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -38,15 +44,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
-
-	"go.uber.org/zap"
-	"modernc.org/mathutil"
 )
 
 const (
@@ -629,14 +633,11 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		return msgs, nil
 	}
 
-	igCols := make(map[string]struct{})
 	igCol, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(tableInfo.DB, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, col := range igCol.Columns {
-		igCols[col] = struct{}{}
-	}
+	igCols := igCol.ColumnsMap()
 
 	if len(tableInfo.DataFiles) == 0 {
 		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
@@ -814,7 +815,7 @@ outloop:
 		case nil:
 			if !initializedColumns {
 				if len(columnPermutation) == 0 {
-					columnPermutation, err = createColumnPermutation(columnNames, igCols.Columns, tableInfo)
+					columnPermutation, err = createColumnPermutation(columnNames, igCols.ColumnsMap(), tableInfo)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -867,4 +868,94 @@ outloop:
 	}
 	log.L().Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
 	return nil
+}
+
+func (rc *Controller) checkTableEmpty(ctx context.Context) error {
+	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.TikvImporter.IncrementalImport {
+		return nil
+	}
+	db, _ := rc.tidbGlue.GetDB()
+
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		tableCount += len(db.Tables)
+	}
+
+	var lock sync.Mutex
+	tableNames := make([]string, 0)
+	concurrency := utils.MinInt(tableCount, rc.cfg.App.RegionConcurrency)
+	ch := make(chan string, concurrency)
+	eg, gCtx := errgroup.WithContext(ctx)
+	for i := 0; i < concurrency; i++ {
+		eg.Go(func() error {
+			for tblName := range ch {
+				// skip tables that have checkpoint
+				if rc.cfg.Checkpoint.Enable {
+					_, err := rc.checkpointsDB.Get(gCtx, tblName)
+					switch {
+					case err == nil:
+						continue
+					case errors.IsNotFound(err):
+					default:
+						return errors.Trace(err)
+					}
+				}
+
+				hasData, err1 := tableContainsData(gCtx, db, tblName)
+				if err1 != nil {
+					return err1
+				}
+				if hasData {
+					lock.Lock()
+					tableNames = append(tableNames, tblName)
+					lock.Unlock()
+				}
+			}
+			return nil
+		})
+	}
+loop:
+	for _, db := range rc.dbMetas {
+		for _, tbl := range db.Tables {
+			select {
+			case ch <- common.UniqueTable(tbl.DB, tbl.Name):
+			case <-gCtx.Done():
+				break loop
+			}
+		}
+	}
+	close(ch)
+	if err := eg.Wait(); err != nil {
+		if common.IsContextCanceledError(err) {
+			return nil
+		}
+		return errors.Annotate(err, "check table contains data failed")
+	}
+
+	if len(tableNames) > 0 {
+		// sort the failed names
+		sort.Strings(tableNames)
+		msg := fmt.Sprintf("table(s) [%s] are not empty", strings.Join(tableNames, ", "))
+		rc.checkTemplate.Collect(Critical, false, msg)
+	}
+	return nil
+}
+
+func tableContainsData(ctx context.Context, db utils.DBExecutor, tableName string) (bool, error) {
+	exec := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.L(),
+	}
+	query := "select 1 from " + tableName + " limit 1"
+	var dump int
+	err := exec.QueryRow(ctx, "check table empty", query, &dump)
+
+	switch {
+	case errors.ErrorEqual(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, errors.Trace(err)
+	default:
+		return true, nil
+	}
 }

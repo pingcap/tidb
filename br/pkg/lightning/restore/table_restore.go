@@ -53,7 +53,7 @@ type TableRestore struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 
-	ignoreColumns []string
+	ignoreColumns map[string]struct{}
 }
 
 func NewTableRestore(
@@ -62,7 +62,7 @@ func NewTableRestore(
 	dbInfo *checkpoints.TidbDBInfo,
 	tableInfo *checkpoints.TidbTableInfo,
 	cp *checkpoints.TableCheckpoint,
-	ignoreColumns []string,
+	ignoreColumns map[string]struct{},
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
@@ -167,15 +167,21 @@ func (tr *TableRestore) initializeColumns(columns []string, ccp *checkpoints.Chu
 	return nil
 }
 
-func createColumnPermutation(columns []string, ignoreColumns []string, tableInfo *model.TableInfo) ([]int, error) {
+func createColumnPermutation(columns []string, ignoreColumns map[string]struct{}, tableInfo *model.TableInfo) ([]int, error) {
 	var colPerm []int
 	if len(columns) == 0 {
 		colPerm = make([]int, 0, len(tableInfo.Columns)+1)
 		shouldIncludeRowID := common.TableHasAutoRowID(tableInfo)
 
 		// no provided columns, so use identity permutation.
-		for i := range tableInfo.Columns {
-			colPerm = append(colPerm, i)
+		for i, col := range tableInfo.Columns {
+			idx := i
+			if _, ok := ignoreColumns[col.Name.L]; ok {
+				idx = -1
+			} else if col.IsGenerated() {
+				idx = -1
+			}
+			colPerm = append(colPerm, idx)
 		}
 		if shouldIncludeRowID {
 			colPerm = append(colPerm, -1)
@@ -677,10 +683,18 @@ func (tr *TableRestore) postProcess(
 		tblInfo := tr.tableInfo.Core
 		var err error
 		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
-			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.AutoRandomType).Base()+1)
+			var maxAutoRandom, autoRandomTotalBits uint64
+			autoRandomTotalBits = 64
+			autoRandomBits := tblInfo.AutoRandomBits // range from (0, 15]
+			if !tblInfo.IsAutoRandomBitColUnsigned() {
+				// if auto_random is signed, leave one extra bit
+				autoRandomTotalBits = 63
+			}
+			maxAutoRandom = 1<<(autoRandomTotalBits-autoRandomBits) - 1
+			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxAutoRandom)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle
-			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.RowIDAllocType).Base()+1)
+			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)
 		}
 		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
@@ -691,7 +705,7 @@ func (tr *TableRestore) postProcess(
 	}
 
 	// tidb backend don't need checksum & analyze
-	if !rc.backend.ShouldPostProcess() {
+	if rc.cfg.PostRestore.Checksum == config.OpLevelOff && rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 		tr.logger.Debug("skip checksum & analyze, not supported by this backend")
 		err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped)
 		return false, errors.Trace(err)
@@ -834,19 +848,12 @@ func (tr *TableRestore) postProcess(
 	return true, nil
 }
 
-func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignoreColumns []string) ([]int, error) {
+func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignoreColumns map[string]struct{}) ([]int, error) {
 	colPerm := make([]int, 0, len(tableInfo.Columns)+1)
 
 	columnMap := make(map[string]int)
 	for i, column := range columns {
 		columnMap[column] = i
-	}
-
-	ignoreMap := make(map[string]int)
-	for _, column := range ignoreColumns {
-		if i, ok := columnMap[column]; ok {
-			ignoreMap[column] = i
-		}
 	}
 
 	tableColumnMap := make(map[string]int)
@@ -858,7 +865,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 	var unknownCols []string
 	for _, c := range columns {
 		if _, ok := tableColumnMap[c]; !ok && c != model.ExtraHandleName.L {
-			if _, ignore := ignoreMap[c]; !ignore {
+			if _, ignore := ignoreColumns[c]; !ignore {
 				unknownCols = append(unknownCols, c)
 			}
 		}
@@ -870,7 +877,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 
 	for _, colInfo := range tableInfo.Columns {
 		if i, ok := columnMap[colInfo.Name.L]; ok {
-			if _, ignore := ignoreMap[colInfo.Name.L]; !ignore {
+			if _, ignore := ignoreColumns[colInfo.Name.L]; !ignore {
 				colPerm = append(colPerm, i)
 			} else {
 				log.L().Debug("column ignored by user requirements",
@@ -891,11 +898,16 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 			colPerm = append(colPerm, -1)
 		}
 	}
+	// append _tidb_rowid column
+	rowIDIdx := -1
 	if i, ok := columnMap[model.ExtraHandleName.L]; ok {
-		colPerm = append(colPerm, i)
-	} else if common.TableHasAutoRowID(tableInfo) {
-		colPerm = append(colPerm, -1)
+		if _, ignored := ignoreColumns[model.ExtraHandleName.L]; !ignored {
+			rowIDIdx = i
+		}
 	}
+	// FIXME: the schema info for tidb backend is not complete, so always add the _tidb_rowid field.
+	// Other logic should ignore this extra field if not needed.
+	colPerm = append(colPerm, rowIDIdx)
 
 	return colPerm, nil
 }
