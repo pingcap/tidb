@@ -55,6 +55,7 @@ type Context struct {
 	cancel      context.CancelFunc
 	sm          util.SessionManager
 	pcache      *kvcache.SimpleLRUCache
+	level       kvrpcpb.DiskFullOpt
 }
 
 type wrapTxn struct {
@@ -91,12 +92,12 @@ func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 // SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
 func (c *Context) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	c.txn.Transaction.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	c.level = level
 }
 
 // ClearDiskFullOpt clears allowed options of current operation in each TiKV disk usage level.
 func (c *Context) ClearDiskFullOpt() {
-	c.txn.Transaction.ClearDiskFullOpt()
+	c.level = kvrpcpb.DiskFullOpt_NotAllowedOnFull
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
@@ -260,6 +261,7 @@ func (c *Context) RollbackTxn(ctx context.Context) {
 // CommitTxn indicates an expected call of CommitTxn.
 func (c *Context) CommitTxn(ctx context.Context) error {
 	defer c.sessionVars.SetInTxn(false)
+	c.txn.SetDiskFullOpt(c.level)
 	if c.txn.Valid() {
 		return c.txn.Commit(ctx)
 	}
