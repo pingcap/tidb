@@ -1667,14 +1667,14 @@ func matchFrac(str string, fsp int) (bool, int, string, error) {
 	return overflow, frac, rest, nil
 }
 
-func matchDuration(str string, fsp int) (Duration, error) {
+func matchDuration(str string, fsp int) (Duration, bool, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
-		return ZeroDuration, errors.Trace(err)
+		return ZeroDuration, true, errors.Trace(err)
 	}
 
 	if len(str) == 0 {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	negative, rest := isNegativeDuration(str)
@@ -1690,13 +1690,13 @@ func matchDuration(str string, fsp int) (Duration, error) {
 	} else if hms, remain, err := matchHHMMSSCompact(rest); err == nil {
 		rest, hhmmss = remain, hms
 	} else {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	rest = parser.Space0(rest)
 	overflow, frac, rest, err := matchFrac(rest, fsp)
 	if err != nil {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	if overflow {
@@ -1705,7 +1705,7 @@ func matchDuration(str string, fsp int) (Duration, error) {
 	}
 
 	if !checkHHMMSS(hhmmss) {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	if hhmmss[0] > TimeMaxHour {
@@ -1715,7 +1715,7 @@ func matchDuration(str string, fsp int) (Duration, error) {
 		} else {
 			t = MaxTime
 		}
-		return Duration{t, fsp}, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return Duration{t, fsp}, false, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	d := gotime.Duration(hhmmss[0]*3600+hhmmss[1]*60+hhmmss[2])*gotime.Second + gotime.Duration(frac)*gotime.Microsecond //nolint:durationcheck
@@ -1724,9 +1724,9 @@ func matchDuration(str string, fsp int) (Duration, error) {
 	}
 	d, err = TruncateOverflowMySQLTime(d)
 	if err == nil && len(rest) > 0 {
-		return Duration{d, fsp}, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return Duration{d, fsp}, false, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
-	return Duration{d, fsp}, errors.Trace(err)
+	return Duration{d, fsp}, false, errors.Trace(err)
 }
 
 // canFallbackToDateTime return true
@@ -1770,12 +1770,12 @@ func canFallbackToDateTime(str string) bool {
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
 func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration, bool, error) {
 	rest := strings.TrimSpace(str)
-	d, err := matchDuration(rest, fsp)
+	d, isNull, err := matchDuration(rest, fsp)
 	if err == nil {
-		return d, false, nil
+		return d, isNull, nil
 	}
 	if !canFallbackToDateTime(rest) {
-		return d, false, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return d, isNull, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	datetime, err := ParseDatetime(sc, rest)

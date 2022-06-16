@@ -2956,6 +2956,8 @@ func TestCast(t *testing.T) {
 	tk.MustQuery("select cast('0000-00-00' as TIME);").Check(testkit.Rows("00:00:00"))
 	tk.MustQuery("select cast('1234x' as TIME);").Check(testkit.Rows("00:12:34"))
 	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect time value: '1234x'"))
+	tk.MustQuery("select cast('a' as TIME);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select cast('' as TIME);").Check(testkit.Rows("<nil>"))
 }
 
 func TestTableInfoMeta(t *testing.T) {
