@@ -546,6 +546,11 @@ error = '''
 TiDB admin check table failed.
 '''
 
+["executor:8067"]
+error = '''
+Load data: unmatched columns
+'''
+
 ["executor:8114"]
 error = '''
 Unknown plan
