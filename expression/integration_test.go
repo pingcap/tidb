@@ -10560,3 +10560,13 @@ func (s *testIntegrationSuite) TestIssue30326(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[executor:1242]Subquery returns more than 1 row")
 }
+
+func (s *testIntegrationSuite) TestIssue33397(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(32));")
+	tk.MustExec("insert into t values(''), ('');")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
+	tk.MustQuery("select compress(a) from t").Check(testkit.Rows("", ""))
+}
