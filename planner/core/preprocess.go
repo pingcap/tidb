@@ -423,7 +423,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 		// By checking here, this makes all SELECT/SHOW/INSERT/UPDATE/DELETE statements safe.
 		currentUser, activeRoles := p.ctx.GetSessionVars().User, p.ctx.GetSessionVars().ActiveRoles
 		if pm := privilege.GetPrivilegeManager(p.ctx); pm != nil {
-			if !pm.RequestVerification(activeRoles, sName.L, tn.Name.O, "", mysql.AllPrivMask) {
+			if !pm.RequestVerification(activeRoles, sName.L, tn.Name.O, "", mysql.AllPrivMask, nil) {
 				u := currentUser.Username
 				h := currentUser.Hostname
 				if currentUser.AuthHostname != "" {

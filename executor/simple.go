@@ -407,8 +407,8 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 	}
 
 	activeRoles := sessionVars.ActiveRoles
-	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.DefaultRoleTable, "", mysql.UpdatePriv) {
-		if !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.DefaultRoleTable, "", mysql.UpdatePriv, nil) {
+		if !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv, nil) {
 			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		}
 	}
@@ -770,14 +770,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			return errors.New("miss privilege checker")
 		}
 		activeRoles := e.ctx.GetSessionVars().ActiveRoles
-		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.InsertPriv) {
+		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.InsertPriv, nil) {
 			if s.IsCreateRole {
-				if !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateRolePriv) &&
-					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+				if !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateRolePriv, nil) &&
+					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv, nil) {
 					return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE or CREATE USER")
 				}
 			}
-			if !s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+			if !s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv, nil) {
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE User")
 			}
 		}
@@ -917,10 +917,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		return errors.New("could not load privilege checker")
 	}
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
+	hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv, nil)
 	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
 	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
-	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
+	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv, nil)
 
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
@@ -1211,14 +1211,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		return errors.New("miss privilege checker")
 	}
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
+	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv, nil) {
 		if s.IsDropRole {
-			if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
-				!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+			if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv, nil) &&
+				!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv, nil) {
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
 			}
 		}
-		if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+		if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv, nil) {
 			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		}
 	}
@@ -1430,7 +1430,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	} else {
 		checker := privilege.GetPrivilegeManager(e.ctx)
 		activeRoles := e.ctx.GetSessionVars().ActiveRoles
-		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv, nil) {
 			return ErrDBaccessDenied.GenWithStackByArgs(u, h, "mysql")
 		}
 		u = s.User.Username

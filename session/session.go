@@ -469,7 +469,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	tName := model.NewCIStr(tableName)
 	pm := privilege.GetPrivilegeManager(s)
 	if pm != nil && s.sessionVars.User != nil {
-		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
+		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask, nil) {
 			user := s.sessionVars.User
 			u := user.Username
 			h := user.Hostname

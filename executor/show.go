@@ -262,7 +262,7 @@ func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			return in, true
 		}
 		activeRoles := v.ctx.GetSessionVars().ActiveRoles
-		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv) {
+		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv, nil) {
 			v.ok = false
 		}
 		return in, true
@@ -440,7 +440,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 	loginUser, activeRoles := e.ctx.GetSessionVars().User, e.ctx.GetSessionVars().ActiveRoles
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
-		if pm.RequestVerification(activeRoles, "", "", "", mysql.ProcessPriv) {
+		if pm.RequestVerification(activeRoles, "", "", "", mysql.ProcessPriv, nil) {
 			hasProcessPriv = true
 		}
 	}
@@ -491,7 +491,7 @@ func (e *ShowExec) fetchShowTables() error {
 	for _, v := range schemaTables {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
-		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask, nil) {
 			continue
 		} else if fieldFilter != "" && v.Meta().Name.L != fieldFilter {
 			continue
@@ -567,7 +567,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	for _, row := range rows {
 		tableName := row.GetString(0)
-		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tableName, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tableName, "", mysql.AllPrivMask, nil) {
 			continue
 		} else if fieldFilter != "" && strings.ToLower(tableName) != fieldFilter {
 			continue
@@ -597,7 +597,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv) {
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv, nil) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -675,7 +675,7 @@ func (e *ShowExec) fetchShowIndex() error {
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask, nil) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -1517,7 +1517,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		// Show create user requires the SELECT privilege on mysql.user.
 		// Ref https://dev.mysql.com/doc/refman/5.7/en/show-create-user.html
 		activeRoles := sessVars.ActiveRoles
-		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.SelectPriv) {
+		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.SelectPriv, nil) {
 			return e.tableAccessDenied("SELECT", mysql.UserTable)
 		}
 	}
@@ -1588,7 +1588,7 @@ func (e *ShowExec) fetchShowGrants() error {
 		// Show grant user requires the SELECT privilege on mysql schema.
 		// Ref https://dev.mysql.com/doc/refman/8.0/en/show-grants.html
 		if userName != e.User.Username || hostName != e.User.Hostname {
-			if !checker.RequestVerification(vars.ActiveRoles, mysql.SystemDB, "", "", mysql.SelectPriv) {
+			if !checker.RequestVerification(vars.ActiveRoles, mysql.SystemDB, "", "", mysql.SelectPriv, nil) {
 				return ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
 			}
 		}

@@ -42,7 +42,7 @@ type Manager interface {
 	// If table is not "", check global/db/table scope privileges.
 	// priv should be a defined constant like CreatePriv, if pass AllPrivMask to priv,
 	// this means any privilege would be OK.
-	RequestVerification(activeRole []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
+	RequestVerification(activeRole []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType, err error) bool
 
 	// RequestVerificationWithUser verifies specific user privilege for the request.
 	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool

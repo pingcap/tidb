@@ -305,7 +305,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 
 		for _, tbl := range e.is.SchemaTables(dbInfo.Name) {
 			tblInfo := tbl.Meta()
-			if checker != nil && !checker.RequestVerification(activeRoles, dbInfo.Name.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(activeRoles, dbInfo.Name.O, tblInfo.Name.O, "", mysql.AllPrivMask, nil) {
 				continue
 			}
 
