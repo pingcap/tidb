@@ -860,80 +860,6 @@ func (bc *Client) handleFineGrained(
 	return backoffMill, nil
 }
 
-<<<<<<< HEAD
-=======
-func doSendBackup(
-	ctx context.Context,
-	client backuppb.BackupClient,
-	req backuppb.BackupRequest,
-	respFn func(*backuppb.BackupResponse) error,
-) error {
-	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
-		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
-			"process will notify the shell.")
-		if sigFile, ok := v.(string); ok {
-			file, err := os.Create(sigFile)
-			if err != nil {
-				log.Warn("failed to create file for notifying, skipping notify", zap.Error(err))
-			}
-			if file != nil {
-				file.Close()
-			}
-		}
-		time.Sleep(3 * time.Second)
-	})
-	bCli, err := client.Backup(ctx, &req)
-	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
-		switch val.(string) {
-		case "Unavaiable":
-			{
-				logutil.CL(ctx).Debug("failpoint reset-retryable-error unavailable injected.")
-				err = status.Error(codes.Unavailable, "Unavailable error")
-			}
-		case "Internal":
-			{
-				logutil.CL(ctx).Debug("failpoint reset-retryable-error internal injected.")
-				err = status.Error(codes.Internal, "Internal error")
-			}
-		}
-	})
-	failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.CL(ctx).Debug("failpoint reset-not-retryable-error injected.")
-			err = status.Error(codes.Unknown, "Your server was haunted hence doesn't work, meow :3")
-		}
-	})
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = bCli.CloseSend()
-	}()
-
-	for {
-		resp, err := bCli.Recv()
-		if err != nil {
-			if errors.Cause(err) == io.EOF { // nolint:errorlint
-				logutil.CL(ctx).Debug("backup streaming finish",
-					logutil.Key("backup-start-key", req.GetStartKey()),
-					logutil.Key("backup-end-key", req.GetEndKey()))
-				return nil
-			}
-			return err
-		}
-		// TODO: handle errors in the resp.
-		logutil.CL(ctx).Debug("range backed up",
-			logutil.Key("small-range-start-key", resp.GetStartKey()),
-			logutil.Key("small-range-end-key", resp.GetEndKey()),
-			zap.Int("api-version", int(resp.ApiVersion)))
-		err = respFn(resp)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-}
-
->>>>>>> 167d4ebc6... backup: retry on internal error and make more errors can be retried (#34352)
 // SendBackup send backup request to the given store.
 // Stop receiving response if respFn returns error.
 func SendBackup(
@@ -976,9 +902,17 @@ backupLoop:
 		})
 		bcli, err := client.Backup(ctx, &req)
 		failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
-			if val.(bool) {
-				logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
-				err = status.Error(codes.Unavailable, "Unavailable error")
+			switch val.(string) {
+			case "Unavaiable":
+				{
+					logutil.CL(ctx).Debug("failpoint reset-retryable-error unavailable injected.")
+					err = status.Error(codes.Unavailable, "Unavailable error")
+				}
+			case "Internal":
+				{
+					logutil.CL(ctx).Debug("failpoint reset-retryable-error internal injected.")
+					err = status.Error(codes.Internal, "Internal error")
+				}
 			}
 		})
 		failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
