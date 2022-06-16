@@ -435,7 +435,7 @@ func TestFix35149(t *testing.T) {
 		id varchar(100) NOT NULL,
 		id2 int(11) NOT NULL,
 		PRIMARY KEY (id,id2) /*T![clustered_index] CLUSTERED */
-	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin);`)
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
 	tk.MustExec("drop table if exists t10;")
 	tk.MustExec(`CREATE TABLE t10 (
 		id varchar(100) NOT NULL,
@@ -444,12 +444,10 @@ func TestFix35149(t *testing.T) {
 	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("explain select /*+ INL_JOIN(t9,t10) */ * from t9 join t10 on t9.id = t10.id and  t10.id = 's12' ;").Check(testkit.RowsWithSep("|",
-		`Projection_9|10.00|root|test.t9.id, test.t9.id2, test.t10.id, test.t10.id2`, `└─HashJoin_11|10.00|root|CARTESIAN inner join`,
-		`├─Point_Get_12(Build)|1.00|root|table:t10, index:PRIMARY(id)`, `└─IndexReader_14(Probe)|10.00|root|index:IndexRangeScan_13`,
-		`└─IndexRangeScan_13|10.00|cop[tikv]|table:t9, index:PRIMARY(id, id2)|range:["s12","s12"], keep order:false, stats:pseudo`))
+		`HashJoin_7|100.00|root| CARTESIAN inner join`, `├─Point_Get_11(Build)|1.00|root|table:t10, clustered index:PRIMARY(id) `, `└─TableReader_10(Probe)|10.00|root| data:TableRangeScan_9`,
+		`  └─TableRangeScan_9|10.00|cop[tikv]|table:t9|range:["s12","s12"], keep order:false, stats:pseudo`))
 	tk.MustExec("set names utf8mb4 collate utf8mb4_bin;")
 	tk.MustQuery("explain select /*+ INL_JOIN(t9,t10) */ * from t9 join t10 on t9.id = t10.id and  t10.id = 's12' ;").Check(testkit.RowsWithSep("|",
-		`Projection_9|10.00|root|test.t9.id, test.t9.id2, test.t10.id, test.t10.id2`, `└─HashJoin_11|10.00|root|CARTESIAN inner join`,
-		`├─Point_Get_12(Build)|1.00|root|table:t10, index:PRIMARY(id)`, `└─IndexReader_14(Probe)|10.00|root|index:IndexRangeScan_13`,
-		`└─IndexRangeScan_13|10.00|cop[tikv]|table:t9, index:PRIMARY(id, id2)|range:["s12","s12"], keep order:false, stats:pseudo`))
+		`HashJoin_7|100.00|root| CARTESIAN inner join`, `├─Point_Get_11(Build)|1.00|root|table:t10, clustered index:PRIMARY(id) `, `└─TableReader_10(Probe)|10.00|root| data:TableRangeScan_9`,
+		`  └─TableRangeScan_9|10.00|cop[tikv]|table:t9|range:["s12","s12"], keep order:false, stats:pseudo`))
 }
