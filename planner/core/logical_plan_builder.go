@@ -3787,10 +3787,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "with t1 as (select id from test_table)") {
-		fmt.Println(1)
-	}
-
 	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
 		return nil, err
