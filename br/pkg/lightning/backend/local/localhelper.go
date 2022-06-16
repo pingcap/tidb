@@ -595,6 +595,11 @@ func intersectRange(region *metapb.Region, rg Range) Range {
 	return Range{start: startKey, end: endKey}
 }
 
+type StoreWriteLimiter interface {
+	WaitN(ctx context.Context, storeID uint64, n int) error
+	Limit() int
+}
+
 type storeWriteLimiter struct {
 	rwm      sync.RWMutex
 	limiters map[uint64]*rate.Limiter
@@ -631,6 +636,10 @@ func (s *storeWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) er
 	return limiter.WaitN(ctx, n)
 }
 
+func (s *storeWriteLimiter) Limit() int {
+	return s.limit
+}
+
 func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
 	s.rwm.RLock()
 	limiter, ok := s.limiters[storeID]
@@ -646,4 +655,14 @@ func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
 		s.limiters[storeID] = limiter
 	}
 	return limiter
+}
+
+type noopStoreWriteLimiter struct{}
+
+func (noopStoreWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) error {
+	return nil
+}
+
+func (noopStoreWriteLimiter) Limit() int {
+	return math.MaxInt
 }

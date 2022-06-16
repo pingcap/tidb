@@ -233,7 +233,7 @@ type local struct {
 	importClientFactory ImportClientFactory
 
 	bufferPool   *membuf.Pool
-	writeLimiter *storeWriteLimiter
+	writeLimiter StoreWriteLimiter
 }
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
@@ -308,9 +308,11 @@ func NewLocalBackend(
 	if duplicateDetection {
 		keyAdapter = dupDetectKeyAdapter{}
 	}
-	var writeLimiter *storeWriteLimiter
+	var writeLimiter StoreWriteLimiter
 	if cfg.TikvImporter.StoreWriteBWLimit > 0 {
 		writeLimiter = newStoreWriteLimiter(int(cfg.TikvImporter.StoreWriteBWLimit))
+	} else {
+		writeLimiter = noopStoreWriteLimiter{}
 	}
 	local := &local{
 		engines:  sync.Map{},
@@ -831,34 +833,19 @@ func (local *local) WriteToTiKV(
 	if regionSplitSize <= int64(config.SplitRegionSize) {
 		regionMaxSize = regionSplitSize * 4 / 3
 	}
-	// If there is a writeLimiter, we set a lower flush limit to make
-	// the speed of write more smooth.
-	flushLimit := int64(math.MaxInt64)
-	if local.writeLimiter != nil {
-		flushLimit = int64(local.writeLimiter.limit / 10)
-	}
+	// Set a lower flush limit to make the speed of write more smooth.
+	flushLimit := int64(local.writeLimiter.Limit() / 10)
 
 	flushKVs := func() error {
 		for i := range clients {
-			if local.writeLimiter != nil {
-				if err := local.writeLimiter.WaitN(ctx, storeIDs[i], int(size)); err != nil {
-					// The error is most likely due to the context being cancelled.
-					// But the error returned by the WaitN may confuse the caller, so
-					// return the context error instead if possible.
-					if ctx.Err() != nil {
-						err = ctx.Err()
-					}
-					return errors.Trace(err)
-				}
+			if err := local.writeLimiter.WaitN(ctx, storeIDs[i], int(size)); err != nil {
+				return errors.Trace(err)
 			}
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
 				return errors.Trace(err)
 			}
 		}
-		count = 0
-		size = 0
-		bytesBuf.Reset()
 		return nil
 	}
 
@@ -884,6 +871,9 @@ func (local *local) WriteToTiKV(
 			if err := flushKVs(); err != nil {
 				return nil, Range{}, stats, err
 			}
+			count = 0
+			size = 0
+			bytesBuf.Reset()
 		}
 		if totalSize >= regionMaxSize || totalCount >= regionSplitKeys {
 			break
@@ -898,6 +888,9 @@ func (local *local) WriteToTiKV(
 		if err := flushKVs(); err != nil {
 			return nil, Range{}, stats, err
 		}
+		count = 0
+		size = 0
+		bytesBuf.Reset()
 	}
 
 	var leaderPeerMetas []*sst.SSTMeta
@@ -940,7 +933,7 @@ func (local *local) WriteToTiKV(
 			logutil.Region(region.Region), logutil.Leader(region.Leader))
 	}
 	stats.count = totalCount
-	stats.totalBytes = size
+	stats.totalBytes = totalSize
 
 	return leaderPeerMetas, finishedRange, stats, nil
 }

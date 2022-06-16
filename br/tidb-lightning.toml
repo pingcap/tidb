@@ -137,6 +137,7 @@ addr = "127.0.0.1:8287"
 # usage is bound by region-concurrency * local-writer-mem-cache-size.
 #local-writer-mem-cache-size = '128MiB'
 # Limit the write rate to each tikv store. 0 means no limit.
+# Limit the write bandwidth to each tikv store. The unit is 'Bytes per second'. 0 means no limit.
 #store-write-bwlimit = 0
 
 [mydumper]
