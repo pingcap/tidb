@@ -33,9 +33,9 @@ const (
 	TxnIdle TxnRunningState = iota
 	// TxnRunning means the transaction is running, i.e. executing a statement
 	TxnRunning
-	// TxnLockWaiting means the transaction is blocked on a lock
-	TxnLockWaiting
-	// TxnCommitting means the transaction is (at least trying to) committing
+	// TxnLockAcquiring means the transaction is trying to acquire a lock
+	TxnLockAcquiring
+	// TxnCommitting means`` the transaction is (at least trying to) committing
 	TxnCommitting
 	// TxnRollingBack means the transaction is rolling back
 	TxnRollingBack
@@ -43,11 +43,11 @@ const (
 
 // StateLabel is used to translate TxnRunningState to its prometheus label name.
 var stateLabel map[TxnRunningState]string = map[TxnRunningState]string{
-	TxnIdle:        "idle",
-	TxnRunning:     "executing_sql",
-	TxnLockWaiting: "waiting_for_lock",
-	TxnCommitting:  "committing",
-	TxnRollingBack: "rolling_back",
+	TxnIdle:          "idle",
+	TxnRunning:       "executing_sql",
+	TxnLockAcquiring: "acquiring_lock",
+	TxnCommitting:    "committing",
+	TxnRollingBack:   "rolling_back",
 }
 
 func StateLabel(state TxnRunningState) string {
@@ -105,7 +105,7 @@ type TxnInfo struct {
 	State TxnRunningState
 	// When last time `State` changes, for metrics
 	LastStateChangeTime time.Time
-	// Last trying to block start time. Invalid if State is not TxnLockWaiting.
+	// Last trying to block start time. Invalid if State is not TxnLockAcquiring.
 	BlockStartTime struct {
 		Valid bool
 		time.Time

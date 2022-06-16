@@ -433,7 +433,7 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	var originState txninfo.TxnRunningState
 	txn.mu.Lock()
 	originState = txn.mu.TxnInfo.State
-	txn.updateState(txninfo.TxnLockWaiting)
+	txn.updateState(txninfo.TxnLockAcquiring)
 	txn.mu.TxnInfo.BlockStartTime.Valid = true
 	txn.mu.TxnInfo.BlockStartTime.Time = t
 	txn.mu.Unlock()
