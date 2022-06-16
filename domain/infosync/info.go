@@ -335,8 +335,9 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		res, err = doRequestWithFailpoint(req)
+		res, err = doRequestWithFailpoint(req) // nolint
 		if err == nil {
+			defer terror.Call(res.Body.Close)
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
 				return nil, err
@@ -348,7 +349,6 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 					bodyBytes = nil
 				}
 			}
-			terror.Log(res.Body.Close())
 			return bodyBytes, err
 		}
 	}
