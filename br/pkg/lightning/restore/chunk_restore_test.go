@@ -73,7 +73,7 @@ func (s *chunkRestoreSuite) SetupTest() {
 	}
 
 	var err error
-	s.cr, err = newChunkRestore(context.Background(), 1, s.cfg, &chunk, w, s.store, nil)
+	s.cr, err = newChunkRestore(context.Background(), 1, s.cfg, &chunk, w, s.store, nil, nil)
 	require.NoError(s.T(), err)
 }
 

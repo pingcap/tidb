@@ -327,6 +327,14 @@ build_for_br_integration_test:
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
+build_for_lightning_test:
+	@make failpoint-enable
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(LIGHTNING_BIN).test \
+		github.com/pingcap/tidb/br/cmd/tidb-lightning
+	@make failpoint-disable
+
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
