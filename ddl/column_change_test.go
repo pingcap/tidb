@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -103,7 +102,7 @@ func TestColumnAdd(t *testing.T) {
 		tbl := external.GetTableByName(t, internal, "test", "t")
 		if job.SchemaState != model.StatePublic {
 			for _, col := range tbl.Cols() {
-				assert.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
+				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
 			}
 		}
 	}
