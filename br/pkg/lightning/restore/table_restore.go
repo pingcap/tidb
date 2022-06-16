@@ -56,6 +56,8 @@ type TableRestore struct {
 	logger    log.Logger
 
 	ignoreColumns map[string]struct{}
+	rowIDLock     sync.Mutex
+	curMaxRowID   int64
 }
 
 func NewTableRestore(
@@ -143,6 +145,9 @@ func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowID
 		for _, chunk := range engine.Chunks {
 			chunk.Chunk.PrevRowIDMax += rowIDBase
 			chunk.Chunk.RowIDMax += rowIDBase
+			if chunk.Chunk.RowIDMax > tr.curMaxRowID {
+				tr.curMaxRowID = chunk.Chunk.RowIDMax
+			}
 		}
 	}
 }
@@ -457,6 +462,8 @@ func (tr *TableRestore) restoreEngine(
 		cancel()
 	}
 
+	metrics, _ := metric.FromContext(ctx)
+
 	// Restore table data
 	for chunkIndex, chunk := range cp.Chunks {
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
@@ -493,7 +500,7 @@ func (tr *TableRestore) restoreEngine(
 		// 	2. sql -> kvs
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
-		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
+		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo, tr)
 		if err != nil {
 			setError(err)
 			break
@@ -501,7 +508,9 @@ func (tr *TableRestore) restoreEngine(
 		var remainChunkCnt float64
 		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
 			remainChunkCnt = float64(chunk.Chunk.EndOffset-chunk.Chunk.Offset) / float64(chunk.Chunk.EndOffset-chunk.Key.Offset)
-			metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
+			if metrics != nil {
+				metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
+			}
 		}
 
 		dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
@@ -528,7 +537,9 @@ func (tr *TableRestore) restoreEngine(
 				wg.Done()
 				rc.regionWorkers.Recycle(w)
 			}()
-			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
+			if metrics != nil {
+				metrics.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
+			}
 			err := cr.restore(ctx, tr, engineID, dataWriter, indexWriter, rc)
 			var dataFlushStatus, indexFlushStaus backend.ChunkFlushStatus
 			if err == nil {
@@ -538,8 +549,10 @@ func (tr *TableRestore) restoreEngine(
 				indexFlushStaus, err = indexWriter.Close(ctx)
 			}
 			if err == nil {
-				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
-				metric.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
+				if metrics != nil {
+					metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
+					metrics.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
+				}
 				if dataFlushStatus != nil && indexFlushStaus != nil {
 					if dataFlushStatus.Flushed() && indexFlushStaus.Flushed() {
 						saveCheckpoint(rc, tr, engineID, cr.chunk)
@@ -554,7 +567,9 @@ func (tr *TableRestore) restoreEngine(
 					}
 				}
 			} else {
-				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Add(remainChunkCnt)
+				if metrics != nil {
+					metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Add(remainChunkCnt)
+				}
 				setError(err)
 			}
 		}(restoreWorker, cr)
@@ -955,7 +970,9 @@ func (tr *TableRestore) importKV(
 		return errors.Trace(err)
 	}
 
-	metric.ImportSecondsHistogram.Observe(dur.Seconds())
+	if m, ok := metric.FromContext(ctx); ok {
+		m.ImportSecondsHistogram.Observe(dur.Seconds())
+	}
 
 	failpoint.Inject("SlowDownImport", func() {})
 
@@ -1020,4 +1037,32 @@ func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) 
 	}
 
 	return threshold
+}
+
+func (tr *TableRestore) allocateRowIDs(newRowCount int64, rc *Controller) (int64, int64, error) {
+	tr.rowIDLock.Lock()
+	defer tr.rowIDLock.Unlock()
+	metaMgr := rc.metaMgrBuilder.TableMetaMgr(tr)
+	// try to re-allocate from downstream
+	// if we are using parallel import, rowID should be reconciled globally.
+	// Otherwise, this function will simply return 0.
+	newRowIDBase, newRowIDMax, err := metaMgr.ReallocTableRowIDs(context.Background(), newRowCount)
+	if err != nil {
+		return 0, 0, err
+	}
+	// TODO: refinement: currently, when we're not using SSTMode + incremental,
+	// metadata of the table restore is not maintained globally.
+	// So we have to deviate this two disparate situations here and make
+	// code complexer.
+	var rowIDBase int64
+	if newRowIDMax != 0 {
+		// re-alloc from downstream
+		rowIDBase = newRowIDBase
+		tr.curMaxRowID = newRowIDMax
+	} else {
+		// single import mode: re-allocate rowID from memory
+		rowIDBase = tr.curMaxRowID + 1
+		tr.curMaxRowID += newRowCount
+	}
+	return rowIDBase, tr.curMaxRowID, nil
 }

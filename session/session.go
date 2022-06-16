@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
@@ -1925,6 +1926,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 		return nil, err
 	}
+
+	if err = sessiontxn.GetTxnManager(s).AdviseOptimizeWithPlan(stmt.Plan); err != nil {
+		return nil, err
+	}
+
 	durCompile := time.Since(s.sessionVars.StartTime)
 	s.GetSessionVars().DurationCompile = durCompile
 	if s.isInternal() {
@@ -2181,7 +2187,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
-	if err = sessiontxn.WarmUpTxn(s); err != nil {
+	if err = sessiontxn.GetTxnManager(s).AdviseWarmup(); err != nil {
 		return
 	}
 	prepareExec := executor.NewPrepareExec(s, sql)
@@ -2290,14 +2296,14 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		if err = sessiontxn.WarmUpTxn(s); err == nil {
+		if err = sessiontxn.GetTxnManager(s).AdviseWarmup(); err == nil {
 			stmtCtx.Priority = kv.PriorityHigh
 			resultSet, err = runStmt(ctx, s, stmt)
 		}
 	case nil:
 		// cache is invalid
 		if prepareStmt.ForUpdateRead {
-			err = sessiontxn.WarmUpTxn(s)
+			err = sessiontxn.GetTxnManager(s).AdviseWarmup()
 		}
 
 		if err == nil {
@@ -3494,4 +3500,14 @@ func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
 
 func (s *session) GetStmtStats() *stmtstats.StatementStats {
 	return s.stmtStats
+}
+
+// EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
+func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	return s.sessionVars.EncodeSessionStates(ctx, sessionStates)
+}
+
+// DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
+func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	return s.sessionVars.DecodeSessionStates(ctx, sessionStates)
 }
