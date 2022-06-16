@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"math/rand"
 	"net"
 	"os"
 	"path/filepath"
@@ -78,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -112,7 +114,7 @@ var _ = SerialSuites(&testSuiteJoinSerial{&baseTestSuite{}})
 var _ = Suite(&testSuiteAgg{baseTestSuite: &baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
-var _ = Suite(&testSuite8{&baseTestSuite{}})
+var _ = SerialSuites(&testSuite8{&baseTestSuite{}})
 var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
@@ -9324,4 +9326,161 @@ func (s *testSuiteP1) TestIssue29412(c *C) {
 	tk.MustExec("create table t29142_2(a double);")
 	tk.MustExec("insert into t29142_1 value(20);")
 	tk.MustQuery("select sum(distinct a) as x from t29142_1 having x > some ( select a from t29142_2 where x in (a));").Check(nil)
+}
+
+func (s *testSerialSuite) TestIndexJoin31494(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int(11) default null, b int(11) default null, key(b));")
+	insertStr := "insert into t1 values(1, 1)"
+	for i := 1; i < 32768; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("create table t2(a int(11) default null, b int(11) default null, c int(11) default null)")
+	insertStr = "insert into t2 values(1, 1, 1)"
+	for i := 1; i < 32768; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("set @@tidb_mem_quota_query=2097152;")
+	// This bug will be reproduced in 10 times.
+	for i := 0; i < 10; i++ {
+		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	}
+}
+
+func (s *testSerialSuite) TestIssue28650(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int, index(a));")
+	tk.MustExec("create table t2(a int, c int, b char(50), index(a,c,b));")
+	tk.MustExec("set tidb_enable_rate_limit_action=off;")
+
+	wg := &sync.WaitGroup{}
+	sql := `explain analyze
+	select /*+ stream_agg(@sel_1) stream_agg(@sel_3) %s(@sel_2 t2)*/ count(1) from
+		(
+			SELECT t2.a AS t2_external_user_ext_id, t2.b AS t2_t1_ext_id  FROM t2 INNER JOIN (SELECT t1.a AS d_t1_ext_id  FROM t1 GROUP BY t1.a) AS anon_1 ON anon_1.d_t1_ext_id = t2.a  WHERE t2.c = 123 AND t2.b
+		IN ("%s") ) tmp`
+
+	wg.Add(1)
+	sqls := make([]string, 2)
+	go func() {
+		defer wg.Done()
+		inElems := make([]string, 1000)
+		for i := 0; i < len(inElems); i++ {
+			inElems[i] = fmt.Sprintf("wm_%dbDgAAwCD-v1QB%dxky-g_dxxQCw", rand.Intn(100), rand.Intn(100))
+		}
+		sqls[0] = fmt.Sprintf(sql, "inl_join", strings.Join(inElems, "\",\""))
+		sqls[1] = fmt.Sprintf(sql, "inl_hash_join", strings.Join(inElems, "\",\""))
+	}()
+
+	tk.MustExec("insert into t1 select rand()*400;")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t1 select rand()*400 from t1;")
+	}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = config.OOMActionLog
+		})
+	}()
+	wg.Wait()
+	for _, sql := range sqls {
+		tk.MustExec("set @@tidb_mem_quota_query = 1073741824") // 1GB
+		c.Assert(tk.QueryToErr(sql), IsNil)
+		tk.MustExec("set @@tidb_mem_quota_query = 33554432") // 32MB, out of memory during executing
+		c.Assert(strings.Contains(tk.QueryToErr(sql).Error(), "Out Of Memory Quota!"), IsTrue)
+		tk.MustExec("set @@tidb_mem_quota_query = 65536") // 64KB, out of memory during building the plan
+		func() {
+			defer func() {
+				r := recover()
+				c.Assert(r, NotNil)
+				err := errors.Errorf("%v", r)
+				c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+			}()
+			tk.MustExec(sql)
+		}()
+	}
+}
+
+// Details at https://github.com/pingcap/tidb/issues/31038
+func (s *testSerialSuite) TestFix31038(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = false
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t123")
+	tk.MustExec("create table t123 (id int);")
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/disable-collect-execution", `return(true)`)
+	tk.MustQuery("select * from t123;")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/disable-collect-execution")
+}
+
+func (s *testSuite) TestDeleteWithMulTbl(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// Delete multiple tables from left joined table.
+	// The result of left join is (3, null, null).
+	// Because rows in t2 are not matched, so no row will be deleted in t2.
+	// But row in t1 is matched, so it should be deleted.
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c1 int);")
+	tk.MustExec("create table t2 (c1 int primary key, c2 int);")
+	tk.MustExec("insert into t1 values(3);")
+	tk.MustExec("insert into t2 values(2, 2);")
+	tk.MustExec("insert into t2 values(0, 0);")
+	tk.MustExec("delete from t1, t2 using t1 left join t2 on t1.c1 = t2.c2;")
+	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 order by c1;").Check(testkit.Rows("0 0", "2 2"))
+
+	// Rows in both t1 and t2 are matched, so will be deleted even if it's null.
+	// NOTE: The null values are not generated by join.
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c1 int);")
+	tk.MustExec("create table t2 (c2 int);")
+	tk.MustExec("insert into t1 values(null);")
+	tk.MustExec("insert into t2 values(null);")
+	tk.MustExec("delete from t1, t2 using t1 join t2 where t1.c1 is null;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t2;").Check(testkit.Rows())
+}
+
+func (s *testSerialSuite) TestEncodingSet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `enum-set` (`set` SET(" +
+		"'x00','x01','x02','x03','x04','x05','x06','x07','x08','x09','x10','x11','x12','x13','x14','x15'," +
+		"'x16','x17','x18','x19','x20','x21','x22','x23','x24','x25','x26','x27','x28','x29','x30','x31'," +
+		"'x32','x33','x34','x35','x36','x37','x38','x39','x40','x41','x42','x43','x44','x45','x46','x47'," +
+		"'x48','x49','x50','x51','x52','x53','x54','x55','x56','x57','x58','x59','x60','x61','x62','x63'" +
+		")NOT NULL PRIMARY KEY)")
+	tk.MustExec("INSERT INTO `enum-set` VALUES\n(\"x00,x59\");")
+	tk.MustQuery("select `set` from `enum-set` use index(PRIMARY)").Check(testkit.Rows("x00,x59"))
+	tk.MustExec("admin check table `enum-set`")
 }

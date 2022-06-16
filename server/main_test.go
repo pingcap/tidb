@@ -23,6 +23,7 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
+	RunInGoTest = true // flag for NewServer to known it is running in test environment
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("time.Sleep"),
