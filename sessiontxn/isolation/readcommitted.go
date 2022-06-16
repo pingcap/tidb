@@ -32,10 +32,9 @@ import (
 )
 
 type stmtState struct {
-	stmtTS          uint64
-	stmtTSFuture    oracle.Future
-	stmtUseStartTS  bool
-	stmtReuseStmtTS bool
+	stmtTS         uint64
+	stmtTSFuture   oracle.Future
+	stmtUseStartTS bool
 }
 
 func (s *stmtState) prepareStmt(useStartTS bool) error {
@@ -49,9 +48,8 @@ func (s *stmtState) prepareStmt(useStartTS bool) error {
 type PessimisticRCTxnContextProvider struct {
 	baseTxnContextProvider
 	stmtState
-	// latestTS records the latest stmtTS we fetched
-	latestTS      uint64
-	latestTSValid bool
+	latestOracleTS      uint64
+	latestOracleTSValid bool
 }
 
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
@@ -69,10 +67,9 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 
 	provider.onTxnActive = func(txn kv.Transaction) {
 		txn.SetOption(kv.Pessimistic, true)
-		provider.latestTS = txn.StartTS()
-		provider.latestTSValid = true
+		provider.latestOracleTS = txn.StartTS()
+		provider.latestOracleTSValid = true
 	}
-
 	provider.getStmtReadTSFunc = provider.getStmtTS
 	provider.getStmtForUpdateTSFunc = provider.getStmtTS
 	return provider
@@ -88,8 +85,6 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
-	// Invalid rc check for next statement or retry when error occurs
-
 	switch point {
 	case sessiontxn.StmtErrAfterQuery:
 		return p.handleAfterQueryError(err)
@@ -118,13 +113,28 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	switch {
 	case p.stmtUseStartTS:
 		stmtTSFuture = sessiontxn.FuncFuture(p.getTxnStartTS)
-	case p.latestTSValid && (sessVars.StmtCtx.RCCheckTS || p.stmtReuseStmtTS):
-		stmtTSFuture = sessiontxn.ConstantFuture(p.latestTS)
+	case p.latestOracleTSValid && sessVars.StmtCtx.RCCheckTS:
+		stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	default:
-		stmtTSFuture = sessiontxn.NewOracleFuture(p.ctx, p.sctx, sessVars.TxnCtx.TxnScope)
+		stmtTSFuture = p.getOracleFuture()
 	}
 
 	p.stmtTSFuture = stmtTSFuture
+}
+
+func (p *PessimisticRCTxnContextProvider) getOracleFuture() sessiontxn.FuncFuture {
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
+	return func() (ts uint64, err error) {
+		if ts, err = future.Wait(); err != nil {
+			return
+		}
+		txnCtx.SetForUpdateTS(ts)
+		ts = txnCtx.GetForUpdateTS()
+		p.latestOracleTS = ts
+		p.latestOracleTSValid = true
+		return
+	}
 }
 
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
@@ -142,15 +152,8 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 		return 0, err
 	}
 
-	// forUpdateTS should exactly equal to the read ts
-	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	txnCtx.SetForUpdateTS(ts)
-	ts = txnCtx.GetForUpdateTS()
 	txn.SetOption(kv.SnapshotTS, ts)
-
 	p.stmtTS = ts
-	p.latestTS = ts
-	p.latestTSValid = true
 	return
 }
 
@@ -162,14 +165,14 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 		return sessiontxn.NoIdea()
 	}
 
-	p.latestTSValid = false
+	p.latestOracleTSValid = false
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL))
 	return sessiontxn.RetryReady()
 }
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
-	p.latestTSValid = false
+	p.latestOracleTSValid = false
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
@@ -190,7 +193,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 	if retryable {
 		return sessiontxn.RetryReady()
 	}
-
 	return sessiontxn.ErrorAction(lockErr)
 }
 
@@ -215,7 +217,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		return nil
 	}
 
-	if p.stmtUseStartTS || p.stmtReuseStmtTS || !p.latestTSValid {
+	if p.stmtUseStartTS || !p.latestOracleTSValid {
 		return nil
 	}
 
@@ -229,7 +231,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 	}
 
 	if v, ok := plan.(*plannercore.Insert); ok && v.SelectPlan == nil {
-		p.stmtReuseStmtTS = true
+		p.stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	}
 
 	return nil
