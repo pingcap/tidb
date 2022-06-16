@@ -16,6 +16,8 @@ package isolation_test
 
 import (
 	"context"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/testkit"
 	"testing"
 	"time"
 
@@ -95,4 +97,29 @@ func (a *txnAssert[T]) Check(t *testing.T) {
 func (a *txnAssert[T]) CheckAndGetProvider(t *testing.T) T {
 	a.Check(t)
 	return sessiontxn.GetTxnManager(a.sctx).GetContextProvider().(T)
+}
+
+func TestConflictErrorInOtherQueryContainingPointGet111(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 1), (2,2),(3,3),(4,4)")
+	tk.MustQuery("select * from t where id=1 for update union all select * from t where id = 2 for update").Check(testkit.Rows("1 1", "2 2"))
+	//tk.MustExec("select * from t where id = 1 and v > 1 for update")
+	//tk.MustExec("select * from t where id in (1, 2, 3) order by id for update")
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["errWriteConflict"], 1)
+
+	tk.MustExec("rollback")
 }

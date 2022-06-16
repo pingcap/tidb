@@ -181,36 +181,63 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	optimizeForNotFetchingLatestTS := false
-	switch v := plan.(type) {
-	case *plannercore.PhysicalLock:
-		if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
-			optimizeForNotFetchingLatestTS = true
-		}
-	case *plannercore.PhysicalSelection:
-		if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
-			optimizeForNotFetchingLatestTS = true
-		}
-	case *plannercore.Update:
-		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
-			optimizeForNotFetchingLatestTS = true
-		}
-	case *plannercore.Delete:
-		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
-			optimizeForNotFetchingLatestTS = true
-		}
-	case *plannercore.Insert:
-		if v.SelectPlan == nil {
-			optimizeForNotFetchingLatestTS = true
-		}
-	case *plannercore.PointGetPlan, *plannercore.BatchPointGetPlan:
-		optimizeForNotFetchingLatestTS = true
+	//optimizeForNotFetchingLatestTS := false
+	//switch v := plan.(type) {
+	//case *plannercore.PhysicalLock:
+	//	if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
+	//		optimizeForNotFetchingLatestTS = true
+	//	}
+	//case *plannercore.PhysicalSelection:
+	//	if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
+	//		optimizeForNotFetchingLatestTS = true
+	//	}
+	//case *plannercore.Update:
+	//	if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
+	//		optimizeForNotFetchingLatestTS = true
+	//	}
+	//case *plannercore.Delete:
+	//	if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
+	//		optimizeForNotFetchingLatestTS = true
+	//	}
+	//case *plannercore.Insert:
+	//	if v.SelectPlan == nil {
+	//		optimizeForNotFetchingLatestTS = true
+	//	}
+	//case *plannercore.PointGetPlan, *plannercore.BatchPointGetPlan:
+	//	optimizeForNotFetchingLatestTS = true
+	//
+	//}
 
-	}
-
-	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS
+	p.optimizeForNotFetchingLatestTS = unname(plan)
 
 	return nil
+}
+
+func unname(plan plannercore.Plan) bool {
+	switch v := plan.(type) {
+	case *plannercore.PointGetPlan:
+		return true
+	case *plannercore.BatchPointGetPlan:
+		return true
+	case plannercore.PhysicalPlan:
+		if v.Children() == nil {
+			return false
+		}
+		allChildrenArePointGet := true
+		for _, p := range v.Children() {
+			allChildrenArePointGet = allChildrenArePointGet && unname(p)
+		}
+		return allChildrenArePointGet
+	case *plannercore.Update:
+		_, ok := v.SelectPlan.(*plannercore.PointGetPlan)
+		return ok
+	case *plannercore.Delete:
+		_, ok := v.SelectPlan.(*plannercore.PointGetPlan)
+		return ok
+	case *plannercore.Insert:
+		return v.SelectPlan == nil
+	}
+	return false
 }
 
 func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
