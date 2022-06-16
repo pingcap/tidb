@@ -5809,8 +5809,9 @@
         },
         {
           "aliasColors": {},
+          "bars": true,
           "dashLength": 10,
-          "datasource": "${DS_TEST-CLUSTER}",
+          "datasource": "playground",
           "description": "How many transactions are there in this state at this time",
           "fieldConfig": {
             "defaults": {},
@@ -5833,7 +5834,6 @@
             "total": false,
             "values": false
           },
-          "lines": true,
           "linewidth": 1,
           "nullPointMode": "null",
           "options": {
@@ -5844,14 +5844,16 @@
           "renderer": "flot",
           "seriesOverrides": [],
           "spaceLength": 10,
+          "stack": true,
           "targets": [
             {
-              "expr": "tidb_session_txn_state_count",
+              "expr": "tidb_session_txn_state_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}",
               "legendFormat": "{{type}}",
               "interval": "",
               "exemplar": true,
               "hide": false,
-              "refId": "A"
+              "refId": "A",
+              "intervalFactor": 1
             }
           ],
           "thresholds": [],
@@ -5894,13 +5896,12 @@
             "align": false,
             "alignLevel": null
           },
-          "bars": false,
           "dashes": false,
           "fillGradient": 0,
           "hiddenSeries": false,
+          "lines": false,
           "percentage": false,
           "points": false,
-          "stack": false,
           "steppedLine": false,
           "timeFrom": null,
           "timeShift": null
@@ -5909,7 +5910,7 @@
           "aliasColors": {},
           "dashLength": 10,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Percentage of transactions in this state at this time",
+          "description": "How much time transactions spend on each state",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -5939,21 +5940,37 @@
           "pluginVersion": "7.5.11",
           "pointradius": 2,
           "renderer": "flot",
-          "seriesOverrides": [],
+          "seriesOverrides": [
+            {
+              "$$hashKey": "object:1266",
+              "alias": "total",
+              "bars": false,
+              "lines": true
+            }
+          ],
           "spaceLength": 10,
           "targets": [
             {
-              "expr": "tidb_session_txn_state_count",
+              "expr": "sum(rate(tidb_session_txn_state_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "legendFormat": "{{type}}",
               "interval": "",
               "exemplar": true,
               "hide": false,
               "refId": "A"
+            },
+            {
+              "expr": "sum(rate(tidb_session_transaction_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+              "legendFormat": "total",
+              "interval": "",
+              "exemplar": true,
+              "refId": "B",
+              "hide": false,
+              "intervalFactor": 2
             }
           ],
           "thresholds": [],
           "timeRegions": [],
-          "title": "Transaction state percentage",
+          "title": "Transaction execution states duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -5992,12 +6009,12 @@
             "alignLevel": null
           },
           "bars": true,
-          "percentage": true,
           "stack": true,
           "lines": false,
           "dashes": false,
           "fillGradient": 0,
           "hiddenSeries": false,
+          "percentage": false,
           "points": false,
           "steppedLine": false,
           "timeFrom": null,
