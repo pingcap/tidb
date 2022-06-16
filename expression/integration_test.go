@@ -10565,7 +10565,7 @@ func (s *testIntegrationSuite) TestIssue32488(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;")
+	tk.MustExec("create table t(a varchar(32));")
 	tk.MustExec("insert into t values('ʞ'), ('İ');")
 	tk.MustExec("set @@tidb_enable_vectorized_expression = false;")
 	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check(testkit.Rows("İ i", "Ʞ ʞ"))
