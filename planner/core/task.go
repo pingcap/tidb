@@ -663,7 +663,7 @@ func calcPagingCost(ctx sessionctx.Context, indexPlan PhysicalPlan, expectCnt ui
 	if sourceRows > indexRows {
 		indexSelectivity = indexRows / sourceRows
 	}
-	pagingCst := seekCnt*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.CPUFactor
+	pagingCst := seekCnt*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.GetCPUFactor()
 	pagingCst *= indexSelectivity
 
 	// we want the diff between idxCst and pagingCst here,
@@ -1109,7 +1109,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	p.SetChildren(childPlans...)
 	sessVars := p.ctx.GetSessionVars()
 	// Children of UnionExec are executed in parallel.
-	t.cst = childMaxCost + float64(1+len(tasks))*sessVars.ConcurrencyFactor
+	t.cst = childMaxCost + float64(1+len(tasks))*sessVars.GetConcurrencyFactor()
 	p.cost = t.cost()
 	return t
 }
@@ -1119,13 +1119,13 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	if mppTask, _ := tasks[0].(*mppTask); mppTask != nil { // always push to mpp task.
 		sc := sel.ctx.GetSessionVars().StmtCtx
 		if expression.CanExprsPushDown(sc, sel.Conditions, sel.ctx.GetClient(), kv.TiFlash) {
-			mppTask.addCost(mppTask.count() * sessVars.CPUFactor)
+			mppTask.addCost(mppTask.count() * sessVars.GetCPUFactor())
 			sel.cost = mppTask.cost()
 			return attachPlan2Task(sel, mppTask.copy())
 		}
 	}
 	t := tasks[0].convertToRootTask(sel.ctx)
-	t.addCost(t.count() * sessVars.CPUFactor)
+	t.addCost(t.count() * sessVars.GetCPUFactor())
 	sel.cost = t.cost()
 	return attachPlan2Task(sel, t)
 }
