@@ -117,7 +117,7 @@ var (
 			map[string]string{
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
-				"run-ddl":                       "enable_ddl",
+				"run-ddl":                       "tidb_enable_ddl",
 			},
 		},
 		{
@@ -474,7 +474,7 @@ type Instance struct {
 	EnableCollectExecutionInfo bool       `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
-	EnableDDL                  AtomicBool `toml:"enable_ddl" json:"enable_ddl"`
+	TiDBEnableDDL              AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -826,7 +826,7 @@ var defaultConf = Config{
 		EnableCollectExecutionInfo:  true,
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
-		EnableDDL:                   *NewAtomicBool(true),
+		TiDBEnableDDL:               *NewAtomicBool(true),
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -1161,7 +1161,7 @@ func (c *Config) Valid() error {
 		}
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, nameList)
 	}
-	if c.Store == "mocktikv" && !c.Instance.EnableDDL.Load() {
+	if c.Store == "mocktikv" && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
 	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {

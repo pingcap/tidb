@@ -415,13 +415,13 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeInstance, Name: PluginDir, Value: "/data/deploy/plugin", ReadOnly: true, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.PluginDir, nil
 	}},
-	{Scope: ScopeInstance, Name: EnableDDL, Value: BoolToOnOff(config.GetGlobalConfig().Instance.EnableDDL.Load()), Type: TypeBool,
+	{Scope: ScopeInstance, Name: TiDBEnableDDL, Value: BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), Type: TypeBool,
 		SetGlobal: func(s *SessionVars, val string) error {
-			config.GetGlobalConfig().Instance.EnableDDL.Store(TiDBOptOn(val))
+			config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(TiDBOptOn(val))
 			return nil
 		},
 		GetGlobal: func(s *SessionVars) (string, error) {
-			return BoolToOnOff(config.GetGlobalConfig().Instance.EnableDDL.Load()), nil
+			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), nil
 		},
 	},
 
@@ -1778,8 +1778,8 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
-	// EnableDDL indicates whether the tidb-server runs DDL statements,
-	EnableDDL = "enable_ddl"
+	// TiDBEnableDDL indicates whether the tidb-server runs DDL statements,
+	TiDBEnableDDL = "tidb_enable_ddl"
 	// Port is the name for 'port' system variable.
 	Port = "port"
 	// DataDir is the name for 'datadir' system variable.

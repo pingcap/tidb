@@ -464,4 +464,4 @@ tidb_slow_log_threshold = 300
 tidb_record_plan_in_slow_log = 1
 
 # Run ddl worker on this tidb-server.
-enable_ddl = true
+tidb_enable_ddl = true

@@ -468,14 +468,14 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.EnableDDL.Load()))
+	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
 
-	// If enable_ddl is true, we need campaign owner and do DDL job.
+	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
-	if config.GetGlobalConfig().Instance.EnableDDL.Load() {
+	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		err := d.ownerManager.CampaignOwner()
 		if err != nil {
 			return errors.Trace(err)
@@ -661,7 +661,7 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 
 func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	// If the workers don't run, we needn't notify workers.
-	if !config.GetGlobalConfig().Instance.EnableDDL.Load() {
+	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		return
 	}
 	var worker *worker

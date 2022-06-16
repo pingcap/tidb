@@ -309,7 +309,7 @@ enable-enum-length-limit = true
 [instance]
 
 # Run ddl worker on this tidb-server.
-enable_ddl = true
+tidb_enable_ddl = true
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -1024,7 +1024,7 @@ func TestConflictInstanceConfig(t *testing.T) {
 		"": {
 			"", map[string]string{
 				"check-mb4-value-in-utf8": "tidb_check_mb4_value_in_utf8",
-				"run-ddl":                 "enable_ddl",
+				"run-ddl":                 "tidb_enable_ddl",
 			},
 		},
 		"log": {
@@ -1037,7 +1037,7 @@ func TestConflictInstanceConfig(t *testing.T) {
 	_, err = f.WriteString("check-mb4-value-in-utf8 = true \nrun-ddl = true \n" +
 		"[log] \nenable-slow-log = true \n" +
 		"[performance] \nforce-priority = \"NO_PRIORITY\"\n" +
-		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"\nenable_ddl = false")
+		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"\ntidb_enable_ddl = false")
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	err = conf.Load(configFile)
@@ -1050,7 +1050,7 @@ func TestConflictInstanceConfig(t *testing.T) {
 	require.Equal(t, "NO_PRIORITY", conf.Performance.ForcePriority)
 	require.Equal(t, "LOW_PRIORITY", conf.Instance.ForcePriority)
 	require.Equal(t, true, conf.RunDDL)
-	require.Equal(t, false, conf.Instance.EnableDDL.Load())
+	require.Equal(t, false, conf.Instance.TiDBEnableDDL.Load())
 	require.Equal(t, 0, len(DeprecatedOptions))
 	for _, conflictOption := range ConflictOptions {
 		expectedConflictOption, ok := expectedConflictOptions[conflictOption.SectionName]
@@ -1080,7 +1080,7 @@ func TestDeprecatedConfig(t *testing.T) {
 		"": {
 			"", map[string]string{
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
-				"run-ddl":                       "enable_ddl",
+				"run-ddl":                       "tidb_enable_ddl",
 			},
 		},
 		"log": {

@@ -78,7 +78,7 @@ func NewBackupCommand() *cobra.Command {
 			task.LogArguments(c)
 
 			// Do not run ddl worker in BR.
-			config.GetGlobalConfig().Instance.EnableDDL.Store(false)
+			config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
 
 			summary.SetUnit(summary.BackupUnit)
 			return nil

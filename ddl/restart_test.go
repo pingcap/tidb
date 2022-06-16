@@ -49,7 +49,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	d.wg.Run(d.limitDDLJobs)
-	if !config.GetGlobalConfig().Instance.EnableDDL.Load() {
+	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		return
 	}
 

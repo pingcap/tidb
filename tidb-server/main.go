@@ -446,7 +446,7 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Binlog.Enable = *enableBinlog
 	}
 	if actualFlags[nmRunDDL] {
-		cfg.Instance.EnableDDL.Store(*runDDL)
+		cfg.Instance.TiDBEnableDDL.Store(*runDDL)
 	}
 	if actualFlags[nmDdlLease] {
 		cfg.Lease = *ddlLease
@@ -559,7 +559,7 @@ func setGlobalVars() {
 				case "enable-collect-execution-info":
 					cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
 				case "run-ddl":
-					cfg.Instance.EnableDDL.Store(cfg.RunDDL)
+					cfg.Instance.TiDBEnableDDL.Store(cfg.RunDDL)
 				}
 			case "log":
 				switch oldName {
