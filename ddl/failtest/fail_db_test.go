@@ -102,15 +102,15 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	}()
 	tk.MustExec("create table tx(a int)")
 	tk.MustExec("insert into tx values(1)")
-	_, err = tk.Exec("rename table tx to ty")
+	err = tk.ExecToErr("rename table tx to ty")
 	require.Error(t, err)
 	tk.MustExec("create table ty(a int)")
 	tk.MustExec("insert into ty values(2)")
-	_, err = tk.Exec("rename table ty to tz, tx to ty")
+	err = tk.ExecToErr("rename table ty to tz, tx to ty")
 	require.Error(t, err)
-	_, err = tk.Exec("select * from tz")
+	err = tk.ExecToErr("select * from tz")
 	require.Error(t, err)
-	_, err = tk.Exec("rename table tx to ty, ty to tz")
+	err = tk.ExecToErr("rename table tx to ty, ty to tz")
 	require.Error(t, err)
 	tk.MustQuery("select * from ty").Check(testkit.Rows("2"))
 	// Make sure that the table's data has not been deleted.
@@ -134,7 +134,7 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustExec("insert into nt values(7)")
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
-	_, err = tk.Exec("alter table pt exchange partition p1 with table nt")
+	err = tk.ExecToErr("alter table pt exchange partition p1 with table nt")
 	require.Error(t, err)
 
 	tk.MustQuery("select * from pt").Check(testkit.Rows("1", "3", "5"))
@@ -263,7 +263,7 @@ func TestFailSchemaSyncer(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	require.True(t, s.dom.SchemaValidator.IsStarted())
-	_, err = tk.Exec("insert into t values(1)")
+	err = tk.ExecToErr("insert into t values(1)")
 	require.NoError(t, err)
 }
 
@@ -483,8 +483,7 @@ func TestModifyColumn(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("insert into t values(111, 222, 333)")
-	_, err = tk.Exec("alter table t change column a aa tinyint after c")
-	require.EqualError(t, err, "[types:1690]constant 222 overflows tinyint")
+	tk.MustGetErrMsg("alter table t change column a aa tinyint after c", "[types:1690]constant 222 overflows tinyint")
 	tk.MustExec("alter table t change column a aa mediumint after c")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
@@ -500,17 +499,12 @@ func TestModifyColumn(t *testing.T) {
 
 	// Test unsupported statements.
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
-	_, err = tk.Exec("alter table t1 modify column a mediumint")
-	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: table is partition table")
+	tk.MustGetErrMsg("alter table t1 modify column a mediumint", "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
-	_, err = tk.Exec("alter table t2 modify column b mediumint")
-	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
-	_, err = tk.Exec("alter table t2 modify column c mediumint")
-	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
-	_, err = tk.Exec("alter table t2 modify column a mediumint generated always as(id+1) stored")
-	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
-	_, err = tk.Exec("alter table t2 modify column a mediumint")
-	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
+	tk.MustGetErrMsg("alter table t2 modify column b mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
+	tk.MustGetErrMsg("alter table t2 modify column c mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
+	tk.MustGetErrMsg("alter table t2 modify column a mediumint generated always as(id+1) stored", "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
+	tk.MustGetErrMsg("alter table t2 modify column a mediumint", "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 
 	// Test multiple rows of data.
 	tk.MustExec("create table t3(a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")

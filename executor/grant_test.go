@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
@@ -257,6 +258,13 @@ func TestCreateUserWhenGrant(t *testing.T) {
 	// Make sure user is created automatically when grant to a non-exists one.
 	tk.MustQuery(`SELECT user FROM mysql.user WHERE user='test' and host='%'`).Check(
 		testkit.Rows("test"),
+	)
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	// Grant without a password.
+	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%'`)
+	// Make sure user is created automatically when grant to a non-exists one.
+	tk.MustQuery(`SELECT user, plugin FROM mysql.user WHERE user='test' and host='%'`).Check(
+		testkit.Rows("test mysql_native_password"),
 	)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 }
@@ -522,41 +530,23 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 		tk.MustExec("drop user issue27867;")
 	}()
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
-	err := tk.ExecToErr("grant all on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
+	tk.MustGetErrCode("grant all on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
 	// Check case insensitivity
-	err = tk.ExecToErr("grant all on PERFormanCE_scHemA.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'")
+	tk.MustGetErrCode("grant all on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
 	// Check other database privileges
 	tk.MustExec("grant select on performance_schema.* to issue27867;")
-	tk.MustExec("grant insert on performance_schema.* to issue27867;")
-	tk.MustExec("grant update on performance_schema.* to issue27867;")
-	tk.MustExec("grant delete on performance_schema.* to issue27867;")
-	tk.MustExec("grant drop on performance_schema.* to issue27867;")
-	tk.MustExec("grant lock tables on performance_schema.* to issue27867;")
-	err = tk.ExecToErr("grant create on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
-	err = tk.ExecToErr("grant references on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
-	err = tk.ExecToErr("grant alter on PERFormAnCE_scHemA.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormAnCE_scHemA'")
-	err = tk.ExecToErr("grant execute on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
-	err = tk.ExecToErr("grant index on PERFormanCE_scHemA.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'")
-	err = tk.ExecToErr("grant create view on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
-	err = tk.ExecToErr("grant show view on performance_schema.* to issue27867;")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
+	tk.MustGetErrCode("grant insert on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant update on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant delete on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant drop on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant lock tables on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant create on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant references on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant alter on PERFormAnCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant execute on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant index on PERFormanCE_scHemA.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant create view on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
+	tk.MustGetErrCode("grant show view on performance_schema.* to issue27867;", errno.ErrDBaccessDenied)
 }
 
 func TestGrantDynamicPrivs(t *testing.T) {
