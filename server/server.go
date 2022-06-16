@@ -634,7 +634,7 @@ func (s *Server) SetMaxConnections(newMaxConnections uint32) error {
 	conns := len(s.clients)
 	s.rwlock.RUnlock()
 
-	if conns >= int(newMaxConnections) {
+	if conns > int(newMaxConnections) {
 		logutil.BgLogger().Error("Current connections number exceeds the setting value",
 			zap.Uint32("max connections", newMaxConnections), zap.Error(errConCount))
 		return errConCount
