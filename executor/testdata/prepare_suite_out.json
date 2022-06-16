@@ -63,7 +63,7 @@
               "Projection_3 1.00 root  10->Column#1, cba->Column#2",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "10 cba"
             ]
@@ -253,7 +253,7 @@
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "1234567"
             ]
@@ -270,7 +270,7 @@
               "Projection_3 1.00 root  cast(0.99999, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "1"
             ]
@@ -287,7 +287,7 @@
               "Projection_3 1.00 root  cast(99999.0, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "99999"
             ]
@@ -304,7 +304,7 @@
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:79)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-123456789"
             ]
@@ -321,7 +321,7 @@
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-1234567"
             ]
@@ -338,7 +338,7 @@
               "Projection_3 1.00 root  cast(-0.99999, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-1"
             ]
@@ -355,7 +355,7 @@
               "Projection_3 1.00 root  cast(-99999.0, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-99999"
             ]
@@ -394,7 +394,7 @@
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "1234567"
             ]
@@ -411,7 +411,7 @@
               "Projection_3 1.00 root  cast(0.99999, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "1"
             ]
@@ -428,7 +428,7 @@
               "Projection_3 1.00 root  cast(99999.0, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "99999"
             ]
@@ -445,7 +445,7 @@
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:79)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-123456789"
             ]
@@ -462,7 +462,7 @@
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-1234567"
             ]
@@ -479,7 +479,7 @@
               "Projection_3 1.00 root  cast(-0.99999, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-1"
             ]
@@ -496,7 +496,7 @@
               "Projection_3 1.00 root  cast(-99999.0, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-99999"
             ]
@@ -535,7 +535,7 @@
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(5,4) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "9.9999"
             ]
@@ -552,7 +552,7 @@
               "Projection_3 1.00 root  cast(0.99999, decimal(5,4) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "1.0000"
             ]
@@ -569,7 +569,7 @@
               "Projection_3 1.00 root  cast(99999.0, decimal(5,4) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "9.9999"
             ]
@@ -586,7 +586,7 @@
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:78)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-9.9999"
             ]
@@ -603,7 +603,7 @@
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(5,4) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-9.9999"
             ]
@@ -620,7 +620,7 @@
               "Projection_3 1.00 root  cast(-0.99999, decimal(5,4) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-1.0000"
             ]
@@ -637,7 +637,7 @@
               "Projection_3 1.00 root  cast(-99999.0, decimal(5,4) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-9.9999"
             ]
@@ -676,7 +676,7 @@
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(64,30) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "1234567.123456700000000000000000000000"
             ]
@@ -693,7 +693,7 @@
               "Projection_3 1.00 root  cast(0.99999, decimal(64,30) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "0.999990000000000000000000000000"
             ]
@@ -710,7 +710,7 @@
               "Projection_3 1.00 root  cast(99999.0, decimal(64,30) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "99999.000000000000000000000000000000"
             ]
@@ -727,7 +727,7 @@
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:80)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-123456789.012345678901234567890123456789"
             ]
@@ -744,7 +744,7 @@
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(64,30) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-1234567.123456700000000000000000000000"
             ]
@@ -761,7 +761,7 @@
               "Projection_3 1.00 root  cast(-0.99999, decimal(64,30) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-0.999990000000000000000000000000"
             ]
@@ -778,7 +778,7 @@
               "Projection_3 1.00 root  cast(-99999.0, decimal(64,30) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-99999.000000000000000000000000000000"
             ]
@@ -817,7 +817,7 @@
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(15,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "1234567.12346"
             ]
@@ -834,7 +834,7 @@
               "Projection_3 1.00 root  cast(0.99999, decimal(15,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "0.99999"
             ]
@@ -851,7 +851,7 @@
               "Projection_3 1.00 root  cast(99999.0, decimal(15,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "99999.00000"
             ]
@@ -868,7 +868,7 @@
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:79)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-123456789.01235"
             ]
@@ -885,7 +885,7 @@
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(15,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-1234567.12346"
             ]
@@ -902,7 +902,7 @@
               "Projection_3 1.00 root  cast(-0.99999, decimal(15,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-0.99999"
             ]
@@ -919,7 +919,7 @@
               "Projection_3 1.00 root  cast(-99999.0, decimal(15,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-99999.00000"
             ]
@@ -958,7 +958,7 @@
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(5,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "0.99999"
             ]
@@ -975,7 +975,7 @@
               "Projection_3 1.00 root  cast(0.99999, decimal(5,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "0.99999"
             ]
@@ -992,7 +992,7 @@
               "Projection_3 1.00 root  cast(99999.0, decimal(5,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "0.99999"
             ]
@@ -1009,7 +1009,7 @@
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:78)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-0.99999"
             ]
@@ -1026,7 +1026,7 @@
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(5,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-0.99999"
             ]
@@ -1043,7 +1043,7 @@
               "Projection_3 1.00 root  cast(-0.99999, decimal(5,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-0.99999"
             ]
@@ -1060,7 +1060,7 @@
               "Projection_3 1.00 root  cast(-99999.0, decimal(5,5) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
-            "LastPlanUseCache": "1",
+            "LastPlanUseCache": "0",
             "Result": [
               "-0.99999"
             ]

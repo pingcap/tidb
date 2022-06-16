@@ -7824,7 +7824,7 @@ func (s *testIntegrationSuite) TestIssue17727(c *C) {
 
 	tk.MustExec("set @a = '2020-06-12 13:47:58';")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1591940878"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
@@ -10559,4 +10559,14 @@ func (s *testIntegrationSuite) TestIssue30326(c *C) {
 	err := tk.QueryToErr("select (FIRST_VALUE(1) over (partition by v.a)) as c3 from (select a from t where t.a = (select a from t t2 where t.a = t2.a)) as v;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[executor:1242]Subquery returns more than 1 row")
+}
+
+func (s *testIntegrationSuite) TestIssue33397(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(32));")
+	tk.MustExec("insert into t values(''), ('');")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
+	tk.MustQuery("select compress(a) from t").Check(testkit.Rows("", ""))
 }

@@ -89,7 +89,12 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 			execID = vars.PreparedStmtNameToID[execStmt.Name]
 		}
 		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+			checkSchema := vars.IsIsolation(ast.ReadCommitted)
+			if !checkSchema {
+				preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
+				checkSchema = ok && preparedObj.ForUpdateRead
+			}
+			if checkSchema {
 				is := domain.GetDomain(sctx).InfoSchema()
 				return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
 			}
@@ -102,6 +107,16 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
+
+	if !sctx.GetSessionVars().InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
+		allowed, err := allowInReadOnlyMode(sctx, node)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !allowed {
+			return nil, nil, errors.Trace(core.ErrSQLInReadOnlyMode)
+		}
+	}
 
 	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
 	// engine in not read only stmt.
@@ -353,16 +368,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	if err := plannercore.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
 		return nil, nil, 0, err
-	}
-
-	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
-		allowed, err := allowInReadOnlyMode(sctx, node)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if !allowed {
-			return nil, nil, 0, errors.Trace(core.ErrSQLInReadOnlyMode)
-		}
 	}
 
 	// Handle the execute statement.
