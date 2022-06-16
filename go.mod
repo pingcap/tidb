@@ -49,6 +49,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
+<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20210806074406-317f69fb54b4
 	github.com/pingcap/log v0.0.0-20210818144256-6455d4a4c6f9
 	github.com/pingcap/parser v0.0.0-20210831085004-b5390aa83f65
@@ -56,6 +57,14 @@ require (
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tipb v0.0.0-20211025074540-e1c7362eeeb4
 	github.com/prometheus/client_golang v1.5.1
+=======
+	github.com/pingcap/kvproto v0.0.0-20220517085838-12e2f5a9d167
+	github.com/pingcap/log v1.1.0
+	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
+	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
+	github.com/pingcap/tipb v0.0.0-20220602075447-4847c5d68e73
+	github.com/prometheus/client_golang v1.12.2
+>>>>>>> 4ae78cdea... expression: refine date_add/sub return type and precision (#35009)
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
 	github.com/shirou/gopsutil v3.21.2+incompatible
