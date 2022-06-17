@@ -652,9 +652,14 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 		}
 		lLen, rLen := lType.Flen+lExtend, rType.Flen+rExtend
 		cLen := mathutil.Max(lLen, rLen)
+<<<<<<< HEAD
 		cLen = mathutil.Min(65, cLen)
 		commonType.Decimal = cDec
 		commonType.Flen = cLen
+=======
+		commonType.SetDecimalUnderLimit(cDec)
+		commonType.SetFlenUnderLimit(cLen)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {
 		if mysql.IsIntegerType(commonType.Tp) {
 			// If the target type is int, both TiFlash and Mysql only support cast to Int64
@@ -1554,7 +1559,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 				break
 			}
 		}
-		pb := aggregation.AggFuncToPBExpr(sctx, client, aggFunc)
+		pb, _ := aggregation.AggFuncToPBExpr(sctx, client, aggFunc, storeType)
 		if pb == nil {
 			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
 			ret = false

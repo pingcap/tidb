@@ -4949,8 +4949,13 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	bf.tp.Flen = retFLen
 	bf.tp.Decimal = retDecimal
+=======
+	bf.tp.SetFlenUnderLimit(retFLen)
+	bf.tp.SetDecimalUnderLimit(retDecimal)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 
 	var sig builtinFunc
 	if len(args) == 0 {
