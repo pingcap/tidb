@@ -467,13 +467,7 @@ func (s *testRangeSuite) testNeedSplit(c *C, isRawKv bool) {
 	// Region end key
 	c.Assert(restore.NeedSplit([]byte("d"), regions, isRawKv), IsNil)
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
-
-	for _, ca := range cases {
-		err := restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
-		require.Error(t, err)
-		require.Regexp(t, ca.err, err.Error())
-	}
+	c.Assert(restore.NeedSplit([]byte("e"), regions, isRawKv), IsNil)
 }
 
 type fakeRestorer struct {
