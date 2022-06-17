@@ -26,6 +26,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -88,12 +89,15 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli          *clientv3.Client
-	info             *ServerInfo
-	serverInfoPath   string
-	minStartTS       uint64
-	minStartTSPath   string
-	manager          util2.SessionManager
+	etcdCli        *clientv3.Client
+	info           *ServerInfo
+	serverInfoPath string
+	minStartTS     uint64
+	minStartTSPath string
+	managerMu      struct {
+		mu sync.RWMutex
+		util2.SessionManager
+	}
 	session          *concurrency.Session
 	topologySession  *concurrency.Session
 	prometheusAddr   string
@@ -196,12 +200,16 @@ func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) er
 
 // SetSessionManager set the session manager for InfoSyncer.
 func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
-	is.manager = manager
+	is.managerMu.mu.Lock()
+	defer is.managerMu.mu.Unlock()
+	is.managerMu.SessionManager = manager
 }
 
 // GetSessionManager get the session manager.
 func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
-	return is.manager
+	is.managerMu.mu.RLock()
+	defer is.managerMu.mu.RUnlock()
+	return is.managerMu.SessionManager
 }
 
 func initLabelRuleManager(etcdCli *clientv3.Client) LabelRuleManager {
@@ -588,11 +596,11 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 
 // ReportMinStartTS reports self server min start timestamp to ETCD.
 func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
-	if is.manager == nil {
-		// Server may not start in time.
+	sm := is.GetSessionManager()
+	if sm == nil {
 		return
 	}
-	pl := is.manager.ShowProcessList()
+	pl := sm.ShowProcessList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
