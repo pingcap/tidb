@@ -59,7 +59,7 @@ func mockTableAppendColumn(t *statistics.Table) {
 }
 
 func mockTableAppendIndex(t *statistics.Table) {
-	index := int64(len(t.Columns) + 1)
+	index := int64(len(t.Indices) + 1)
 	t.Indices[index] = &statistics.Index{
 		Info:     &model.IndexInfo{ID: index},
 		CMSketch: statistics.NewCMSketch(1, 1),
@@ -67,13 +67,11 @@ func mockTableAppendIndex(t *statistics.Table) {
 }
 
 func mockTableRemoveColumn(t *statistics.Table) {
-	idx := int64(len(t.Columns))
-	t.Columns[idx] = nil
+	delete(t.Columns, int64(len(t.Columns)))
 }
 
 func mockTableRemoveIndex(t *statistics.Table) {
-	idx := int64(len(t.Indices))
-	t.Indices[idx] = nil
+	delete(t.Indices, int64(len(t.Indices)))
 }
 
 func TestLRUPutGetDel(t *testing.T) {
@@ -201,12 +199,12 @@ func TestLRUFreshMemUsage(t *testing.T) {
 	require.Equal(t, lru.Cost(), 7*mockIndexMemoryUsage+7*mockColumnMemoryUsage)
 
 	mockTableRemoveColumn(t1)
-	lru.FreshMemUsage()
+	lru.Put(int64(1), t1)
 	require.Equal(t, lru.TotalCost(), 6*mockColumnTotalMemoryUsage+7*mockIndexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 7*mockIndexMemoryUsage+6*mockColumnMemoryUsage)
 
 	mockTableRemoveIndex(t1)
-	lru.FreshMemUsage()
+	lru.Put(int64(1), t1)
 	require.Equal(t, lru.TotalCost(), 6*mockColumnTotalMemoryUsage+6*mockIndexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 6*mockIndexMemoryUsage+6*mockColumnMemoryUsage)
 }
