@@ -1143,7 +1143,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 	// In some cases, some statistics in column would be evicted
 	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
 	// In this case, we will think this column as valid due to we can still use the rest of the statistics to do optimize.
-	return c.TotalRowCount() == 0 || (!c.IsNecessaryStatisticsLoaded() && c.Histogram.NDV > 0)
+	return c.TotalRowCount() == 0 || (!c.IsEssentialStatisticsLoaded() && c.Histogram.NDV > 0)
 }
 
 // IsHistNeeded checks if this column needs histogram to be loaded
@@ -2312,9 +2312,9 @@ func (s ColLoadedStatus) IsLoadNeeded() bool {
 	return true
 }
 
-// IsNecessaryStatisticsLoaded indicates whether the necessary statistics is loaded.
+// IsEssentialStatisticsLoaded indicates whether the essential statistics is loaded.
 // If the column was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
-func (s ColLoadedStatus) IsNecessaryStatisticsLoaded() bool {
+func (s ColLoadedStatus) IsEssentialStatisticsLoaded() bool {
 	return s.statisticsInitialized && (s.evictedStatus < allEvicted)
 }
 
