@@ -107,10 +107,10 @@ func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType
 		}
 		retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal() + 1)
 		if isReal {
-			retTp.SetFlenUnderLimit(retTp.GetFlen())
+			retTp.SetFlen(mathutil.Min(retTp.GetFlen(), mysql.MaxRealWidth))
 			return
 		}
-		retTp.SetFlenUnderLimit(retTp.GetFlen())
+		retTp.SetFlenUnderLimit(mathutil.Min(retTp.GetFlen(), mysql.MaxDecimalWidth))
 		return
 	}
 	if isReal {
