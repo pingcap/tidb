@@ -726,8 +726,10 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		"partition p1 values IN (3, 4), " +
 		"partition p3 values IN (5))")
 	tk.MustExec("insert into t0 values(1, 1), (2, 2), (3, 3), (4, 4)")
-	// can't hit BatchPointGet, because not hash partition.
-	tk.MustQuery("explain select * from t0 where id in (1, 3)")
+	tk.MustQuery("explain format='brief' select * from t0 where id in (1, 3)").Check(testkit.Rows(
+		"TableReader 20.00 root partition:p0,p1 data:Selection]\n" +
+			"[└─Selection 20.00 cop[tikv]  in(test.t0.id, 1, 3)]\n" +
+			"[  └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t1")
@@ -736,8 +738,10 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		"partition p1 values IN ((3, 3),(4, 4)), " +
 		"partition p3 values IN ((5, 5)))")
 	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3), (4, 4)")
-	// can't hit BatchPointGet, because not hash partition.
-	tk.MustQuery("explain select * from t1 where (id, name) in ((1, 1), (3, 3))")
+	tk.MustQuery("explain format='brief' select * from t1 where (id, name) in ((1, 1), (3, 3))").Check(testkit.Rows("" +
+		"TableReader 0.02 root partition:p0,p1 data:Selection]\n" +
+		"[└─Selection 0.02 cop[tikv]  or(and(eq(test.t1.id, 1), eq(test.t1.name, 1)), and(eq(test.t1.id, 3), eq(test.t1.name, 3)))]\n" +
+		"[  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t2")
@@ -746,8 +750,10 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		"partition p1 values IN ((3,'c'),(4,'d')), " +
 		"partition p3 values IN ((5,'e')))")
 	tk.MustExec("insert into t2 values(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')")
-	// can't hit BatchPointGet, because not hash partition.
-	tk.MustQuery("explain select * from t2 where (id, name) in ((1, 'a'), (3, 'c'))")
+	tk.MustQuery("explain format='brief' select * from t2 where (id, name) in ((1, 'a'), (3, 'c'))").Check(testkit.Rows(
+		"TableReader 0.02 root partition:p0,p1 data:Selection]\n" +
+			"[└─Selection 0.02 cop[tikv]  or(and(eq(test.t2.id, 1), eq(test.t2.name, \"a\")), and(eq(test.t2.id, 3), eq(test.t2.name, \"c\")))]\n" +
+			"[  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestIssue19141(t *testing.T) {

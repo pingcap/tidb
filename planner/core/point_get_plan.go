@@ -630,13 +630,13 @@ func newBatchPointGetPlan(
 			}
 		}
 
-		sort.SliceStable(partitionInfos, func(i, j int) bool {
-			return partitionInfos[i].ID < partitionInfos[j].ID
-		})
+		visitPartition := make(map[int64]bool)
 		filterPartitionInfos := partitionInfos[:0]
 		for i := 0; i < len(partitionInfos); i++ {
-			if i == 0 || partitionInfos[i].ID != partitionInfos[i-1].ID {
+			_, ok := visitPartition[partitionInfos[i].ID]
+			if !ok {
 				filterPartitionInfos = append(filterPartitionInfos, partitionInfos[i])
+				visitPartition[partitionInfos[i].ID] = true
 			}
 		}
 		if len(filterPartitionInfos) == 0 {
@@ -815,13 +815,13 @@ func newBatchPointGetPlan(
 		}
 
 	}
-	sort.SliceStable(partitionInfos, func(i, j int) bool {
-		return partitionInfos[i].ID < partitionInfos[j].ID
-	})
+	visitPartition := make(map[int64]bool)
 	filterPartitionInfos := partitionInfos[:0]
 	for i := 0; i < len(partitionInfos); i++ {
-		if i == 0 || partitionInfos[i].ID != partitionInfos[i-1].ID {
+		_, ok := visitPartition[partitionInfos[i].ID]
+		if !ok {
 			filterPartitionInfos = append(filterPartitionInfos, partitionInfos[i])
+			visitPartition[partitionInfos[i].ID] = true
 		}
 	}
 	if len(filterPartitionInfos) == 0 {
