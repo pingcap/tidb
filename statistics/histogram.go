@@ -2278,6 +2278,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 const (
 	allLoaded = iota
 	onlyCmsEvicted
+	//nolint:unused,deadcode
 	onlyHistRemained
 	allEvicted
 )
