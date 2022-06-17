@@ -1143,7 +1143,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 	// In some cases, some statistics in column would be evicted
 	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
 	// In this case, we will think this column as valid due to we can still use the rest of the statistics to do optimize.
-	return c.TotalRowCount() == 0 || (!c.IsEssentialStatisticsLoaded() && c.Histogram.NDV > 0)
+	return c.TotalRowCount() == 0 || (!c.IsEssentialStatsLoaded() && c.Histogram.NDV > 0)
 }
 
 // IsHistNeeded checks if this column needs histogram to be loaded
@@ -1315,7 +1315,7 @@ func (c *Column) ItemID() int64 {
 // DropEvicted implements TableCacheItem
 // DropEvicted drops evicted structures
 func (c *Column) DropEvicted() {
-	if c.StatsVer < Version2 && c.IsStatisticsInitialized() {
+	if c.StatsVer < Version2 && c.IsStatsInitialized() {
 		c.CMSketch = nil
 		c.evictedStatus = onlyCmsEvicted
 	}
@@ -2285,40 +2285,40 @@ const (
 
 // ColLoadedStatus indicates the status of column statistics
 type ColLoadedStatus struct {
-	statisticsInitialized bool
-	evictedStatus         int
+	statsInitialized bool
+	evictedStatus    int
 }
 
 // NewColFullLoadStatus returns the status that the column fully loaded
 func NewColFullLoadStatus() ColLoadedStatus {
 	return ColLoadedStatus{
-		statisticsInitialized: true,
-		evictedStatus:         allLoaded,
+		statsInitialized: true,
+		evictedStatus:    allLoaded,
 	}
 }
 
-// IsStatisticsInitialized indicates whether the column's statistics was loaded from storage before.
-// Note that `IsStatisticsInitialized` only can be set in initializing
-func (s ColLoadedStatus) IsStatisticsInitialized() bool {
-	return s.statisticsInitialized
+// IsStatsInitialized indicates whether the column's statistics was loaded from storage before.
+// Note that `IsStatsInitialized` only can be set in initializing
+func (s ColLoadedStatus) IsStatsInitialized() bool {
+	return s.statsInitialized
 }
 
 // IsLoadNeeded indicates whether it needs load statistics during LoadNeededHistograms or sync stats
 // If the column was loaded and any statistics of it is evicting, it also needs re-load statistics.
 func (s ColLoadedStatus) IsLoadNeeded() bool {
-	if s.statisticsInitialized {
+	if s.statsInitialized {
 		return s.evictedStatus > allLoaded
 	}
 	return true
 }
 
-// IsEssentialStatisticsLoaded indicates whether the essential statistics is loaded.
+// IsEssentialStatsLoaded indicates whether the essential statistics is loaded.
 // If the column was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
-func (s ColLoadedStatus) IsEssentialStatisticsLoaded() bool {
-	return s.statisticsInitialized && (s.evictedStatus < allEvicted)
+func (s ColLoadedStatus) IsEssentialStatsLoaded() bool {
+	return s.statsInitialized && (s.evictedStatus < allEvicted)
 }
 
 // IsCMSEvicted indicates whether the cms got evicted now.
 func (s ColLoadedStatus) IsCMSEvicted() bool {
-	return s.statisticsInitialized && s.evictedStatus >= onlyCmsEvicted
+	return s.statsInitialized && s.evictedStatus >= onlyCmsEvicted
 }
