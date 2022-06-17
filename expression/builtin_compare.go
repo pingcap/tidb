@@ -147,6 +147,8 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if resultFieldType.Tp == mysql.TypeNull {
 		types.SetBinChsClnFlag(bf.tp)
+		resultFieldType.SetFlen(0)
+		resultFieldType.SetDecimal(0)
 	} else {
 		maxIntLen := 0
 		maxFlen := 0
@@ -154,8 +156,13 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		// Find the max length of field in `maxFlen`,
 		// and max integer-part length in `maxIntLen`.
 		for _, argTp := range fieldTps {
+<<<<<<< HEAD
 			if argTp.Decimal > resultFieldType.Decimal {
 				resultFieldType.Decimal = argTp.Decimal
+=======
+			if argTp.GetDecimal() > resultFieldType.GetDecimal() {
+				resultFieldType.SetDecimalUnderLimit(argTp.GetDecimal())
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 			}
 			argIntLen := argTp.Flen
 			if argTp.Decimal > 0 {
@@ -176,12 +183,21 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		// For integer, field length = maxIntLen + (1/0 for sign bit)
 		// For decimal, field length = maxIntLen + maxDecimal + (1/0 for sign bit)
 		if resultEvalType == types.ETInt || resultEvalType == types.ETDecimal {
+<<<<<<< HEAD
 			resultFieldType.Flen = maxIntLen + resultFieldType.Decimal
 			if resultFieldType.Decimal > 0 {
 				resultFieldType.Flen++
 			}
 			if !mysql.HasUnsignedFlag(resultFieldType.Flag) {
 				resultFieldType.Flen++
+=======
+			resultFieldType.SetFlenUnderLimit(maxIntLen + resultFieldType.GetDecimal())
+			if resultFieldType.GetDecimal() > 0 {
+				resultFieldType.SetFlenUnderLimit(resultFieldType.GetFlen() + 1)
+			}
+			if !mysql.HasUnsignedFlag(resultFieldType.GetFlag()) {
+				resultFieldType.SetFlenUnderLimit(resultFieldType.GetFlen() + 1)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 			}
 			bf.tp = resultFieldType
 		} else {
@@ -500,7 +516,15 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
+<<<<<<< HEAD
 	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
+=======
+
+	flen, decimal := fixFlenAndDecimalForGreatestAndLeast(args)
+	sig.getRetTp().SetFlenUnderLimit(flen)
+	sig.getRetTp().SetDecimalUnderLimit(decimal)
+
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	return sig, nil
 }
 
@@ -767,7 +791,13 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 	}
+<<<<<<< HEAD
 	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
+=======
+	flen, decimal := fixFlenAndDecimalForGreatestAndLeast(args)
+	sig.getRetTp().SetFlenUnderLimit(flen)
+	sig.getRetTp().SetDecimalUnderLimit(decimal)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	return sig, nil
 }
 

@@ -1364,11 +1364,20 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 		// ref2: https://github.com/pingcap/tidb/issues/24953
 		resultTp.Flag |= (a.Flag & mysql.UnsignedFlag) & (b.Flag & mysql.UnsignedFlag)
 	}
+<<<<<<< HEAD
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
 		resultTp.Flen = mysql.MaxIntWidth
+=======
+	resultTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+	// `flen - decimal` is the fraction before '.'
+	resultTp.SetFlenUnderLimit(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
+	types.TryToFixFlenOfDatetime(resultTp)
+	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.GetFlen() < mysql.MaxIntWidth {
+		resultTp.SetFlen(mysql.MaxIntWidth)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	}
 	expression.SetBinFlagOrBinStr(b, resultTp)
 	return resultTp

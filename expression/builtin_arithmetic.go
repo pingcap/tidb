@@ -90,6 +90,7 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 // type according to the two input parameter's types.
 func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType, arg0, arg1 Expression, isReal bool, isMultiply bool) {
 	a, b := arg0.GetType(), arg1.GetType()
+<<<<<<< HEAD
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0, arg1}) {
 		// set length and decimal to unspecified if arguments depend on parameters
 		retTp.Flen, retTp.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
@@ -99,6 +100,12 @@ func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType
 		retTp.Decimal = a.Decimal + b.Decimal
 		if !isMultiply {
 			retTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
+=======
+	if a.GetDecimal() != types.UnspecifiedLength && b.GetDecimal() != types.UnspecifiedLength {
+		retTp.SetDecimalUnderLimit(a.GetDecimal() + b.GetDecimal())
+		if !isMultiply {
+			retTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 		}
 		if !isReal && retTp.Decimal > mysql.MaxDecimalScale {
 			retTp.Decimal = mysql.MaxDecimalScale
@@ -111,12 +118,20 @@ func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType
 		if isMultiply {
 			digitsInt = a.Flen - a.Decimal + b.Flen - b.Decimal
 		}
+<<<<<<< HEAD
 		retTp.Flen = digitsInt + retTp.Decimal + 3
+=======
+		retTp.SetFlenUnderLimit(digitsInt + retTp.GetDecimal() + 1)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 		if isReal {
 			retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxRealWidth)
 			return
 		}
+<<<<<<< HEAD
 		retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxDecimalWidth)
+=======
+		retTp.SetFlenUnderLimit(mathutil.Min(retTp.GetFlen(), mysql.MaxDecimalWidth))
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 		return
 	}
 	if isReal {
@@ -134,6 +149,7 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 	if decb == int(types.UnspecifiedFsp) {
 		decb = 0
 	}
+<<<<<<< HEAD
 	retTp.Decimal = deca + precIncrement
 	if retTp.Decimal > mysql.MaxDecimalScale {
 		retTp.Decimal = mysql.MaxDecimalScale
@@ -148,6 +164,16 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 	if retTp.Flen > mysql.MaxDecimalWidth {
 		retTp.Flen = mysql.MaxDecimalWidth
 	}
+=======
+	retTp.SetDecimalUnderLimit(deca + precIncrement)
+	if a.GetFlen() == types.UnspecifiedLength {
+		retTp.SetFlen(mysql.MaxDecimalWidth)
+		return
+	}
+	aPrec := types.DecimalLength2Precision(a.GetFlen(), a.GetDecimal(), mysql.HasUnsignedFlag(a.GetFlag()))
+	retTp.SetFlenUnderLimit(aPrec + decb + precIncrement)
+	retTp.SetFlenUnderLimit(types.Precision2LengthNoTruncation(retTp.GetFlen(), retTp.GetDecimal(), mysql.HasUnsignedFlag(retTp.GetFlag())))
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 }
 
 func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldType) {
@@ -887,10 +913,14 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	if a.Decimal == types.UnspecifiedLength || b.Decimal == types.UnspecifiedLength {
 		retTp.Decimal = types.UnspecifiedLength
 	} else {
+<<<<<<< HEAD
 		retTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 		if isDecimal && retTp.Decimal > mysql.MaxDecimalScale {
 			retTp.Decimal = mysql.MaxDecimalScale
 		}
+=======
+		retTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	}
 
 	if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
@@ -898,7 +928,11 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	} else {
 		retTp.Flen = mathutil.Max(a.Flen, b.Flen)
 		if isDecimal {
+<<<<<<< HEAD
 			retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxDecimalWidth)
+=======
+			retTp.SetFlenUnderLimit(retTp.GetFlen())
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 			return
 		}
 		retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxRealWidth)

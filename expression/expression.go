@@ -17,6 +17,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1004,6 +1005,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	return false
 }
 
+<<<<<<< HEAD
 func isValidTiFlashDecimalType(tp *types.FieldType) bool {
 	if tp.Tp != mysql.TypeNewDecimal {
 		return false
@@ -1011,6 +1013,8 @@ func isValidTiFlashDecimalType(tp *types.FieldType) bool {
 	return tp.Flen > 0 && tp.Flen <= 65 && tp.Decimal >= 0 && tp.Decimal <= 30 && tp.Flen >= tp.Decimal
 }
 
+=======
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
 	switch scalarFunc.FuncName.L {
 	case ast.Cast:
@@ -1079,7 +1083,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return sourceType.Tp == retType.Tp || retType.Tp == mysql.TypeDouble
 		case tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastTimeAsDecimal,
 			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
-			return isValidTiFlashDecimalType(function.RetType)
+			return function.RetType.IsDecimalValid()
 		case tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastTimeAsString,
 			tipb.ScalarFuncSig_CastStringAsString /*, tipb.ScalarFuncSig_CastDurationAsString, tipb.ScalarFuncSig_CastJsonAsString*/ :
 			return true
@@ -1257,6 +1261,13 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().Tp) + "'."))
 			}
 			return false
+		case mysql.TypeNewDecimal:
+			if !expr.GetType().IsDecimalValid() {
+				if pc.sc.InExplainStmt {
+					pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "')."))
+				}
+				return false
+			}
 		}
 	}
 	switch x := expr.(type) {
@@ -1393,7 +1404,12 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 					newDecimal = mysql.MaxDecimalScale
 				}
 			}
+<<<<<<< HEAD
 			args[0].GetType().Flen, args[0].GetType().Decimal = newFlen, newDecimal
+=======
+			args[0].GetType().SetFlenUnderLimit(newFlen)
+			args[0].GetType().SetDecimalUnderLimit(newDecimal)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 		}
 	}
 }

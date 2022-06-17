@@ -137,8 +137,13 @@ func (c *absFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if argTp == types.ETReal {
 		bf.tp.Flen, bf.tp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDouble)
 	} else {
+<<<<<<< HEAD
 		bf.tp.Flen = argFieldTp.Flen
 		bf.tp.Decimal = argFieldTp.Decimal
+=======
+		bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen())
+		bf.tp.SetDecimalUnderLimit(argFieldTp.GetDecimal())
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	}
 	var sig builtinFunc
 	switch argTp {
@@ -269,6 +274,7 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	argFieldTp := args[0].GetType()
+<<<<<<< HEAD
 	if mysql.HasUnsignedFlag(argFieldTp.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
@@ -281,6 +287,23 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 			bf.tp.Flen += mathutil.Max(decimalDelta, 0)
 		} else {
 			bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
+=======
+	if mysql.HasUnsignedFlag(argFieldTp.GetFlag()) {
+		bf.tp.AddFlag(mysql.UnsignedFlag)
+	}
+
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if argTp == types.ETDecimal {
+		bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen())
+		bf.tp.SetDecimalUnderLimit(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
+		if bf.tp.GetDecimal() != types.UnspecifiedLength {
+			if argFieldTp.GetDecimal() != types.UnspecifiedLength {
+				decimalDelta := bf.tp.GetDecimal() - argFieldTp.GetDecimal()
+				bf.tp.SetFlenUnderLimit(bf.tp.GetFlen() + mathutil.Max(decimalDelta, 0))
+			} else {
+				bf.tp.SetFlenUnderLimit(argFieldTp.GetFlen() + bf.tp.GetDecimal())
+			}
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 		}
 	}
 
@@ -487,8 +510,16 @@ func (c *ceilFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
+<<<<<<< HEAD
 	argFieldTp := args[0].GetType()
 	bf.tp.Flen, bf.tp.Decimal = argFieldTp.Flen, 0
+=======
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if retTp == types.ETDecimal {
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen())
+		bf.tp.SetDecimal(0)
+	}
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 
 	switch argTp {
 	case types.ETInt:
@@ -675,7 +706,16 @@ func (c *floorFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
+<<<<<<< HEAD
 	bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+=======
+
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if retTp == types.ETDecimal {
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen())
+		bf.tp.SetDecimal(0)
+	}
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	switch argTp {
 	case types.ETInt:
 		if retTp == types.ETInt {
@@ -1898,10 +1938,19 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 
 	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
 	bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
 	bf.tp.Flag |= args[0].GetType().Flag
+=======
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if argTp == types.ETDecimal {
+		bf.tp.SetDecimalUnderLimit(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
+		bf.tp.SetFlenUnderLimit(args[0].GetType().GetFlen() - args[0].GetType().GetDecimal() + bf.tp.GetDecimal())
+	}
+	bf.tp.AddFlag(args[0].GetType().GetFlag())
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 
 	var sig builtinFunc
 	switch argTp {

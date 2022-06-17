@@ -1898,7 +1898,13 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
+<<<<<<< HEAD
 	tp.Flen, tp.Decimal = expr.GetType().Flen, expr.GetType().Decimal
+=======
+	tp.SetFlenUnderLimit(expr.GetType().GetFlen())
+	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
+
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	if expr.GetType().EvalType() == types.ETInt {
 		tp.Flen = mysql.MaxIntWidth
 	}
@@ -1906,8 +1912,24 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		tp.Flen = mysql.MaxDecimalWidth
 	}
 	types.SetBinChsClnFlag(tp)
+<<<<<<< HEAD
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
+=======
+	tp.AddFlag(expr.GetType().GetFlag() & mysql.UnsignedFlag)
+	castExpr := BuildCastFunction(ctx, expr, tp)
+	// For const item, we can use find-grained precision and scale by the result.
+	if castExpr.ConstItem(ctx.GetSessionVars().StmtCtx) {
+		val, isnull, err := castExpr.EvalDecimal(ctx, chunk.Row{})
+		if !isnull && err == nil {
+			precision, frac := val.PrecisionAndFrac()
+			castTp := castExpr.GetType()
+			castTp.SetDecimalUnderLimit(frac)
+			castTp.SetFlenUnderLimit(precision)
+		}
+	}
+	return castExpr
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 }
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type of expr is
