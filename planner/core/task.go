@@ -603,9 +603,14 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 		}
 		lLen, rLen := lType.Flen+lExtend, rType.Flen+rExtend
 		cLen := mathutil.Max(lLen, rLen)
+<<<<<<< HEAD
 		cLen = mathutil.Min(65, cLen)
 		commonType.Decimal = cDec
 		commonType.Flen = cLen
+=======
+		commonType.SetDecimalUnderLimit(cDec)
+		commonType.SetFlenUnderLimit(cLen)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {
 		if mysql.IsIntegerType(commonType.Tp) {
 			// If the target type is int, both TiFlash and Mysql only support cast to Int64
@@ -1409,7 +1414,23 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			ret = false
 			break
 		}
+<<<<<<< HEAD
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
+=======
+		orderBySize := len(aggFunc.OrderByItems)
+		if orderBySize > 0 {
+			exprs := make([]expression.Expression, 0, orderBySize)
+			for _, item := range aggFunc.OrderByItems {
+				exprs = append(exprs, item.Expr)
+			}
+			if !expression.CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false) {
+				reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs in order-by clause"
+				ret = false
+				break
+			}
+		}
+		pb, _ := aggregation.AggFuncToPBExpr(sctx, client, aggFunc, storeType)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 		if pb == nil {
 			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
 			ret = false

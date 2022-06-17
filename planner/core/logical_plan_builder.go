@@ -1330,12 +1330,23 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 		// The decimal result type will be unsigned only when all the decimals to be united are unsigned.
 		resultTp.Flag &= b.Flag & mysql.UnsignedFlag
 	} else {
+<<<<<<< HEAD
 		// Non-decimal results will be unsigned when the first SQL statement result in the union is unsigned.
 		resultTp.Flag |= a.Flag & mysql.UnsignedFlag
 	}
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+=======
+		// Non-decimal results will be unsigned when a,b both unsigned.
+		// ref1: https://dev.mysql.com/doc/refman/5.7/en/union.html#union-result-set
+		// ref2: https://github.com/pingcap/tidb/issues/24953
+		resultTp.AddFlag((a.GetFlag() & mysql.UnsignedFlag) & (b.GetFlag() & mysql.UnsignedFlag))
+	}
+	resultTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+	// `flen - decimal` is the fraction before '.'
+	resultTp.SetFlenUnderLimit(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	types.TryToFixFlenOfDatetime(resultTp)
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
 		resultTp.Flen = mysql.MaxIntWidth
