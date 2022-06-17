@@ -582,7 +582,7 @@
       "with recursive cte1(c1) as (select 1 union select /*+ merge */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;",
       "with cte1 as (select * from tc), cte2 as (with cte3 as (select /*+ MERGE() */ * from te) ,cte4 as (select * from tc) select * from cte3,cte4) select * from cte2;",
       "with cte2 as (with cte4 as (select * from tc) select * from te, cte4) select * from cte2;",
-      "with cte2 as (with cte4 as (select /*+ merge() */  * from tc) select * from te, cte4) select * from cte2;"
+      "with cte2 as (with cte4 as (select /*+ merge() */ * from tc) select * from te, cte4) select * from cte2;"
     ]
   },
   {
