@@ -310,11 +310,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			// hence the checksum would fail.
 			done := b.registerTableIsRestoring(result.TablesToSend)
 			pool.ApplyOnErrorGroup(eg, func() error {
-<<<<<<< HEAD
-				err := SplitRanges(ectx, b.client, result.Ranges, result.RewriteRules, b.updateCh)
-=======
 				err := b.client.SplitRanges(ectx, result.Ranges, result.RewriteRules, b.updateCh, false)
->>>>>>> 49f291db7... br: Fix stuck when meeting error (#33201)
 				if err != nil {
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 					return err
@@ -385,11 +381,8 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			eg.Go(func() error {
 				e := b.client.RestoreFiles(ectx, files, r.result.RewriteRules, b.updateCh)
 				if e != nil {
-<<<<<<< HEAD
-=======
 					log.Error("restore batch meet error", logutil.ShortError(e), logutil.Files(files))
 					r.done()
->>>>>>> 49f291db7... br: Fix stuck when meeting error (#33201)
 					return e
 				}
 				log.Info("restore batch done", rtree.ZapRanges(r.result.Ranges))

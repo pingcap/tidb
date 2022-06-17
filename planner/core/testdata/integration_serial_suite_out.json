@@ -2943,6 +2943,9 @@
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(Column#9, Column#10, Column#11 separator \",\")->Column#7",
           "      └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#11",
           "        └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -2957,6 +2960,9 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:test.ts.col_0, test.ts.col_1, test.ts.id, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -2970,6 +2976,9 @@
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -2984,6 +2993,9 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:test.ts.col_0, test.ts.col_1, test.ts.id, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -2997,6 +3009,9 @@
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3011,6 +3026,9 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:test.ts.col_0, test.ts.col_1, test.ts.id, funcs:count(1)->Column#12, funcs:max(test.ts.col_0)->Column#13",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3025,6 +3043,9 @@
           "          └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#13, funcs:group_concat(Column#10, Column#11, Column#12 separator \",\")->Column#9",
           "            └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#12, test.ts.col_2",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3039,6 +3060,9 @@
           "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: N/A]",
           "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.ts.col_0, test.ts.col_1, test.ts.col_2, test.ts.id, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3052,6 +3076,9 @@
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: N/A]",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3066,6 +3093,9 @@
           "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: N/A]",
           "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.ts.col_0, test.ts.col_1, test.ts.col_2, test.ts.id, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3079,6 +3109,9 @@
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: N/A]",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3093,6 +3126,9 @@
           "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: N/A]",
           "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.ts.col_1, test.ts.col_2, test.ts.id, funcs:firstrow(test.ts.col_0)->test.ts.col_0",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3106,6 +3142,9 @@
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: N/A]",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3121,6 +3160,9 @@
           "            └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#32, Column#33, Column#34, Column#35, funcs:count(1)->Column#25, funcs:max(Column#29)->Column#26, funcs:count(Column#30)->Column#27, funcs:sum(Column#31)->Column#28",
           "              └─Projection 10000.00 batchCop[tiflash]  test.ts.col_1, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#31, test.ts.col_2, test.ts.col_0, test.ts.col_1, test.ts.id",
           "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3134,6 +3176,9 @@
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3149,6 +3194,9 @@
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:Column#27, Column#28, Column#29, funcs:count(Column#23)->Column#19, funcs:max(Column#24)->Column#20, funcs:count(Column#25)->Column#21, funcs:sum(Column#26)->Column#22",
           "              └─Projection 10000.00 batchCop[tiflash]  test.ts.id, test.ts.col_1, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#26, test.ts.col_0, test.ts.col_1, test.ts.id",
           "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3163,6 +3211,9 @@
           "          └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#40, funcs:group_concat(Column#33, Column#34, Column#35 separator \",\")->Column#28, funcs:count(Column#36)->Column#29, funcs:min(Column#37)->Column#30, funcs:count(Column#38)->Column#31, funcs:sum(Column#39)->Column#32",
           "            └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#35, test.ts.id, test.ts.col_0, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#39, test.ts.col_2",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3178,6 +3229,9 @@
           "            └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#33, Column#34, Column#35, Column#36, funcs:count(Column#29)->Column#25, funcs:max(Column#30)->Column#26, funcs:count(Column#31)->Column#27, funcs:sum(Column#32)->Column#28",
           "              └─Projection 10000.00 batchCop[tiflash]  test.ts.id, test.ts.col_1, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#32, test.ts.col_2, test.ts.col_0, test.ts.col_1, test.ts.id",
           "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3189,6 +3243,9 @@
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(Column#24, Column#25, Column#26 separator \",\")->Column#14, funcs:count(Column#27)->Column#15, funcs:min(Column#28)->Column#16, funcs:count(Column#29)->Column#17, funcs:sum(Column#30)->Column#18",
           "      └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#26, test.ts.id, test.ts.col_0, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#30",
           "        └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3204,6 +3261,9 @@
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:Column#27, Column#28, Column#29, funcs:count(Column#23)->Column#19, funcs:max(Column#24)->Column#20, funcs:count(Column#25)->Column#21, funcs:sum(Column#26)->Column#22",
           "              └─Projection 10000.00 batchCop[tiflash]  test.ts.id, test.ts.col_1, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#26, test.ts.col_0, test.ts.col_1, test.ts.id",
           "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3217,6 +3277,9 @@
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: N/A]",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3230,6 +3293,9 @@
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: N/A]",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3243,6 +3309,9 @@
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3256,6 +3325,9 @@
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3271,6 +3343,9 @@
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:Column#29, Column#30, Column#31, Column#32, funcs:group_concat(Column#24, Column#25 separator \",\")->Column#20, funcs:max(Column#26)->Column#21, funcs:count(Column#27)->Column#22, funcs:sum(Column#28)->Column#23",
           "              └─Projection 10000.00 batchCop[tiflash]  test.ts.col_1, cast(test.ts.id, var_string(20))->Column#25, test.ts.col_1, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#28, test.ts.col_0, test.ts.col_1, test.ts.id, test.ts.col_2",
           "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3286,6 +3361,9 @@
           "            └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#35, Column#36, Column#37, Column#38, funcs:group_concat(Column#30, Column#31 separator \",\")->Column#26, funcs:max(Column#32)->Column#27, funcs:count(Column#33)->Column#28, funcs:sum(Column#34)->Column#29",
           "              └─Projection 10000.00 batchCop[tiflash]  test.ts.col_1, cast(test.ts.id, var_string(20))->Column#31, test.ts.col_1, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#34, test.ts.col_0, test.ts.col_1, test.ts.id, test.ts.col_2",
           "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3300,6 +3378,12 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:\"GG\", 0, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'"
         ]
       },
       {
@@ -3314,6 +3398,9 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:\"01\", 0, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3328,6 +3415,9 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:0, 1, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3342,6 +3432,9 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:0, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3356,6 +3449,9 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#15, collate: N/A]",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:0, 1, 10, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3370,6 +3466,9 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#12, collate: N/A]",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:0, 1, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3384,6 +3483,17 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#15, collate: N/A]",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:\"GG\", 0, 1, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'",
+          "[types:1292]Truncated incorrect DOUBLE value: 'GG'"
         ]
       },
       {
@@ -3397,6 +3507,9 @@
           "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "          └─HashAgg 1.00 batchCop[tiflash]  group by:\"GG\", ",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3410,6 +3523,9 @@
           "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "          └─HashAgg 1.00 batchCop[tiflash]  group by:\"GG\", \"Gg\", ",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3423,6 +3539,9 @@
           "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "          └─HashAgg 1.00 batchCop[tiflash]  group by:\"GG\", \"GG-10\", ",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3437,6 +3556,12 @@
           "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─HashAgg 1.00 batchCop[tiflash]  group by:\"1200-01-01 00:00:00.023\", 1200, ",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
+          "[types:1292]Truncated incorrect DOUBLE value: '1200-01-01 00:00:00.023'",
+          "[types:1292]Truncated incorrect DOUBLE value: '1200-01-01 00:00:00.023'",
+          "[types:1292]Truncated incorrect DOUBLE value: '1200-01-01 00:00:00.023'"
         ]
       },
       {
@@ -3450,6 +3575,9 @@
           "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.id, collate: N/A]",
           "          └─HashAgg 8000.00 batchCop[tiflash]  group by:test.ts.id, funcs:group_concat(test.ts.col_0, test.ts.col_0 separator \",\")->Column#9",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3464,6 +3592,9 @@
           "          └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#13, funcs:group_concat(Column#10, Column#11, Column#12 separator \",\")->Column#9",
           "            └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_0, cast(test.ts.id, var_string(20))->Column#12, test.ts.id",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3478,6 +3609,9 @@
           "          └─HashAgg 1.00 batchCop[tiflash]  group by:Column#10, funcs:firstrow(Column#9)->Column#8",
           "            └─Projection 10000.00 batchCop[tiflash]  lt(test.ts.id, 10)->Column#9, test.ts.col_0",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3492,6 +3626,9 @@
           "          └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#11, Column#12, funcs:firstrow(Column#10)->Column#9",
           "            └─Projection 10000.00 batchCop[tiflash]  lt(test.ts.id, 10)->Column#10, test.ts.col_1, test.ts.col_0",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
         ]
       },
       {
@@ -3507,6 +3644,27 @@
           "            └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#15, Column#16, funcs:firstrow(Column#14)->Column#13",
           "              └─Projection 10000.00 batchCop[tiflash]  lt(test.ts.id, 10)->Column#14, test.ts.col_1, gt(cast(test.ts.col_0, double BINARY), 10)->Column#16",
           "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by col_0<=>null) from ts",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:group_concat(distinct Column#6 order by Column#7 separator \",\")->Column#5",
+          "└─Projection 10000.00 root  test.ts.col_0, nulleq(test.ts.col_0, <nil>)->Column#7",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tiflash] table:ts keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
+          "Scalar function 'nulleq'(signature: NullEQString, return type: bigint(1)) is not supported to push down to tiflash now.",
+          "Aggregation can not be pushed to tiflash because arguments of AggFunc `group_concat` contains unsupported exprs in order-by clause",
+          "Scalar function 'nulleq'(signature: NullEQString, return type: bigint(1)) is not supported to push down to tiflash now.",
+          "Aggregation can not be pushed to tiflash because arguments of AggFunc `group_concat` contains unsupported exprs in order-by clause",
+          "Scalar function 'nulleq'(signature: NullEQString, return type: bigint(1)) is not supported to push down to tiflash now.",
+          "Aggregation can not be pushed to tiflash because arguments of AggFunc `group_concat` contains unsupported exprs in order-by clause"
         ]
       }
     ]

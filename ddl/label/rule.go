@@ -144,8 +144,8 @@ func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	for i := 0; i < len(ids); i++ {
 		data := map[string]string{
-			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]))),
-			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]+1))),
+			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]))),
+			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]+1))),
 		}
 		r.Data = append(r.Data, data)
 	}
