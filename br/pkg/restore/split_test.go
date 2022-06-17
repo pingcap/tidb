@@ -34,6 +34,7 @@ type TestClient struct {
 	injectInScatter func(*restore.RegionInfo) error
 
 	scattered map[uint64]bool
+	InjectErr bool
 }
 
 func NewTestClient(
@@ -180,6 +181,10 @@ func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.Ge
 }
 
 func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*restore.RegionInfo, error) {
+	if c.InjectErr {
+		return nil, errors.New("mock scan error")
+	}
+
 	infos := c.regionsInfo.ScanRange(key, endKey, limit)
 	regions := make([]*restore.RegionInfo, 0, len(infos))
 	for _, info := range infos {
