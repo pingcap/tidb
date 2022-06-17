@@ -344,6 +344,9 @@ type Job struct {
 
 	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
 	SeqNum uint64 `json:"seq_num"`
+
+	// NOTE: To add a field, please make sure that the following methods work as expected:
+	// - ddl.cloneFromSubJob
 }
 
 // FinishTableJob is called when a job is finished.
@@ -425,12 +428,12 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 		if job.MultiSchemaInfo != nil {
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
 				// Only update the args of last executing sub-job.
-				if sub.Args == nil {
-					continue
-				}
-				sub.RawArgs, err = json.Marshal(sub.Args)
-				if err != nil {
-					return nil, errors.Trace(err)
+				if sub.Args != nil {
+					sub.RawArgs, err = json.Marshal(sub.Args)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					break
 				}
 			}
 		}
