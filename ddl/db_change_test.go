@@ -837,10 +837,10 @@ func runTestInSchemaState(
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	require.NoError(t, err)
 	cbFunc := func(job *model.Job) {
-		if currentSchemaState(job) == prevState || checkErr != nil {
+		if jobStateOrLastSubJobState(job) == prevState || checkErr != nil {
 			return
 		}
-		prevState = currentSchemaState(job)
+		prevState = jobStateOrLastSubJobState(job)
 		if prevState != state {
 			return
 		}
@@ -877,7 +877,7 @@ func runTestInSchemaState(
 	}
 }
 
-func currentSchemaState(job *model.Job) model.SchemaState {
+func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
 	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 		subs := job.MultiSchemaInfo.SubJobs
 		return subs[len(subs)-1].SchemaState

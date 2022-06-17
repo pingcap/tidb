@@ -115,7 +115,7 @@ func createColumnInfoWithPosCheck(tblInfo *model.TableInfo, colInfo *model.Colum
 	return colInfo, pos, offset, nil
 }
 
-func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) *model.ColumnInfo {
+func initColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) *model.ColumnInfo {
 	cols := tblInfo.Columns
 	colInfo.ID = allocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
@@ -154,7 +154,7 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 		}
 	}
 
-	err = checkPosition(tblInfo, pos)
+	err = checkAfterPositionExists(tblInfo, pos)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, false, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
@@ -179,7 +179,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		}
 	})
 
-	tblInfo, columnInfo, col, pos, ifNotExists, err := checkAddColumn(t, job)
+	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(t, job)
 	if err != nil {
 		if ifNotExists && infoschema.ErrColumnExists.Equal(err) {
 			job.Warning = toTError(err)
@@ -189,7 +189,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errors.Trace(err)
 	}
 	if columnInfo == nil {
-		columnInfo = createColumnInfo(tblInfo, col)
+		columnInfo = initColumnInfo(tblInfo, colFromArgs)
 		logutil.BgLogger().Info("[ddl] run add column job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo))
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 			job.State = model.JobStateCancelled
@@ -300,7 +300,9 @@ func setColumnsState(columnInfos []*model.ColumnInfo, state model.SchemaState) {
 	}
 }
 
-func checkPosition(tblInfo *model.TableInfo, pos *ast.ColumnPosition) error {
+// checkAfterPositionExists makes sure the column specified in AFTER clause is exists.
+// For example, ALTER TABLE t ADD COLUMN c3 INT AFTER c1.
+func checkAfterPositionExists(tblInfo *model.TableInfo, pos *ast.ColumnPosition) error {
 	if pos != nil && pos.Tp == ast.ColumnPositionAfter {
 		c := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if c == nil {

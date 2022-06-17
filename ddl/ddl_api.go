@@ -3540,7 +3540,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if col == nil {
 		return nil
 	}
-	err = checkPosition(t.Meta(), spec.Position)
+	err = checkAfterPositionExists(t.Meta(), spec.Position)
 	if err != nil {
 		return errors.Trace(err)
 	}
