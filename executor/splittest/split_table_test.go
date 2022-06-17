@@ -278,7 +278,7 @@ func TestShowTableRegion(t *testing.T) {
 	// Check scheduling constraint and scheduling state default value
 	for i := range rows {
 		require.Equal(t, "", rows[i][11])
-		require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[i][12])
+		require.Equal(t, "", rows[i][12])
 	}
 
 	// Test show table index regions.

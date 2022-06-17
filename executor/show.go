@@ -1923,16 +1923,19 @@ func (e *ShowExec) fetchSchedulingInfo(ctx context.Context, regions []regionMeta
 		}
 	}
 	var constraintStr string
+	var scheduleStateStr string
 	for i := range regions {
 		if constraint, ok := schedulingConstraints[regions[i].physicalID]; ok && constraint != nil {
 			constraintStr = constraint.String()
+			scheduleStateStr = scheduleState[regions[i].physicalID].String()
 		} else {
 			constraintStr = ""
+			scheduleStateStr = ""
 		}
 		regionRowItem = append(regionRowItem, showTableRegionRowItem{
 			regionMeta:            regions[i],
 			schedulingConstraints: constraintStr,
-			schedulingState:       scheduleState[regions[i].physicalID].String(),
+			schedulingState:       scheduleStateStr,
 		})
 	}
 	return regionRowItem, nil
