@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,6 +83,7 @@ func TestClusterTables(t *testing.T) {
 	t.Run("StmtSummaryHistoryTable", SubTestStmtSummaryHistoryTable(s))
 	t.Run("Issue26379", SubTestIssue26379(s))
 	t.Run("SubTestStmtSummaryResultRows", SubTestStmtSummaryResultRows(s))
+	t.Run("SubTestStmtSummaryIssue35340", SubTestStmtSummaryIssue35340(s))
 	t.Run("SubTestSlowQueryOOM", SubTestSlowQueryOOM(s))
 }
 
@@ -490,6 +492,36 @@ func SubTestStmtSummaryResultRows(s *clusterTablesSuite) func(t *testing.T) {
 			Check(testkit.Rows("10 30 20"))
 		tk.MustQuery("select MIN_RESULT_ROWS,MAX_RESULT_ROWS,AVG_RESULT_ROWS from information_schema.cluster_statements_summary where query_sample_text like 'select%test.t limit%' and MAX_RESULT_ROWS > 10").
 			Check(testkit.Rows("10 30 20"))
+	}
+}
+
+func SubTestStmtSummaryIssue35340(s *clusterTablesSuite) func(t *testing.T) {
+	return func(t *testing.T) {
+		tk := s.newTestKitWithRoot(t)
+		tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
+		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
+		for i := 0; i < 100; i++ {
+			user := "user" + strconv.Itoa(i)
+			tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
+		}
+		tk.MustExec("flush privileges")
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				tk := s.newTestKitWithRoot(t)
+				for j := 0; j < 100; j++ {
+					user := "user" + strconv.Itoa(j)
+					require.True(t, tk.Session().Auth(&auth.UserIdentity{
+						Username: user,
+						Hostname: "localhost",
+					}, nil, nil))
+					tk.MustQuery("select count(*) from information_schema.statements_summary;")
+				}
+			}()
+		}
+		wg.Wait()
 	}
 }
 
