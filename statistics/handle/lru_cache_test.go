@@ -66,6 +66,16 @@ func mockTableAppendIndex(t *statistics.Table) {
 	}
 }
 
+func mockTableRemoveColumn(t *statistics.Table) {
+	idx := int64(len(t.Columns))
+	t.Columns[idx] = nil
+}
+
+func mockTableRemoveIndex(t *statistics.Table) {
+	idx := int64(len(t.Indices))
+	t.Indices[idx] = nil
+}
+
 func TestLRUPutGetDel(t *testing.T) {
 	capacity := int64(100)
 	lru := newStatsLruCache(capacity)
@@ -189,6 +199,16 @@ func TestLRUFreshMemUsage(t *testing.T) {
 	lru.FreshMemUsage()
 	require.Equal(t, lru.TotalCost(), 7*mockColumnTotalMemoryUsage+7*mockIndexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 7*mockIndexMemoryUsage+7*mockColumnMemoryUsage)
+
+	mockTableRemoveColumn(t1)
+	lru.FreshMemUsage()
+	require.Equal(t, lru.TotalCost(), 6*mockColumnTotalMemoryUsage+7*mockIndexTotalMemoryUsage)
+	require.Equal(t, lru.Cost(), 7*mockIndexMemoryUsage+6*mockColumnMemoryUsage)
+
+	mockTableRemoveIndex(t1)
+	lru.FreshMemUsage()
+	require.Equal(t, lru.TotalCost(), 6*mockColumnTotalMemoryUsage+6*mockIndexTotalMemoryUsage)
+	require.Equal(t, lru.Cost(), 6*mockIndexMemoryUsage+6*mockColumnMemoryUsage)
 }
 
 func TestLRUPutTooBig(t *testing.T) {

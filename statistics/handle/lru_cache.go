@@ -164,14 +164,9 @@ func (s *statsInnerCache) updateIndices(tblID int64, tbl *statistics.Table, tblM
 				deletedIdx = append(deletedIdx, oldIdxID)
 			}
 		}
-		for idxID, index := range tbl.Indices {
-			idxMem := tblMemUsage.IndicesMemUsage[idxID]
-			s.lru.put(tblID, idxID, true, index, idxMem, true, needMove)
-		}
 		for _, idxID := range deletedIdx {
 			s.lru.del(tblID, idxID, true)
 		}
-		return
 	}
 	for idxID, idx := range tbl.Indices {
 		idxMem := tblMemUsage.IndicesMemUsage[idxID]
@@ -190,14 +185,9 @@ func (s *statsInnerCache) updateColumns(tblID int64, tbl *statistics.Table, tblM
 				deletedCol = append(deletedCol, oldColID)
 			}
 		}
-		for colID, col := range tbl.Columns {
-			colMem := tblMemUsage.ColumnsMemUsage[colID]
-			s.lru.put(tblID, colID, false, col, colMem, true, needMove)
-		}
 		for _, colID := range deletedCol {
 			s.lru.del(tblID, colID, false)
 		}
-		return
 	}
 	for colID, col := range tbl.Columns {
 		colMem := tblMemUsage.ColumnsMemUsage[colID]
