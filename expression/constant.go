@@ -453,28 +453,28 @@ func (c *Constant) Coercibility() Coercibility {
 }
 
 // TryUpdateCollate Update collate based on priority #35149
-func TryUpdateCollate(eq *ScalarFunction) {
+// Try to unify collate by priority before physical optimization.
+// After unifying collate, the impact of session level on some optimizations can be shielded
+func TryUpdateEQFunctionCollate(eq *ScalarFunction) {
 
-	if eq.FuncName.L != ast.EQ {
-		return
-	}
-	ok := expressionUpdateCollate(eq, true)
-	if !ok {
-		expressionUpdateCollate(eq, false)
+	if eq.FuncName.L == ast.EQ {
+		expressionUpdateCollate(eq)
 	}
 
 }
 
 // ExpressionUpdateCollate checks whether the expression can be updated to the new collation.
-func expressionUpdateCollate(eq *ScalarFunction, colIsLeft bool) bool {
+func expressionUpdateCollate(eq *ScalarFunction) bool {
 	var col *Column
 	var con *Constant
+	colIsLeft := true
 	colOk := false
 	conOk := false
-	if colIsLeft {
-		col, colOk = eq.GetArgs()[0].(*Column)
-	} else {
+
+	col, colOk = eq.GetArgs()[0].(*Column)
+	if !colOk {
 		col, colOk = eq.GetArgs()[1].(*Column)
+		colIsLeft = false
 	}
 	if !colOk {
 		return false
@@ -482,6 +482,7 @@ func expressionUpdateCollate(eq *ScalarFunction, colIsLeft bool) bool {
 	if !col.HasCoercibility() {
 		return true
 	}
+
 	if colIsLeft {
 		con, conOk = eq.GetArgs()[1].(*Constant)
 	} else {
@@ -496,17 +497,17 @@ func expressionUpdateCollate(eq *ScalarFunction, colIsLeft bool) bool {
 
 	if col.GetType().GetCharset() != con.GetType().GetCharset() {
 		// utf8 is a subset of utf8mb4
+		// If the constant is utf8 and the column is utf8mb4, the constant can be directly converted to utf8mb4
 		if con.GetType().GetCharset() == "utf8" && col.GetType().GetCharset() == "utf8mb4" {
 			if col.Coercibility() < con.Coercibility() {
 				con.GetType().SetCharset(col.GetType().GetCharset())
 				con.GetType().SetCollate(col.GetType().GetCollate())
 			}
 		}
-		return true
-	}
 
-	if col.Coercibility() < con.Coercibility() {
+	} else if col.Coercibility() < con.Coercibility() {
 		con.GetType().SetCollate(col.GetType().GetCollate())
 	}
+
 	return true
 }

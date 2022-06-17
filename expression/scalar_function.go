@@ -236,7 +236,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		// try update collacte for foldable function
 		newsf := FoldConstant(sf)
 		if scalarFunc, ok := newsf.(*ScalarFunction); ok {
-			TryUpdateCollate(scalarFunc)
+			TryUpdateEQFunctionCollate(scalarFunc)
 		}
 		return newsf, nil
 	} else if fold == -1 {
@@ -251,7 +251,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		}
 		// update collacte for foldable function
 		if scalarFunc, ok := newSf.(*ScalarFunction); ok {
-			TryUpdateCollate(scalarFunc)
+			TryUpdateEQFunctionCollate(scalarFunc)
 		}
 		return newSf, nil
 	}

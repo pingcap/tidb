@@ -442,6 +442,11 @@ func TestFix35149(t *testing.T) {
 		id2 int(11) DEFAULT NULL,
 		PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
 	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec(`CREATE TABLE t11 (
+		id varchar(100) NOT NULL ,
+		id2 int(11) DEFAULT NULL,
+		PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin`)
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("explain select /*+ INL_JOIN(t9,t10) */ * from t9 join t10 on t9.id = t10.id and  t10.id = 's12' ;").Check(testkit.RowsWithSep("|",
 		`HashJoin_7|100.00|root| CARTESIAN inner join`, `├─Point_Get_11(Build)|1.00|root|table:t10, clustered index:PRIMARY(id) `, `└─TableReader_10(Probe)|10.00|root| data:TableRangeScan_9`,
@@ -450,4 +455,17 @@ func TestFix35149(t *testing.T) {
 	tk.MustQuery("explain select /*+ INL_JOIN(t9,t10) */ * from t9 join t10 on t9.id = t10.id and  t10.id = 's12' ;").Check(testkit.RowsWithSep("|",
 		`HashJoin_7|100.00|root| CARTESIAN inner join`, `├─Point_Get_11(Build)|1.00|root|table:t10, clustered index:PRIMARY(id) `, `└─TableReader_10(Probe)|10.00|root| data:TableRangeScan_9`,
 		`  └─TableRangeScan_9|10.00|cop[tikv]|table:t9|range:["s12","s12"], keep order:false, stats:pseudo`))
+	tk.MustExec("set names utf8 collate utf8_general_ci;")
+	tk.MustQuery("explain select /*+ INL_JOIN(t9,t10) */ * from t9 join t10 on t9.id = t10.id and  t10.id = 's12' ;").Check(testkit.RowsWithSep("|",
+		`HashJoin_7|100.00|root| CARTESIAN inner join`, `├─Point_Get_11(Build)|1.00|root|table:t10, clustered index:PRIMARY(id) `, `└─TableReader_10(Probe)|10.00|root| data:TableRangeScan_9`,
+		`  └─TableRangeScan_9|10.00|cop[tikv]|table:t9|range:["s12","s12"], keep order:false, stats:pseudo`))
+	tk.MustExec("set names utf8 collate utf8_bin;")
+	tk.MustQuery("explain select /*+ INL_JOIN(t9,t10) */ * from t9 join t10 on t9.id = t10.id and  t10.id = 's12' ;").Check(testkit.RowsWithSep("|",
+		`HashJoin_7|100.00|root| CARTESIAN inner join`, `├─Point_Get_11(Build)|1.00|root|table:t10, clustered index:PRIMARY(id) `, `└─TableReader_10(Probe)|10.00|root| data:TableRangeScan_9`,
+		`  └─TableRangeScan_9|10.00|cop[tikv]|table:t9|range:["s12","s12"], keep order:false, stats:pseudo`))
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
+	tk.MustQuery("explain select /*+ INL_JOIN(t9,t10) */ * from t9 join t11 on t9.id = t11.id and  t11.id = 's12' ;").Check(testkit.RowsWithSep("|",
+		`IndexJoin_22|12.50|root| inner join, inner:TableReader_19, outer key:test.t11.id, inner key:test.t9.id, equal cond:eq(test.t11.id, test.t9.id)`,
+		`├─Point_Get_27(Build)|1.00|root|table:t11, clustered index:PRIMARY(id) `, `└─TableReader_19(Probe)|1.00|root| data:TableRangeScan_18`,
+		`  └─TableRangeScan_18|1.00|cop[tikv]|table:t9|range: decided by [test.t11.id], keep order:false, stats:pseudo`))
 }
