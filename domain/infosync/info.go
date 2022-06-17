@@ -181,11 +181,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if err != nil {
 		return nil, err
 	}
-	if etcdCli != nil {
-		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
-	} else {
-		is.labelRuleManager = initLabelRuleManager([]string{})
-	}
+	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -216,11 +212,11 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	return is.managerMu.SessionManager
 }
 
-func initLabelRuleManager(addrs []string) LabelRuleManager {
-	if len(addrs) == 0 {
+func initLabelRuleManager(etcdCli *clientv3.Client) LabelRuleManager {
+	if etcdCli == nil {
 		return &mockLabelManager{labelRules: map[string][]byte{}}
 	}
-	return &PDLabelManager{addrs: addrs}
+	return &PDLabelManager{etcdCli: etcdCli}
 }
 
 // GetServerInfo gets self server static information.
