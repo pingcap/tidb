@@ -1260,18 +1260,18 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 // usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
 // uselessFilters is the conditions which cannot be used for building ranges.
 // remainingRangeCandidates is the other conditions for future use.
-func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression) {
+func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression, emptyRange bool) {
 	uselessFilters = make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
 	var remainedEqOrIn []expression.Expression
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
-	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, _ = ranger.ExtractEqAndInCondition(
+	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, emptyRange = ranger.ExtractEqAndInCondition(
 		innerPlan.ctx, innerPlan.pushedDownConds,
 		ijHelper.curNotUsedIndexCols,
 		ijHelper.curNotUsedColLens,
 	)
 	uselessFilters = append(uselessFilters, remainedEqOrIn...)
-	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates
+	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates, emptyRange
 }
 
 // buildLastColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
@@ -1393,7 +1393,10 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	accesses := make([]expression.Expression, 0, len(path.IdxCols))
 	relatedExprs := make([]expression.Expression, 0, len(path.IdxCols)) // all expressions related to the chosen range
 	ijHelper.resetContextForIndex(innerJoinKeys, path.IdxCols, path.IdxColLens, outerJoinKeys)
-	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
+	notKeyEqAndIn, remained, rangeFilterCandidates, emptyRange := ijHelper.findUsefulEqAndInFilters(innerPlan)
+	if emptyRange {
+		return true, nil
+	}
 	var remainedEqAndIn []expression.Expression
 	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(path.IdxCols, notKeyEqAndIn, outerJoinKeys)
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
@@ -2539,6 +2542,11 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil
 	}
+
+	// Is this aggregate a final stage aggregate?
+	// Final agg can't be split into multi-stage aggregate
+	hasFinalAgg := len(la.AggFuncs) > 0 && la.AggFuncs[0].Mode == aggregation.FinalMode
+
 	if len(la.GroupByItems) > 0 {
 		partitionCols := la.GetPotentialPartitionKeys()
 		// trying to match the required parititions.
@@ -2562,6 +2570,11 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			hashAggs = append(hashAggs, agg)
 		}
 
+		// Final agg can't be split into multi-stage aggregate, so exit early
+		if hasFinalAgg {
+			return
+		}
+
 		// 2-phase agg
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, RejectSort: true}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
@@ -2578,7 +2591,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			agg.MppRunMode = MppTiDB
 			hashAggs = append(hashAggs, agg)
 		}
-	} else {
+	} else if !hasFinalAgg {
 		// TODO: support scalar agg in MPP, merge the final result to one node
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
@@ -2627,6 +2640,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
+
 	for _, taskTp := range taskTypes {
 		if taskTp == property.MppTaskType {
 			mppAggs := la.tryToGetMppHashAggs(prop)
