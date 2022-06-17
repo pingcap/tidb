@@ -33,6 +33,7 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -1000,6 +1001,21 @@ type Writer struct {
 	batchSize  int64
 
 	lastMetaSeq int32
+	prevRowID   int64 // only used for appendRowsSorted
+}
+
+func (w *Writer) flushAndNewWriter() error {
+	var err error
+	err = w.flush(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newWriter, err := w.createSSTWriter()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	w.writer = newWriter
+	return nil
 }
 
 func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
@@ -1009,6 +1025,17 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 			return errors.Trace(err)
 		}
 		w.writer = writer
+	}
+	if len(kvs) == 0 {
+		return nil
+	}
+	if w.prevRowID != 0 && kvs[0].RowID > w.prevRowID+1 {
+		// rowID leap. probably re-alloc id
+		// should write to different sst
+		err := w.flushAndNewWriter()
+		if err != nil {
+			return err
+		}
 	}
 
 	keyAdapter := w.engine.keyAdapter
@@ -1034,7 +1061,26 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		kvs = newKvs
 	}
-	return w.writer.writeKVs(kvs)
+	startIdx := 0
+	w.prevRowID = kvs[len(kvs)-1].RowID
+	for i := 1; i < len(kvs); i++ {
+		if kvs[i].RowID > kvs[i-1].RowID+1 {
+			// leap id
+			err := w.writer.writeKVs(kvs[startIdx:i])
+			if err != nil {
+				return err
+			}
+			err = w.flushAndNewWriter()
+			if err != nil {
+				return err
+			}
+			startIdx = i
+		}
+	}
+	if startIdx < len(kvs) {
+		return w.writer.writeKVs(kvs[startIdx:])
+	}
+	return nil
 }
 
 func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) error {
@@ -1101,6 +1147,9 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 }
 
 func (w *Writer) flush(ctx context.Context) error {
+	failpoint.Inject("MockFlushWriter", func() {
+		failpoint.Return(nil)
+	})
 	w.Lock()
 	defer w.Unlock()
 	if w.batchCount == 0 {

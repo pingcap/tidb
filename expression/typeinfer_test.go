@@ -104,6 +104,7 @@ func TestInferType(t *testing.T) {
 	tests = append(tests, s.createTestCase4OpFuncs()...)
 	tests = append(tests, s.createTestCase4OtherFuncs()...)
 	tests = append(tests, s.createTestCase4TimeFuncs()...)
+	tests = append(tests, s.createTestCase4DateAddSubFuncs()...)
 	tests = append(tests, s.createTestCase4LikeFuncs()...)
 	tests = append(tests, s.createTestCase4Literals()...)
 	tests = append(tests, s.createTestCase4JSONFuncs()...)
@@ -1926,17 +1927,990 @@ func (s *InferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 
 		{"extract(day from c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"extract(hour from c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
+	}
+}
 
-		{"date_add('20121212', interval 1 day)", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, mysql.MaxDatetimeFullWidth, types.UnspecifiedLength},
-		{"date_sub('20121212', interval 1 day)", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, mysql.MaxDatetimeFullWidth, types.UnspecifiedLength},
-		{"date_add(c_datetime, interval 1 day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
-		{"date_sub(c_datetime, interval 1 day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
-		{"date_add(c_datetime, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
-		{"date_sub(c_datetime, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
-		{"date_add(c_date, interval 1 day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
-		{"date_sub(c_date, interval 1 day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
-		{"date_add(c_date, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
-		{"date_sub(c_date, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+func (s *InferTypeSuite) createTestCase4DateAddSubFuncs() []typeInferTestCase {
+	return []typeInferTestCase{
+		// Legacy.
+		{"date_add('20121212', interval 1 day)", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, mysql.MaxDatetimeFullWidth, types.MinFsp},
+		{"date_sub('20121212', interval 1 day)", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, mysql.MaxDatetimeFullWidth, types.MinFsp},
+		{"date_add(c_datetime, interval 1 day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_sub(c_datetime, interval 1 day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_sub(c_datetime, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_date, interval 1 day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_sub(c_date, interval 1 day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_sub(c_date, interval 1 hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// date + microsecond.
+		{"date_add(c_date, interval c_char microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_varchar microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_int_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_bigint_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_double_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_decimal microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// date + second_microsecond.
+		{"date_add(c_date, interval c_char second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_varchar second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_int_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_bigint_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_double_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_decimal second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// date + minute_microsecond.
+		{"date_add(c_date, interval c_char minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_varchar minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_int_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_bigint_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_double_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_decimal minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// date + hour_microsecond.
+		{"date_add(c_date, interval c_char hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_varchar hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_int_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_bigint_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_double_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_decimal hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// date + day_microsecond.
+		{"date_add(c_date, interval c_char day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_varchar day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_int_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_bigint_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_double_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_decimal day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// date + second.
+		{"date_add(c_date, interval c_char second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_varchar second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_int_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_double_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_date, interval c_decimal second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// date + minute_second.
+		{"date_add(c_date, interval c_char minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_varchar minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_int_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_double_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_decimal minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// date + hour_second.
+		{"date_add(c_date, interval c_char hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_varchar hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_int_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_double_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_decimal hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// date + day_second.
+		{"date_add(c_date, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// date + minute.
+		{"date_add(c_date, interval c_char minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_varchar minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_int_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_double_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_decimal minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// date + hour_minute.
+		{"date_add(c_date, interval c_char hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_varchar hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_int_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_double_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_decimal hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// date + day_minute.
+		{"date_add(c_date, interval c_char day_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_varchar day_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_int_d day_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d day_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_double_d day_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_decimal day_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// date + hour.
+		{"date_add(c_date, interval c_char hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_varchar hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_int_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_double_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_decimal hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// date + day_hour.
+		{"date_add(c_date, interval c_char day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_varchar day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_int_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_double_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_date, interval c_decimal day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// date + day.
+		{"date_add(c_date, interval c_char day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_varchar day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_int_d day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_double_d day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_decimal day)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+
+		// date + week.
+		{"date_add(c_date, interval c_char week)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_varchar week)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_int_d week)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d week)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_double_d week)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_decimal week)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+
+		// date + month.
+		{"date_add(c_date, interval c_char month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_varchar month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_int_d month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_double_d month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_decimal month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+
+		// date + year_month.
+		{"date_add(c_date, interval c_char year_month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_varchar year_month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_int_d year_month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d year_month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_double_d year_month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_decimal year_month)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+
+		// date + quarter.
+		{"date_add(c_date, interval c_char quarter)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_varchar quarter)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_int_d quarter)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d quarter)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_double_d quarter)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_decimal quarter)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+
+		// date + year.
+		{"date_add(c_date, interval c_char year)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_varchar year)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_int_d year)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_bigint_d year)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_double_d year)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+		{"date_add(c_date, interval c_decimal year)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, types.MinFsp},
+
+		// time(3) + microsecond.
+		{"date_add(c_time, interval c_char microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_varchar microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_int_d microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_bigint_d microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_double_d microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_decimal microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+
+		// time(3) + second_microsecond.
+		{"date_add(c_time, interval c_char second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_varchar second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_int_d second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_bigint_d second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_double_d second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_decimal second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+
+		// time(3) + minute_microsecond.
+		{"date_add(c_time, interval c_char minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_varchar minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_int_d minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_bigint_d minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_double_d minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_decimal minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+
+		// time(3) + hour_microsecond.
+		{"date_add(c_time, interval c_char hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_varchar hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_int_d hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_bigint_d hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_double_d hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_decimal hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+
+		// time(3) + day_microsecond.
+		{"date_add(c_time, interval c_char day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_varchar day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_int_d day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_bigint_d day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_double_d day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_decimal day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+
+		// time(3) + second.
+		{"date_add(c_time, interval c_char second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_varchar second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_int_d second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_bigint_d second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_double_d second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time, interval c_decimal second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+
+		// time(3) + minute_second.
+		{"date_add(c_time, interval c_char minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_varchar minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_int_d minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_bigint_d minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_double_d minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_decimal minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+
+		// time(3) + hour_second.
+		{"date_add(c_time, interval c_char hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_varchar hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_int_d hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_bigint_d hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_double_d hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_decimal hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+
+		// time(3) + day_second.
+		{"date_add(c_time, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// time(3) + minute.
+		{"date_add(c_time, interval c_char minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_varchar minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_int_d minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_bigint_d minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_double_d minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_decimal minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+
+		// time(3) + hour_minute.
+		{"date_add(c_time, interval c_char hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_varchar hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_int_d hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_bigint_d hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_double_d hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_decimal hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+
+		// time(3) + day_minute.
+		{"date_add(c_time, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// time(3) + hour.
+		{"date_add(c_time, interval c_char hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_varchar hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_int_d hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_bigint_d hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_double_d hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_decimal hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+
+		// time(3) + day_hour.
+		{"date_add(c_time, interval c_char day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_varchar day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_int_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_bigint_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_double_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_decimal day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// time(3) + day.
+		{"date_add(c_time, interval c_char day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_varchar day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_int_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_bigint_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_double_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_decimal day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// time(3) + week.
+		{"date_add(c_time, interval c_char week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_varchar week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_int_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_bigint_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_double_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_decimal week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// time(3) + month.
+		{"date_add(c_time, interval c_char month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_varchar month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_int_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_bigint_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_double_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_decimal month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// time(3) + year_month.
+		{"date_add(c_time, interval c_char year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_varchar year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_int_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_bigint_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_double_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_decimal year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// time(3) + quarter.
+		{"date_add(c_time, interval c_char quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_varchar quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_int_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_bigint_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_double_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_decimal quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// time(3) + year.
+		{"date_add(c_time, interval c_char year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_varchar year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_int_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_bigint_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_double_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_decimal year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// time + microsecond.
+		{"date_add(c_time_d, interval c_char microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_varchar microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_int_d microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_bigint_d microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_double_d microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_decimal microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+
+		// time + second_microsecond.
+		{"date_add(c_time_d, interval c_char second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_varchar second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_int_d second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_bigint_d second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_double_d second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_decimal second_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+
+		// time + minute_microsecond.
+		{"date_add(c_time_d, interval c_char minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_varchar minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_int_d minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_bigint_d minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_double_d minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_decimal minute_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+
+		// time + hour_microsecond.
+		{"date_add(c_time_d, interval c_char hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_varchar hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_int_d hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_bigint_d hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_double_d hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_decimal hour_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+
+		// time + day_microsecond.
+		{"date_add(c_time_d, interval c_char day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_varchar day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_int_d day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_bigint_d day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_double_d day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_decimal day_microsecond)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+
+		// time + second.
+		{"date_add(c_time_d, interval c_char second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_varchar second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_int_d second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthWithFsp, types.MaxFsp},
+		{"date_add(c_time_d, interval c_decimal second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+
+		// time + minute_second.
+		{"date_add(c_time_d, interval c_char minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal minute_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+
+		// time + hour_second.
+		{"date_add(c_time_d, interval c_char hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal hour_second)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+
+		// time + day_second.
+		{"date_add(c_time_d, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// time + minute.
+		{"date_add(c_time_d, interval c_char minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+
+		// time + hour_minute.
+		{"date_add(c_time_d, interval c_char hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal hour_minute)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+
+		// time + day_minute.
+		{"date_add(c_time_d, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// time + hour.
+		{"date_add(c_time_d, interval c_char hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal hour)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDurationWidthNoFsp, types.MinFsp},
+
+		// time + day_hour.
+		{"date_add(c_time_d, interval c_char day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// time + day.
+		{"date_add(c_time_d, interval c_char day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// time + week.
+		{"date_add(c_time_d, interval c_char week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// time + month.
+		{"date_add(c_time_d, interval c_char month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// time + year_month.
+		{"date_add(c_time_d, interval c_char year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// time + quarter.
+		{"date_add(c_time_d, interval c_char quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// time + year.
+		{"date_add(c_time_d, interval c_char year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime(2) + microsecond.
+		{"date_add(c_datetime, interval c_char microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_varchar microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_int_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_bigint_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_double_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_decimal microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// datetime(2) + second_microsecond.
+		{"date_add(c_datetime, interval c_char second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_varchar second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_int_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_bigint_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_double_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_decimal second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// datetime(2) + minute_microsecond.
+		{"date_add(c_datetime, interval c_char minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_varchar minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_int_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_bigint_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_double_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_decimal minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// datetime(2) + hour_microsecond.
+		{"date_add(c_datetime, interval c_char hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_varchar hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_int_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_bigint_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_double_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_decimal hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// datetime(2) + day_microsecond.
+		{"date_add(c_datetime, interval c_char day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_varchar day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_int_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_bigint_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_double_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_decimal day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// datetime(2) + second.
+		{"date_add(c_datetime, interval c_char second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_varchar second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_int_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime, interval c_decimal second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// datetime(2) + minute_second.
+		{"date_add(c_datetime, interval c_char minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + hour_second.
+		{"date_add(c_datetime, interval c_char hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + day_second.
+		{"date_add(c_datetime, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + minute.
+		{"date_add(c_datetime, interval c_char minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + hour_minute.
+		{"date_add(c_datetime, interval c_char hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + day_minute.
+		{"date_add(c_datetime, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + hour.
+		{"date_add(c_datetime, interval c_char hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + day_hour.
+		{"date_add(c_datetime, interval c_char day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + day.
+		{"date_add(c_datetime, interval c_char day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + week.
+		{"date_add(c_datetime, interval c_char week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + month.
+		{"date_add(c_datetime, interval c_char month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + year_month.
+		{"date_add(c_datetime, interval c_char year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + quarter.
+		{"date_add(c_datetime, interval c_char quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime(2) + year.
+		{"date_add(c_datetime, interval c_char year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_varchar year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_int_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_bigint_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_double_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"date_add(c_datetime, interval c_decimal year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+
+		// datetime + microsecond.
+		{"date_add(c_datetime_d, interval c_char microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_varchar microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_int_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_double_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_decimal microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// datetime + second_microsecond.
+		{"date_add(c_datetime_d, interval c_char second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_varchar second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_int_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_double_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_decimal second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// datetime + minute_microsecond.
+		{"date_add(c_datetime_d, interval c_char minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_varchar minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_int_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_double_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_decimal minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// datetime + hour_microsecond.
+		{"date_add(c_datetime_d, interval c_char hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_varchar hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_int_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_double_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_decimal hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// datetime + day_microsecond.
+		{"date_add(c_datetime_d, interval c_char day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_varchar day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_int_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_double_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_decimal day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// datetime + second.
+		{"date_add(c_datetime_d, interval c_char second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_varchar second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_int_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_datetime_d, interval c_decimal second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// datetime + minute_second.
+		{"date_add(c_datetime_d, interval c_char minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + hour_second.
+		{"date_add(c_datetime_d, interval c_char hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + day_second.
+		{"date_add(c_datetime_d, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + minute.
+		{"date_add(c_datetime_d, interval c_char minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + hour_minute.
+		{"date_add(c_datetime_d, interval c_char hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + day_minute.
+		{"date_add(c_datetime_d, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + hour.
+		{"date_add(c_datetime_d, interval c_char hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + day_hour.
+		{"date_add(c_datetime_d, interval c_char day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + day.
+		{"date_add(c_datetime_d, interval c_char day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + week.
+		{"date_add(c_datetime_d, interval c_char week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + month.
+		{"date_add(c_datetime_d, interval c_char month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + year_month.
+		{"date_add(c_datetime_d, interval c_char year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + quarter.
+		{"date_add(c_datetime_d, interval c_char quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// datetime + year.
+		{"date_add(c_datetime_d, interval c_char year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_varchar year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_int_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_bigint_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_double_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_datetime_d, interval c_decimal year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + microsecond.
+		{"date_add(c_timestamp_d, interval c_char microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_varchar microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_int_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_double_d microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_decimal microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// timestamp + second_microsecond.
+		{"date_add(c_timestamp_d, interval c_char second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_varchar second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_int_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_double_d second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_decimal second_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// timestamp + minute_microsecond.
+		{"date_add(c_timestamp_d, interval c_char minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_varchar minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_int_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_double_d minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_decimal minute_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// timestamp + hour_microsecond.
+		{"date_add(c_timestamp_d, interval c_char hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_varchar hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_int_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_double_d hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_decimal hour_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// timestamp + day_microsecond.
+		{"date_add(c_timestamp_d, interval c_char day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_varchar day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_int_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_double_d day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_decimal day_microsecond)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+
+		// timestamp + second.
+		{"date_add(c_timestamp_d, interval c_char second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_varchar second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_int_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},
+		{"date_add(c_timestamp_d, interval c_decimal second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+
+		// timestamp + minute_second.
+		{"date_add(c_timestamp_d, interval c_char minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal minute_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + hour_second.
+		{"date_add(c_timestamp_d, interval c_char hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal hour_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + day_second.
+		{"date_add(c_timestamp_d, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + minute.
+		{"date_add(c_timestamp_d, interval c_char minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + hour_minute.
+		{"date_add(c_timestamp_d, interval c_char hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal hour_minute)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + day_minute.
+		{"date_add(c_timestamp_d, interval c_char day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal day_second)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + hour.
+		{"date_add(c_timestamp_d, interval c_char hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + day_hour.
+		{"date_add(c_timestamp_d, interval c_char day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + day.
+		{"date_add(c_timestamp_d, interval c_char day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + week.
+		{"date_add(c_timestamp_d, interval c_char week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + month.
+		{"date_add(c_timestamp_d, interval c_char month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + year_month.
+		{"date_add(c_timestamp_d, interval c_char year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal year_month)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + quarter.
+		{"date_add(c_timestamp_d, interval c_char quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal quarter)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// timestamp + year.
+		{"date_add(c_timestamp_d, interval c_char year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_varchar year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_int_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_bigint_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_double_d year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_timestamp_d, interval c_decimal year)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+
+		// Rest + *.
+		{"date_add(c_bit, interval c_char microsecond)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxDatetimeFullWidth, types.MinFsp},
+		{"date_add(c_int_d, interval c_varchar second)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxDatetimeFullWidth, types.MinFsp},
+		{"date_add(c_double_d, interval c_int_d day_microsecond)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxDatetimeFullWidth, types.MinFsp},
+		{"date_add(c_decimal, interval c_bigint_d hour)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxDatetimeFullWidth, types.MinFsp},
+		{"date_add(c_varchar, interval c_double_d day)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxDatetimeFullWidth, types.MinFsp},
+		{"date_add(c_binary, interval c_decimal year)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxDatetimeFullWidth, types.MinFsp},
 	}
 }
 
