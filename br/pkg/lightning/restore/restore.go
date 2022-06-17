@@ -389,7 +389,9 @@ func NewRestoreControllerWithPauser(
 			needChecksum: cfg.PostRestore.Checksum != config.OpLevelOff,
 		}
 	case isSSTImport:
-		metaBuilder = singleMgrBuilder{}
+		metaBuilder = singleMgrBuilder{
+			taskID: cfg.TaskID,
+		}
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
@@ -1893,7 +1895,19 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			if err = rc.taskMgr.InitTask(ctx, source); err != nil {
 				return errors.Trace(err)
 			}
-			if rc.cfg.App.CheckRequirements {
+		}
+		if rc.cfg.App.CheckRequirements {
+			needCheck := true
+			if rc.cfg.Checkpoint.Enable {
+				taskCheckpoints, err := rc.checkpointsDB.TaskCheckpoint(ctx)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				// If task checkpoint is initialized, it means check has been performed before.
+				// We don't need and shouldn't check again, because lightning may have already imported some data.
+				needCheck = taskCheckpoints == nil
+			}
+			if needCheck {
 				err = rc.localResource(source)
 				if err != nil {
 					return errors.Trace(err)
