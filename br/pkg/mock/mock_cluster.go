@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/pprof"
-	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +24,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/pkg/tempurl"
 	"go.uber.org/zap"
 )
 
@@ -83,30 +80,13 @@ func NewCluster() (*Cluster, error) {
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
-	statusURL, err := url.Parse(tempurl.Alloc())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	statusPort, err := strconv.ParseInt(statusURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	addrURL, err := url.Parse(tempurl.Alloc())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	addrPort, err := strconv.ParseInt(addrURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_ = addrPort
-
+	server.RunInGoTest = true
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
-	cfg.Port = uint(addrPort)
+	// let tidb random select a port
+	cfg.Port = 0
 	cfg.Store = "tikv"
-	cfg.Status.StatusPort = uint(statusPort)
+	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 
 	svr, err := server.NewServer(cfg, mock.TiDBDriver)
@@ -119,7 +99,7 @@ func (mock *Cluster) Start() error {
 			panic(err1)
 		}
 	}()
-	mock.DSN = waitUntilServerOnline(addrURL.Host, cfg.Status.StatusPort)
+	mock.DSN = waitUntilServerOnline("127.0.0.1", cfg.Status.StatusPort)
 	return nil
 }
 

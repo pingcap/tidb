@@ -11,9 +11,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -34,6 +39,7 @@ type TestClient struct {
 	injectInScatter func(*restore.RegionInfo) error
 
 	scattered map[uint64]bool
+	InjectErr bool
 }
 
 func NewTestClient(
@@ -180,6 +186,10 @@ func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.Ge
 }
 
 func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*restore.RegionInfo, error) {
+	if c.InjectErr {
+		return nil, errors.New("mock scan error")
+	}
+
 	infos := c.regionsInfo.ScanRange(key, endKey, limit)
 	regions := make([]*restore.RegionInfo, 0, len(infos))
 	for _, info := range infos {
@@ -244,7 +254,7 @@ func TestScatterFinishInTime(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
+	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -290,7 +300,7 @@ func TestSplitAndScatter(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
+	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -426,28 +436,39 @@ FindRegion:
 }
 
 func (s *testRangeSuite) TestNeedSplit(c *C) {
+	s.testNeedSplit(c, false)
+	s.testNeedSplit(c, true)
+}
+
+func (s *testRangeSuite) testNeedSplit(c *C, isRawKv bool) {
+	encode := func(in []byte) []byte {
+		if isRawKv {
+			return in
+		}
+		return codec.EncodeBytes([]byte{}, in)
+	}
+
 	regions := []*restore.RegionInfo{
 		{
 			Region: &metapb.Region{
-				StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-				EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+				StartKey: encode([]byte("b")),
+				EndKey:   encode([]byte("d")),
 			},
 		},
 	}
-<<<<<<< HEAD
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("a"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("a"), regions, isRawKv), IsNil)
 	// Region start key
-	c.Assert(restore.NeedSplit([]byte("b"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("b"), regions, isRawKv), IsNil)
 	// In region
-	region := restore.NeedSplit([]byte("c"), regions)
-	c.Assert(bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytes([]byte{}, []byte("b"))), Equals, 0)
-	c.Assert(bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytes([]byte{}, []byte("d"))), Equals, 0)
+	region := restore.NeedSplit([]byte("c"), regions, isRawKv)
+	c.Assert(bytes.Compare(region.Region.GetStartKey(), encode([]byte("b"))), Equals, 0)
+	c.Assert(bytes.Compare(region.Region.GetEndKey(), encode([]byte("d"))), Equals, 0)
 	// Region end key
-	c.Assert(restore.NeedSplit([]byte("d"), regions), IsNil)
+	c.Assert(restore.NeedSplit([]byte("d"), regions, isRawKv), IsNil)
 	// Out of region
 	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
-=======
+
 	for _, ca := range cases {
 		err := restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
 		require.Error(t, err)
@@ -581,5 +602,4 @@ func TestSplitFailed(t *testing.T) {
 	sender.Close()
 	require.GreaterOrEqual(t, len(r.splitRanges), 2)
 	require.Len(t, r.restoredFiles, 0)
->>>>>>> e2ad790a2... br: fix race in test `Test(Split|Restore)Failed` (#33313)
 }
