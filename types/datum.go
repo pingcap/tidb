@@ -2213,9 +2213,15 @@ func ChangeReverseResultByUpperLowerBound(
 	case KindFloat64:
 		resRetType.Tp = mysql.TypeDouble
 	case KindMysqlDecimal:
+<<<<<<< HEAD
 		resRetType.Tp = mysql.TypeNewDecimal
 		resRetType.Flen = int(res.GetMysqlDecimal().GetDigitsFrac() + res.GetMysqlDecimal().GetDigitsInt())
 		resRetType.Decimal = int(res.GetMysqlDecimal().GetDigitsInt())
+=======
+		resRetType.SetType(mysql.TypeNewDecimal)
+		resRetType.SetFlenUnderLimit(int(res.GetMysqlDecimal().GetDigitsFrac() + res.GetMysqlDecimal().GetDigitsInt()))
+		resRetType.SetDecimalUnderLimit(int(res.GetMysqlDecimal().GetDigitsInt()))
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	}
 	bound := getDatumBound(&resRetType, rType)
 	cmp, err := d.CompareDatum(sc, &bound)
