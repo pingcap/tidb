@@ -1257,7 +1257,6 @@ func BuildFinalModeAggregation(
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
 		finalAggFunc.OrderByItems = aggFunc.OrderByItems
-		finalAggFunc.Mode = aggFunc.Mode
 		args := make([]expression.Expression, 0, len(aggFunc.Args))
 		if aggFunc.HasDistinct {
 			/*
@@ -1339,8 +1338,10 @@ func BuildFinalModeAggregation(
 
 			finalAggFunc.OrderByItems = byItems
 			finalAggFunc.HasDistinct = aggFunc.HasDistinct
-			if aggFunc.Mode == aggregation.FinalMode || aggFunc.Mode == aggregation.CompleteMode {
+			if aggFunc.Mode == aggregation.CompleteMode {
 				finalAggFunc.Mode = aggregation.CompleteMode
+			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
+				finalAggFunc.Mode = aggregation.Partial2Mode
 			}
 		} else {
 			if aggFunc.Name == ast.AggFuncGroupConcat && len(aggFunc.OrderByItems) > 0 {
@@ -1421,8 +1422,10 @@ func BuildFinalModeAggregation(
 				}
 			}
 
-			if aggFunc.Mode == aggregation.FinalMode || aggFunc.Mode == aggregation.CompleteMode {
+			if aggFunc.Mode == aggregation.CompleteMode {
 				finalAggFunc.Mode = aggregation.FinalMode
+			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
+				finalAggFunc.Mode = aggregation.Partial2Mode
 			}
 		}
 
