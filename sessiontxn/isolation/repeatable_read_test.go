@@ -455,10 +455,10 @@ func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit, active 
 		assert := activePessimisticRRAssert(t, tk.Session(), true)
 		tk.MustExec("begin pessimistic")
 		return assert.CheckAndGetProvider(t)
-	} else {
-		tk.MustExec("set @@autocommit=0")
-		assert := inactivePessimisticRRAssert(tk.Session())
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
-		return assert.CheckAndGetProvider(t)
 	}
+
+	tk.MustExec("set @@autocommit=0")
+	assert := inactivePessimisticRRAssert(tk.Session())
+	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+	return assert.CheckAndGetProvider(t)
 }
