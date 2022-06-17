@@ -141,7 +141,7 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 }
 
 // CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
 	if err != nil {
 		log.Error("create table failed",
@@ -206,8 +206,8 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 				zap.Error(err))
 			return errors.Trace(err)
 		}
-	// only table exists in ddlJobs during incremental restoration should do alter after creation.
-	case ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+	// only table exists in restored cluster during incremental restoration should do alter after creation.
+	case toBeCorrectedTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
 		if utils.NeedAutoID(table.Info) {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_increment = %d;",

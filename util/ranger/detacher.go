@@ -198,7 +198,7 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 	offset := int(-1)
 	for i, cond := range conds {
 		tmpConds := []expression.Expression{cond}
-		colSets := expression.ExtractColumnSet(tmpConds)
+		colSets := expression.ExtractColumnSet(cond)
 		if colSets.Len() == 0 {
 			continue
 		}
