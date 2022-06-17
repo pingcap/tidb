@@ -4108,6 +4108,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error) {
+	//nolint: prealloc
 	var ret []kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
