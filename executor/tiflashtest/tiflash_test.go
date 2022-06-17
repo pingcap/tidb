@@ -281,7 +281,7 @@ func TestMppExecution(t *testing.T) {
 	require.NoError(t, err)
 	ts := txn.StartTS()
 	taskID := tk.Session().GetSessionVars().AllocMPPTaskID(ts)
-	require.Equal(t, int64(6), taskID)
+	require.Equal(t, int64(5), taskID)
 	tk.MustExec("commit")
 	taskID = tk.Session().GetSessionVars().AllocMPPTaskID(ts + 1)
 	require.Equal(t, int64(1), taskID)
