@@ -985,28 +985,6 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestIsJobRollbackable(t *testing.T) {
-	cases := []struct {
-		tp     model.ActionType
-		state  model.SchemaState
-		result bool
-	}{
-		{model.ActionDropIndex, model.StateNone, true},
-		{model.ActionDropIndex, model.StateDeleteOnly, false},
-		{model.ActionDropSchema, model.StateDeleteOnly, false},
-		{model.ActionDropColumn, model.StateDeleteOnly, false},
-		{model.ActionDropColumns, model.StateDeleteOnly, false},
-		{model.ActionDropIndexes, model.StateDeleteOnly, false},
-	}
-	job := &model.Job{}
-	for _, ca := range cases {
-		job.Type = ca.tp
-		job.SchemaState = ca.state
-		re := job.IsRollbackable()
-		require.Equal(t, ca.result, re)
-	}
-}
-
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		dbterror.ErrDDLJobNotFound,
