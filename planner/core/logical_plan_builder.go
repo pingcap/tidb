@@ -6679,13 +6679,9 @@ func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVar
 	for _, col := range res.Columns {
 		col.RetType = col.RetType.Clone()
 		col.UniqueID = svar.AllocPlanColumnID()
-<<<<<<< HEAD
 		col.RetType.Flag &= ^mysql.NotNullFlag
-=======
-		col.RetType.DelFlag(mysql.NotNullFlag)
 		// Since you have reallocated unique id here, the old-cloned-cached hash code is not valid anymore.
 		col.CleanHashCode()
->>>>>>> 580a68dff... planner: fix cte-schema-clone will clone the old hashcode of its column if any (#35415)
 	}
 	return res
 }
