@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strconv"
+
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -161,6 +163,14 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 		Collate: collationToProto(ft.Collate),
 		Elems:   ft.Elems,
 	}
+}
+
+// ToPBFieldTypeWithCheck converts *types.FieldType to *tipb.FieldType with checking the valid decimal for TiFlash
+func ToPBFieldTypeWithCheck(ft *types.FieldType, storeType kv.StoreType) (*tipb.FieldType, error) {
+	if storeType == kv.TiFlash && !ft.IsDecimalValid() {
+		return nil, errors.New(ft.String() + " can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(ft.GetFlen()) + "','" + strconv.Itoa(ft.GetDecimal()) + "').")
+	}
+	return ToPBFieldType(ft), nil
 }
 
 // FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.

@@ -709,7 +709,11 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	bf.tp.Flen = args[1].GetType().Flen
+=======
+	bf.tp.SetFlenUnderLimit(args[1].GetType().GetFlen())
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	switch argTp {
 	case types.ETString:
 		sig = &builtinSetStringVarSig{bf}
@@ -1065,7 +1069,11 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	bf.tp.Flen = c.tp.Flen
+=======
+	bf.tp.SetFlenUnderLimit(c.tp.GetFlen())
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	sig = &builtinGetDecimalVarSig{bf}
 	return sig, nil
 }

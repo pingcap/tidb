@@ -600,6 +600,7 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	dg := new(dataGen4Expr2PbTest)
 	exprs := make([]Expression, 0)
 
+<<<<<<< HEAD
 	jsonColumn := dg.genColumn(mysql.TypeJSON, 1)
 	intColumn := dg.genColumn(mysql.TypeLonglong, 2)
 	realColumn := dg.genColumn(mysql.TypeDouble, 3)
@@ -610,6 +611,21 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	binaryStringColumn.RetType.Collate = charset.CollationBin
 	int32Column := dg.genColumn(mysql.TypeLong, 8)
 	float32Column := dg.genColumn(mysql.TypeFloat, 9)
+=======
+	jsonColumn := genColumn(mysql.TypeJSON, 1)
+	intColumn := genColumn(mysql.TypeLonglong, 2)
+	realColumn := genColumn(mysql.TypeDouble, 3)
+	decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
+	decimalColumn.RetType.SetDecimal(mysql.MaxDecimalScale)
+	decimalColumn.RetType.SetFlen(mysql.MaxDecimalWidth)
+	stringColumn := genColumn(mysql.TypeString, 5)
+	datetimeColumn := genColumn(mysql.TypeDatetime, 6)
+	binaryStringColumn := genColumn(mysql.TypeString, 7)
+	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
+	int32Column := genColumn(mysql.TypeLong, 8)
+	float32Column := genColumn(mysql.TypeFloat, 9)
+	enumColumn := genColumn(mysql.TypeEnum, 10)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)

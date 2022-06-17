@@ -23,8 +23,14 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+=======
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -91,7 +97,12 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 			aggFunc, err := NewAggFuncDesc(s.ctx, funcName, args, hasDistinct)
 			c.Assert(err, IsNil)
 			aggFunc.RetTp = funcTypes[i]
+<<<<<<< HEAD
 			pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
+=======
+			pbExpr, err := AggFuncToPBExpr(ctx, client, aggFunc, kv.UnSpecified)
+			require.NoError(t, err)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 			js, err := json.Marshal(pbExpr)
 			c.Assert(err, IsNil)
 			if funcName != ast.AggFuncGroupConcat {

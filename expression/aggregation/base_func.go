@@ -183,6 +183,7 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+<<<<<<< HEAD
 		a.RetTp.Flen, a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Flen+21, mysql.MaxDecimalWidth), 0
 		if a.Args[0].GetType().Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
@@ -196,6 +197,16 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
 		}
+=======
+		a.RetTp.SetFlenUnderLimit(a.Args[0].GetType().GetFlen() + 21)
+		a.RetTp.SetDecimal(0)
+		if a.Args[0].GetType().GetFlen() < 0 {
+			a.RetTp.SetFlen(mysql.MaxDecimalWidth)
+		}
+	case mysql.TypeNewDecimal:
+		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(), 0, 22)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
@@ -212,6 +223,7 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+<<<<<<< HEAD
 		a.RetTp.Decimal = types.DivFracIncr
 		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType().Tp)
 		a.RetTp.Flen = flen + types.DivFracIncr
@@ -226,6 +238,14 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 		if a.Args[0].GetType().Flen < 0 {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
+=======
+		a.RetTp.SetDecimalUnderLimit(types.DivFracIncr)
+		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType().GetType())
+		a.RetTp.SetFlenUnderLimit(flen + types.DivFracIncr)
+	case mysql.TypeYear, mysql.TypeNewDecimal:
+		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(), types.DivFracIncr, types.DivFracIncr)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal

@@ -950,3 +950,30 @@ func GetBuiltinList() []string {
 	sort.Strings(res)
 	return res
 }
+<<<<<<< HEAD
+=======
+
+func (b *baseBuiltinFunc) setDecimalAndFlenForDatetime(fsp int) {
+	b.tp.SetDecimalUnderLimit(fsp)
+	b.tp.SetFlenUnderLimit(mysql.MaxDatetimeWidthNoFsp + fsp)
+	if fsp > 0 {
+		// Add the length for `.`.
+		b.tp.SetFlenUnderLimit(b.tp.GetFlen() + 1)
+	}
+}
+
+func (b *baseBuiltinFunc) setDecimalAndFlenForDate() {
+	b.tp.SetDecimal(0)
+	b.tp.SetFlen(mysql.MaxDateWidth)
+	b.tp.SetType(mysql.TypeDate)
+}
+
+func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
+	b.tp.SetDecimalUnderLimit(fsp)
+	b.tp.SetFlenUnderLimit(mysql.MaxDurationWidthNoFsp + fsp)
+	if fsp > 0 {
+		// Add the length for `.`.
+		b.tp.SetFlenUnderLimit(b.tp.GetFlen() + 1)
+	}
+}
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
