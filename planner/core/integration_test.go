@@ -4939,3 +4939,22 @@ func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
 }
+
+func (s *testIntegrationSerialSuite) TestIssue33042(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int primary key, col1 int)")
+	tk.MustExec("create table t2(id int primary key, col1 int)")
+	tk.MustQuery("explain format='brief' SELECT /*+ merge_join(t1, t2)*/ * FROM (t1 LEFT JOIN t2 ON t1.col1=t2.id) order by t2.id;").Check(
+		testkit.Rows(
+			"Sort 12500.00 root  test.t2.id",
+			"└─MergeJoin 12500.00 root  left outer join, left key:test.t1.col1, right key:test.t2.id",
+			"  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+			"  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+			"  └─Sort(Probe) 10000.00 root  test.t1.col1",
+			"    └─TableReader 10000.00 root  data:TableFullScan",
+			"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		),
+	)
+}
