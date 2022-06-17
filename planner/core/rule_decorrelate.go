@@ -189,6 +189,13 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			}
 			appendRemoveProjTraceStep(apply, proj, opt)
 			return s.optimize(ctx, p, opt)
+		} else if li, ok := innerPlan.(*LogicalLimit); ok {
+			if li.Offset == 0 {
+				innerPlan = li.children[0]
+				apply.SetChildren(outerPlan, innerPlan)
+				appendRemoveLimitTraceStep(li, opt)
+				return s.optimize(ctx, p, opt)
+			}
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.children[0]
@@ -375,6 +382,16 @@ func appendRemoveMaxOneRowTraceStep(m *LogicalMaxOneRow, opt *logicalOptimizeOp)
 		return ""
 	}
 	opt.appendStepToCurrent(m.ID(), m.TP(), reason, action)
+}
+
+func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *logicalOptimizeOp) {
+	action := func() string {
+		return fmt.Sprintf("%v_%v removed from plan tree", limit.TP(), limit.ID())
+	}
+	reason := func() string {
+		return ""
+	}
+	opt.appendStepToCurrent(limit.ID(), limit.TP(), reason, action)
 }
 
 func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *logicalOptimizeOp) {
