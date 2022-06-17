@@ -928,11 +928,19 @@ func GetBuiltinList() []string {
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForDatetime(fsp int) {
+<<<<<<< HEAD
 	b.tp.Decimal = fsp
 	b.tp.Flen = mysql.MaxDatetimeWidthNoFsp + fsp
 	if fsp > 0 {
 		// Add the length for `.`.
 		b.tp.Flen++
+=======
+	b.tp.SetDecimalUnderLimit(fsp)
+	b.tp.SetFlenUnderLimit(mysql.MaxDatetimeWidthNoFsp + fsp)
+	if fsp > 0 {
+		// Add the length for `.`.
+		b.tp.SetFlenUnderLimit(b.tp.GetFlen() + 1)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	}
 }
 
@@ -943,10 +951,18 @@ func (b *baseBuiltinFunc) setDecimalAndFlenForDate() {
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
+<<<<<<< HEAD
 	b.tp.Decimal = fsp
 	b.tp.Flen = mysql.MaxDurationWidthNoFsp + fsp
 	if fsp > 0 {
 		// Add the length for `.`.
 		b.tp.Flen++
+=======
+	b.tp.SetDecimalUnderLimit(fsp)
+	b.tp.SetFlenUnderLimit(mysql.MaxDurationWidthNoFsp + fsp)
+	if fsp > 0 {
+		// Add the length for `.`.
+		b.tp.SetFlenUnderLimit(b.tp.GetFlen() + 1)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 	}
 }

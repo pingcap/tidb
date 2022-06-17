@@ -300,11 +300,19 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Decimal = int(x.Fsp)
 		SetBinChsClnFlag(tp)
 	case *MyDecimal:
+<<<<<<< HEAD
 		tp.Tp = mysql.TypeNewDecimal
 		tp.Flen = len(x.ToString())
 		tp.Decimal = int(x.digitsFrac)
 		// Add the length for `.`.
 		tp.Flen++
+=======
+		tp.SetType(mysql.TypeNewDecimal)
+		tp.SetFlenUnderLimit(len(x.ToString()))
+		tp.SetDecimalUnderLimit(int(x.digitsFrac))
+		// Add the length for `.`.
+		tp.SetFlenUnderLimit(tp.GetFlen() + 1)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 		SetBinChsClnFlag(tp)
 	case Enum:
 		tp.Tp = mysql.TypeEnum

@@ -88,7 +88,11 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			if lhs.Decimal == types.UnspecifiedLength || rhs.Decimal == types.UnspecifiedLength {
 				resultFieldType.Decimal = types.UnspecifiedLength
 			} else {
+<<<<<<< HEAD
 				resultFieldType.Decimal = mathutil.Max(lhs.Decimal, rhs.Decimal)
+=======
+				resultFieldType.SetDecimalUnderLimit(mathutil.Max(lhs.GetDecimal(), rhs.GetDecimal()))
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 			}
 		}
 
@@ -134,8 +138,14 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			if lhs.Decimal != types.UnspecifiedLength {
 				rhsFlen -= rhs.Decimal
 			}
+<<<<<<< HEAD
 			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.Decimal + 1   // account for -1 len fields
 			resultFieldType.Flen = mathutil.Min(flen, mysql.MaxDecimalWidth) // make sure it doesn't overflow
+=======
+			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.GetDecimal() + 1 // account for -1 len fields
+			resultFieldType.SetFlenUnderLimit(flen)
+
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 		} else {
 			resultFieldType.Flen = maxlen(lhs.Flen, rhs.Flen)
 		}
@@ -208,8 +218,14 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		fieldTp.Flag |= mysql.BinaryFlag
 	}
 	// Set retType to BINARY(0) if all arguments are of type NULL.
+<<<<<<< HEAD
 	if fieldTp.Tp == mysql.TypeNull {
 		fieldTp.Flen, fieldTp.Decimal = 0, types.UnspecifiedLength
+=======
+	if fieldTp.GetType() == mysql.TypeNull {
+		fieldTp.SetFlen(0)
+		fieldTp.SetDecimal(0)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 		types.SetBinChsClnFlag(fieldTp)
 	}
 	argTps := make([]types.EvalType, 0, l)
@@ -725,10 +741,19 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	retTp.Flag |= (lhs.Flag & mysql.NotNullFlag) | (rhs.Flag & mysql.NotNullFlag)
 	if lhs.Tp == mysql.TypeNull && rhs.Tp == mysql.TypeNull {
 		retTp.Tp = mysql.TypeNull
 		retTp.Flen, retTp.Decimal = 0, -1
+=======
+
+	retTp.AddFlag((lhs.GetFlag() & mysql.NotNullFlag) | (rhs.GetFlag() & mysql.NotNullFlag))
+	if lhs.GetType() == mysql.TypeNull && rhs.GetType() == mysql.TypeNull {
+		retTp.SetType(mysql.TypeNull)
+		retTp.SetFlen(0)
+		retTp.SetDecimal(0)
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()

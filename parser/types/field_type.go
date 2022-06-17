@@ -18,6 +18,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -57,6 +58,127 @@ func NewFieldType(tp byte) *FieldType {
 		Decimal: UnspecifiedLength,
 	}
 }
+<<<<<<< HEAD
+=======
+func (ft *FieldType) IsDecimalValid() bool {
+	if ft.tp == mysql.TypeNewDecimal && (ft.decimal < 0 || ft.decimal > mysql.MaxDecimalScale || ft.flen <= 0 || ft.flen > mysql.MaxDecimalWidth || ft.flen < ft.decimal) {
+		return false
+	}
+	return true
+}
+func (ft *FieldType) GetType() byte {
+	return ft.tp
+}
+
+func (ft *FieldType) GetFlag() uint {
+	return ft.flag
+}
+
+func (ft *FieldType) GetFlen() int {
+	return ft.flen
+}
+
+func (ft *FieldType) GetDecimal() int {
+	return ft.decimal
+}
+
+func (ft *FieldType) GetCharset() string {
+	return ft.charset
+}
+
+func (ft *FieldType) GetCollate() string {
+	return ft.collate
+}
+
+func (ft *FieldType) GetElems() []string {
+	return ft.elems
+}
+
+func (ft *FieldType) SetType(tp byte) {
+	ft.tp = tp
+}
+
+func (ft *FieldType) SetFlag(flag uint) {
+	ft.flag = flag
+}
+
+func (ft *FieldType) AddFlag(flag uint) {
+	ft.flag |= flag
+}
+
+func (ft *FieldType) AndFlag(flag uint) {
+	ft.flag &= flag
+}
+
+func (ft *FieldType) ToggleFlag(flag uint) {
+	ft.flag ^= flag
+}
+
+func (ft *FieldType) DelFlag(flag uint) {
+	ft.flag &= ^flag
+}
+
+func (ft *FieldType) SetFlen(flen int) {
+	ft.flen = flen
+}
+
+func (ft *FieldType) SetFlenUnderLimit(flen int) {
+	if ft.tp == mysql.TypeNewDecimal {
+		ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
+	} else {
+		ft.flen = flen
+	}
+}
+
+func (ft *FieldType) SetDecimal(decimal int) {
+	ft.decimal = decimal
+}
+
+func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
+	if ft.tp == mysql.TypeNewDecimal {
+		ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
+	} else {
+		ft.decimal = decimal
+	}
+}
+
+func (ft *FieldType) UpdateFlenAndDecimalUnderLimit(old *FieldType, deltaDecimal int, deltaFlen int) {
+	if ft.tp != mysql.TypeNewDecimal {
+		return
+	}
+	if old.decimal < 0 {
+		deltaFlen += mysql.MaxDecimalScale
+		ft.decimal = mysql.MaxDecimalScale
+	} else {
+		ft.SetDecimal(old.decimal + deltaDecimal)
+	}
+	if old.flen < 0 {
+		ft.flen = mysql.MaxDecimalWidth
+	} else {
+		ft.SetFlenUnderLimit(old.flen + deltaFlen)
+	}
+}
+
+func (ft *FieldType) SetCharset(charset string) {
+	ft.charset = charset
+}
+
+func (ft *FieldType) SetCollate(collate string) {
+	ft.collate = collate
+}
+
+func (ft *FieldType) SetElems(elems []string) {
+	ft.elems = elems
+}
+
+func (ft *FieldType) SetElem(idx int, element string) {
+	ft.elems[idx] = element
+}
+
+func (ft *FieldType) GetElem(idx int) string {
+	return ft.elems[idx]
+}
+>>>>>>> 9a77892ac... execution: avoid decimal overflow and check valid (#34399)
 
 // Clone returns a copy of itself.
 func (ft *FieldType) Clone() *FieldType {
