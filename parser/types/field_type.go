@@ -19,6 +19,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -58,7 +59,12 @@ func NewFieldType(tp byte) *FieldType {
 		decimal: UnspecifiedLength,
 	}
 }
-
+func (ft *FieldType) IsDecimalValid() bool {
+	if ft.tp == mysql.TypeNewDecimal && (ft.decimal < 0 || ft.decimal > mysql.MaxDecimalScale || ft.flen <= 0 || ft.flen > mysql.MaxDecimalWidth || ft.flen < ft.decimal) {
+		return false
+	}
+	return true
+}
 func (ft *FieldType) GetType() byte {
 	return ft.tp
 }
@@ -115,8 +121,41 @@ func (ft *FieldType) SetFlen(flen int) {
 	ft.flen = flen
 }
 
+func (ft *FieldType) SetFlenUnderLimit(flen int) {
+	if ft.tp == mysql.TypeNewDecimal {
+		ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
+	} else {
+		ft.flen = flen
+	}
+}
+
 func (ft *FieldType) SetDecimal(decimal int) {
 	ft.decimal = decimal
+}
+
+func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
+	if ft.tp == mysql.TypeNewDecimal {
+		ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
+	} else {
+		ft.decimal = decimal
+	}
+}
+
+func (ft *FieldType) UpdateFlenAndDecimalUnderLimit(old *FieldType, deltaDecimal int, deltaFlen int) {
+	if ft.tp != mysql.TypeNewDecimal {
+		return
+	}
+	if old.decimal < 0 {
+		deltaFlen += mysql.MaxDecimalScale
+		ft.decimal = mysql.MaxDecimalScale
+	} else {
+		ft.SetDecimal(old.decimal + deltaDecimal)
+	}
+	if old.flen < 0 {
+		ft.flen = mysql.MaxDecimalWidth
+	} else {
+		ft.SetFlenUnderLimit(old.flen + deltaFlen)
+	}
 }
 
 func (ft *FieldType) SetCharset(charset string) {
