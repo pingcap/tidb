@@ -1825,3 +1825,18 @@ func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Duplicate entry"), Equals, true)
 }
+
+// https://github.com/pingcap/tidb/issues/29483.
+func (s *testSuite13) TestReplaceAllocatingAutoID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists replace_auto_id;")
+	tk.MustExec("create database replace_auto_id;")
+	tk.MustExec(`use replace_auto_id;`)
+
+	tk.MustExec("SET sql_mode='NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (a tinyint not null auto_increment primary key, b char(20));")
+	tk.MustExec("INSERT INTO t1 VALUES (127,'maxvalue');")
+	// Note that this error is different from MySQL's duplicated primary key error.
+	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
+}
