@@ -16,8 +16,10 @@ package session
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
@@ -71,7 +73,20 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
 	}
-	return m.ctxProvider.GetStmtForUpdateTS()
+
+	ts, err := m.ctxProvider.GetStmtForUpdateTS()
+	if err != nil {
+		return 0, err
+	}
+
+	failpoint.Inject("assertTxnManagerForUpdateTSEqual", func() {
+		sessVars := m.sctx.GetSessionVars()
+		if txnCtxForUpdateTS := sessVars.TxnCtx.GetForUpdateTS(); sessVars.SnapshotTS == 0 && ts != txnCtxForUpdateTS {
+			panic(fmt.Sprintf("forUpdateTS not equal %d != %d", ts, txnCtxForUpdateTS))
+		}
+	})
+
+	return ts, nil
 }
 
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
