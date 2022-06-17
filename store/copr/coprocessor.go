@@ -932,7 +932,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
 		if strings.Contains(err.Error(), "write conflict") {
-			return nil, kv.ErrWriteConflict
+			return nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
 		}
 		return nil, errors.Trace(err)
 	}

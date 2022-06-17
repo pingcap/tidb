@@ -157,7 +157,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 	sessVars := p.sctx.GetSessionVars()
 	if sessVars.StmtCtx.RCCheckTS && errors.ErrorEqual(queryErr, kv.ErrWriteConflict) {
 		logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
-			zap.String("sql", sessVars.StmtCtx.OriginalSQL))
+			zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
 		return sessiontxn.RetryReady()
 	}
 
