@@ -2070,7 +2070,8 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
-	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
+	rowSize := getTblStats(sender.children[0]).GetAvgRowSize(sender.ctx, sender.children[0].Schema().Columns, false, false)
+	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
 	sender.cost = cst
 	receiver.cost = cst
 	return &mppTask{
