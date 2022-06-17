@@ -372,36 +372,6 @@ func TestBetweenExprCollation(t *testing.T) {
 	tk.MustGetErrMsg("select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;", "[expression:1270]Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'BETWEEN'")
 }
 
-func TestIssue34823(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("create table t1(a char(20));")
-	tk.MustExec("create table t2(b binary(20), c binary(20));")
-	tk.MustExec("insert into t1 value('-1');")
-	tk.MustExec("insert into t2 value(0x2D31, 0x67);")
-	tk.MustExec("insert into t2 value(0x2D31, 0x73);")
-	tk.MustQuery("select a from t1, t2 where t1.a between t2.b and t2.c;").Check(testkit.Rows())
-	tk.MustQuery("select a from t1, t2 where cast(t1.a as binary(20)) between t2.b and t2.c;").Check(testkit.Rows("-1", "-1"))
-}
-
-func TestBetweenExprBinaryCollationInSingleSide(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("create table t1(a char(20)) collate utf8mb4_general_ci;")
-	tk.MustExec("create table t2(b binary(20), c char(20)) collate utf8mb4_general_ci;")
-	tk.MustExec("insert into t1 values ('a');")
-	tk.MustExec("insert into t2 values (0x0, 'A');")
-	tk.MustQuery("select * from t1, t2 where t1.a between t2.b and t2.c;").Check(testkit.Rows())
-}
-
 func TestInsertOnDuplicateLazyMoreThan1Row(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -454,18 +424,4 @@ func TestMultiColInExpression(t *testing.T) {
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
-}
-
-func TestSingleColInExpressionBinaryCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("create table t1(a binary(20));")
-	tk.MustExec("create table t2(b char(20)) default charset=utf8mb4 collate=utf8mb4_bin;")
-	tk.MustExec("insert into t1 values (0x2d31);")
-	tk.MustExec("insert into t2 values ('-1');")
-	tk.MustQuery("select * from t1, t2 where t1.a in (t2.b, 3);").Check(testkit.Rows())
 }
