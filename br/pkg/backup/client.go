@@ -910,9 +910,17 @@ backupLoop:
 		})
 		bcli, err := client.Backup(ctx, &req)
 		failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
-			if val.(bool) {
-				logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
-				err = status.Error(codes.Unavailable, "Unavailable error")
+			switch val.(string) {
+			case "Unavaiable":
+				{
+					logutil.CL(ctx).Debug("failpoint reset-retryable-error unavailable injected.")
+					err = status.Error(codes.Unavailable, "Unavailable error")
+				}
+			case "Internal":
+				{
+					logutil.CL(ctx).Debug("failpoint reset-retryable-error internal injected.")
+					err = status.Error(codes.Internal, "Internal error")
+				}
 			}
 		})
 		failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
@@ -978,9 +986,15 @@ const (
 
 // isRetryableError represents whether we should retry reset grpc connection.
 func isRetryableError(err error) bool {
-
-	if status.Code(err) == codes.Unavailable {
-		return true
+	// some errors can be retried
+	// https://github.com/pingcap/tidb/issues/34350
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded,
+		codes.ResourceExhausted, codes.Aborted, codes.Internal:
+		{
+			log.Warn("backup met some errors, these errors can be retry 5 times", zap.Error(err))
+			return true
+		}
 	}
 
 	// At least, there are two possible cancel() call,
@@ -988,6 +1002,7 @@ func isRetryableError(err error) bool {
 	if status.Code(err) == codes.Canceled {
 		if s, ok := status.FromError(err); ok {
 			if strings.Contains(s.Message(), gRPC_Cancel) {
+				log.Warn("backup met grpc cancel error, this errors can be retry 5 times", zap.Error(err))
 				return true
 			}
 		}
