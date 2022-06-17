@@ -43,6 +43,10 @@ var HookBeforeFirstRunExecutorKey stringutil.StringerStr = "testHookKeyBeforeFir
 // Only for test
 var HookAfterOnStmtRetryWithLockErrorKey stringutil.StringerStr = "testHookKeyAfterOnStmtRetryWithLockError"
 
+var TestSessionStopBeforeExecutorFirstRun = "before executor first run"
+
+var TestSessionOnStmtRetryAfterLockError = "lock error, OnStmtRetry called"
+
 // RecordAssert is used only for test
 func RecordAssert(sctx sessionctx.Context, name string, value interface{}) {
 	records, ok := sctx.Value(AssertRecordsKey).(map[string]interface{})

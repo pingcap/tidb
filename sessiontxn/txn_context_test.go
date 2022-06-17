@@ -52,8 +52,7 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertNotStaleReadForExecutorGetReadTS", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/hookBeforeFirstRunExecutor", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/hookAfterOnStmtRetryWithLockError", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/sessionStop", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec", "return"))
@@ -85,8 +84,7 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertNotStaleReadForExecutorGetReadTS"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/hookBeforeFirstRunExecutor"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/hookAfterOnStmtRetryWithLockError"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/sessionStop"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec"))
@@ -709,6 +707,33 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("rollback")
+}
+
+func TestAA(t *testing.T) {
+	store, _, deferFunc := setupTxnContextTest(t)
+	defer deferFunc()
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	stops := []string{sessiontxn.TestSessionStopBeforeExecutorFirstRun, sessiontxn.TestSessionOnStmtRetryAfterLockError}
+	runner := testkit.NewMultiSessionsRunner(t, store)
+	s1 := runner.Session("s1").StopWhen(stops).Start(func(t *testing.T, tk *testkit.SessionThreadTestKit) {
+		tk.MustExec("use test")
+		tk.MustExec("begin pessimistic")
+		tk.EnableSessionStopPoint()
+		tk.MustQuery("select * from t1 for update").Check(testkit.Rows("1 12"))
+		tk.DisableSessionStopPoint()
+		tk.MustExec("rollback")
+	})
+
+	s1.Step().CheckCurrentStop(sessiontxn.TestSessionStopBeforeExecutorFirstRun)
+	tk2.MustExec("update t1 set v=v+1")
+	s1.Step().CheckCurrentStop(sessiontxn.TestSessionOnStmtRetryAfterLockError)
+	tk2.MustExec("update t1 set v=v+1")
+	s1.Step().CheckCurrentStop(sessiontxn.TestSessionOnStmtRetryAfterLockError)
+	s1.Step().CheckDone()
+	time.Sleep(time.Second)
 }
 
 // See issue: https://github.com/pingcap/tidb/issues/35459

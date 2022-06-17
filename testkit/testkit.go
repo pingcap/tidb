@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/multithreadtest"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -433,4 +434,92 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+type SessionThreadTestKit struct {
+	*TestKit
+	ch *multithreadtest.Chan
+}
+
+func (tk *SessionThreadTestKit) EnableSessionStopPoint() {
+	multithreadtest.EnableSessionStopPoint(tk.Session(), tk.ch)
+}
+
+func (tk *SessionThreadTestKit) DisableSessionStopPoint() {
+	multithreadtest.DisableSessionStopPoint(tk.Session())
+}
+
+type SessionThread struct {
+	*multithreadtest.Thread
+	t     *testing.T
+	store kv.Storage
+}
+
+func (s *SessionThread) StopWhen(stops []string) *SessionThread {
+	s.Thread.StopWhen(stops)
+	return s
+}
+
+func (s *SessionThread) StopWhenNot(stops []string) *SessionThread {
+	s.Thread.StopWhenNot(stops)
+	return s
+}
+
+func (s *SessionThread) StopForAllPoints() *SessionThread {
+	s.Thread.StopForAllPoints()
+	return s
+}
+
+func (s *SessionThread) Start(run func(t *testing.T, tk *SessionThreadTestKit)) *SessionThread {
+	s.Thread.Start(func(ch *multithreadtest.Chan, _ []any) []any {
+		tk := NewTestKit(s.t, s.store)
+		run(s.t, &SessionThreadTestKit{
+			TestKit: tk,
+			ch:      ch,
+		})
+		return nil
+	})
+	return s
+}
+
+func (s *SessionThread) Step() *SessionThread {
+	s.Thread.Step()
+	return s
+}
+
+func (s *SessionThread) StepUntilDone() *SessionThread {
+	s.Thread.StepUntilDone()
+	return s
+}
+
+func (s *SessionThread) CheckCurrentStop(name string) *SessionThread {
+	s.Thread.CheckCurrentStop(name)
+	return s
+}
+
+func (s *SessionThread) CheckDone() *SessionThread {
+	s.Thread.CheckDone()
+	return s
+}
+
+type MultiSessionsRunner struct {
+	*multithreadtest.ThreadsRunner
+	t     *testing.T
+	store kv.Storage
+}
+
+func NewMultiSessionsRunner(t *testing.T, store kv.Storage) *MultiSessionsRunner {
+	return &MultiSessionsRunner{
+		ThreadsRunner: multithreadtest.NewThreadsRunner(),
+		t:             t,
+		store:         store,
+	}
+}
+
+func (r *MultiSessionsRunner) Session(name string) *SessionThread {
+	return &SessionThread{
+		Thread: r.Thread(name),
+		t:      r.t,
+		store:  r.store,
+	}
 }

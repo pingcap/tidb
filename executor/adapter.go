@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/util/multithreadtest"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -417,8 +419,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
 
-	failpoint.Inject("hookBeforeFirstRunExecutor", func() {
-		sessiontxn.ExecTestHook(a.Ctx, sessiontxn.HookBeforeFirstRunExecutorKey)
+	failpoint.Inject("sessionStop", func() {
+		multithreadtest.SessionStop(a.Ctx, sessiontxn.TestSessionStopBeforeExecutorFirstRun)
 	})
 
 	if err = e.Open(ctx); err != nil {
@@ -798,8 +800,8 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, err
 	}
 
-	failpoint.Inject("hookAfterOnStmtRetryWithLockError", func() {
-		sessiontxn.ExecTestHook(a.Ctx, sessiontxn.HookAfterOnStmtRetryWithLockErrorKey)
+	failpoint.Inject("sessionStop", func() {
+		multithreadtest.SessionStop(a.Ctx, sessiontxn.TestSessionOnStmtRetryAfterLockError)
 	})
 
 	e, err := a.buildExecutor()
