@@ -54,13 +54,13 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.NoError(t, err)
 	forUpdateStmt := stmts[0]
 
-	compareTS := getOracleTS(t, se)
+	compareTS := se.GetSessionVars().TxnCtx.StartTS
 	// first ts should request from tso
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	ts, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
-	require.Greater(t, ts, compareTS)
+	require.Equal(t, ts, compareTS)
 	rcCheckTS := ts
 
 	// second ts should reuse first ts
