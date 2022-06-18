@@ -49,7 +49,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
-	provider := initializeRepeatableReadProvider(t, tk)
+	provider := initializeRepeatableReadProvider(t, tk, true)
 
 	var lockErr error
 
@@ -139,7 +139,7 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
-	provider := initializeRepeatableReadProvider(t, tk)
+	provider := initializeRepeatableReadProvider(t, tk, true)
 
 	stmts, _, err := parser.New().Parse("select * from t", "", "")
 	require.NoError(t, err)
@@ -224,7 +224,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 	// non-active txn and then active it
 	tk.MustExec("rollback")
 	tk.MustExec("set @@autocommit=0")
-	assert = inActivePessimisticRRAssert(se)
+	assert = inactivePessimisticRRAssert(se)
 	assertAfterActive := activePessimisticRRAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider := assert.CheckAndGetProvider(t)
@@ -237,7 +237,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 
 	// Case Pessimistic Autocommit
 	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
-	assert = inActivePessimisticRRAssert(se)
+	assert = inactivePessimisticRRAssert(se)
 	assertAfterActive = activePessimisticRRAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
@@ -315,7 +315,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 	tk.MustExec("rollback")
 	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
 	tk.MustExec("set @@autocommit=0")
-	assert = inActivePessimisticRRAssert(se)
+	assert = inactivePessimisticRRAssert(se)
 	assertAfterActive := activePessimisticRRAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
@@ -339,10 +339,11 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	tk.MustExec("create table t (id int primary key, v int)")
 	tk.MustExec("insert into t values (1,1), (2,2)")
 	se := tk.Session()
-	provider := initializeRepeatableReadProvider(t, tk)
+	provider := initializeRepeatableReadProvider(t, tk, true)
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
 	txnManager := sessiontxn.GetTxnManager(se)
 
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err := parser.New().ParseOneStmt("delete from t where id = 1", "", "")
 	require.NoError(t, err)
 	compareTs := getOracleTS(t, se)
@@ -358,6 +359,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.Greater(t, compareTs, ts)
 	require.Equal(t, ts, forUpdateTS)
 
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
 	require.NoError(t, err)
 	err = provider.OnStmtStart(context.TODO())
@@ -371,6 +373,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ts, forUpdateTS)
 
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err = parser.New().ParseOneStmt("select * from (select * from t where id = 1 for update) as t1 for update", "", "")
 	require.NoError(t, err)
 	err = provider.OnStmtStart(context.TODO())
@@ -435,12 +438,43 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.Greater(t, ts, compareTs)
 
 	// Now, test for one that does not use the optimization
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err = parser.New().ParseOneStmt("select * from t for update", "", "")
 	compareTs = getOracleTS(t, se)
 	require.NoError(t, err)
 	err = provider.OnStmtStart(context.TODO())
 	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
+	execStmt, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, ts, compareTs)
+
+	// Test use startTS after optimize when autocommit=0
+	activeAssert := activePessimisticRRAssert(t, tk.Session(), true)
+	provider = initializeRepeatableReadProvider(t, tk, false)
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
+	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
+	require.NoError(t, err)
+	execStmt, err = compiler.Compile(context.TODO(), stmt)
+	require.NoError(t, err)
+	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Same(t, provider, activeAssert.CheckAndGetProvider(t))
+	require.Equal(t, tk.Session().GetSessionVars().TxnCtx.StartTS, ts)
+
+	// Test still fetch for update ts after optimize when autocommit=0
+	compareTs = getOracleTS(t, se)
+	activeAssert = activePessimisticRRAssert(t, tk.Session(), true)
+	provider = initializeRepeatableReadProvider(t, tk, false)
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
+	stmt, err = parser.New().ParseOneStmt("select * from t", "", "")
+	require.NoError(t, err)
 	execStmt, err = compiler.Compile(context.TODO(), stmt)
 	require.NoError(t, err)
 	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
@@ -634,7 +668,7 @@ func activePessimisticRRAssert(t *testing.T, sctx sessionctx.Context,
 	}
 }
 
-func inActivePessimisticRRAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticRRTxnContextProvider] {
+func inactivePessimisticRRAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticRRTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticRRTxnContextProvider]{
 		sctx:         sctx,
 		isolation:    "REPEATABLE-READ",
@@ -643,9 +677,19 @@ func inActivePessimisticRRAssert(sctx sessionctx.Context) *txnAssert[*isolation.
 	}
 }
 
-func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit) *isolation.PessimisticRRTxnContextProvider {
+func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit, active bool) *isolation.PessimisticRRTxnContextProvider {
+	tk.MustExec("commit")
 	tk.MustExec("set @@tx_isolation = 'REPEATABLE-READ'")
-	assert := activePessimisticRRAssert(t, tk.Session(), true)
-	tk.MustExec("begin pessimistic")
+	tk.MustExec("set @@tidb_txn_mode= 'pessimistic'")
+
+	if active {
+		assert := activePessimisticRRAssert(t, tk.Session(), true)
+		tk.MustExec("begin pessimistic")
+		return assert.CheckAndGetProvider(t)
+	}
+
+	tk.MustExec("set @@autocommit=0")
+	assert := inactivePessimisticRRAssert(tk.Session())
+	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
 	return assert.CheckAndGetProvider(t)
 }

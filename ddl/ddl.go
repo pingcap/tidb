@@ -544,7 +544,7 @@ func (d *ddl) close() {
 	d.schemaSyncer.Close()
 
 	for _, worker := range d.workers {
-		worker.close()
+		worker.Close()
 	}
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -812,7 +812,11 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}
 }
 
-func (d *ddl) callHookOnChanged(err error) error {
+func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
+	if job.State == model.JobStateNone {
+		// We don't call the hook if the job haven't run yet.
+		return err
+	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
