@@ -410,7 +410,6 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTs)
 
-	provider = initializeRepeatableReadProvider(t, tk)
 	forUpdateTS = se.GetSessionVars().TxnCtx.GetForUpdateTS()
 	txnManager = sessiontxn.GetTxnManager(se)
 	// test for batch point get for update
