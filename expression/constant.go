@@ -452,7 +452,7 @@ func (c *Constant) Coercibility() Coercibility {
 	return c.collationInfo.Coercibility()
 }
 
-// TryUpdateCollate Update collate based on priority #35149
+// TryUpdateEQFunctionCollate Update collate based on priority #35149
 // Try to unify collate by priority before physical optimization.
 // After unifying collate, the impact of session level on some optimizations can be shielded
 func TryUpdateEQFunctionCollate(eq *ScalarFunction) {
@@ -465,6 +465,7 @@ func TryUpdateEQFunctionCollate(eq *ScalarFunction) {
 
 // ExpressionUpdateCollate checks whether the expression can be updated to the new collation.
 func expressionUpdateCollate(eq *ScalarFunction) bool {
+	// If left and right are columns/Constant, they have the same priority so don't consider this case
 	var col *Column
 	var con *Constant
 	colIsLeft := true
@@ -495,16 +496,18 @@ func expressionUpdateCollate(eq *ScalarFunction) bool {
 		return true
 	}
 
+	// In addition to utf8 and utf8mb4 encoding, other encodings are handled by the cast function
 	if col.GetType().GetCharset() != con.GetType().GetCharset() {
 		// utf8 is a subset of utf8mb4
 		// If the constant is utf8 and the column is utf8mb4, the constant can be directly converted to utf8mb4
 		if con.GetType().GetCharset() == "utf8" && col.GetType().GetCharset() == "utf8mb4" {
+			// The lower the coer value, the higher the priority
 			if col.Coercibility() < con.Coercibility() {
 				con.GetType().SetCharset(col.GetType().GetCharset())
 				con.GetType().SetCollate(col.GetType().GetCollate())
 			}
 		}
-
+		// The lower the coer value, the higher the priority
 	} else if col.Coercibility() < con.Coercibility() {
 		con.GetType().SetCollate(col.GetType().GetCollate())
 	}
