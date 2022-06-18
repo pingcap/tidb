@@ -103,9 +103,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 
-	//
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
-	// TODO get alloc id / cluster id from pd.
 	pdCli := mgr.GetPDClient()
 	clusterID := pdCli.GetClusterID(ctx)
 	allocID, err := pdCli.GetAllocID(ctx)
@@ -117,13 +115,15 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// NOTE: we should start snapshot in specify order.
 
 	// receive the volume info from TiDB deployment tools.
-	ebsCfg := &backup.EBSBackupConfig{}
-	err = ebsCfg.ConfigFromFile(cfg.VolumeFile)
+	backupInfo := &backup.EBSBackupInfo{}
+	err = backupInfo.ConfigFromFile(cfg.VolumeFile)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	backupInfo.SetClusterID(clusterID)
+	backupInfo.SetAllocID(allocID)
 
-	err = backup.StartsEBSSnapshot(ebsCfg)
+	err = backup.StartsEBSSnapshot(backupInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -11,8 +11,8 @@ import (
 )
 
 func TestParseConfig(t *testing.T) {
-	cfg := &EBSBackupConfig{}
+	cfg := &EBSBackupInfo{}
 	curDir, err := os.Getwd()
 	require.NoError(t, err)
-	require.NoError(t, cfg.ConfigFromFile(filepath.Join(curDir, "ebs_backup.toml")))
+	require.NoError(t, cfg.ConfigFromFile(filepath.Join(curDir, "ebs_backup.json")))
 }
