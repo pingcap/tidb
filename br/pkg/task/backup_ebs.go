@@ -4,6 +4,8 @@ package task
 
 import (
 	"context"
+	"encoding/json"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -75,7 +77,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 
 	// Step.1.1 get global resolved ts and stop gc until all volumes ebs snapshot starts.
 	// TODO: get resolved ts
-	resolvedTs := uint64(0)
+	resolvedTs, err := client.GetTS(ctx, 10*time.Minute, 0)
 	sp := utils.BRServiceSafePoint{
 		BackupTS: resolvedTs,
 		TTL:      utils.DefaultBRGCSafePointTTL,
@@ -110,6 +112,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	if err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("get pd cluster info", zap.Uint64("cluster-id", clusterID), zap.Uint64("alloc-id", allocID))
 
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
@@ -122,19 +125,36 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	}
 	backupInfo.SetClusterID(clusterID)
 	backupInfo.SetAllocID(allocID)
+	log.Info("get backup info from file", zap.Any("info", backupInfo))
 
-	err = backup.StartsEBSSnapshot(backupInfo)
+	sess, err := backup.NewEC2Session(backupInfo.Region)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	allVolumes, err := sess.StartsEBSSnapshot(backupInfo)
+	if err != nil {
+		// TODO maybe we should consider remove snapshots already exists in a failure
+		return errors.Trace(err)
+	}
+	log.Info("all ebs snapshots are starts.", zap.Int("count", len(allVolumes)))
+	err = sess.WaitEBSSnapshotFinished(allVolumes)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("all ebs snapshots are finished.", zap.Int("count", len(allVolumes)))
 
 	// Step.3 save backup meta file to s3.
 	externalStorage := client.GetStorage()
-	// TODO define the meta file in kvproto.
-	err = externalStorage.WriteFile(c, metautil.MetaFile, nil)
+	// NOTE: maybe define the meta file in kvproto in the future.
+	// but for now json is enough.
+	data, err := json.Marshal(backupInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	err = externalStorage.WriteFile(c, metautil.MetaFile, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("finished ebs backup.")
 	return nil
 }
