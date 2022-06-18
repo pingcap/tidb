@@ -814,7 +814,11 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk.MustExec("create user a@'%' identified by '';")
 	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "a", Hostname: "%"}, nil, nil))
 	tk.MustExec("grant select on mysql.stats_meta to a@'%';")
-	tk.MustExec("show stats_meta;")
+	tk.MustExec("grant select on mysql.stats_buckets to a@'%';")
+	tk.MustExec("grant select on mysql.stats_histograms to a@'%';")
+	tk1.MustExec("show stats_meta")
+	tk1.MustExec("SHOW STATS_BUCKETS")
+	tk1.MustExec("SHOW STATS_HISTOGRAMS")
 
 }
 
