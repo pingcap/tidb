@@ -69,13 +69,14 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 		return p.forUpdateTS, nil
 	}
 
-	if p.optimizeForNotFetchingLatestTS {
-		return p.getTxnStartTS()
-	}
-
 	var txn kv.Transaction
 	if txn, err = p.activeTxn(); err != nil {
 		return 0, err
+	}
+
+	if p.optimizeForNotFetchingLatestTS {
+		p.forUpdateTS = p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+		return p.forUpdateTS, nil
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
@@ -181,39 +182,13 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	//optimizeForNotFetchingLatestTS := false
-	//switch v := plan.(type) {
-	//case *plannercore.PhysicalLock:
-	//	if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
-	//		optimizeForNotFetchingLatestTS = true
-	//	}
-	//case *plannercore.PhysicalSelection:
-	//	if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
-	//		optimizeForNotFetchingLatestTS = true
-	//	}
-	//case *plannercore.Update:
-	//	if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
-	//		optimizeForNotFetchingLatestTS = true
-	//	}
-	//case *plannercore.Delete:
-	//	if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
-	//		optimizeForNotFetchingLatestTS = true
-	//	}
-	//case *plannercore.Insert:
-	//	if v.SelectPlan == nil {
-	//		optimizeForNotFetchingLatestTS = true
-	//	}
-	//case *plannercore.PointGetPlan, *plannercore.BatchPointGetPlan:
-	//	optimizeForNotFetchingLatestTS = true
-	//
-	//}
-
-	p.optimizeForNotFetchingLatestTS = unname(plan)
+	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS(plan)
 
 	return nil
 }
 
-func unname(plan plannercore.Plan) bool {
+// optimizeForNotFetchingLatestTS searches for optimization condition recursively
+func optimizeForNotFetchingLatestTS(plan plannercore.Plan) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
 		return true
@@ -225,7 +200,7 @@ func unname(plan plannercore.Plan) bool {
 		}
 		allChildrenArePointGet := true
 		for _, p := range v.Children() {
-			allChildrenArePointGet = allChildrenArePointGet && unname(p)
+			allChildrenArePointGet = allChildrenArePointGet && optimizeForNotFetchingLatestTS(p)
 		}
 		return allChildrenArePointGet
 	case *plannercore.Update:
