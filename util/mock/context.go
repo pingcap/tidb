@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
@@ -54,6 +55,7 @@ type Context struct {
 	cancel      context.CancelFunc
 	sm          util.SessionManager
 	pcache      *kvcache.SimpleLRUCache
+	level       kvrpcpb.DiskFullOpt
 }
 
 type wrapTxn struct {
@@ -90,12 +92,12 @@ func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 // SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
 func (c *Context) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	c.txn.Transaction.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	c.level = level
 }
 
 // ClearDiskFullOpt clears allowed options of current operation in each TiKV disk usage level.
 func (c *Context) ClearDiskFullOpt() {
-	c.txn.Transaction.ClearDiskFullOpt()
+	c.level = kvrpcpb.DiskFullOpt_NotAllowedOnFull
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
@@ -259,6 +261,7 @@ func (c *Context) RollbackTxn(ctx context.Context) {
 // CommitTxn indicates an expected call of CommitTxn.
 func (c *Context) CommitTxn(ctx context.Context) error {
 	defer c.sessionVars.SetInTxn(false)
+	c.txn.SetDiskFullOpt(c.level)
 	if c.txn.Valid() {
 		return c.txn.Commit(ctx)
 	}
@@ -384,6 +387,16 @@ func (c *Context) ReleaseAdvisoryLock(lockName string) bool {
 // ReleaseAllAdvisoryLocks releases all advisory locks
 func (c *Context) ReleaseAllAdvisoryLocks() int {
 	return 0
+}
+
+// EncodeSessionStates implements sessionctx.Context EncodeSessionStates interface.
+func (c *Context) EncodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+	return errors.Errorf("Not Supported")
+}
+
+// DecodeSessionStates implements sessionctx.Context DecodeSessionStates interface.
+func (c *Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+	return errors.Errorf("Not Supported")
 }
 
 // Close implements the sessionctx.Context interface.

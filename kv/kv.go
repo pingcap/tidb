@@ -341,9 +341,6 @@ type Request struct {
 	Desc bool
 	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
 	NotFillCache bool
-	// Streaming indicates using streaming API for this request, result in that one Next()
-	// call would not corresponds to a whole region result.
-	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
 	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.

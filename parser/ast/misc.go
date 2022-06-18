@@ -46,6 +46,7 @@ var (
 	_ StmtNode = &SetRoleStmt{}
 	_ StmtNode = &SetDefaultRoleStmt{}
 	_ StmtNode = &SetStmt{}
+	_ StmtNode = &SetSessionStatesStmt{}
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &FlushStmt{}
 	_ StmtNode = &KillStmt{}
@@ -1052,6 +1053,28 @@ func (n *SetConfigStmt) Accept(v Visitor) (Node, bool) {
 	} else {
 		n.Value = node.(ExprNode)
 	}
+	return v.Leave(n)
+}
+
+// SetSessionStatesStmt is a statement to restore session states.
+type SetSessionStatesStmt struct {
+	stmtNode
+
+	SessionStates string
+}
+
+func (n *SetSessionStatesStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SET SESSION_STATES ")
+	ctx.WriteString(n.SessionStates)
+	return nil
+}
+
+func (n *SetSessionStatesStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetSessionStatesStmt)
 	return v.Leave(n)
 }
 
@@ -3527,7 +3550,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "ordered_hash_join", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")

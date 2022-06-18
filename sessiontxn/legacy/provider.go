@@ -189,14 +189,15 @@ func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context) error {
 	return nil
 }
 
-// Advise is used to give advice to provider
-func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
-	switch tp {
-	case sessiontxn.AdviceWarmUp:
-		p.Sctx.PrepareTSFuture(p.Ctx)
-	}
-	return nil
-}
+//// todo: remove
+//// Advise is used to give advice to provider
+//func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
+//	switch tp {
+//	case sessiontxn.AdviceWarmUp:
+//		p.Sctx.PrepareTSFuture(p.Ctx)
+//	}
+//	return nil
+//}
 
 // activeTxn actives the txn
 func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
@@ -219,4 +220,15 @@ func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
 
 	p.isTxnActive = true
 	return txn, nil
+}
+
+// AdviseWarmup provides warmup for inner state
+func (p *SimpleTxnContextProvider) AdviseWarmup() error {
+	p.Sctx.PrepareTSFuture(p.Ctx)
+	return nil
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (p *SimpleTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	return nil
 }
