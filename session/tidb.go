@@ -128,7 +128,7 @@ var (
 	schemaLease = int64(1 * time.Second)
 
 	// statsLease is the time for reload stats table.
-	statsLease = int64(3 * time.Second)
+	statsLease = int64(100 * time.Millisecond)
 
 	// indexUsageSyncLease is the time for index usage synchronization.
 	// Because we have not completed GC and other functions, we set it to 0.
