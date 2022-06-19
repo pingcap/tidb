@@ -109,7 +109,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	var snapshot kv.Snapshot
 	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == e.snapshotTS {
 		// We can safely reuse the transaction snapshot if snapshotTS is equal to forUpdateTS.
-		// The snapshot may contains cache that can reduce RPC call.
+		// The snapshot may contain cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
 	} else {
 		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)

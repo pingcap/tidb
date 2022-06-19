@@ -352,7 +352,7 @@ func IsFastPlan(p plannercore.Plan) bool {
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
-// like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
+// like the INSERT, UPDATE statements, it executes in this function. If the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	defer func() {
