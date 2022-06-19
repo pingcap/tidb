@@ -25,14 +25,7 @@ buildsucc:
 
 all: dev server benchkv
 
-<<<<<<< HEAD
-parser:
-	@echo "remove this command later, when our CI script doesn't call it"
-
 dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev
-=======
-dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
->>>>>>> fe1b9915b... *: add parser generation command at the root (#35396)
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
