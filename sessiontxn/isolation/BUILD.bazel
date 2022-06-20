@@ -35,7 +35,7 @@ go_test(
     srcs = [
         "main_test.go",
         "readcommitted_test.go",
-        "repeatable_reat_test.go",
+        "repeatable_read_test.go",
         "serializable_test.go",
     ],
     deps = [
