@@ -1692,6 +1692,7 @@ func matchDuration(str string, fsp int) (Duration, bool, error) {
 
 	negative, rest := isNegativeDuration(str)
 	rest = parser.Space0(rest)
+	charsLen := len(rest)
 
 	hhmmss := [3]int{}
 
@@ -1708,7 +1709,7 @@ func matchDuration(str string, fsp int) (Duration, bool, error) {
 
 	rest = parser.Space0(rest)
 	overflow, frac, rest, err := matchFrac(rest, fsp)
-	if err != nil {
+	if err != nil || (len(rest) > 0 && charsLen >= 12) {
 		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 

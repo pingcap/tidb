@@ -1213,19 +1213,18 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
-		dur, isNull, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(f64s[i], 'f', -1, 64), b.tp.GetDecimal())
+		dur, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(f64s[i], 'f', -1, 64), b.tp.GetDecimal())
 		if err != nil {
-			if !types.ErrTruncatedWrongVal.Equal(err) {
-				return err
-			}
-			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-			if err != nil {
-				return err
-			}
-			if isNull {
+			if types.ErrTruncatedWrongVal.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+				if err != nil {
+					return err
+				}
+				// ErrTruncatedWrongVal needs to be considered NULL.
 				result.SetNull(i, true)
 				continue
 			}
+			return err
 		}
 		ds[i] = dur.Duration
 	}
@@ -1794,19 +1793,18 @@ func (b *builtinCastDecimalAsDurationSig) vecEvalDuration(input *chunk.Chunk, re
 		if result.IsNull(i) {
 			continue
 		}
-		dur, isNull, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(args[i].ToString()), b.tp.GetDecimal())
+		dur, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(args[i].ToString()), b.tp.GetDecimal())
 		if err != nil {
-			if !types.ErrTruncatedWrongVal.Equal(err) {
-				return err
-			}
-			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-			if err != nil {
-				return err
-			}
-			if isNull {
+			if types.ErrTruncatedWrongVal.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+				if err != nil {
+					return err
+				}
+				// ErrTruncatedWrongVal needs to be considered NULL.
 				result.SetNull(i, true)
 				continue
 			}
+			return err
 		}
 		ds[i] = dur.Duration
 	}
