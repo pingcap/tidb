@@ -1325,56 +1325,34 @@ func (c *Column) DropEvicted() {
 	}
 	switch c.evictedStatus {
 	case allLoaded:
-		if c.CMSketch != nil {
-			c.CMSketch = nil
-			c.evictedStatus = onlyCmsEvicted
+		if c.CMSketch != nil && c.StatsVer < Version2 {
+			c.dropCMS()
 			return
 		}
-
-	}
-
-	originTopNLen := int64(len(c.TopN.TopN))
-	switch c.StatsVer {
-	case Version2:
-		c.TopN = nil
-		if len(c.Histogram.Buckets) == 0 && originTopNLen >= c.Histogram.NDV {
-			c.evictedStatus = allEvicted
-			return
-		}
-		c.evictedStatus = onlyHistRemained
+		// For stats version2, there is no cms thus we directly drop topn
+		c.dropTopN()
+		return
+	case onlyCmsEvicted:
+		c.dropTopN()
 		return
 	default:
-		if c.evictedStatus == allLoaded && c.CMSketch != nil {
-			c.CMSketch = nil
-			c.evictedStatus = onlyCmsEvicted
-			return
-		}
-
+		return
 	}
+}
 
-	//<<<<<<< HEAD
-	//	if !c.wasLoaded {
-	//		return
-	//	}
-	//	switch c.StatsVer {
-	//	case Version2:
-	//		c.TopN = nil
-	//		c.topnEvicting = true
-	//	default:
-	//		if !c.cmsEvicting {
-	//			c.CMSketch = nil
-	//			c.cmsEvicting = true
-	//			return
-	//		}
-	//		if !c.topnEvicting {
-	//			c.TopN = nil
-	//			c.topnEvicting = true
-	//			return
-	//		}
-	//=======
-	if c.StatsVer < Version2 && c.IsStatsInitialized() {
-		c.CMSketch = nil
-		c.evictedStatus = onlyCmsEvicted
+func (c *Column) dropCMS() {
+	c.CMSketch = nil
+	c.evictedStatus = onlyCmsEvicted
+}
+
+func (c *Column) dropTopN() {
+	originTopNNum := int64(c.TopN.Num())
+	c.TopN = nil
+	if len(c.Histogram.Buckets) == 0 && originTopNNum >= c.Histogram.NDV {
+		// This indicates column has topn instead of histogram
+		c.evictedStatus = allEvicted
+	} else {
+		c.evictedStatus = onlyHistRemained
 	}
 }
 

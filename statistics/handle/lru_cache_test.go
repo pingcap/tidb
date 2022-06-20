@@ -25,6 +25,7 @@ import (
 var (
 	mockIndexCMSMemoryUsage    = int64(4)
 	mockColumnCMSMemoryUsage   = int64(4)
+	mockColumnTopNMemoryUsage  = int64(64)
 	mockColumnTotalMemoryUsage = statistics.EmptyHistogramSize + mockColumnCMSMemoryUsage
 	mockIndexTotalMemoryUsage  = statistics.EmptyHistogramSize + mockIndexCMSMemoryUsage
 )
@@ -209,6 +210,16 @@ func TestLRUFreshMemUsage(t *testing.T) {
 	lru.FreshMemUsage()
 	require.Equal(t, lru.TotalCost(), 7*mockColumnTotalMemoryUsage+7*mockIndexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 7*mockIndexCMSMemoryUsage+7*mockColumnCMSMemoryUsage)
+
+	mockTableRemoveColumn(t1)
+	lru.Put(int64(1), t1)
+	require.Equal(t, lru.TotalCost(), 6*mockColumnTotalMemoryUsage+7*mockIndexTotalMemoryUsage)
+	require.Equal(t, lru.Cost(), 7*mockIndexCMSMemoryUsage+6*mockColumnCMSMemoryUsage)
+
+	mockTableRemoveIndex(t1)
+	lru.Put(int64(1), t1)
+	require.Equal(t, lru.TotalCost(), 6*mockColumnTotalMemoryUsage+6*mockIndexTotalMemoryUsage)
+	require.Equal(t, lru.Cost(), 6*mockIndexCMSMemoryUsage+6*mockColumnCMSMemoryUsage)
 }
 
 func TestLRUPutTooBig(t *testing.T) {
@@ -267,21 +278,38 @@ func TestLRUEvictPolicy(t *testing.T) {
 	s := newStatsLruCache(capacity)
 	t1 := newMockStatisticsTable(1, 0, true, true)
 	s.Put(1, t1)
-	require.Equal(t, s.TotalCost(), mockColumnTotalMemoryUsage+statistics.TopNUnitSize)
-	require.Equal(t, s.Cost(), mockColumnCMSMemoryUsage+statistics.TopNUnitSize)
+	require.Equal(t, s.TotalCost(), mockColumnTotalMemoryUsage+mockColumnTopNMemoryUsage)
+	require.Equal(t, s.Cost(), mockColumnCMSMemoryUsage+mockColumnTopNMemoryUsage)
 	cost := s.Cost()
-	// assert cms got evicted and topn remained
+	// assert column's cms got evicted and topn remained
 	s.SetCapacity(cost - 1)
-	require.Equal(t, s.Cost(), statistics.TopNUnitSize)
-	require.Nil(t, t1.Columns[0].CMSketch)
-	require.True(t, t1.Columns[0].IsCMSEvicted())
-	require.NotNil(t, t1.Columns[0].TopN)
-	require.False(t, t1.Columns[0].IsTopNEvicted())
-	// assert both cms and topn got evicted
+	require.Equal(t, s.Cost(), mockColumnTopNMemoryUsage)
+	require.Nil(t, t1.Columns[1].CMSketch)
+	require.True(t, t1.Columns[1].IsCMSEvicted())
+	require.NotNil(t, t1.Columns[1].TopN)
+	require.False(t, t1.Columns[1].IsTopNEvicted())
+	// assert both column's cms and topn got evicted
 	s.SetCapacity(1)
 	require.Equal(t, s.Cost(), int64(0))
-	require.Nil(t, t1.Columns[0].CMSketch)
-	require.True(t, t1.Columns[0].IsCMSEvicted())
-	require.Nil(t, t1.Columns[0].TopN)
-	require.True(t, t1.Columns[0].IsTopNEvicted())
+	require.Nil(t, t1.Columns[1].CMSketch)
+	require.True(t, t1.Columns[1].IsCMSEvicted())
+	require.Nil(t, t1.Columns[1].TopN)
+	require.True(t, t1.Columns[1].IsTopNEvicted())
+
+	s = newStatsLruCache(capacity)
+	t2 := newMockStatisticsTable(0, 1, true, true)
+	s.Put(2, t2)
+	require.Equal(t, s.TotalCost(), mockIndexTotalMemoryUsage+mockColumnTopNMemoryUsage)
+	require.Equal(t, s.Cost(), mockIndexCMSMemoryUsage+mockColumnTopNMemoryUsage)
+	cost = s.Cost()
+	// assert index's cms got evicted and topn remained
+	s.SetCapacity(cost - 1)
+	require.Equal(t, s.Cost(), mockColumnTopNMemoryUsage)
+	require.Nil(t, t2.Indices[1].CMSketch)
+	require.NotNil(t, t2.Indices[1].TopN)
+	// assert both column's cms and topn got evicted
+	s.SetCapacity(1)
+	require.Equal(t, s.Cost(), int64(0))
+	require.Nil(t, t2.Indices[1].CMSketch)
+	require.Nil(t, t2.Indices[1].TopN)
 }

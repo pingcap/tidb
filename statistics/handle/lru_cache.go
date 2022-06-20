@@ -441,6 +441,7 @@ func (c *innerItemLruCache) evictIfNeeded() {
 			delete(c.elements[item.tblID][item.isIndex], item.id)
 		} else {
 			c.cache.PushFront(curr)
+			item.innerMemUsage = newMem
 		}
 		if c.onEvict != nil {
 			c.onEvict(item.tblID)

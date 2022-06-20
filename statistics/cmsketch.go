@@ -21,7 +21,6 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -37,8 +36,6 @@ import (
 	"github.com/twmb/murmur3"
 	"golang.org/x/exp/slices"
 )
-
-const TopNUnitSize = int64(unsafe.Sizeof(TopNMeta{}))
 
 // topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.
 const topNThreshold = uint64(10)
@@ -683,10 +680,14 @@ func (c *TopN) RemoveVal(val []byte) {
 
 // MemoryUsage returns the total memory usage of a topn.
 func (c *TopN) MemoryUsage() (sum int64) {
-	if c == nil || len(c.TopN) < 1 {
+	if c == nil {
 		return
 	}
-	return int64(cap(c.TopN)) * TopNUnitSize
+	sum = 32 // size of array (24) + reference (8)
+	for _, meta := range c.TopN {
+		sum += 32 + int64(cap(meta.Encoded)) // 32 is size of byte array (24) + size of uint64 (8)
+	}
+	return
 }
 
 // queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
