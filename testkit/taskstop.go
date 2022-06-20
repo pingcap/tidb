@@ -22,9 +22,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TaskFunc is the func for the task
 type TaskFunc func(ch *taskstop.Chan)
-type SessionTaskFunc func(ch *taskstop.Chan, tk *TestKit)
 
+// StoppableTask is a task object that can be paused
 type StoppableTask struct {
 	t       *testing.T
 	name    string
@@ -60,39 +61,47 @@ func (t *StoppableTask) setup(fn TaskFunc) {
 	t.record(t.currentStop)
 }
 
+// CurrentStop returns the task's current stop
 func (t *StoppableTask) CurrentStop() *taskstop.StopPoint {
 	return t.currentStop
 }
 
+// Start starts the task
 func (t *StoppableTask) Start() *StoppableTask {
 	return t.ExpectWaitingStart().Continue()
 }
 
+// Continue resumes the task
 func (t *StoppableTask) Continue() *StoppableTask {
 	t.step()
 	t.record(t.currentStop)
 	return t
 }
 
+// ExpectStoppedAt will check the task stops at the specified stop point
 func (t *StoppableTask) ExpectStoppedAt(name string) *StoppableTask {
 	require.Equal(t.t, name, t.currentStop.Name())
 	return t
 }
 
+// ExpectWaitingStart will check the task is waiting for start
 func (t *StoppableTask) ExpectWaitingStart() *StoppableTask {
 	require.Truef(t.t, t.IsWaitingStart(), "current stop: '%s'", t.currentStop.Name())
 	return t
 }
 
+// ExpectDone will check the task is done
 func (t *StoppableTask) ExpectDone() *StoppableTask {
 	require.Truef(t.t, t.IsDone(), "current stop: '%s'", t.currentStop.Name())
 	return t
 }
 
+// IsWaitingStart returns whether the current stop is waiting for start
 func (t *StoppableTask) IsWaitingStart() bool {
 	return t.currentStop.Name() == "START"
 }
 
+// IsDone returns whether the current stop is done
 func (t *StoppableTask) IsDone() bool {
 	return t.currentStop.Name() == "DONE"
 }
@@ -119,6 +128,7 @@ func (t *StoppableTask) waitNextStop() {
 	}
 }
 
+// StoppableTasksRunner is used to manage all StoppableTasks
 type StoppableTasksRunner struct {
 	t     *testing.T
 	tasks map[string]*StoppableTask
@@ -128,6 +138,7 @@ type StoppableTasksRunner struct {
 	}
 }
 
+// NewStoppableTasksRunner creates a new StoppableTasksRunner
 func NewStoppableTasksRunner(t *testing.T) *StoppableTasksRunner {
 	return &StoppableTasksRunner{
 		t:     t,
@@ -135,6 +146,7 @@ func NewStoppableTasksRunner(t *testing.T) *StoppableTasksRunner {
 	}
 }
 
+// CreateTask creates a new task
 func (r *StoppableTasksRunner) CreateTask(name string, fn TaskFunc) *StoppableTask {
 	if _, ok := r.tasks[name]; ok {
 		r.t.Fatalf("task '%s' already exists", name)
