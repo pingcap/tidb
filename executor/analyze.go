@@ -288,7 +288,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		StartAnalyzeJob(e.ctx, task.job)
 		switch task.taskType {
 		case colTask:
-			resultsCh <- analyzeColumnsPushdownWithRetry(task.colExec)
+			resultsCh <- analyzeColumnsPushDownEntry(task.colExec)
 		case idxTask:
 			resultsCh <- analyzeIndexPushdown(task.idxExec)
 		case fastTask:
