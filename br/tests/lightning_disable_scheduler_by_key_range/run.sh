@@ -60,11 +60,12 @@ ready_for_import_engine() {
   exit 1
 }
 
-run_curl() {
-  curl \
-    --cacert "$TEST_DIR/certs/ca.pem" \
-    --cert "$TEST_DIR/certs/curl.pem" \
-    --key "$TEST_DIR/certs/curl.key" \
+# FIXME: use `wget` instead of `curl` because the latter rejects ECC certs on our CI.
+run_wget() {
+  wget -q -O - \
+    --ca-certificate="$TEST_DIR/certs/ca.pem" \
+    --certificate="$TEST_DIR/certs/curl.pem" \
+    --private-key="$TEST_DIR/certs/curl.key" \
     "$@"
 }
 
@@ -72,19 +73,17 @@ ensure_lightning_is_started
 start_http_server
 ready_for_import_engine
 
-length=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
+length=$(run_wget "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
 if [ "$length" -ne 1 ]; then
   echo "region-label key-range rules should be 1, but got $length" >&2
   exit 1
 fi
 
-run_curl -X DELETE "https://localhost:${port}/fail/github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine"
+run_wget --method=DELETE "https://localhost:${port}/fail/github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine"
 wait "$shpid"
 
-run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules"
-
-length=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
-if [ "$length" -ne "0" ]; then
+length=$(run_wget "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
+if [ -n "$length" ] && [ "$length" -ne 0 ]; then
   echo "region-label key-range rules should be 0, but got $length" >&2
   exit 1
 fi
