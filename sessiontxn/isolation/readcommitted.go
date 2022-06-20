@@ -48,7 +48,8 @@ func (s *stmtState) prepareStmt(useStartTS bool) error {
 type PessimisticRCTxnContextProvider struct {
 	baseTxnContextProvider
 	stmtState
-	latestOracleTS      uint64
+	latestOracleTS uint64
+	// latestOracleTSValid shows whether we have already fetched a ts from pd and whether the ts we fetched is still valid.
 	latestOracleTSValid bool
 }
 
