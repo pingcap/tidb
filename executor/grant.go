@@ -163,7 +163,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				return errors.Trace(ErrPasswordFormat)
 			}
 			authPlugin := mysql.AuthNativePassword
-			if user.AuthOpt.AuthPlugin != "" {
+			if user.AuthOpt != nil && user.AuthOpt.AuthPlugin != "" {
 				authPlugin = user.AuthOpt.AuthPlugin
 			}
 			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx,
