@@ -25,9 +25,6 @@ buildsucc:
 
 all: dev server benchkv
 
-parser:
-	@echo "remove this command later, when our CI script doesn't call it"
-
 dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 	@>&2 echo "Great, all tests passed."
 
@@ -95,6 +92,9 @@ test_part_2: test_part_parser gotest gogenerate br_unit_test dumpling_unit_test
 test_part_parser: parser_yacc test_part_parser_dev
 
 test_part_parser_dev: parser_fmt parser_unit_test
+
+parser:
+	@cd parser && make parser
 
 parser_yacc:
 	@cd parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
@@ -327,6 +327,14 @@ build_for_br_integration_test:
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
+build_for_lightning_test:
+	@make failpoint-enable
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(LIGHTNING_BIN).test \
+		github.com/pingcap/tidb/br/cmd/tidb-lightning
+	@make failpoint-disable
+
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
@@ -430,13 +438,13 @@ bazel_prepare:
 bazel_test: failpoint-enable bazel_ci_prepare
 	bazel --output_user_root=/home/jenkins/.tidb/tmp test --config=ci  \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/lightning/log:log_test -//br/pkg/task:task_test
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 
 bazel_coverage_test: failpoint-enable bazel_ci_prepare
 	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/lightning/log:log_test -//br/pkg/task:task_test
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin

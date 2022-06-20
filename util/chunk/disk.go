@@ -18,7 +18,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"sync"
 
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -40,8 +39,6 @@ type ListInDisk struct {
 
 	dataFile   diskFileReaderWriter
 	offsetFile diskFileReaderWriter
-
-	chkPool *sync.Pool // Using a Chunk Pool to avoid constructing a chunk structure for each GetRow()
 }
 
 // diskFileReaderWriter represents a Reader and a Writer for the temporary disk file.
@@ -108,9 +105,6 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 		fieldTypes: fieldTypes,
 		// TODO(fengliyuan): set the quota of disk usage.
 		diskTracker: disk.NewTracker(memory.LabelForChunkListInDisk, -1),
-		chkPool: &sync.Pool{New: func() interface{} {
-			return NewChunkWithCapacity(fieldTypes, 1024)
-		}},
 	}
 	return l
 }
@@ -190,6 +184,12 @@ func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
 
 // GetRow gets a Row from the ListInDisk by RowPtr.
 func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
+	row, _, err = l.GetRowAndAppendToChunk(ptr, nil)
+	return row, err
+}
+
+// GetRowAndAppendToChunk gets a Row from the ListInDisk by RowPtr. Return the Row and the Ref Chunk.
+func (l *ListInDisk) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, _ *Chunk, err error) {
 	off, err := l.getOffset(ptr.ChkIdx, ptr.RowIdx)
 	if err != nil {
 		return
@@ -198,12 +198,10 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(r)
 	if err != nil {
-		return row, err
+		return row, nil, err
 	}
-	chk := l.chkPool.Get().(*Chunk)
 	row, chk = format.toRow(l.fieldTypes, chk)
-	l.chkPool.Put(chk)
-	return row, err
+	return row, chk, err
 }
 
 func (l *ListInDisk) getOffset(chkIdx uint32, rowIdx uint32) (int64, error) {
@@ -241,7 +239,6 @@ func (l *ListInDisk) Close() error {
 		terror.Call(l.offsetFile.disk.Close)
 		terror.Log(os.Remove(l.offsetFile.disk.Name()))
 	}
-	l.chkPool = nil
 	return nil
 }
 

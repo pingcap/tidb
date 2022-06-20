@@ -258,10 +258,14 @@ func LoadSchemaInfo(
 			tableName := tblInfo.Name.String()
 			if tblInfo.State != model.StatePublic {
 				err := errors.Errorf("table [%s.%s] state is not public", schema.Name, tableName)
-				metric.RecordTableCount(metric.TableStatePending, err)
+				if m, ok := metric.FromContext(ctx); ok {
+					m.RecordTableCount(metric.TableStatePending, err)
+				}
 				return nil, err
 			}
-			metric.RecordTableCount(metric.TableStatePending, err)
+			if m, ok := metric.FromContext(ctx); ok {
+				m.RecordTableCount(metric.TableStatePending, err)
+			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
