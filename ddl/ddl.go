@@ -389,6 +389,18 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
+		d.ownerManager.SetBeOwnerHook(func() {
+			err := kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+				t := meta.NewMeta(txn)
+				var err error
+				d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
+				return err
+			})
+			if err != nil {
+				logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
+			}
+		})
+
 		err := d.ownerManager.CampaignOwner()
 		if err != nil {
 			return errors.Trace(err)
@@ -408,15 +420,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
-		}
-
-		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
-			return err
-		})
-		if err != nil {
-			return err
 		}
 
 		go d.schemaSyncer.StartCleanWork()
