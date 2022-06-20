@@ -1662,6 +1662,9 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		servers   = make([]ServerInfo, 0, memberNum)
 		errs      = make([]error, 0, memberNum)
 	)
+	if memberNum == 0 {
+		return servers, nil
+	}
 	// Try on each member until one succeeds or all fail.
 	for _, addr := range members {
 		// Get PD version, git_hash
