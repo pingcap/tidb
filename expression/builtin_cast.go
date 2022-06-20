@@ -1930,8 +1930,8 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
-	tp.SetFlen(expr.GetType().GetFlen())
-	tp.SetDecimal(expr.GetType().GetDecimal())
+	tp.SetFlenUnderLimit(expr.GetType().GetFlen())
+	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
 
 	if expr.GetType().EvalType() == types.ETInt {
 		tp.SetFlen(mysql.MaxIntWidth)
@@ -1948,14 +1948,8 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		if !isnull && err == nil {
 			precision, frac := val.PrecisionAndFrac()
 			castTp := castExpr.GetType()
-			castTp.SetDecimal(frac)
-			castTp.SetFlen(precision)
-			if castTp.GetFlen() > mysql.MaxDecimalWidth {
-				castTp.SetFlen(mysql.MaxDecimalWidth)
-			}
-			if castTp.GetDecimal() > mysql.MaxDecimalScale {
-				castTp.SetDecimal(mysql.MaxDecimalScale)
-			}
+			castTp.SetDecimalUnderLimit(frac)
+			castTp.SetFlenUnderLimit(precision)
 		}
 	}
 	return castExpr

@@ -2392,8 +2392,8 @@ func ChangeReverseResultByUpperLowerBound(
 		resRetType.SetType(mysql.TypeDouble)
 	case KindMysqlDecimal:
 		resRetType.SetType(mysql.TypeNewDecimal)
-		resRetType.SetFlen(int(res.GetMysqlDecimal().GetDigitsFrac() + res.GetMysqlDecimal().GetDigitsInt()))
-		resRetType.SetDecimal(int(res.GetMysqlDecimal().GetDigitsInt()))
+		resRetType.SetFlenUnderLimit(int(res.GetMysqlDecimal().GetDigitsFrac() + res.GetMysqlDecimal().GetDigitsInt()))
+		resRetType.SetDecimalUnderLimit(int(res.GetMysqlDecimal().GetDigitsInt()))
 	}
 	bound := getDatumBound(&resRetType, rType)
 	cmp, err := d.Compare(sc, &bound, collate.GetCollator(resRetType.GetCollate()))
