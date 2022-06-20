@@ -364,25 +364,21 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 	}
 }
 
-func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
+func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
-		return nil
+		return nil, false
 	}
 	useLeftToBuild := (p.preferJoinType & preferLeftAsHashJoinBuild) > 0
 	useRightToBuild := (p.preferJoinType & preferRightAsHashJoinBuild) > 0
-	// TODO: report warning when both are true
-	if useLeftToBuild && useRightToBuild {
-		useLeftToBuild = false
-		useRightToBuild = false
-		p.preferJoinType ^= preferLeftAsHashJoinBuild
-		p.preferJoinType ^= preferRightAsHashJoinBuild
-		// report warning
-	}
+	forced := useLeftToBuild || useRightToBuild || (p.preferJoinType&preferHashJoin > 0)
 	joins := make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
-		// TODO: warning
+		if useLeftToBuild || useRightToBuild {
+			// Do not support specifying the build side.
+			forced = false
+		}
 	case LeftOuterJoin:
 		if !useLeftToBuild {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
@@ -409,7 +405,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 			joins = append(joins, p.getHashJoin(prop, 0, false))
 		}
 	}
-	return joins
+	return joins, forced
 }
 
 func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
@@ -1836,8 +1832,8 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	}
 	joins = append(joins, indexJoins...)
 
-	hashJoins := p.getHashJoins(prop)
-	if ((p.preferJoinType&preferHashJoin) > 0 || (p.preferJoinType&preferLeftAsHashJoinBuild) > 0 || (p.preferJoinType&preferRightAsHashJoinBuild) > 0) && len(hashJoins) > 0 {
+	hashJoins, forced := p.getHashJoins(prop)
+	if forced && len(hashJoins) > 0 {
 		return hashJoins, true, nil
 	}
 	joins = append(joins, hashJoins...)
