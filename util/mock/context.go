@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var (
@@ -176,6 +176,11 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return nil
 }
 
+// GetDomainInfoSchema returns the latest information schema in domain
+func (c *Context) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+	return nil
+}
+
 // GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
 func (c *Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
@@ -268,21 +273,6 @@ func (c *Context) CommitTxn(ctx context.Context) error {
 	return nil
 }
 
-// InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
-func (c *Context) InitTxnWithStartTS(startTS uint64) error {
-	if c.txn.Valid() {
-		return nil
-	}
-	if c.Store != nil {
-		txn, err := c.Store.Begin(tikv.WithTxnScope(kv.GlobalTxnScope), tikv.WithStartTS(startTS))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		c.txn.Transaction = txn
-	}
-	return nil
-}
-
 // GetStore gets the store of session.
 func (c *Context) GetStore() kv.Storage {
 	return c.Store
@@ -366,7 +356,13 @@ func (c *Context) HasLockedTables() bool {
 }
 
 // PrepareTSFuture implements the sessionctx.Context interface.
-func (c *Context) PrepareTSFuture(ctx context.Context) {
+func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error {
+	return nil
+}
+
+// GetPreparedTSFuture returns the prepared ts future
+func (c *Context) GetPreparedTSFuture() oracle.Future {
+	return nil
 }
 
 // GetStmtStats implements the sessionctx.Context interface.
