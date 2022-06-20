@@ -158,6 +158,35 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	return result
 }
 
+// MockInfoSchemaFromDBInfoWithSchemaVer only serves for test.
+// model.DBInfo.Tables should be filled.
+func MockInfoSchemaFromDBInfoWithSchemaVer(dbInfos []*model.DBInfo, schemaVer int64) InfoSchema {
+	result := &infoSchema{}
+	result.schemaMap = make(map[string]*schemaTables)
+	result.policyMap = make(map[string]*model.PolicyInfo)
+	result.ruleBundleMap = make(map[int64]*placement.Bundle)
+	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+
+	for _, dbInfo := range dbInfos {
+		tables := make(map[string]table.Table, len(dbInfo.Tables))
+		result.schemaMap[dbInfo.Name.L] = &schemaTables{
+			dbInfo: dbInfo,
+			tables: tables,
+		}
+		for _, tblInfo := range dbInfo.Tables {
+			tbl := table.MockTableFromMeta(tblInfo)
+			tables[tblInfo.Name.L] = tbl
+			bucketIdx := tableBucketIdx(tblInfo.ID)
+			result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
+		}
+	}
+	for i := range result.sortedTablesBuckets {
+		sort.Sort(result.sortedTablesBuckets[i])
+	}
+	result.schemaMetaVersion = schemaVer
+	return result
+}
+
 var _ InfoSchema = (*infoSchema)(nil)
 
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {

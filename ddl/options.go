@@ -19,6 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -27,11 +29,12 @@ type Option func(*Options)
 
 // Options represents all the options of the DDL module needs
 type Options struct {
-	EtcdCli   *clientv3.Client
-	Store     kv.Storage
-	InfoCache *infoschema.InfoCache
-	Hook      Callback
-	Lease     time.Duration
+	EtcdCli          *clientv3.Client
+	Store            kv.Storage
+	InfoCache        *infoschema.InfoCache
+	Hook             Callback
+	Lease            time.Duration
+	DoDDLJobInjected func(ctx sessionctx.Context, job *model.Job) error
 }
 
 // WithEtcdClient specifies the `clientv3.Client` of DDL used to request the etcd service
@@ -66,5 +69,12 @@ func WithHook(callback Callback) Option {
 func WithLease(lease time.Duration) Option {
 	return func(options *Options) {
 		options.Lease = lease
+	}
+}
+
+// WithDoDDLJob specifies another implementation of DDL.DoDDLJob.
+func WithDoDDLJob(f func(ctx sessionctx.Context, job *model.Job) error) Option {
+	return func(options *Options) {
+		options.DoDDLJobInjected = f
 	}
 }

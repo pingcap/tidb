@@ -1836,6 +1836,8 @@ func init() {
 	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
 		return GetDomain(ctx).InfoSchema()
 	}
+	d := &Domain{}
+	ddl.FetchAllSchemasWithTables = d.fetchAllSchemasWithTables
 }
 
 var (

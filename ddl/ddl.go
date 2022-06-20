@@ -206,6 +206,8 @@ type ddl struct {
 	sessPool          *sessionPool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
+
+	doDDLJobInjected func(ctx sessionctx.Context, job *model.Job) error
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -438,6 +440,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
+		doDDLJobInjected:  opt.DoDDLJobInjected,
 	}
 
 	return d
@@ -709,6 +712,10 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	if d.doDDLJobInjected != nil {
+		return d.doDDLJobInjected(ctx, job)
+	}
+
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
