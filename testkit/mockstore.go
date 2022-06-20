@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -38,9 +37,6 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (store
 
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TokenLimit = 100000
-	})
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	dom, clean := bootstrap(t, store, 0)
