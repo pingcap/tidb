@@ -68,13 +68,14 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 		return p.forUpdateTS, nil
 	}
 
-	if p.followingOperatorIsPointGetForUpdate {
-		return p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS(), nil
-	}
-
 	var txn kv.Transaction
 	if txn, err = p.activateTxn(); err != nil {
 		return 0, err
+	}
+
+	if p.followingOperatorIsPointGetForUpdate {
+		p.forUpdateTS = p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+		return p.forUpdateTS, nil
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx

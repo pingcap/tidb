@@ -259,6 +259,15 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	return err
 }
 
+// MustExecToErr executes a sql statement and must return Error.
+func (tk *TestKit) MustExecToErr(sql string, args ...interface{}) {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.require.NoError(res.Close())
+	}
+	tk.require.Error(err)
+}
+
 func newSession(t testing.TB, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -288,6 +297,12 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
 	err := tk.ExecToErr(sql)
 	tk.require.EqualError(err, errStr)
+}
+
+// MustGetDBError executes a sql statement and assert its terror.
+func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
+	err := tk.ExecToErr(sql)
+	tk.require.Truef(terror.ErrorEqual(err, dberr), "err %v", err)
 }
 
 // MustContainErrMsg executes a sql statement and assert its error message containing errStr.

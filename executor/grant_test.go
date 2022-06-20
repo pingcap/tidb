@@ -260,6 +260,13 @@ func TestCreateUserWhenGrant(t *testing.T) {
 		testkit.Rows("test"),
 	)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	// Grant without a password.
+	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%'`)
+	// Make sure user is created automatically when grant to a non-exists one.
+	tk.MustQuery(`SELECT user, plugin FROM mysql.user WHERE user='test' and host='%'`).Check(
+		testkit.Rows("test mysql_native_password"),
+	)
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 }
 
 func TestCreateUserWithTooLongName(t *testing.T) {

@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
@@ -3491,4 +3492,14 @@ func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
 
 func (s *session) GetStmtStats() *stmtstats.StatementStats {
 	return s.stmtStats
+}
+
+// EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
+func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	return s.sessionVars.EncodeSessionStates(ctx, sessionStates)
+}
+
+// DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
+func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	return s.sessionVars.DecodeSessionStates(ctx, sessionStates)
 }
