@@ -37,7 +37,7 @@ type dbMetaMgrBuilder struct {
 func (b *dbMetaMgrBuilder) Init(ctx context.Context) error {
 	exec := common.SQLWithRetry{
 		DB:           b.db,
-		Logger:       log.L(),
+		Logger:       log.FromContext(ctx),
 		HideQueryLog: redact.NeedRedact(),
 	}
 	metaDBSQL := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", common.EscapeIdentifier(b.schema))
@@ -96,6 +96,8 @@ type dbTableMetaMgr struct {
 	tr           *TableRestore
 	tableName    string
 	needChecksum bool
+
+	logger log.Logger
 }
 
 func (m *dbTableMetaMgr) InitTableMeta(ctx context.Context) error {
@@ -382,10 +384,10 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		ck := verify.MakeKVChecksum(baseTotalBytes, baseTotalKvs, baseChecksum)
 		checksum = &ck
 	}
-	log.L().Info("allocate table row_id base", zap.String("table", m.tr.tableName),
+	log.FromContext(ctx).Info("allocate table row_id base", zap.String("table", m.tr.tableName),
 		zap.Int64("row_id_base", newRowIDBase))
 	if checksum != nil {
-		log.L().Info("checksum base", zap.Any("checksum", checksum))
+		log.FromContext(ctx).Info("checksum base", zap.Any("checksum", checksum))
 	}
 	return checksum, newRowIDBase, nil
 }
@@ -519,7 +521,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		ck := verify.MakeKVChecksum(totalBytes, totalKvs, totalChecksum)
 		baseTotalChecksum = &ck
 	}
-	log.L().Info("check table checksum", zap.String("table", m.tr.tableName),
+	log.FromContext(ctx).Info("check table checksum", zap.String("table", m.tr.tableName),
 		zap.Bool("checksum", needChecksum), zap.String("new_status", newStatus.String()))
 	return
 }
@@ -536,7 +538,7 @@ func (m *dbTableMetaMgr) FinishTable(ctx context.Context) error {
 func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tableName string) error {
 	exec := &common.SQLWithRetry{
 		DB:     db,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	query := fmt.Sprintf("DELETE FROM %s", metaTable)
 	var args []interface{}
@@ -636,7 +638,7 @@ type storedCfgs struct {
 func (m *dbTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	stmt := fmt.Sprintf(`INSERT INTO %s (task_id, status, source_bytes) values (?, ?, ?) ON DUPLICATE KEY UPDATE state = ?`, m.tableName)
@@ -647,7 +649,7 @@ func (m *dbTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
 func (m *dbTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	exist := false
@@ -689,7 +691,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -747,7 +749,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -830,7 +832,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 			// try to rollback the stopped schedulers
 			cancelFunc := m.pd.MakeUndoFunctionByConfig(pausedCfg.RestoreCfg)
 			if err1 := cancelFunc(ctx); err1 != nil {
-				log.L().Warn("undo remove schedulers failed", zap.Error(err1))
+				log.FromContext(ctx).Warn("undo remove schedulers failed", zap.Error(err1))
 			}
 			return errors.Trace(err)
 		}
@@ -878,7 +880,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -923,7 +925,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 				allFinished = false
 				// check if other task still running
 				if state == taskStateNormal {
-					log.L().Info("unfinished task found", zap.Int64("task_id", taskID),
+					log.FromContext(ctx).Info("unfinished task found", zap.Int64("task_id", taskID),
 						zap.Stringer("status", status))
 					switchBack = false
 				}
@@ -957,7 +959,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 
 		return nil
 	})
-	log.L().Info("check all task finish status", zap.Bool("task_finished", finished),
+	log.FromContext(ctx).Info("check all task finish status", zap.Bool("task_finished", finished),
 		zap.Bool("all_finished", allFinished), zap.Bool("switch_back", switchBack))
 
 	return switchBack, allFinished, err
@@ -966,7 +968,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 func (m *dbTaskMetaMgr) Cleanup(ctx context.Context) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	stmt := fmt.Sprintf("DROP TABLE %s;", m.tableName)
@@ -979,7 +981,7 @@ func (m *dbTaskMetaMgr) Cleanup(ctx context.Context) error {
 func (m *dbTaskMetaMgr) CleanupTask(ctx context.Context) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	stmt := fmt.Sprintf("DELETE FROM %s WHERE task_id = %d;", m.tableName, m.taskID)
 	err := exec.Exec(ctx, "clean up task", stmt)
@@ -991,14 +993,20 @@ func (m *dbTaskMetaMgr) Close() {
 }
 
 func (m *dbTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
-	return MaybeCleanupAllMetas(ctx, m.session, m.schemaName, true)
+	return MaybeCleanupAllMetas(ctx, log.FromContext(ctx), m.session, m.schemaName, true)
 }
 
 // MaybeCleanupAllMetas remove the meta schema if there is no unfinished tables
-func MaybeCleanupAllMetas(ctx context.Context, db *sql.DB, schemaName string, tableMetaExist bool) error {
+func MaybeCleanupAllMetas(
+	ctx context.Context,
+	logger log.Logger,
+	db *sql.DB,
+	schemaName string,
+	tableMetaExist bool,
+) error {
 	exec := &common.SQLWithRetry{
 		DB:     db,
-		Logger: log.L(),
+		Logger: logger,
 	}
 
 	// check if all tables are finished
@@ -1009,7 +1017,7 @@ func MaybeCleanupAllMetas(ctx context.Context, db *sql.DB, schemaName string, ta
 			return errors.Trace(err)
 		}
 		if cnt > 0 {
-			log.L().Warn("there are unfinished table in table meta table, cleanup skipped.")
+			logger.Warn("there are unfinished table in table meta table, cleanup skipped.")
 			return nil
 		}
 	}

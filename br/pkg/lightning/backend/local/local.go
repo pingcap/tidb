@@ -376,7 +376,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 			client, err1 := local.getImportClient(ctx, s.Id)
 			if err1 != nil {
 				err = err1
-				log.L().Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
+				log.FromContext(ctx).Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
 				continue
 			}
 			_, err = client.MultiIngest(ctx, &sst.MultiIngestRequest{})
@@ -385,12 +385,12 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 			}
 			if st, ok := status.FromError(err); ok {
 				if st.Code() == codes.Unimplemented {
-					log.L().Info("multi ingest not support", zap.Any("unsupported store", s))
+					log.FromContext(ctx).Info("multi ingest not support", zap.Any("unsupported store", s))
 					local.supportMultiIngest = false
 					return nil
 				}
 			}
-			log.L().Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
+			log.FromContext(ctx).Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
 				zap.Int("retry", i))
 		}
 		if err != nil {
@@ -399,14 +399,14 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 			if hasTiFlash {
 				return errors.Trace(err)
 			}
-			log.L().Warn("check multi failed all retry, fallback to false", log.ShortError(err))
+			log.FromContext(ctx).Warn("check multi failed all retry, fallback to false", log.ShortError(err))
 			local.supportMultiIngest = false
 			return nil
 		}
 	}
 
 	local.supportMultiIngest = true
-	log.L().Info("multi ingest support")
+	log.FromContext(ctx).Info("multi ingest support")
 	return nil
 }
 
@@ -467,10 +467,18 @@ func (local *local) Close() {
 	allEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
 	local.engines = sync.Map{}
 
-	for _, engine := range allEngines {
+	var (
+		engine *Engine
+		logger log.Logger
+	)
+
+	for _, engine = range allEngines {
 		engine.Close()
 		engine.unlock()
 	}
+
+	logger = engine.logger
+
 	local.importClientFactory.Close()
 	local.bufferPool.Destroy()
 
@@ -480,22 +488,22 @@ func (local *local) Close() {
 		hasDuplicates := iter.First()
 		allIsWell := true
 		if err := iter.Error(); err != nil {
-			log.L().Warn("iterate duplicate db failed", zap.Error(err))
+			logger.Warn("iterate duplicate db failed", zap.Error(err))
 			allIsWell = false
 		}
 		if err := iter.Close(); err != nil {
-			log.L().Warn("close duplicate db iter failed", zap.Error(err))
+			logger.Warn("close duplicate db iter failed", zap.Error(err))
 			allIsWell = false
 		}
 		if err := local.duplicateDB.Close(); err != nil {
-			log.L().Warn("close duplicate db failed", zap.Error(err))
+			logger.Warn("close duplicate db failed", zap.Error(err))
 			allIsWell = false
 		}
 		// If checkpoint is disabled, or we don't detect any duplicate, then this duplicate
 		// db dir will be useless, so we clean up this dir.
 		if allIsWell && (!local.checkpointEnabled || !hasDuplicates) {
 			if err := os.RemoveAll(filepath.Join(local.localStoreDir, duplicateDBName)); err != nil {
-				log.L().Warn("remove duplicate db file failed", zap.Error(err))
+				logger.Warn("remove duplicate db file failed", zap.Error(err))
 			}
 		}
 		local.duplicateDB = nil
@@ -506,7 +514,7 @@ func (local *local) Close() {
 	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
 		err := os.RemoveAll(local.localStoreDir)
 		if err != nil {
-			log.L().Warn("remove local db file failed", zap.Error(err))
+			logger.Warn("remove local db file failed", zap.Error(err))
 		}
 	}
 
@@ -666,6 +674,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			duplicateDetection: local.duplicateDetection,
 			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
+			logger:             log.FromContext(ctx),
 		}
 		engine.sstIngester = dbSSTIngester{e: engine}
 		if err = engine.loadEngineMeta(); err != nil {
@@ -742,7 +751,7 @@ func (local *local) WriteToTiKV(
 				break
 			}
 			if e != nil {
-				log.L().Error("failed to get StoreInfo from pd http api", zap.Error(e))
+				log.FromContext(ctx).Error("failed to get StoreInfo from pd http api", zap.Error(e))
 			}
 		}
 	}
@@ -759,7 +768,7 @@ func (local *local) WriteToTiKV(
 		return nil, Range{}, stats, errors.Annotate(iter.Error(), "failed to read the first key")
 	}
 	if !iter.Valid() {
-		log.L().Info("keys within region is empty, skip ingest", logutil.Key("start", start),
+		log.FromContext(ctx).Info("keys within region is empty, skip ingest", logutil.Key("start", start),
 			logutil.Key("regionStart", region.Region.StartKey), logutil.Key("end", end),
 			logutil.Key("regionEnd", region.Region.EndKey))
 		return nil, regionRange, stats, nil
@@ -884,20 +893,20 @@ func (local *local) WriteToTiKV(
 		}
 		if leaderID == region.Region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
-			log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
+			log.FromContext(ctx).Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
 		}
 	}
 
 	// if there is not leader currently, we should directly return an error
 	if len(leaderPeerMetas) == 0 {
-		log.L().Warn("write to tikv no leader", logutil.Region(region.Region), logutil.Leader(region.Leader),
+		log.FromContext(ctx).Warn("write to tikv no leader", logutil.Region(region.Region), logutil.Leader(region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
 		return nil, Range{}, stats, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
 			region.Region.Id, leaderID)
 	}
 
-	log.L().Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
+	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size),
 		zap.Int64("buf_size", bytesBuf.TotalSize()),
@@ -907,7 +916,7 @@ func (local *local) WriteToTiKV(
 	if iter.Valid() && iter.Next() {
 		firstKey := append([]byte{}, iter.Key()...)
 		finishedRange = Range{start: regionRange.start, end: firstKey}
-		log.L().Info("write to tikv partial finish", zap.Int64("count", totalCount),
+		log.FromContext(ctx).Info("write to tikv partial finish", zap.Int64("count", totalCount),
 			zap.Int64("size", size), logutil.Key("startKey", regionRange.start), logutil.Key("endKey", regionRange.end),
 			logutil.Key("remainStart", firstKey), logutil.Key("remainEnd", regionRange.end),
 			logutil.Region(region.Region), logutil.Leader(region.Leader))
@@ -1023,7 +1032,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 		return ranges, nil
 	}
 
-	logger := log.With(zap.Stringer("engine", engine.UUID))
+	logger := log.FromContext(ctx).With(zap.Stringer("engine", engine.UUID))
 	sizeProps, err := getSizeProperties(logger, engine.db, local.keyAdapter)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1060,7 +1069,7 @@ func (local *local) writeAndIngestByRange(
 		return errors.Annotate(iter.Error(), "failed to read the first key")
 	}
 	if !hasKey {
-		log.L().Info("There is no pairs in iterator",
+		log.FromContext(ctxt).Info("There is no pairs in iterator",
 			logutil.Key("start", start),
 			logutil.Key("end", end))
 		engine.finishedRanges.add(Range{start: start, end: end})
@@ -1091,14 +1100,14 @@ WriteAndIngest:
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
 		regions, err = split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 		if err != nil || len(regions) == 0 {
-			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
+			log.FromContext(ctx).Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
 				logutil.Key("startKey", startKey), logutil.Key("endKey", endKey), zap.Int("retry", retry))
 			retry++
 			continue WriteAndIngest
 		}
 
 		for _, region := range regions {
-			log.L().Debug("get region", zap.Int("retry", retry), zap.Binary("startKey", startKey),
+			log.FromContext(ctx).Debug("get region", zap.Int("retry", retry), zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey), zap.Uint64("id", region.Region.GetId()),
 				zap.Stringer("epoch", region.Region.GetRegionEpoch()), zap.Binary("start", region.Region.GetStartKey()),
 				zap.Binary("end", region.Region.GetEndKey()), zap.Reflect("peers", region.Region.GetPeers()))
@@ -1117,7 +1126,7 @@ WriteAndIngest:
 				} else {
 					retry++
 				}
-				log.L().Info("retry write and ingest kv pairs", logutil.Key("startKey", pairStart),
+				log.FromContext(ctx).Info("retry write and ingest kv pairs", logutil.Key("startKey", pairStart),
 					logutil.Key("endKey", end), log.ShortError(err), zap.Int("retry", retry))
 				continue WriteAndIngest
 			}
@@ -1158,7 +1167,7 @@ loopWrite:
 				return err
 			}
 
-			log.L().Warn("write to tikv failed", log.ShortError(err), zap.Int("retry", i))
+			log.FromContext(ctx).Warn("write to tikv failed", log.ShortError(err), zap.Int("retry", i))
 			continue loopWrite
 		}
 
@@ -1177,7 +1186,7 @@ loopWrite:
 			ingestMetas := metas[start:end]
 			errCnt := 0
 			for errCnt < maxRetryTimes {
-				log.L().Debug("ingest meta", zap.Reflect("meta", ingestMetas))
+				log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 				var resp *sst.IngestResponse
 				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
 					// only inject the error once
@@ -1211,7 +1220,7 @@ loopWrite:
 					if common.IsContextCanceledError(err) {
 						return err
 					}
-					log.L().Warn("ingest failed", log.ShortError(err), logutil.SSTMetas(ingestMetas),
+					log.FromContext(ctx).Warn("ingest failed", log.ShortError(err), logutil.SSTMetas(ingestMetas),
 						logutil.Region(region.Region), logutil.Leader(region.Leader))
 					errCnt++
 					continue
@@ -1229,7 +1238,7 @@ loopWrite:
 				}
 				switch retryTy {
 				case retryNone:
-					log.L().Warn("ingest failed noretry", log.ShortError(err), logutil.SSTMetas(ingestMetas),
+					log.FromContext(ctx).Warn("ingest failed noretry", log.ShortError(err), logutil.SSTMetas(ingestMetas),
 						logutil.Region(region.Region), logutil.Leader(region.Leader))
 					// met non-retryable error retry whole Write procedure
 					return err
@@ -1244,7 +1253,7 @@ loopWrite:
 		}
 
 		if err != nil {
-			log.L().Warn("write and ingest region, will retry import full range", log.ShortError(err),
+			log.FromContext(ctx).Warn("write and ingest region, will retry import full range", log.ShortError(err),
 				logutil.Region(region.Region), logutil.Key("start", start),
 				logutil.Key("end", end))
 		} else {
@@ -1264,10 +1273,10 @@ loopWrite:
 func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, ranges []Range, regionSplitSize int64, regionSplitKeys int64) error {
 	if engine.Length.Load() == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
-		log.L().Info("engine contains no data", zap.Stringer("uuid", engine.UUID))
+		log.FromContext(ctx).Info("engine contains no data", zap.Stringer("uuid", engine.UUID))
 		return nil
 	}
-	log.L().Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
+	log.FromContext(ctx).Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
 
 	var allErrLock sync.Mutex
 	var allErr error
@@ -1300,7 +1309,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				if !common.IsRetryableError(err) {
 					break
 				}
-				log.L().Warn("write and ingest by range failed",
+				log.FromContext(ctx).Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
 				backOffTime *= 2
 				if backOffTime > maxRetryBackoffTime {
@@ -1342,7 +1351,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	lfTotalSize := lf.TotalSize.Load()
 	lfLength := lf.Length.Load()
 	if lfTotalSize == 0 {
-		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
+		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
 	kvRegionSplitSize, kvRegionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
@@ -1354,7 +1363,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			regionSplitKeys = kvRegionSplitKeys
 		}
 	} else {
-		log.L().Warn("fail to get region split keys and size", zap.Error(err))
+		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
 
 	// split sorted file into range by 96MB size per file
@@ -1363,14 +1372,14 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		return err
 	}
 
-	log.L().Info("start import engine", zap.Stringer("uuid", engineUUID),
+	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
 		zap.Int("ranges", len(ranges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
 	for {
 		unfinishedRanges := lf.unfinishedRanges(ranges)
 		if len(unfinishedRanges) == 0 {
 			break
 		}
-		log.L().Info("import engine unfinished ranges", zap.Int("count", len(unfinishedRanges)))
+		log.FromContext(ctx).Info("import engine unfinished ranges", zap.Int("count", len(unfinishedRanges)))
 
 		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 		// the table when table is created.
@@ -1382,37 +1391,37 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 				break
 			}
 
-			log.L().Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
 				log.ShortError(err), zap.Int("retry", i))
 		}
 		if err != nil {
-			log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
+			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
 			return err
 		}
 
 		// start to write to kv and ingest
 		err = local.writeAndIngestByRanges(ctx, lf, unfinishedRanges, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			log.L().Error("write and ingest engine failed", log.ShortError(err))
+			log.FromContext(ctx).Error("write and ingest engine failed", log.ShortError(err))
 			return err
 		}
 	}
 
-	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID),
+	log.FromContext(ctx).Info("import engine success", zap.Stringer("uuid", engineUUID),
 		zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength),
 		zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
 	return nil
 }
 
 func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
-	logger := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
+	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe)
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1423,14 +1432,14 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 }
 
 func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
-	logger := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
+	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe)
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1441,7 +1450,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 }
 
 func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
-	logger := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
+	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
 	}()
@@ -1459,7 +1468,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
 	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &kv.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
-	})
+	}, log.FromContext(ctx))
 	if err != nil {
 		return err
 	}
@@ -1541,7 +1550,7 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	if localEngine == nil {
-		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
 	defer localEngine.unlock()
@@ -1574,7 +1583,7 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	// release this engine after import success
 	if localEngine == nil {
-		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
 	defer localEngine.unlock()
@@ -1651,7 +1660,7 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 		return nil
 	}
 
-	res, err := g.GetSQLExecutor().QueryStringsWithLog(ctx, tiFlashReplicaQuery, "fetch tiflash replica info", log.L())
+	res, err := g.GetSQLExecutor().QueryStringsWithLog(ctx, tiFlashReplicaQuery, "fetch tiflash replica info", log.FromContext(ctx))
 	if err != nil {
 		return errors.Annotate(err, "fetch tiflash replica info failed")
 	}
@@ -1690,8 +1699,8 @@ func (local *local) MakeEmptyRows() kv.Rows {
 	return kv.MakeRowsFromKvPairs(nil)
 }
 
-func (local *local) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return kv.NewTableKVEncoder(tbl, options, local.metrics)
+func (local *local) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+	return kv.NewTableKVEncoder(ctx, tbl, options, local.metrics)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
@@ -1743,7 +1752,7 @@ func (local *local) isIngestRetryable(
 			if newRegion != nil {
 				return newRegion, nil
 			}
-			log.L().Warn("get region by key return nil, will retry", logutil.Region(region.Region), logutil.Leader(region.Leader),
+			log.FromContext(ctx).Warn("get region by key return nil, will retry", logutil.Region(region.Region), logutil.Leader(region.Leader),
 				zap.Int("retry", i))
 			select {
 			case <-ctx.Done():
@@ -1895,7 +1904,7 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		if err == nil {
 			return regionSplitSize, regionSplitKeys, nil
 		}
-		log.L().Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
+		log.FromContext(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
 	return 0, 0, errors.New("get region split size and keys failed")
 }

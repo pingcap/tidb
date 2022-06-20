@@ -66,13 +66,18 @@ type tableKVEncoder struct {
 	metrics  *metric.Metrics
 }
 
-func NewTableKVEncoder(tbl table.Table, options *SessionOptions, metrics *metric.Metrics) (Encoder, error) {
+func NewTableKVEncoder(
+	tbl table.Table,
+	options *SessionOptions,
+	metrics *metric.Metrics,
+	logger log.Logger,
+) (Encoder, error) {
 	if metrics != nil {
 		metrics.KvEncoderCounter.WithLabelValues("open").Inc()
 	}
 	meta := tbl.Meta()
 	cols := tbl.Cols()
-	se := newSession(options)
+	se := newSession(options, logger)
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
 	recordCtx := tables.NewCommonAddRecordCtx(len(cols))
 	tables.SetAddRecordCtx(se, recordCtx)
@@ -267,7 +272,7 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 		log.ShortError(err),
 	)
 
-	log.L().Error("failed to covert kv value", logutil.RedactAny("origVal", original.GetValue()),
+	logger.Error("failed to covert kv value", logutil.RedactAny("origVal", original.GetValue()),
 		zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
 		zap.Int("columnID", j+1))
 	return errors.Annotatef(
