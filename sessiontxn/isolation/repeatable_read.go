@@ -182,17 +182,21 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS(plan)
+	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS(plan, nil)
 
 	return nil
 }
 
 // optimizeForNotFetchingLatestTS searches for optimization condition recursively
-func optimizeForNotFetchingLatestTS(plan plannercore.Plan) bool {
+// Note: For point get and batch point get (name it plan), if the parent node is update/delete/physicalLock, we should check
+// whether the plan.Lock. If the plan.Lock is false which means the lock has not pushed down to it successfully due to some reasons,
+// we should not optimize for it.
+func optimizeForNotFetchingLatestTS(plan plannercore.Plan, parentPlan plannercore.Plan) bool {
 	switch v := plan.(type) {
-	case *plannercore.PointGetPlan:
-		return true
-	case *plannercore.BatchPointGetPlan:
+	case *plannercore.PointGetPlan, *plannercore.BatchPointGetPlan:
+		if needNotToBeOptimized(plan, parentPlan) {
+			return false
+		}
 		return true
 	case plannercore.PhysicalPlan:
 		if v.Children() == nil {
@@ -200,19 +204,35 @@ func optimizeForNotFetchingLatestTS(plan plannercore.Plan) bool {
 		}
 		allChildrenArePointGet := true
 		for _, p := range v.Children() {
-			allChildrenArePointGet = allChildrenArePointGet && optimizeForNotFetchingLatestTS(p)
+			allChildrenArePointGet = allChildrenArePointGet && optimizeForNotFetchingLatestTS(p, v)
 		}
 		return allChildrenArePointGet
 	case *plannercore.Update:
-		_, ok := v.SelectPlan.(*plannercore.PointGetPlan)
-		return ok
+		return optimizeForNotFetchingLatestTS(v.SelectPlan, v)
 	case *plannercore.Delete:
-		_, ok := v.SelectPlan.(*plannercore.PointGetPlan)
-		return ok
+		return optimizeForNotFetchingLatestTS(v.SelectPlan, v)
 	case *plannercore.Insert:
 		return v.SelectPlan == nil
 	}
 	return false
+}
+
+func needNotToBeOptimized(plan plannercore.Plan, parentPlan plannercore.Plan) bool {
+	var flag bool
+	switch parentPlan.(type) {
+	case *plannercore.Update, *plannercore.Delete, *plannercore.PhysicalLock:
+		flag = true
+	}
+
+	locked := true
+	switch v := plan.(type) {
+	case *plannercore.PointGetPlan:
+		locked = v.Lock
+	case *plannercore.BatchPointGetPlan:
+		locked = v.Lock
+	}
+
+	return flag && !locked
 }
 
 func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
