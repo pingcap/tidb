@@ -46,12 +46,12 @@ func (cfg *BackupEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	return cfg.ParseFromFlags(flags)
+	return cfg.Config.ParseFromFlags(flags)
 }
 
 // DefineBackupEBSFlags defines common flags for the backup command.
 func DefineBackupEBSFlags(flags *pflag.FlagSet) {
-	flags.String(flagBackupVolumeFile, "./backup.toml", "the file path of volume infos of TiKV node")
+	flags.String(flagBackupVolumeFile, "./backup.json", "the file path of volume infos of TiKV node")
 	flags.Bool(flagBackupDryRun, false, "don't access to aws environment if set to true")
 }
 
@@ -185,5 +185,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 	log.Info("finished ebs backup.")
+	summary.SetSuccessStatus(true)
 	return nil
 }
