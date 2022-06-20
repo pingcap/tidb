@@ -56,7 +56,6 @@ type BatchPointGetExec struct {
 	singlePart       bool
 	partTblID        int64
 	idxVals          [][]types.Datum
-	startTS          uint64
 	readReplicaScope string
 	isStaleness      bool
 	snapshotTS       uint64
