@@ -888,12 +888,14 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 }
 
 func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits uint64) error {
+	if shardRowIDBits == 0 {
+		return nil
+	}
 	ctx, err := s.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer s.put(ctx)
-
 	// Check next global max auto ID first.
 	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID()
 	if err != nil {
