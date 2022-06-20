@@ -27,18 +27,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-<<<<<<< HEAD
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-=======
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
->>>>>>> 7bd892340... infoschema: try on each PD member until one succeeds or all fail (#35285)
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
 
