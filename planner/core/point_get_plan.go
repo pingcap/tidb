@@ -633,7 +633,7 @@ func newBatchPointGetPlan(
 
 		posArr := make([]int, len(pos2PartitionDefinition))
 		i := 0
-		for pos, _ := range pos2PartitionDefinition {
+		for pos := range pos2PartitionDefinition {
 			posArr[i] = pos
 			i++
 		}
@@ -821,7 +821,7 @@ func newBatchPointGetPlan(
 
 	posArr := make([]int, len(pos2PartitionDefinition))
 	i := 0
-	for pos, _ := range pos2PartitionDefinition {
+	for pos := range pos2PartitionDefinition {
 		posArr[i] = pos
 		i++
 	}
