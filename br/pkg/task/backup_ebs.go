@@ -126,8 +126,11 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	backupInfo.SetClusterID(clusterID)
 	backupInfo.SetAllocID(allocID)
 	log.Info("get backup info from file", zap.Any("info", backupInfo))
+	snapCount := backupInfo.GetSnapshotCount()
 
-	sess, err := backup.NewEC2Session(backupInfo.Region)
+	progress := g.StartProgress(ctx, cmdName, int64(snapCount), !cfg.LogProgress)
+
+	sess, err := backup.NewEC2Session()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -137,7 +140,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 	log.Info("all ebs snapshots are starts.", zap.Int("count", len(allVolumes)))
-	err = sess.WaitEBSSnapshotFinished(allVolumes)
+	err = sess.WaitEBSSnapshotFinished(allVolumes, progress)
 	if err != nil {
 		return errors.Trace(err)
 	}

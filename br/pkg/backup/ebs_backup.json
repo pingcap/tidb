@@ -1,12 +1,15 @@
 {
-  "meta" : {
-    "cluster_id": "1242154",
-    "cluster_version": "v6.1.0",
-    "max_alloc_id": "6000",
-    "resolved_ts": "456745777823347",
+  "cluster_info" : {
+    "id": "1242154",
+    "version": "v6.1.0",
+    "max_alloc_id": 6000,
+    "resolved_ts": 456745777823347
+  },
+  "tikv": {
+    "replicas": 3,
     "stores": [
       {
-        "store_id": "1",
+        "store_id": 1,
         "volumes": [
           {
             "volume_id": "vol-0e65f40961a9f6244",
@@ -21,7 +24,7 @@
         ]
       },
       {
-        "store_id": "2",
+        "store_id": 2,
         "volumes": [
           {
             "volume_id": "vol-0e65f40961a9f6246",
@@ -36,7 +39,7 @@
         ]
       },
       {
-        "store_id": "3",
+        "store_id": 3,
         "volumes": [
           {
             "volume_id": "vol-0e65f40961a9f6248",
@@ -52,14 +55,16 @@
       }
     ]
   },
-  "replicas": {
-    "pd": 3,
-    "tikv": 3,
-    "tidb": 3
+  "pd": {
+    "replicas": 3
+  },
+  "tidb": {
+    "replicas": 3
   },
   "kubernetes": {
     "pvs": [],
     "pvcs": [],
+    "crd": {},
     "options": {}
   },
   "options": {}

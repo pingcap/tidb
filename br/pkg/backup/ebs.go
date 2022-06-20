@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"go.uber.org/zap"
 	"os"
 	"sort"
@@ -26,37 +27,60 @@ const (
 type EBSVolume struct {
 	ID         string `json:"id" toml:"id"`
 	Type       string `json:"type" toml:"type"`
-	SnapshotID string `json:"snapshot-id" toml:"snapshot-id"`
-	Status     string `json:"status" toml"status"`
+	SnapshotID string `json:"snapshot_id" toml:"snapshot_id"`
+	Status     string `json:"status" toml:"status"`
 }
 
 type EBSStore struct {
-	StoreID uint64       `json:"store-id" toml:"store-id"`
+	StoreID uint64       `json:"store_id" toml:"store_id"`
 	Volumes []*EBSVolume `json:"volumes" toml:"volumes"`
 }
 
-// ClusterMeta represents the tidb cluster level meta infos. such as
+// ClusterInfo represents the tidb cluster level meta infos. such as
 // pd cluster id/alloc id, cluster resolved ts and tikv configuration.
-type ClusterMeta struct {
-	ClusterID      uint64            `json:"cluster-id" toml:"cluster-id"`
-	ClusterVersion string            `json:"cluster-version" toml:"cluster-version"`
-	MaxAllocID     uint64            `json:"max-alloc-id" toml:"max-alloc-id"`
-	ResolvedTS     uint64            `json:"resolved-ts" toml:"resolved-ts"`
-	Stores         []*EBSStore       `json:"stores" toml:"stores"`
-	Replicas       map[string]uint64 `json:"replicas" toml:"replicas"`
+type ClusterInfo struct {
+	ID         uint64            `json:"cluster_id" toml:"cluster_id"`
+	Version    string            `json:"cluster_version" toml:"cluster_version"`
+	MaxAllocID uint64            `json:"max_alloc_id" toml:"max_alloc_id"`
+	ResolvedTS uint64            `json:"resolved_ts" toml:"resolved_ts"`
+	Replicas   map[string]uint64 `json:"replicas" toml:"replicas"`
 }
 
-type KubernetesMeta struct {
-	PVs     []string               `json:"pvs" toml:"pvs"`
-	PVCs    []string               `json:"pvcs" toml:"pvcs"`
+type Kubernetes struct {
+	PVs     []interface{}          `json:"pvs" toml:"pvs"`
+	PVCs    []interface{}          `json:"pvcs" toml:"pvcs"`
+	CRD     interface{}            `json:"crd_tidb_cluster" toml:"crd_tidb_cluster"`
 	Options map[string]interface{} `json:"options" toml:"options""`
 }
 
+type TiKVComponent struct {
+	Replicas int         `json:"replicas"`
+	Stores   []*EBSStore `json:"stores"`
+}
+
+type PDComponent struct {
+	Replicas int `json:"replicas"`
+}
+
+type TiDBComponent struct {
+	Replicas int `json:"replicas"`
+}
+
 type EBSBackupInfo struct {
-	ClusterMeta    ClusterMeta            `json:"cluster-meta" toml:"cluster-meta"`
-	KubernetesMeta KubernetesMeta         `json:"kubernetes-meta" toml:"kubernetes-meta"`
+	ClusterInfo    *ClusterInfo           `json:"cluster_info" toml:"cluster_info"`
+	TiKVComponent  *TiKVComponent         `json:"tikv" toml:"tikv"`
+	TiDBComponent  *TiDBComponent         `json:"tidb" toml:"tidb"`
+	PDComponent    *PDComponent           `json:"pd" toml:"pd"`
+	KubernetesMeta *Kubernetes            `json:"kubernetes" toml:"kubernetes"`
 	Options        map[string]interface{} `json:"options" toml:"options"`
 	Region         string                 `json:"region" toml:"region"`
+}
+
+func (c *EBSBackupInfo) GetSnapshotCount() uint64 {
+	if c.TiKVComponent == nil {
+		return 0
+	}
+	return uint64(len(c.TiKVComponent.Stores))
 }
 
 func (c *EBSBackupInfo) String() string {
@@ -81,19 +105,19 @@ func (c *EBSBackupInfo) ConfigFromFile(path string) error {
 }
 
 func (c *EBSBackupInfo) SetClusterID(id uint64) {
-	c.ClusterMeta.ClusterID = id
+	c.ClusterInfo.ID = id
 }
 
 func (c *EBSBackupInfo) SetAllocID(id uint64) {
-	c.ClusterMeta.MaxAllocID = id
+	c.ClusterInfo.MaxAllocID = id
 }
 
 type EC2Session struct {
 	*ec2.EC2
 }
 
-func NewEC2Session(region string) (*EC2Session, error) {
-	awsConfig := aws.NewConfig().WithRegion(region)
+func NewEC2Session() (*EC2Session, error) {
+	awsConfig := aws.NewConfig()
 	// NOTE: we do not need credential. TiDB Operator need make sure we have the correct permission to access
 	// ec2 snapshot. we may change this behaviour in the future.
 	sessionOptions := session.Options{Config: *awsConfig}
@@ -112,7 +136,7 @@ func NewEC2Session(region string) (*EC2Session, error) {
 func (e *EC2Session) StartsEBSSnapshot(backupInfo *EBSBackupInfo) ([]*EBSVolume, error) {
 	allVolumes := make([]*EBSVolume, 0)
 
-	for _, store := range backupInfo.ClusterMeta.Stores {
+	for _, store := range backupInfo.TiKVComponent.Stores {
 		volumes := store.Volumes
 		if len(volumes) > 1 {
 			// if one store has multiple volume, we should respect the order
@@ -165,7 +189,7 @@ func (e *EC2Session) StartsEBSSnapshot(backupInfo *EBSBackupInfo) ([]*EBSVolume,
 // WaitEBSSnapshotFinished waits all snapshots finished.
 // according to EBS snapshot will do real snapshot background.
 // so we'll check whether all snapshots finished.
-func (e *EC2Session) WaitEBSSnapshotFinished(allVolumes []*EBSVolume) error {
+func (e *EC2Session) WaitEBSSnapshotFinished(allVolumes []*EBSVolume, progress glue.Progress) error {
 	pendingSnapshots := make([]*string, 0, len(allVolumes))
 	// snapshot id -> status
 	pendingMap := make(map[string]bool)
@@ -196,6 +220,7 @@ func (e *EC2Session) WaitEBSSnapshotFinished(allVolumes []*EBSVolume) error {
 				if *s.State == StateSuccess {
 					// this snapshot has finished.
 					pendingMap[*s.SnapshotId] = true
+					progress.Inc()
 				}
 			}
 			pendingSnapshots = nil
