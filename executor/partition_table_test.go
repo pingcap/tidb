@@ -899,12 +899,12 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 		partition p2 values less than (600),
 		partition p3 values less than (800),
 		partition p4 values less than (1001))`)
-	tk.MustExec(`create table tlist(a int, b int, key(a)) partition by list (a) (
+	tk.MustExec(`create table tlist (a int, b int, key(a)) partition by list (a) (
 		partition p0 values in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
-		partition p0 values in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
-		partition p0 values in (20, 21, 22, 23, 24, 25, 26, 27, 28, 29),
-		partition p0 values in (30, 31, 32, 33, 34, 35, 36, 37, 38, 39),
-		partition p0 values in (40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50))`)
+		partition p1 values in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
+		partition p2 values in (20, 21, 22, 23, 24, 25, 26, 27, 28, 29),
+		partition p3 values in (30, 31, 32, 33, 34, 35, 36, 37, 38, 39),
+		partition p4 values in (40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50))`)
 
 	// construct some special data distribution
 	vals := make([]string, 0, 1000)
@@ -3019,6 +3019,8 @@ func TestIssue21731(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p, t")
+	tk.MustExec("set @@tidb_enable_list_partition = OFF")
+	// Notice that this does not really test the issue #21731
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
 }
 
@@ -3597,4 +3599,19 @@ func TestPartitionTableExplain(t *testing.T) {
 		"└─TableReader(Probe) 1.00 root partition:p1 data:Selection",
 		"  └─Selection 1.00 cop[tikv]  not(isnull(testpartitiontableexplain.t.b))",
 		"    └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false"))
+}
+
+func TestIssue35181(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database TestIssue35181")
+	tk.MustExec("use TestIssue35181")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL) PARTITION BY RANGE (`a`) (PARTITION `p0` VALUES LESS THAN (2021), PARTITION `p1` VALUES LESS THAN (3000))")
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`insert into t select * from t where a=3000`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`insert into t select * from t where a=3000`)
 }

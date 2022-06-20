@@ -20,9 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -40,15 +42,29 @@ type InfoschemaMetaVersion interface {
 	SchemaMetaVersion() int64
 }
 
+// SessionStatesHandler is an interface for encoding and decoding session states.
+type SessionStatesHandler interface {
+	// EncodeSessionStates encodes session states into a JSON.
+	EncodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
+	// DecodeSessionStates decodes a map into session states.
+	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
+}
+
 // Context is an interface for transaction and executive args environment.
 type Context interface {
+	SessionStatesHandler
 	// NewTxn creates a new transaction for further execution.
 	// If old transaction is valid, it is committed first.
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
 	NewTxn(context.Context) error
 	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
 	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
-
+	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// RollbackTxn rolls back the current transaction.
+	RollbackTxn(ctx context.Context)
+	// CommitTxn commits the current transaction.
+	CommitTxn(ctx context.Context) error
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn

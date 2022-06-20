@@ -656,10 +656,7 @@ func TestSettersandGetters(t *testing.T) {
 			// There are some historial exceptions where global variables are loaded into the session.
 			// Please don't add to this list, the behavior is not MySQL compatible.
 			switch sv.Name {
-			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
-				TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
-				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
-				TiDBEnableTelemetry, TiDBEnablePointGetCache:
+			case TiDBRowFormatVersion:
 				continue
 			}
 			require.Nil(t, sv.SetSession)

@@ -21,9 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/legacy"
@@ -75,22 +73,16 @@ func TestErrorHandle(t *testing.T) {
 	expectedForUpdateTS += 1
 	require.Equal(t, expectedForUpdateTS, getForUpdateTS(t, provider))
 
-	// StmtErrAfterQuery: ErrWriteConflict should not retry when not RCCheckTS read
+	// StmtErrAfterQuery: always not retry
 	lockErr = kv.ErrWriteConflict
 	action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, lockErr)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, action)
 	require.Nil(t, err)
 
-	// StmtErrAfterQuery: ErrWriteConflict should retry when RCCheckTS read
-	tk.MustExec("set @@tidb_rc_read_check_ts=1")
-	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
-	provider = newSimpleProvider(tk, do)
-	stmts, _, err := parser.New().ParseSQL("select * from t")
-	require.NoError(t, err)
-	require.NoError(t, executor.ResetContextOfStmt(tk.Session(), stmts[0]))
+	tk.Session().GetSessionVars().StmtCtx.RCCheckTS = true
 	require.NoError(t, provider.OnStmtStart(context.TODO()))
 	action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, lockErr)
-	require.Equal(t, sessiontxn.StmtActionRetryReady, action)
+	require.Equal(t, sessiontxn.StmtActionNoIdea, action)
 	require.Nil(t, err)
 }
 

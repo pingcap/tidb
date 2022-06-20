@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -562,16 +561,12 @@ func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) 
 // It is built from "recover table" statement,
 // is used to recover the table that deleted by mistake.
 func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	t := meta.NewMeta(txn)
 	dom := domain.GetDomain(e.ctx)
 	var job *model.Job
+	var err error
 	var tblInfo *model.TableInfo
 	if s.JobID != 0 {
-		job, tblInfo, err = e.getRecoverTableByJobID(s, t, dom)
+		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
 	} else {
 		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
 	}
@@ -607,8 +602,13 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	return err
 }
 
-func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
-	job, err := t.GetHistoryDDLJob(s.JobID)
+func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
+	se, err := e.getSysSession()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer e.releaseSysSession(se)
+	job, err := ddl.GetHistoryJobByID(se, s.JobID)
 	if err != nil {
 		return nil, nil, err
 	}

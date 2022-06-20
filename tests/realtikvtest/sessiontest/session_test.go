@@ -1341,6 +1341,12 @@ func TestSetTxnScope(t *testing.T) {
 }
 
 func TestDoDDLJobQuit(t *testing.T) {
+	// This is required since mock tikv does not support paging.
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/DisablePaging", `return`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/DisablePaging"))
+	}()
+
 	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
 	// use isolated store, because in below failpoint we will cancel its context
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
@@ -2452,6 +2458,7 @@ func TestResultField(t *testing.T) {
 	tk.MustExec(`INSERT INTO t VALUES (2);`)
 	r, err := tk.Exec(`SELECT count(*) from t;`)
 	require.NoError(t, err)
+	defer r.Close()
 	fields := r.Fields()
 	require.NoError(t, err)
 	require.Len(t, fields, 1)
@@ -2504,6 +2511,7 @@ func TestFieldText(t *testing.T) {
 		result, err := tk.Exec(tt.sql)
 		require.NoError(t, err)
 		require.Equal(t, tt.field, result.Fields()[0].ColumnAsName.O)
+		result.Close()
 	}
 }
 

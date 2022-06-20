@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -278,14 +280,23 @@ var tableIDMap = map[string]int64{
 	TablePlacementPolicies:               autoid.InformationSchemaDBID + 79,
 }
 
+// columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
 type columnInfo struct {
-	name      string
-	tp        byte
-	size      int
-	decimal   int
-	flag      uint
-	deflt     interface{}
-	comment   string
+	// name of column
+	name string
+	// tp is column type
+	tp byte
+	// represent size of bytes of the column
+	size int
+	// represent decimal length of the column
+	decimal int
+	// flag represent NotNull, Unsigned, PriKey flags etc.
+	flag uint
+	// deflt is default value
+	deflt interface{}
+	// comment for the column
+	comment string
+	// enumElems represent all possible literal string values of an enum column
 	enumElems []string
 }
 
@@ -1645,18 +1656,33 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var servers = make([]ServerInfo, 0, len(members))
+	// TODO: maybe we should unify the PD API request interface.
+	var (
+		memberNum = len(members)
+		servers   = make([]ServerInfo, 0, memberNum)
+		errs      = make([]error, 0, memberNum)
+	)
+	if memberNum == 0 {
+		return servers, nil
+	}
+	// Try on each member until one succeeds or all fail.
 	for _, addr := range members {
 		// Get PD version, git_hash
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("create pd server info request error", zap.String("url", url), zap.Error(err))
+			errs = append(errs, err)
+			continue
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("request pd server info error", zap.String("url", url), zap.Error(err))
+			errs = append(errs, err)
+			continue
 		}
 		var content = struct {
 			Version        string `json:"version"`
@@ -1666,7 +1692,10 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		err = json.NewDecoder(resp.Body).Decode(&content)
 		terror.Log(resp.Body.Close())
 		if err != nil {
-			return nil, errors.Trace(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("close pd server info request error", zap.String("url", url), zap.Error(err))
+			errs = append(errs, err)
+			continue
 		}
 		if len(content.Version) > 0 && content.Version[0] == 'v' {
 			content.Version = content.Version[1:]
@@ -1680,6 +1709,17 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			GitHash:        content.GitHash,
 			StartTimestamp: content.StartTimestamp,
 		})
+	}
+	// Return the errors if all members' requests fail.
+	if len(errs) == memberNum {
+		errorMsg := ""
+		for idx, err := range errs {
+			errorMsg += err.Error()
+			if idx < memberNum-1 {
+				errorMsg += "; "
+			}
+		}
+		return nil, errors.Trace(fmt.Errorf("%s", errorMsg))
 	}
 	return servers, nil
 }

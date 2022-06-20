@@ -34,12 +34,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
@@ -692,8 +692,8 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 	metrics.GCWorkerCounter.WithLabelValues("delete_range").Inc()
 
 	se := createSession(w.store)
+	defer se.Close()
 	ranges, err := util.LoadDeleteRanges(se, safePoint)
-	se.Close()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -721,9 +721,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			continue
 		}
 
-		se := createSession(w.store)
 		err = util.CompleteDeleteRange(se, r)
-		se.Close()
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
 				zap.String("uuid", w.uuid),
@@ -733,7 +731,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 
-		if err := w.doGCPlacementRules(safePoint, r, gcPlacementRuleCache); err != nil {
+		if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
@@ -1865,7 +1863,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
+func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
@@ -1881,12 +1879,7 @@ func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gc
 		}
 	})
 	if historyJob == nil {
-		err = kv.RunInNewTxn(context.Background(), w.store, false, func(ctx context.Context, txn kv.Transaction) error {
-			var err1 error
-			t := meta.NewMeta(txn)
-			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)
-			return err1
-		})
+		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)
 		if err != nil {
 			return
 		}
@@ -1956,12 +1949,9 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 		}
 	})
 	if historyJob == nil {
-		err = kv.RunInNewTxn(context.Background(), w.store, false, func(ctx context.Context, txn kv.Transaction) error {
-			var err1 error
-			t := meta.NewMeta(txn)
-			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)
-			return err1
-		})
+		se := createSession(w.store)
+		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)
+		se.Close()
 		if err != nil {
 			return
 		}

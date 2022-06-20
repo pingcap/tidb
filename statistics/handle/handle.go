@@ -247,10 +247,12 @@ var statsHealthyGauges = []prometheus.Gauge{
 	metrics.StatsHealthyGauge.WithLabelValues("[50,80)"),
 	metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),
 	metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
+	// [0,100] should always be the last
+	metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
 }
 
 type statsHealthyChange struct {
-	bucketDelta [4]int
+	bucketDelta [5]int
 }
 
 func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
@@ -264,10 +266,13 @@ func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
 	} else {
 		idx = 3
 	}
+	lastIDX := len(c.bucketDelta) - 1
 	if add {
 		c.bucketDelta[idx] += 1
+		c.bucketDelta[lastIDX] += 1
 	} else {
 		c.bucketDelta[idx] -= 1
+		c.bucketDelta[lastIDX] -= 1
 	}
 }
 
@@ -473,7 +478,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
-			// partition is not empty but column stats(hist, topn) is missing
+			// partition stats is not empty but column stats(hist, topn) is missing
 			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				var errMsg string
 				if isIndex == 0 {
@@ -639,6 +644,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			err = err1
 		}
 	}()
+	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 
 	for _, col := range cols {
 		oldCache := h.statsCache.Load().(statsCache)
@@ -647,7 +653,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			continue
 		}
 		c, ok := tbl.Columns[col.ColumnID]
-		if !ok || c.IsLoaded() {
+		if !ok || !c.IsLoadNeeded() {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
@@ -659,9 +665,12 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		fms, err := h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
-		if err != nil {
-			return errors.Trace(err)
+		var fms *statistics.FMSketch
+		if loadFMSketch {
+			fms, err = h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ColumnID)
 		if err != nil {
@@ -671,15 +680,15 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ColumnID))
 		}
 		colHist := &statistics.Column{
-			PhysicalID: col.TableID,
-			Histogram:  *hg,
-			Info:       c.Info,
-			CMSketch:   cms,
-			TopN:       topN,
-			FMSketch:   fms,
-			IsHandle:   c.IsHandle,
-			StatsVer:   rows[0].GetInt64(0),
-			Loaded:     true,
+			PhysicalID:      col.TableID,
+			Histogram:       *hg,
+			Info:            c.Info,
+			CMSketch:        cms,
+			TopN:            topN,
+			FMSketch:        fms,
+			IsHandle:        c.IsHandle,
+			StatsVer:        rows[0].GetInt64(0),
+			ColLoadedStatus: statistics.NewColFullLoadStatus(),
 		}
 		// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 		colHist.Count = int64(colHist.TotalRowCount())
@@ -818,11 +827,11 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 		// We will not load buckets if:
 		// 1. Lease > 0, and:
 		// 2. this column is not handle, and:
-		// 3. the column doesn't has buckets before, and:
+		// 3. the column doesn't has any statistics before, and:
 		// 4. loadAll is false.
 		notNeedLoad := h.Lease() > 0 &&
 			!isHandle &&
-			(col == nil || !col.IsLoaded() && col.LastUpdateVersion < histVer) &&
+			(col == nil || !col.IsStatsInitialized() && col.LastUpdateVersion < histVer) &&
 			!loadAll
 		if notNeedLoad {
 			count, err := h.columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
@@ -859,17 +868,17 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				return errors.Trace(err)
 			}
 			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *hg,
-				Info:       colInfo,
-				CMSketch:   cms,
-				TopN:       topN,
-				FMSketch:   fmSketch,
-				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
-				StatsVer:   statsVer,
-				Loaded:     true,
+				PhysicalID:      table.PhysicalID,
+				Histogram:       *hg,
+				Info:            colInfo,
+				CMSketch:        cms,
+				TopN:            topN,
+				FMSketch:        fmSketch,
+				ErrorRate:       errorRate,
+				IsHandle:        tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				Flag:            flag,
+				StatsVer:        statsVer,
+				ColLoadedStatus: statistics.NewColFullLoadStatus(),
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())

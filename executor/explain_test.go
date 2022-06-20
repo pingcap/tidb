@@ -355,6 +355,9 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 		},
 	}
 
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	for _, test := range tests {
 		checkActRows(t, tk, test.sql, test.expected)
 	}

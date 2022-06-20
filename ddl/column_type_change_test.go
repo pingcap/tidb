@@ -15,19 +15,16 @@
 package ddl_test
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strconv"
 	"testing"
 	"time"
 
-	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -105,8 +102,7 @@ func TestColumnTypeChangeBetweenInteger(t *testing.T) {
 	tk.MustGetErrCode("alter table t modify column a mediumint", errno.ErrDataOutOfRange)
 	tk.MustGetErrCode("alter table t modify column a smallint", errno.ErrDataOutOfRange)
 	tk.MustGetErrCode("alter table t modify column a tinyint", errno.ErrDataOutOfRange)
-	_, err = tk.Exec("admin check table t")
-	require.NoError(t, err)
+	tk.MustExec("admin check table t")
 }
 
 func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
@@ -1725,7 +1721,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 			// For writable column:
 			// Insert / Update should set the column with the casted-related column value.
 			sql := fmt.Sprintf("insert into t values(%d, %d, '2021-06-06 12:13:14')", i+3, i+3)
-			_, err := tk1.Exec(sql)
+			err := tk1.ExecToErr(sql)
 			if err != nil {
 				checkErr = err
 				return
@@ -1733,7 +1729,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 			if job.SchemaState == model.StateWriteOnly {
 				// The casted value will be inserted into changing column too.
 				// for point get
-				_, err := tk1.Exec("update t set b = -1 where a = 1")
+				err := tk1.ExecToErr("update t set b = -1 where a = 1")
 				if err != nil {
 					checkErr = err
 					return
@@ -1741,7 +1737,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 			} else {
 				// The casted value will be inserted into changing column too.
 				// for point get
-				_, err := tk1.Exec("update t set b = -2 where a = 2")
+				err := tk1.ExecToErr("update t set b = -2 where a = 2")
 				if err != nil {
 					checkErr = err
 					return
@@ -1932,13 +1928,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 	require.Less(t, int64(0), jobID)
 
 	// Verification of the history job state.
-	var job *model.Job
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = m.GetHistoryDDLJob(jobID)
-		return errors2.Trace(err1)
-	})
+	job, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), job.ErrorCount)
 	require.Equal(t, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled", job.Error.Error())
@@ -2341,19 +2331,13 @@ func TestChangeNullValueFromOtherTypeToTimestamp(t *testing.T) {
 
 	prepare2()
 	// only from other type NULL to timestamp type NOT NULL, it should be successful. (timestamp to timestamp excluded)
-	_, err = tk.Exec("alter table t modify column a timestamp NOT NULL")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1265]Data truncated for column 'a' at row 1", err.Error())
+	tk.MustGetErrMsg("alter table t modify column a timestamp NOT NULL", "[ddl:1265]Data truncated for column 'a' at row 1")
 
 	// Some dml cases.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a timestamp NOT NULL)")
-	_, err = tk.Exec("insert into t values()")
-	require.Error(t, err)
-	require.Equal(t, "[table:1364]Field 'a' doesn't have a default value", err.Error())
-
-	_, err = tk.Exec("insert into t values(null)")
-	require.Equal(t, "[table:1048]Column 'a' cannot be null", err.Error())
+	tk.MustGetErrMsg("insert into t values()", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustGetErrMsg("insert into t values(null)", "[table:1048]Column 'a' cannot be null")
 }
 
 func TestColumnTypeChangeBetweenFloatAndDouble(t *testing.T) {
