@@ -563,6 +563,14 @@ var defaultSysVars = []*SysVar{
 			tikvstore.TxnCommitBatchSize.Store(uint64(TidbOptInt64(val, int64(tikvstore.DefTxnCommitBatchSize))))
 			return nil
 		}},
+	{Scope: ScopeGlobal, Name: TiDBEnableUnifiedSlowLog, Value: BoolToOnOff(DefEnableUnifiedSlowLog), Type: TypeBool, skipInit: true,
+		GetGlobal: func(sv *SessionVars) (string, error) {
+			return BoolToOnOff(EnableUnifiedSlowLog.Load()), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			EnableUnifiedSlowLog.Store(TiDBOptOn(val))
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
 		on := TiDBOptOn(val)
 		// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly

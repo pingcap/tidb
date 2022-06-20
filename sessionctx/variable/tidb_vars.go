@@ -136,6 +136,9 @@ const (
 	// TiDBEnableChunkRPC enables TiDB to use Chunk format for coprocessor requests.
 	TiDBEnableChunkRPC = "tidb_enable_chunk_rpc"
 
+	// TiDBEnableUnifiedSlowLog enables TiDB to use Chunk format for coprocessor requests.
+	TiDBEnableUnifiedSlowLog = "tidb_enable_unified_slow_log"
+
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
@@ -820,6 +823,7 @@ const (
 	DefChecksumTableConcurrency                    = 4
 	DefSkipUTF8Check                               = false
 	DefSkipASCIICheck                              = false
+	DefEnableUnifiedSlowLog                        = false
 	DefOptAggPushDown                              = false
 	DefOptCartesianBCJ                             = 1
 	DefOptMPPOuterJoinFixedBuildSide               = false
@@ -1054,10 +1058,7 @@ var (
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
-	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
-	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
-	// DDLDiskQuota is the temporary variable for set disk quota for lightning
-	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
+	EnableUnifiedSlowLog              = atomic.NewBool(DefEnableUnifiedSlowLog)
 )
 
 var (
