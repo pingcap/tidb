@@ -23,62 +23,8 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 )
-
-func TestCompareString(t *testing.T) {
-	t.Parallel()
-
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	require.Equal(t, 0, types.CompareString("a", "A", "utf8_general_ci"))
-	require.Equal(t, 0, types.CompareString("À", "A", "utf8_general_ci"))
-	require.Equal(t, 0, types.CompareString("😜", "😃", "utf8_general_ci"))
-	require.Equal(t, 0, types.CompareString("a ", "a  ", "utf8_general_ci"))
-	require.Equal(t, 0, types.CompareString("ß", "s", "utf8_general_ci"))
-	require.NotEqual(t, 0, types.CompareString("ß", "ss", "utf8_general_ci"))
-
-	require.Equal(t, 0, types.CompareString("a", "A", "utf8_unicode_ci"))
-	require.Equal(t, 0, types.CompareString("À", "A", "utf8_unicode_ci"))
-	require.Equal(t, 0, types.CompareString("😜", "😃", "utf8_unicode_ci"))
-	require.Equal(t, 0, types.CompareString("a ", "a  ", "utf8_unicode_ci"))
-	require.NotEqual(t, 0, types.CompareString("ß", "s", "utf8_unicode_ci"))
-	require.Equal(t, 0, types.CompareString("ß", "ss", "utf8_unicode_ci"))
-
-	require.NotEqual(t, 0, types.CompareString("a", "A", "binary"))
-	require.NotEqual(t, 0, types.CompareString("À", "A", "binary"))
-	require.NotEqual(t, 0, types.CompareString("😜", "😃", "binary"))
-	require.NotEqual(t, 0, types.CompareString("a ", "a  ", "binary"))
-
-	ctx := mock.NewContext()
-	ft := types.NewFieldType(mysql.TypeVarString)
-	col1 := &Column{
-		RetType: ft,
-		Index:   0,
-	}
-	col2 := &Column{
-		RetType: ft,
-		Index:   1,
-	}
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 4)
-	chk.Column(0).AppendString("a")
-	chk.Column(1).AppendString("A")
-	chk.Column(0).AppendString("À")
-	chk.Column(1).AppendString("A")
-	chk.Column(0).AppendString("😜")
-	chk.Column(1).AppendString("😃")
-	chk.Column(0).AppendString("a ")
-	chk.Column(1).AppendString("a  ")
-	for i := 0; i < 4; i++ {
-		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
-		require.NoError(t, err)
-		require.False(t, isNull)
-		require.Equal(t, int64(0), v)
-	}
-}
 
 func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll string) Expression {
 	constant := &Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Charset: chs, Collate: coll}}
@@ -565,7 +511,7 @@ func TestDeriveCollation(t *testing.T) {
 		},
 		{
 			[]string{
-				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.In,
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.In, ast.Greatest, ast.Least,
 			},
 			[]Expression{
 				newConstString("a", CoercibilityCoercible, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),

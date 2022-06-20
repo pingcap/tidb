@@ -768,6 +768,17 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	}
 	plan4Agg.SetChildren(np)
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
+
+	// Currently, firstrow agg function is treated like the exact representation of aggregate group key,
+	// so the data type is the same with group key, even if the group key is not null.
+	// However, the return type of firstrow should be nullable, we clear the null flag here instead of
+	// during invoking NewAggFuncDesc, in order to keep compatibility with the existing presumption
+	// that the return type firstrow does not change nullability, whatsoever.
+	// Cloning it because the return type is the same object with argument's data type.
+	newRetTp := firstRowFunc.RetTp.Clone()
+	newRetTp.Flag &= ^mysql.NotNullFlag
+	firstRowFunc.RetTp = newRetTp
+
 	firstRowResultCol := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
@@ -1865,13 +1876,13 @@ func findFieldNameFromNaturalUsingJoin(p LogicalPlan, v *ast.ColumnName) (col *e
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *LogicalJoin:
-		if x.redundantSchema != nil {
-			idx, err := expression.FindFieldName(x.redundantNames, v)
+		if x.fullSchema != nil {
+			idx, err := expression.FindFieldName(x.fullNames, v)
 			if err != nil {
 				return nil, nil, err
 			}
 			if idx >= 0 {
-				return x.redundantSchema.Columns[idx], x.redundantNames[idx], nil
+				return x.fullSchema.Columns[idx], x.fullNames[idx], nil
 			}
 		}
 	}

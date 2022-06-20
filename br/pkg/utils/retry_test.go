@@ -37,6 +37,10 @@ func (s *utilSuite) TestIsRetryableError(c *C) {
 	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrResolveLockTimeout}), IsTrue)
 	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrRegionUnavailable}), IsTrue)
 	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflictInTiDB}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflict}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaExpired}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrInfoSchemaChanged}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTxnRetryable}), IsTrue)
 
 	// gRPC Errors
 	c.Assert(IsRetryableError(status.Error(codes.Canceled, "")), IsFalse)

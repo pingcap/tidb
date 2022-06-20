@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -102,6 +103,7 @@ func NewRestoreClient(
 	store kv.Storage,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
+	isRawKv bool,
 ) (*Client, error) {
 	db, err := NewDB(g, store)
 	if err != nil {
@@ -117,16 +119,19 @@ func NewRestoreClient(
 	if dom != nil {
 		statsHandle = dom.StatsHandle()
 	}
+	// init backupMeta only for passing unit test
+	backupMeta := new(backuppb.BackupMeta)
 
 	return &Client{
 		pdClient:      pdClient,
-		toolClient:    NewSplitClient(pdClient, tlsConf),
+		toolClient:    NewSplitClient(pdClient, tlsConf, isRawKv),
 		db:            db,
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 		switchCh:      make(chan struct{}),
 		dom:           dom,
 		statsHandler:  statsHandle,
+		backupMeta:    backupMeta,
 	}, nil
 }
 
@@ -205,7 +210,7 @@ func (rc *Client) InitBackupMeta(
 	rc.backupMeta = backupMeta
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 
-	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf)
+	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, rc.backupMeta.IsRawKv)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, rc.backupMeta.IsRawKv, rc.rateLimit)
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
@@ -450,8 +455,7 @@ func (rc *Client) GoCreateTables(
 ) <-chan CreatedTable {
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
-
-	ddlTables := rc.DDLJobsMap()
+	ddlTables := rc.GenerateRebasedTables(tables)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -593,6 +597,15 @@ func drainFilesByRange(files []*backuppb.File, supportMulti bool) ([]*backuppb.F
 	}
 
 	return files[:idx], files[idx:]
+}
+
+// SplitRanges implements TiKVRestorer.
+func (rc *Client) SplitRanges(ctx context.Context,
+	ranges []rtree.Range,
+	rewriteRules *RewriteRules,
+	updateCh glue.Progress,
+	isRawKv bool) error {
+	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
 // RestoreFiles tries to restore the files.
@@ -754,6 +767,8 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 			gctx,
 			store.GetAddress(),
 			opt,
+			grpc.WithBlock(),
+			grpc.FailOnNonTempDialError(true),
 			grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 			// we don't need to set keepalive timeout here, because the connection lives
 			// at most 5s. (shorter than minimal value for keepalive time!)
@@ -1116,22 +1131,24 @@ func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
 }
 
-// DDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
-// if we execute some DDLs before create table.
-// we may get two situation that need to rebase auto increment/random id.
-// 1. truncate table: truncate will generate new id cache.
-// 2. create table/create and rename table: the first create table will lock down the id cache.
-// because we cannot create onExistReplace table.
-// so the final create DDL with the correct auto increment/random id won't be executed.
-func (rc *Client) DDLJobsMap() map[UniqueTableName]bool {
-	m := make(map[UniqueTableName]bool)
-	for _, job := range rc.ddlJobs {
-		switch job.Type {
-		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
-			m[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
-		}
+// GenerateRebasedTables generate a map[UniqueTableName]bool to represent tables that haven't updated table info.
+// there are two situations:
+// 1. tables that already exists in the restored cluster.
+// 2. tables that are created by executing ddl jobs.
+// so, only tables in incremental restoration will be added to the map
+func (rc *Client) GenerateRebasedTables(tables []*metautil.Table) (rebasedTablesMap map[UniqueTableName]bool) {
+	if !rc.IsIncremental() {
+		// in full restoration, all tables are created by Session.CreateTable, and all tables' info is updated.
+		rebasedTablesMap = make(map[UniqueTableName]bool)
+		return
 	}
-	return m
+
+	rebasedTablesMap = make(map[UniqueTableName]bool, len(tables))
+	for _, table := range tables {
+		rebasedTablesMap[UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}] = true
+	}
+
+	return
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
