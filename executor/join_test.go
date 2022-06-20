@@ -2182,8 +2182,6 @@ func TestIssue11390(t *testing.T) {
 }
 
 func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
-	plannercore.ForceUseOuterBuild4Test = true
-	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2194,7 +2192,7 @@ func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 	tk.MustExec("insert into t values (11,11),(1,2)")
 	tk.MustExec("insert into s values (1,2),(2,1),(11,11)")
 	tk.MustQuery("select * from t left join s on s.a > t.a").Sort().Check(testkit.Rows("1 2 11 11", "1 2 2 1", "11 11 <nil> <nil>"))
-	tk.MustQuery("explain format = 'brief' select * from t left join s on s.a > t.a").Check(testkit.Rows(
+	tk.MustQuery("explain format = 'brief' select /*+ ordered_hash_join(t) */ * from t left join s on s.a > t.a").Check(testkit.Rows(
 		"HashJoin 99900000.00 root  CARTESIAN left outer join, other cond:gt(test.s.a, test.t.a)",
 		"├─TableReader(Build) 10000.00 root  data:TableFullScan",
 		"│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
@@ -2271,8 +2269,6 @@ func TestIssue14514(t *testing.T) {
 }
 
 func TestOuterMatchStatusIssue14742(t *testing.T) {
-	plannercore.ForceUseOuterBuild4Test = true
-	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2284,7 +2280,7 @@ func TestOuterMatchStatusIssue14742(t *testing.T) {
 	tk.MustExec("insert into testjoin values (NULL);")
 	tk.MustExec("insert into testjoin values (1);")
 	tk.MustExec("insert into testjoin values (2), (2), (2);")
-	tk.MustQuery("SELECT * FROM testjoin t1 RIGHT JOIN testjoin t2 ON t1.a > t2.a order by t1.a, t2.a;").Check(testkit.Rows(
+	tk.MustQuery("SELECT /*+ ordered_hash_join(t2) */ * FROM testjoin t1 RIGHT JOIN testjoin t2 ON t1.a > t2.a order by t1.a, t2.a;").Check(testkit.Rows(
 		"<nil> <nil>",
 		"<nil> 2",
 		"<nil> 2",
@@ -2643,17 +2639,13 @@ func TestIssue20270(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)"))
-	err := tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	err := tk.QueryToErr("select /*+ ordered_hash_join(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	require.Equal(t, executor.ErrQueryInterrupted, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk"))
-	plannercore.ForceUseOuterBuild4Test = true
-	defer func() {
-		plannercore.ForceUseOuterBuild4Test = false
-	}()
 	err = failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
 	require.NoError(t, err)
 	tk.MustExec("insert into t1 values(1,30),(2,40)")
-	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	err = tk.QueryToErr("select /*+ ordered_hash_join(t1, t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	require.Equal(t, executor.ErrQueryInterrupted, err)
 	err = failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin")
 	require.NoError(t, err)

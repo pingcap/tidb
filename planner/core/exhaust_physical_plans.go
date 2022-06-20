@@ -364,10 +364,6 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 	}
 }
 
-// ForceUseOuterBuild4Test is a test option to control forcing use outer input as build.
-// TODO: use hint and remove this variable
-var ForceUseOuterBuild4Test = false
-
 // ForcedHashLeftJoin4Test is a test option to force using HashLeftJoin
 // TODO: use hint and remove this variable
 var ForcedHashLeftJoin4Test = false
@@ -392,42 +388,29 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 		// TODO: warning
 	case LeftOuterJoin:
-		if ForceUseOuterBuild4Test {
-			// TODO: support ordered_Hash_Join hint for test
+		if !useLeftToBuild {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+		}
+		if !useRightToBuild {
 			joins = append(joins, p.getHashJoin(prop, 1, true))
-		} else {
-			if !useLeftToBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-			}
-			if !useRightToBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, true))
-			}
 		}
 	case RightOuterJoin:
-		if ForceUseOuterBuild4Test {
+		if !useLeftToBuild {
 			joins = append(joins, p.getHashJoin(prop, 0, true))
-		} else {
-			if !useLeftToBuild {
-				joins = append(joins, p.getHashJoin(prop, 0, true))
-			}
-			if !useRightToBuild {
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-			}
+		}
+		if !useRightToBuild {
+			joins = append(joins, p.getHashJoin(prop, 0, false))
 		}
 	case InnerJoin:
-		if ForcedHashLeftJoin4Test {
+		if useLeftToBuild {
+			joins = append(joins, p.getHashJoin(prop, 1, true))
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+		} else if useRightToBuild {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 0, true))
 		} else {
-			if useLeftToBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, true))
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-			} else if useRightToBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-				joins = append(joins, p.getHashJoin(prop, 0, true))
-			} else {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-			}
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 0, false))
 		}
 	}
 	return joins
