@@ -55,7 +55,7 @@ type Manager interface {
 	// RequireOwner requires the ownerManager is owner.
 	RequireOwner(ctx context.Context) error
 
-	// SetBeOwnerHook sets a hook for be an owner. The hook is called before becoming an owner.
+	// SetBeOwnerHook sets a hook. The hook is called before becoming an owner.
 	SetBeOwnerHook(hook func())
 }
 
