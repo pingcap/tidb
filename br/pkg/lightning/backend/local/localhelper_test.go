@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -762,7 +763,7 @@ func TestNeedSplit(t *testing.T) {
 
 	for hdl, idx := range checkMap {
 		checkKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(hdl))
-		res := needSplit(checkKey, regions)
+		res := needSplit(checkKey, regions, log.L())
 		if idx < 0 {
 			require.Nil(t, res)
 		} else {

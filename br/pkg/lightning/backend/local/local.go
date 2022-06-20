@@ -1700,7 +1700,7 @@ func (local *local) MakeEmptyRows() kv.Rows {
 }
 
 func (local *local) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return kv.NewTableKVEncoder(ctx, tbl, options, local.metrics)
+	return kv.NewTableKVEncoder(tbl, options, local.metrics, log.FromContext(ctx))
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
