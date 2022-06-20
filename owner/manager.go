@@ -174,7 +174,9 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 }
 
 func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
-	m.beOwnerHook()
+	if m.beOwnerHook != nil {
+		m.beOwnerHook()
+	}
 	atomic.StorePointer(&m.elec, unsafe.Pointer(elec))
 }
 

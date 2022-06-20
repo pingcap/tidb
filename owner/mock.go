@@ -53,7 +53,9 @@ func (m *mockManager) IsOwner() bool {
 }
 
 func (m *mockManager) toBeOwner() {
-	m.beOwnerHook()
+	if m.beOwnerHook != nil {
+		m.beOwnerHook()
+	}
 	atomic.StoreInt32(&m.owner, 1)
 }
 
