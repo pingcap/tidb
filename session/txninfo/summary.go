@@ -132,7 +132,7 @@ func (recorder *TrxHistoryRecorder) OnTrxEnd(info *TxnInfo) {
 	recorder.summaries.onTrxEnd(info.AllSQLDigests)
 }
 
-func new(summariesCap uint) TrxHistoryRecorder {
+func newTrxHistoryRecorder(summariesCap uint) TrxHistoryRecorder {
 	return TrxHistoryRecorder{
 		summaries:   newTrxSummaries(summariesCap),
 		minDuration: 1 * time.Second,
@@ -159,4 +159,4 @@ func (recorder *TrxHistoryRecorder) ResizeSummaries(capacity uint) {
 }
 
 // Recorder is the recorder instance.
-var Recorder TrxHistoryRecorder = new(0)
+var Recorder TrxHistoryRecorder = newTrxHistoryRecorder(0)
