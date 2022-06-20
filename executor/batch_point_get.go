@@ -97,7 +97,6 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
-	e.snapshotTS = e.startTS
 	sessVars := e.ctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 	stmtCtx := sessVars.StmtCtx

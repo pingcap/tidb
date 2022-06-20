@@ -4631,7 +4631,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		tblInfo:          plan.TblInfo,
 		idxInfo:          plan.IndexInfo,
 		rowDecoder:       decoder,
-		startTS:          snapshotTS,
+		snapshotTS:       snapshotTS,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 		keepOrder:        plan.KeepOrder,
