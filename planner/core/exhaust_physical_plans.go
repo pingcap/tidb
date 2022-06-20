@@ -364,10 +364,6 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 	}
 }
 
-// ForcedHashLeftJoin4Test is a test option to force using HashLeftJoin
-// TODO: use hint and remove this variable
-var ForcedHashLeftJoin4Test = false
-
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return nil

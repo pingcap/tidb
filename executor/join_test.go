@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
@@ -2295,8 +2294,6 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 	// Two necessary factors to reproduce this issue:
 	// (1) taking HashLeftJoin, i.e., letting the probing tuple lay at the left side of joined tuples
 	// (2) the projection only contains a part of columns from the build side, i.e., pruning the same probe side
-	plannercore.ForcedHashLeftJoin4Test = true
-	defer func() { plannercore.ForcedHashLeftJoin4Test = false }()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2306,7 +2303,7 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 	tk.MustExec("create table T (a int not null, b int, c int);")
 	tk.MustExec("insert into S values (0,1,2),(0,1,null),(0,1,2);")
 	tk.MustExec("insert into T values (0,10,2),(0,10,null),(1,10,2);")
-	tk.MustQuery("select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
+	tk.MustQuery("select /*+ ordered_hash_join(T) */ T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
 		"0 0 <nil>",
 		"0 0 <nil>",
 		"0 0 <nil>",
@@ -2315,7 +2312,7 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 		"0 0 2",
 	))
 	// NOTE: the HashLeftJoin should be kept
-	tk.MustQuery("explain format = 'brief' select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
+	tk.MustQuery("explain format = 'brief' select /*+ ordered_hash_join(T) */ T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
 		"Sort 12487.50 root  test.t.a, test.t.c",
 		"└─Projection 12487.50 root  test.t.a, test.t.a, test.t.c",
 		"  └─HashJoin 12487.50 root  inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
