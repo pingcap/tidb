@@ -65,6 +65,8 @@ type Collator interface {
 	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string) []byte
+	// KeyWithoutTrimRightSpace returns the collate key for str. The difference with Key is str will not be trimed.
+	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
 }
