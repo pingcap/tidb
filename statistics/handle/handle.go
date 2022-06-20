@@ -654,7 +654,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			continue
 		}
 		c, ok := tbl.Columns[col.ColumnID]
-		if !ok || c.IsLoaded() {
+		if !ok || !c.IsLoadNeeded() {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
@@ -681,15 +681,15 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ColumnID))
 		}
 		colHist := &statistics.Column{
-			PhysicalID: col.TableID,
-			Histogram:  *hg,
-			Info:       c.Info,
-			CMSketch:   cms,
-			TopN:       topN,
-			FMSketch:   fms,
-			IsHandle:   c.IsHandle,
-			StatsVer:   rows[0].GetInt64(0),
-			Loaded:     true,
+			PhysicalID:      col.TableID,
+			Histogram:       *hg,
+			Info:            c.Info,
+			CMSketch:        cms,
+			TopN:            topN,
+			FMSketch:        fms,
+			IsHandle:        c.IsHandle,
+			StatsVer:        rows[0].GetInt64(0),
+			ColLoadedStatus: statistics.NewColFullLoadStatus(),
 		}
 		// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 		colHist.Count = int64(colHist.TotalRowCount())
@@ -828,11 +828,11 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 		// We will not load buckets if:
 		// 1. Lease > 0, and:
 		// 2. this column is not handle, and:
-		// 3. the column doesn't has buckets before, and:
+		// 3. the column doesn't has any statistics before, and:
 		// 4. loadAll is false.
 		notNeedLoad := h.Lease() > 0 &&
 			!isHandle &&
-			(col == nil || !col.IsLoaded() && col.LastUpdateVersion < histVer) &&
+			(col == nil || !col.IsStatsInitialized() && col.LastUpdateVersion < histVer) &&
 			!loadAll
 		if notNeedLoad {
 			count, err := h.columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
@@ -869,17 +869,17 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				return errors.Trace(err)
 			}
 			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *hg,
-				Info:       colInfo,
-				CMSketch:   cms,
-				TopN:       topN,
-				FMSketch:   fmSketch,
-				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
-				StatsVer:   statsVer,
-				Loaded:     true,
+				PhysicalID:      table.PhysicalID,
+				Histogram:       *hg,
+				Info:            colInfo,
+				CMSketch:        cms,
+				TopN:            topN,
+				FMSketch:        fmSketch,
+				ErrorRate:       errorRate,
+				IsHandle:        tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				Flag:            flag,
+				StatsVer:        statsVer,
+				ColLoadedStatus: statistics.NewColFullLoadStatus(),
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
