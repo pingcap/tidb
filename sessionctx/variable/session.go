@@ -16,6 +16,7 @@ package variable
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -41,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	ptypes "github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
@@ -1832,6 +1835,38 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 	}
 
 	return nil
+}
+
+// EncodeSessionStates saves session states into SessionStates.
+func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	// Encode user-defined variables.
+	s.UsersLock.RLock()
+	sessionStates.UserVars = make(map[string]*types.Datum, len(s.Users))
+	for name, userVar := range s.Users {
+		sessionStates.UserVars[name] = userVar.Clone()
+	}
+	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.UserVarTypes))
+	for name, userVarType := range s.UserVarTypes {
+		sessionStates.UserVarTypes[name] = userVarType.Clone()
+	}
+	s.UsersLock.RUnlock()
+	return
+}
+
+// DecodeSessionStates restores session states from SessionStates.
+func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	// Decode user-defined variables.
+	s.UsersLock.Lock()
+	s.Users = make(map[string]types.Datum, len(sessionStates.UserVars))
+	for name, userVar := range sessionStates.UserVars {
+		s.Users[name] = *userVar.Clone()
+	}
+	s.UserVarTypes = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
+	for name, userVarType := range sessionStates.UserVarTypes {
+		s.UserVarTypes[name] = userVarType.Clone()
+	}
+	s.UsersLock.Unlock()
+	return
 }
 
 // TableDelta stands for the changed count for one table or partition.
