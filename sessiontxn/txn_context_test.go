@@ -735,7 +735,7 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 		tk.MustExec("rollback")
 		tk.MustExec("truncate table t1")
 		tk.MustExec("insert into t1 values(1, 10)")
-		return testkit.NewStoppableTasksRunner(t).Task("s2").Create(func(ch *taskstop.Chan) {
+		return testkit.NewStoppableTasksRunner(t).CreateTask("s2", func(ch *taskstop.Chan) {
 			tk2 := testkit.NewTestKit(t, store)
 			defer func() {
 				taskstop.DisableSessionStopPoint(tk2.Session())

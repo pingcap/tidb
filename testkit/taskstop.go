@@ -44,7 +44,7 @@ func newStoppableTask(name string, runner *StoppableTasksRunner) *StoppableTask 
 	}
 }
 
-func (t *StoppableTask) Create(fn TaskFunc) *StoppableTask {
+func (t *StoppableTask) setup(fn TaskFunc) {
 	t.ch = taskstop.NewChan()
 	t.runFunc = fn
 
@@ -56,10 +56,8 @@ func (t *StoppableTask) Create(fn TaskFunc) *StoppableTask {
 		}()
 		t.runFunc(t.ch)
 	}()
-	t.runner.addTask(t)
 	t.waitNextStop()
 	t.record(t.currentStop)
-	return t
 }
 
 func (t *StoppableTask) CurrentStop() *taskstop.StopPoint {
@@ -137,25 +135,21 @@ func NewStoppableTasksRunner(t *testing.T) *StoppableTasksRunner {
 	}
 }
 
-func (r *StoppableTasksRunner) Task(name string) *StoppableTask {
-	if thread, ok := r.tasks[name]; ok {
-		return thread
+func (r *StoppableTasksRunner) CreateTask(name string, fn TaskFunc) *StoppableTask {
+	if _, ok := r.tasks[name]; ok {
+		r.t.Fatalf("task '%s' already exists", name)
 	}
 
-	return newStoppableTask(name, r)
+	task := newStoppableTask(name, r)
+	r.tasks[name] = task
+	task.setup(fn)
+	return task
 }
 
-func (r *StoppableTasksRunner) addTask(thread *StoppableTask) {
-	if _, ok := r.tasks[thread.name]; ok {
-		r.t.Fatalf("thread '%s' already exists", thread.name)
-	}
-	r.tasks[thread.name] = thread
-}
-
-func (r *StoppableTasksRunner) recordPath(threadName string, stop *taskstop.StopPoint) {
-	task, ok := r.tasks[threadName]
+func (r *StoppableTasksRunner) recordPath(taskName string, stop *taskstop.StopPoint) {
+	task, ok := r.tasks[taskName]
 	if !ok {
-		r.t.Fatalf("thread '%s' not exist", task.name)
+		r.t.Fatalf("task '%s' not exist", task.name)
 	}
 
 	r.path = append(r.path, struct {
