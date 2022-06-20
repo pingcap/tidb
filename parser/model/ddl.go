@@ -404,9 +404,6 @@ type Job struct {
 
 	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
 	SeqNum uint64 `json:"seq_num"`
-
-	// NOTE: To add a field, please make sure that the following methods work as expected:
-	// - ddl.cloneFromSubJob
 }
 
 // FinishTableJob is called when a job is finished.
