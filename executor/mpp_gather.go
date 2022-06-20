@@ -81,7 +81,7 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 			zap.Int64("ID", mppTask.ID), zap.String("address", mppTask.Meta.GetAddress()),
 			zap.Bool("EnableFineGrainedShuffle", pf.EnableFineGrainedShuffle),
 			zap.Uint32("FineGrainedShuffleStreamCount", e.ctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount),
-			zap.Int64("FineGrainedShuffleBatchSize", e.ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize),
+			zap.Uint64("FineGrainedShuffleBatchSize", e.ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize),
 			zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
 		req := &kv.MPPDispatchRequest{
 			Data:      pbData,

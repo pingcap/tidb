@@ -1157,7 +1157,7 @@ type SessionVars struct {
 	MaxAllowedPacket uint64
 
 	TiFlashFineGrainedShuffleStreamCount uint32
-	TiFlashFineGrainedShuffleBatchSize   int64
+	TiFlashFineGrainedShuffleBatchSize   uint64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

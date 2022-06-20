@@ -75,7 +75,7 @@ type MPPDispatchRequest struct {
 	ID                            int64 // identify a single task
 	State                         MppTaskStates
 	FineGrainedShuffleStreamCount uint32
-	FineGrainedShuffleBatchSize   int64
+	FineGrainedShuffleBatchSize   uint64
 }
 
 // MPPClient accepts and processes mpp requests.

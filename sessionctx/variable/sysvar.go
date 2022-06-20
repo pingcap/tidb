@@ -1643,7 +1643,7 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashFineGrainedShuffleBatchSize, Value: strconv.Itoa(DefTiFlashFineGrainedShuffleBatchSize), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64,
 		SetSession: func(s *SessionVars, val string) error {
-			s.TiFlashFineGrainedShuffleBatchSize = TidbOptInt64(val, DefTiFlashFineGrainedShuffleBatchSize)
+			s.TiFlashFineGrainedShuffleBatchSize = uint64(TidbOptInt64(val, DefTiFlashFineGrainedShuffleBatchSize))
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBSimplifiedMetrics, Value: BoolToOnOff(DefTiDBSimplifiedMetrics), Type: TypeBool,
