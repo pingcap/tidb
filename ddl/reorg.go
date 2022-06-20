@@ -624,7 +624,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = rh.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -693,7 +693,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			zap.String("startHandle", tryDecodeToHandleString(start)),
 			zap.String("endHandle", tryDecodeToHandleString(end)))
 
-		err = rh.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -779,6 +779,14 @@ func (r *reorgHandler) UpdateDDLReorgStartHandle(job *model.Job, element *meta.E
 func (r *reorgHandler) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	if r.enableConcurrentDDL {
 		return updateDDLReorgHandle(r.s, job, startKey, endKey, physicalTableID, element)
+	}
+	return r.m.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
+}
+
+// InitDDLReorgHandle initializes the job reorganization information.
+func (r *reorgHandler) InitDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	if r.enableConcurrentDDL {
+		return initDDLReorgHandle(r.s, job, startKey, endKey, physicalTableID, element)
 	}
 	return r.m.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
 }

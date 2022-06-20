@@ -286,9 +286,7 @@ func updateConcurrencyDDLJob(sctx *session, job *model.Job, updateRawArgs bool) 
 
 // getDDLReorgHandle get ddl reorg handle.
 func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
-	var id int64
-	var tp []byte
-	sql := fmt.Sprintf("select curr_ele_id, curr_ele_type from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	sql := fmt.Sprintf("select curr_ele_id, curr_ele_type, start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	rows, err := sess.execute(context.Background(), sql, "get_handle")
 	if err != nil {
 		return nil, nil, nil, 0, err
@@ -296,21 +294,15 @@ func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, st
 	if len(rows) == 0 {
 		return nil, nil, nil, 0, meta.ErrDDLReorgElementNotExist
 	}
-	id = rows[0].GetInt64(0)
-	tp = rows[0].GetBytes(1)
+	id := rows[0].GetInt64(0)
+	tp := rows[0].GetBytes(1)
 	element = &meta.Element{
 		ID:      id,
 		TypeKey: tp,
 	}
-	sql = fmt.Sprintf("select start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d", job.ID, id)
-	rows, err = sess.execute(context.Background(), sql, "get_handle")
-	if err != nil {
-		return nil, nil, nil, 0, err
-	}
-
-	startKey = rows[0].GetBytes(0)
-	endKey = rows[0].GetBytes(1)
-	physicalTableID = rows[0].GetInt64(2)
+	startKey = rows[0].GetBytes(2)
+	endKey = rows[0].GetBytes(3)
+	physicalTableID = rows[0].GetInt64(4)
 	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
 	// update them to table's in this case.
 	if physicalTableID == 0 {
@@ -340,13 +332,16 @@ func updateDDLReorgStartHandle(sess *session, job *model.Job, element *meta.Elem
 }
 
 func updateDDLReorgHandle(sess *session, job *model.Job, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
-	sql := fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type) values (%d, %d, %s)", job.ID, element.ID, wrapKey2String(element.TypeKey))
+	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set curr_ele_id = %d, curr_ele_type = %s, start_key = %s, end_key = %s, physical_id = %d where job_id = %d",
+		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, job.ID)
 	_, err := sess.execute(context.Background(), sql, "update_handle")
-	if err != nil {
-		return err
-	}
-	sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key, end_key, physical_id) values (%d, %d, %s, %s, %d)", job.ID, element.ID, wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
-	_, err = sess.execute(context.Background(), sql, "update_handle")
+	return err
+}
+
+func initDDLReorgHandle(sess *session, job *model.Job, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	sql := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, curr_ele_id, curr_ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
+		job.ID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
+	_, err := sess.execute(context.Background(), sql, "update_handle")
 	return err
 }
 
@@ -443,7 +438,7 @@ func (d *ddl) MigrateExistingDDLs() (err error) {
 				if err != nil {
 					return err
 				}
-				err = updateDDLReorgHandle(se, job, start, end, pid, element)
+				err = initDDLReorgHandle(se, job, start, end, pid, element)
 				if err != nil {
 					return err
 				}

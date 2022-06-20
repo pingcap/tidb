@@ -2840,7 +2840,7 @@ var (
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
 	DDLJobTables = []string{
 		"create table tidb_ddl_job(job_id bigint not null, reorg int, schema_id bigint, table_id bigint, job_meta longblob, is_drop_schema int, primary key(job_id))",
-		"create table tidb_ddl_reorg(job_id bigint not null, ele_id bigint, curr_ele_id bigint, curr_ele_type blob, start_key blob, end_key blob, physical_id bigint, reorg_meta longblob)",
+		"create table tidb_ddl_reorg(job_id bigint not null, curr_ele_id bigint, curr_ele_type blob, start_key blob, end_key blob, physical_id bigint, reorg_meta longblob, primary key(job_id))",
 		"create table tidb_ddl_history(job_id bigint not null, job_meta longblob, primary key(job_id))",
 	}
 )
