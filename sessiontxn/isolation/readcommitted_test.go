@@ -56,7 +56,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	compareTS := getOracleTS(t, se)
 	// first ts should request from tso
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
@@ -64,16 +64,16 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 
 	// second ts should reuse first ts
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
 
 	// when one statement did not getStmtReadTS, the next one should still reuse the first ts
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
@@ -92,7 +92,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 
 	// if retry succeed next statement will still use rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
@@ -104,7 +104,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	compareTS = getOracleTS(t, se)
 	require.Greater(t, compareTS, rcCheckTS)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
@@ -112,7 +112,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 
 	// `StmtErrAfterPessimisticLock` will still disable rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
@@ -130,7 +130,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 
 	// only read-only stmt can retry for rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, forUpdateStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), forUpdateStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
@@ -157,7 +157,7 @@ func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
 		&tikverr.ErrDeadlock{Deadlock: &kvrpcpb.Deadlock{}, IsRetryable: true},
 	} {
 		require.NoError(t, executor.ResetContextOfStmt(se, stmt))
-		require.NoError(t, provider.OnStmtStart(context.TODO()))
+		require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 		require.NoError(t, err)
 		require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
@@ -169,7 +169,7 @@ func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
 		errors.New("err"),
 	} {
 		require.NoError(t, executor.ResetContextOfStmt(se, stmt))
-		require.NoError(t, provider.OnStmtStart(context.TODO()))
+		require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 		require.Same(t, lockErr, err)
 		require.Equal(t, sessiontxn.StmtActionError, nextAction)
@@ -191,7 +191,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 
 	// first read
 	require.NoError(t, executor.ResetContextOfStmt(se, stmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 	readTS, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
 	forUpdateTS, err := provider.GetStmtForUpdateTS()
@@ -204,7 +204,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	compareTS = getOracleTS(t, se)
 	require.Greater(t, compareTS, readTS)
 	require.NoError(t, executor.ResetContextOfStmt(se, stmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 	readTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	forUpdateTS, err = provider.GetStmtForUpdateTS()
@@ -269,7 +269,7 @@ func TestRCProviderInitialize(t *testing.T) {
 	assertAfterActive := activeRCTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider := assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	ts, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
 	assertAfterActive.Check(t)
@@ -282,7 +282,7 @@ func TestRCProviderInitialize(t *testing.T) {
 	assertAfterActive = activeRCTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	assertAfterActive.Check(t)
@@ -348,12 +348,12 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	}
 
 	// information schema and ts should equal to snapshot when tidb_snapshot is set
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseSnapshot()
 
 	// information schema and ts will restore when set tidb_snapshot to empty
 	tk.MustExec("set @@tidb_snapshot=''")
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseTxn(false)
 
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
@@ -364,7 +364,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	assertAfterActive := activeRCTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	tk.MustExec("set @@tidb_snapshot=@a")
 	checkUseSnapshot()
 	txn, err = se.Txn(false)

@@ -118,7 +118,7 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (p *SimpleTxnContextProvider) OnStmtStart(ctx context.Context) error {
+func (p *SimpleTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.Ctx = ctx
 	p.InfoSchema = p.Sctx.GetInfoSchema().(infoschema.InfoSchema)
 	return nil

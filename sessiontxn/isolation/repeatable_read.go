@@ -120,8 +120,8 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
+func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+	if err := p.baseTxnContextProvider.OnStmtStart(ctx, node); err != nil {
 		return err
 	}
 

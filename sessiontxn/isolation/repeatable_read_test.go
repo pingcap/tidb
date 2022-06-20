@@ -73,7 +73,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
-	err = provider.OnStmtStart(context.TODO())
+	err = provider.OnStmtStart(context.TODO(), nil)
 	// Unlike StmtRetry which uses forUpdateTS got in OnStmtErrorForNextAction, OnStmtStart will reset provider's forUpdateTS,
 	// which leads GetStmtForUpdateTS to acquire the latest ts.
 	compareTS2 = getOracleTS(t, se)
@@ -110,7 +110,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
-	err = provider.OnStmtStart(context.TODO())
+	err = provider.OnStmtStart(context.TODO(), nil)
 	require.NoError(t, err)
 	// Unlike StmtRetry which uses forUpdateTS got in OnStmtErrorForNextAction, OnStmtStart will reset provider's forUpdateTS,
 	// which leads GetStmtForUpdateTS to acquire the latest ts.
@@ -152,7 +152,7 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 	compareTS := getOracleTS(t, se)
 	// The read ts should be less than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Greater(t, compareTS, CurrentTS)
@@ -160,7 +160,7 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 
 	// The read ts should also be less than the compareTS in a new statement (after calling OnStmtStart)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, CurrentTS, prevTS)
@@ -174,14 +174,14 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 
 	// The for update read ts should be larger than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, forUpdateStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	forUpdateTS, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Greater(t, forUpdateTS, compareTS)
 
 	// But the read ts is still less than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, CurrentTS, prevTS)
@@ -227,7 +227,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 	assertAfterActive := activePessimisticRRAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider := assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	ts, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
 	assertAfterActive.Check(t)
@@ -240,7 +240,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 	assertAfterActive = activePessimisticRRAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	assertAfterActive.Check(t)
@@ -302,12 +302,12 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 	}
 
 	// information schema and ts should equal to snapshot when tidb_snapshot is set
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseSnapshot()
 
 	// information schema and ts will restore when set tidb_snapshot to empty
 	tk.MustExec("set @@tidb_snapshot=''")
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseTxn()
 
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
@@ -318,7 +318,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 	assertAfterActive := activePessimisticRRAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	tk.MustExec("set @@tidb_snapshot=@a")
 	checkUseSnapshot()
 	txn, err = se.Txn(false)
@@ -342,7 +342,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
 	txnManager := sessiontxn.GetTxnManager(se)
 
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
 	stmt, err := parser.New().ParseOneStmt("delete from t where id = 1", "", "")
 	require.NoError(t, err)
 	compareTs := getOracleTS(t, se)
@@ -356,7 +356,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.Greater(t, compareTs, ts)
 	require.Equal(t, ts, forUpdateTS)
 
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
 	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
 	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
@@ -368,7 +368,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ts, forUpdateTS)
 
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
 	stmt, err = parser.New().ParseOneStmt("select * from (select * from t where id = 1 for update) as t1 for update", "", "")
 	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
@@ -381,7 +381,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.Equal(t, ts, forUpdateTS)
 
 	// Now, test for one that does not use the optimization
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
 	stmt, err = parser.New().ParseOneStmt("select * from t for update", "", "")
 	compareTs = getOracleTS(t, se)
 	require.NoError(t, err)
@@ -397,7 +397,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	// Test use startTS after optimize when autocommit=0
 	activeAssert := activePessimisticRRAssert(t, tk.Session(), true)
 	provider = initializeRepeatableReadProvider(t, tk, false)
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
 	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
 	require.NoError(t, err)
 	execStmt, err = compiler.Compile(context.TODO(), stmt)
@@ -413,7 +413,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	compareTs = getOracleTS(t, se)
 	activeAssert = activePessimisticRRAssert(t, tk.Session(), true)
 	provider = initializeRepeatableReadProvider(t, tk, false)
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
 	stmt, err = parser.New().ParseOneStmt("select * from t", "", "")
 	require.NoError(t, err)
 	execStmt, err = compiler.Compile(context.TODO(), stmt)

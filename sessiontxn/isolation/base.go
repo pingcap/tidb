@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"github.com/pingcap/tidb/parser/ast"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -119,7 +120,7 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return p.getStmtForUpdateTSFunc()
 }
 
-func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context) error {
+func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.ctx = ctx
 	return nil
 }

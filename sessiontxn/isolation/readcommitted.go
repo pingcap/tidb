@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	plannercore "github.com/pingcap/tidb/planner/core"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -77,11 +78,28 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
+func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+	if err := p.baseTxnContextProvider.OnStmtStart(ctx, node); err != nil {
 		return err
 	}
+
+	// Try to mark the `RCCheckTS` flag for the first time execution of in-transaction read requests
+	// using read-consistency isolation level.
+	if node != nil && NeedSetRCCheckTSFlag(p.sctx, node) {
+		p.sctx.GetSessionVars().StmtCtx.RCCheckTS = true
+	}
+
 	return p.prepareStmt(!p.isTxnPrepared)
+}
+
+// NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
+func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
+	sessionVars := ctx.GetSessionVars()
+	if sessionVars.ConnectionID > 0 && sessionVars.RcReadCheckTS && sessionVars.InTxn() &&
+		!sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
+		return true
+	}
+	return false
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error

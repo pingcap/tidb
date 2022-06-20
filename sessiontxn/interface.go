@@ -125,7 +125,7 @@ type TxnContextProvider interface {
 	// OnInitialize is the hook that should be called when enter a new txn with this provider
 	OnInitialize(ctx context.Context, enterNewTxnType EnterNewTxnType) error
 	// OnStmtStart is the hook that should be called when a new statement started
-	OnStmtStart(ctx context.Context) error
+	OnStmtStart(ctx context.Context, node ast.StmtNode) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
@@ -147,7 +147,7 @@ type TxnManager interface {
 	// EnterNewTxn enters a new transaction.
 	EnterNewTxn(ctx context.Context, req *EnterNewTxnRequest) error
 	// OnStmtStart is the hook that should be called when a new statement started
-	OnStmtStart(ctx context.Context) error
+	OnStmtStart(ctx context.Context, node ast.StmtNode) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 	// This method is not required to be called for every error in the statement,
 	// it is only required to be called for some errors handled in some specified points given by the parameter `point`.
@@ -175,7 +175,7 @@ func NewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
 	if err := NewTxn(ctx, sctx); err != nil {
 		return err
 	}
-	return GetTxnManager(sctx).OnStmtStart(ctx)
+	return GetTxnManager(sctx).OnStmtStart(ctx, nil)
 }
 
 // GetTxnManager returns the TxnManager object from session context

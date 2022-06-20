@@ -106,11 +106,11 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (m *txnManager) OnStmtStart(ctx context.Context) error {
+func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	return m.ctxProvider.OnStmtStart(ctx)
+	return m.ctxProvider.OnStmtStart(ctx, node)
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
