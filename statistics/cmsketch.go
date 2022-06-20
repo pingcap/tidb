@@ -179,24 +179,6 @@ func (c *CMSketch) MemoryUsage() (sum int64) {
 	return
 }
 
-// queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
-// If such elements does not in topn elements, nothing will happen and false will be returned.
-func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
-	if c == nil || c.TopN == nil {
-		return false
-	}
-	idx := c.findTopN(d)
-	if idx >= 0 {
-		if increase {
-			c.TopN[idx].Count += delta
-		} else {
-			c.TopN[idx].Count -= delta
-		}
-		return true
-	}
-	return false
-}
-
 // InsertBytes inserts the bytes value into the CM Sketch.
 func (c *CMSketch) InsertBytes(bytes []byte) {
 	c.InsertBytesByCount(bytes, 1)
@@ -486,11 +468,6 @@ func (c *CMSketch) Copy() *CMSketch {
 	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, defaultValue: c.defaultValue}
 }
 
-// AppendTopN appends a topn into the TopN struct.
-func (c *TopN) AppendTopN(data []byte, count uint64) {
-	c.TopN = append(c.TopN, TopNMeta{data, count})
-}
-
 // GetWidthAndDepth returns the width and depth of CM Sketch.
 func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
 	return c.width, c.depth
@@ -505,6 +482,14 @@ func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
+}
+
+// AppendTopN appends a topn into the TopN struct.
+func (c *TopN) AppendTopN(data []byte, count uint64) {
+	if c == nil {
+		return
+	}
+	c.TopN = append(c.TopN, TopNMeta{data, count})
 }
 
 func (c *TopN) String() string {
@@ -536,6 +521,9 @@ func (c *TopN) Num() int {
 
 // DecodedString returns the value with decoded result.
 func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, error) {
+	if c == nil {
+		return "", nil
+	}
 	builder := &strings.Builder{}
 	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
 	fmt.Fprint(builder, "[")
@@ -699,6 +687,24 @@ func (c *TopN) MemoryUsage() (sum int64) {
 		return
 	}
 	return int64(cap(c.TopN)) * TopNUnitSize
+}
+
+// queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
+// If such elements does not in topn elements, nothing will happen and false will be returned.
+func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
+	if c == nil || c.TopN == nil {
+		return false
+	}
+	idx := c.findTopN(d)
+	if idx >= 0 {
+		if increase {
+			c.TopN[idx].Count += delta
+		} else {
+			c.TopN[idx].Count -= delta
+		}
+		return true
+	}
+	return false
 }
 
 // NewTopN creates the new TopN struct by the given size.

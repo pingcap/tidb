@@ -71,11 +71,19 @@ func mockTableAppendColumn(t *statistics.Table) {
 }
 
 func mockTableAppendIndex(t *statistics.Table) {
-	index := int64(len(t.Columns) + 1)
+	index := int64(len(t.Indices) + 1)
 	t.Indices[index] = &statistics.Index{
 		Info:     &model.IndexInfo{ID: index},
 		CMSketch: statistics.NewCMSketch(1, 1),
 	}
+}
+
+func mockTableRemoveColumn(t *statistics.Table) {
+	delete(t.Columns, int64(len(t.Columns)))
+}
+
+func mockTableRemoveIndex(t *statistics.Table) {
+	delete(t.Indices, int64(len(t.Indices)))
 }
 
 func TestLRUPutGetDel(t *testing.T) {
@@ -266,14 +274,14 @@ func TestLRUEvictPolicy(t *testing.T) {
 	s.SetCapacity(cost - 1)
 	require.Equal(t, s.Cost(), statistics.TopNUnitSize)
 	require.Nil(t, t1.Columns[0].CMSketch)
-	require.True(t, t1.Columns[0].IsCMSEvicting())
+	require.True(t, t1.Columns[0].IsCMSEvicted())
 	require.NotNil(t, t1.Columns[0].TopN)
-	require.False(t, t1.Columns[0].IsTopNEvicting())
+	require.False(t, t1.Columns[0].IsTopNEvicted())
 	// assert both cms and topn got evicted
 	s.SetCapacity(1)
 	require.Equal(t, s.Cost(), int64(0))
 	require.Nil(t, t1.Columns[0].CMSketch)
-	require.True(t, t1.Columns[0].IsCMSEvicting())
+	require.True(t, t1.Columns[0].IsCMSEvicted())
 	require.Nil(t, t1.Columns[0].TopN)
-	require.True(t, t1.Columns[0].IsTopNEvicting())
+	require.True(t, t1.Columns[0].IsTopNEvicted())
 }
