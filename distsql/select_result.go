@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
@@ -272,6 +273,12 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
+	failpoint.Inject("mockNextRawError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mockNextRawError"))
+		}
+	})
+
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
 	r.feedback.Invalidate()
@@ -394,9 +401,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-			logutil.Logger(ctx).Error("invalid cop task execution summaries length",
-				zap.Int("expected", len(r.copPlanIDs)),
-				zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
+			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
+			// not trigger an error log in this case.
+			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+				logutil.Logger(ctx).Error("invalid cop task execution summaries length",
+					zap.Int("expected", len(r.copPlanIDs)),
+					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+			}
 			return
 		}
 		for i, detail := range r.selectResp.GetExecutionSummaries() {

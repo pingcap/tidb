@@ -89,6 +89,9 @@ type executorBuilder struct {
 	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
 	explicitStaleness bool
 	txnScope          string
+	inUpdateStmt      bool
+	inDeleteStmt      bool
+	inInsertStmt      bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -781,6 +784,7 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
+	b.inInsertStmt = true
 	if v.SelectPlan != nil {
 		// Try to update the forUpdateTS for insert/replace into select statements.
 		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
@@ -1178,15 +1182,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 	}
 
-	// consider collations
-	leftTypes := make([]*types.FieldType, 0, len(retTypes(leftExec)))
-	for _, tp := range retTypes(leftExec) {
-		leftTypes = append(leftTypes, tp.Clone())
-	}
-	rightTypes := make([]*types.FieldType, 0, len(retTypes(rightExec)))
-	for _, tp := range retTypes(rightExec) {
-		rightTypes = append(rightTypes, tp.Clone())
-	}
 	leftIsBuildSide := true
 
 	e.isNullEQ = v.IsNullEQ
@@ -1229,23 +1224,31 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	executorCountHashJoinExec.Inc()
 
+	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
+	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
+	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
+	// and use ETString to hash the second column, although they may be the same column.
+	leftExecTypes, rightExecTypes := retTypes(leftExec), retTypes(rightExec)
+	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys))
+	for i, col := range v.LeftJoinKeys {
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes[i].Flag = col.RetType.Flag
+	}
+	for i, col := range v.RightJoinKeys {
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes[i].Flag = col.RetType.Flag
+	}
+
+	// consider collations
 	for i := range v.EqualConditions {
 		chs, coll := v.EqualConditions[i].CharsetAndCollation(e.ctx)
-		bt := leftTypes[v.LeftJoinKeys[i].Index]
-		bt.Charset, bt.Collate = chs, coll
-		pt := rightTypes[v.RightJoinKeys[i].Index]
-		pt.Charset, pt.Collate = chs, coll
+		leftTypes[i].Charset, leftTypes[i].Collate = chs, coll
+		rightTypes[i].Charset, rightTypes[i].Collate = chs, coll
 	}
 	if leftIsBuildSide {
 		e.buildTypes, e.probeTypes = leftTypes, rightTypes
 	} else {
 		e.buildTypes, e.probeTypes = rightTypes, leftTypes
-	}
-	for _, key := range e.buildKeys {
-		e.buildTypes[key.Index].Flag = key.RetType.Flag
-	}
-	for _, key := range e.probeKeys {
-		e.probeTypes[key.Index].Flag = key.RetType.Flag
 	}
 	return e
 }
@@ -1386,6 +1389,12 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
 	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+		e.numWorkers = 0
+	}
+
+	// Use un-parallel projection for query that write on memdb to avoid data race.
+	// See also https://github.com/pingcap/tidb/issues/26832
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -1861,6 +1870,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 }
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
+	b.inUpdateStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
@@ -1932,6 +1942,7 @@ func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int)
 }
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
+	b.inDeleteStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
@@ -2478,6 +2489,21 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		outerTypes[col.Index].Flag = col.RetType.Flag
 	}
 
+	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
+	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
+	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
+	// and use ETString to hash the second column, although they may be the same column.
+	innerHashTypes := make([]*types.FieldType, len(v.InnerHashKeys))
+	outerHashTypes := make([]*types.FieldType, len(v.OuterHashKeys))
+	for i, col := range v.InnerHashKeys {
+		innerHashTypes[i] = innerTypes[col.Index].Clone()
+		innerHashTypes[i].Flag = col.RetType.Flag
+	}
+	for i, col := range v.OuterHashKeys {
+		outerHashTypes[i] = outerTypes[col.Index].Clone()
+		outerHashTypes[i].Flag = col.RetType.Flag
+	}
+
 	var (
 		outerFilter           []expression.Expression
 		leftTypes, rightTypes []*types.FieldType
@@ -2512,12 +2538,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec),
 		outerCtx: outerCtx{
-			rowTypes: outerTypes,
-			filter:   outerFilter,
+			rowTypes:  outerTypes,
+			hashTypes: outerHashTypes,
+			filter:    outerFilter,
 		},
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 			rowTypes:      innerTypes,
+			hashTypes:     innerHashTypes,
 			colLens:       v.IdxColLens,
 			hasPrefixCol:  hasPrefixCol,
 		},

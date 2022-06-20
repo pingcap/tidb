@@ -88,10 +88,11 @@ type IndexLookUpJoin struct {
 }
 
 type outerCtx struct {
-	rowTypes []*types.FieldType
-	keyCols  []int
-	hashCols []int
-	filter   expression.CNFExprs
+	rowTypes  []*types.FieldType
+	keyCols   []int
+	hashTypes []*types.FieldType
+	hashCols  []int
+	filter    expression.CNFExprs
 }
 
 type innerCtx struct {
@@ -99,6 +100,7 @@ type innerCtx struct {
 	rowTypes      []*types.FieldType
 	keyCols       []int
 	keyColIDs     []int64 // the original ID in its table, used by dynamic partition pruning
+	hashTypes     []*types.FieldType
 	hashCols      []int
 	colLens       []int
 	hasPrefixCol  bool

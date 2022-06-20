@@ -1578,3 +1578,20 @@ func (s *seqTestSuite) TestIssue19410(c *C) {
 	tk.MustQuery("select /*+ INL_HASH_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
 	tk.MustQuery("select /*+ INL_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
 }
+
+func (s *seqTestSuite) TestAnalyzeNextRawErrorNoLeak(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int, c varchar(32))")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/distsql/mockNextRawError", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/distsql/mockNextRawError"), IsNil)
+	}()
+
+	err := tk.ExecToErr("analyze table t1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mockNextRawError")
+}
