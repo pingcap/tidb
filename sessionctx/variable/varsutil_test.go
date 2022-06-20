@@ -673,3 +673,21 @@ func TestStmtVars(t *testing.T) {
 	err = SetStmtVar(vars, MaxExecutionTime, "100")
 	require.NoError(t, err)
 }
+
+func TestSessionStatesSystemVar(t *testing.T) {
+	vars := NewSessionVars()
+	err := SetSessionSystemVar(vars, "autocommit", "1")
+	require.NoError(t, err)
+	val, keep, err := GetSessionStatesSystemVar(vars, "autocommit")
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	require.Equal(t, true, keep)
+	val, keep, err = GetSessionStatesSystemVar(vars, Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, false, keep)
+	err = SetSessionSystemVar(vars, MaxAllowedPacket, "1024")
+	val, keep, err = GetSessionStatesSystemVar(vars, MaxAllowedPacket)
+	require.NoError(t, err)
+	require.Equal(t, "1024", val)
+	require.Equal(t, true, keep)
+}
