@@ -4612,6 +4612,19 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		return nil
 	}
 
+	if plan.Lock && !b.inSelectLockStmt {
+		b.inSelectLockStmt = true
+		defer func() {
+			b.inSelectLockStmt = false
+		}()
+	}
+
+	snapshotTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
@@ -4631,27 +4644,18 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		columns:          plan.Columns,
 	}
 
+	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.getCacheTable(plan.TblInfo, snapshotTS)
+	}
+
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
 		e.lock = false
 		e.waitTime = 0
 	}
 
-	txnManager := sessiontxn.GetTxnManager(b.ctx)
-	var err error
 	if e.lock {
 		b.hasLock = true
-		e.startTS, err = txnManager.GetStmtForUpdateTS()
-	} else {
-		e.startTS, err = txnManager.GetStmtReadTS()
-	}
-	if err != nil {
-		b.err = err
-		return nil
-	}
-
-	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(plan.TblInfo, e.startTS)
 	}
 
 	var capacity int
