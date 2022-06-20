@@ -182,19 +182,19 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS(plan, nil)
+	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS(plan, false)
 
 	return nil
 }
 
 // optimizeForNotFetchingLatestTS searches for optimization condition recursively
-// Note: For point get and batch point get (name it plan), if the parent node is update/delete/physicalLock, we should check
-// whether the plan.Lock. If the plan.Lock is false which means the lock has not pushed down to it successfully due to some reasons,
-// we should not optimize for it.
-func optimizeForNotFetchingLatestTS(plan plannercore.Plan, parentPlan plannercore.Plan) bool {
+// Note: For point get and batch point get (name it plan), if one of the ancestor node is update/delete/physicalLock,
+// we should check whether the plan.Lock is true or false. See comments in needNotToBeOptimized.
+// flag = true means one of the ancestor node is update/delete/physicalLock.
+func optimizeForNotFetchingLatestTS(plan plannercore.Plan, flag bool) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan, *plannercore.BatchPointGetPlan:
-		if needNotToBeOptimized(plan, parentPlan) {
+		if needNotToBeOptimized(plan, flag) {
 			return false
 		}
 		return true
@@ -203,27 +203,28 @@ func optimizeForNotFetchingLatestTS(plan plannercore.Plan, parentPlan plannercor
 			return false
 		}
 		allChildrenArePointGet := true
+		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
 		for _, p := range v.Children() {
-			allChildrenArePointGet = allChildrenArePointGet && optimizeForNotFetchingLatestTS(p, v)
+			allChildrenArePointGet = allChildrenArePointGet && optimizeForNotFetchingLatestTS(p, isPhysicalLock || flag)
 		}
 		return allChildrenArePointGet
 	case *plannercore.Update:
-		return optimizeForNotFetchingLatestTS(v.SelectPlan, v)
+		return optimizeForNotFetchingLatestTS(v.SelectPlan, true)
 	case *plannercore.Delete:
-		return optimizeForNotFetchingLatestTS(v.SelectPlan, v)
+		return optimizeForNotFetchingLatestTS(v.SelectPlan, true)
 	case *plannercore.Insert:
 		return v.SelectPlan == nil
 	}
 	return false
 }
 
-func needNotToBeOptimized(plan plannercore.Plan, parentPlan plannercore.Plan) bool {
-	var flag bool
-	switch parentPlan.(type) {
-	case *plannercore.Update, *plannercore.Delete, *plannercore.PhysicalLock:
-		flag = true
-	}
-
+// needNotToBeOptimized
+// The argument `flag` means whether one of the ancestor of the plan is update/delete/physicalLock.
+// We do not optimize the point get/ batch point get if plan.lock = false and flag = true.
+// Theoretically, the plan.lock should be true if the flag is true. But due to the bug describing in Issue35524,
+// the plan.lock can be false in the case of flag being true. In this case, optimization here can lead to different results
+// which cannot be accepted as AdviseOptimizeWithPlan cannot change results.
+func needNotToBeOptimized(plan plannercore.Plan, flag bool) bool {
 	locked := true
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
