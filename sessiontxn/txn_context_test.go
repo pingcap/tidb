@@ -735,12 +735,7 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 		tk.MustExec("rollback")
 		tk.MustExec("truncate table t1")
 		tk.MustExec("insert into t1 values(1, 10)")
-		task := testkit.NewStoppableTasksRunner(t).Task("s2").StopWhen(
-			sessiontxn.StopPointBeforeExecutorFirstRun,
-			sessiontxn.StopPointOnStmtRetryAfterLockError,
-		)
-
-		return task.Create(func(ch *taskstop.Chan) {
+		return testkit.NewStoppableTasksRunner(t).Task("s2").Create(func(ch *taskstop.Chan) {
 			tk2 := testkit.NewTestKit(t, store)
 			defer func() {
 				taskstop.DisableSessionStopPoint(tk2.Session())
@@ -756,7 +751,12 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 			} else {
 				tk2.MustExec("set autocommit=0")
 			}
-			taskstop.EnableSessionStopPoint(tk2.Session(), ch)
+			taskstop.EnableSessionStopPoint(
+				tk2.Session(),
+				ch,
+				sessiontxn.StopPointBeforeExecutorFirstRun,
+				sessiontxn.StopPointOnStmtRetryAfterLockError,
+			)
 			if strings.HasPrefix(sql, "update") {
 				tk2.MustExec(sql)
 				taskstop.DisableSessionStopPoint(tk2.Session())

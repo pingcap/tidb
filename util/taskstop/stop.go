@@ -80,21 +80,44 @@ func (ch *Chan) WaitStepSignal() chan any {
 	return ch.ch2
 }
 
-func EnableSessionStopPoint(sctx sessionctx.Context, c *Chan) {
-	sctx.SetValue(stringutil.StringerStr("sessionStopChain"), c)
+type sessionStopInjection struct {
+	ch             *Chan
+	stopEveryPoint bool
+	stopList       []string
+}
+
+func EnableSessionStopPoint(sctx sessionctx.Context, c *Chan, stopList ...string) {
+	sctx.SetValue(stringutil.StringerStr("sessionStopInjection"), &sessionStopInjection{
+		ch:             c,
+		stopEveryPoint: len(stopList) == 0,
+		stopList:       stopList,
+	})
 }
 
 func DisableSessionStopPoint(sctx sessionctx.Context) {
-	sctx.SetValue(stringutil.StringerStr("sessionStopChain"), nil)
+	sctx.SetValue(stringutil.StringerStr("sessionStopInjection"), nil)
 }
 
 func InjectSessionStopPoint(sctx sessionctx.Context, stopName string) {
 	failpoint.Inject("sessionStop", func() {
-		if ch, ok := sctx.Value(stringutil.StringerStr("sessionStopChain")).(*Chan); ok {
-			if err := ch.SignalOnStopAt(stopName); err != nil {
+		if inject, ok := sctx.Value(stringutil.StringerStr("sessionStopInjection")).(*sessionStopInjection); ok {
+			if !inject.stopEveryPoint {
+				shouldStop := false
+				for _, stop := range inject.stopList {
+					if stop == stopName {
+						shouldStop = true
+					}
+				}
+
+				if !shouldStop {
+					return
+				}
+			}
+
+			if err := inject.ch.SignalOnStopAt(stopName); err != nil {
 				panic(err)
 			}
-			<-ch.WaitStepSignal()
+			<-inject.ch.WaitStepSignal()
 		}
 	})
 }

@@ -34,8 +34,6 @@ type StoppableTask struct {
 
 	currentStop *taskstop.StopPoint
 	path        []*taskstop.StopPoint
-	whiteList   bool
-	stopList    map[string]struct{}
 }
 
 func newStoppableTask(name string, runner *StoppableTasksRunner) *StoppableTask {
@@ -44,31 +42,6 @@ func newStoppableTask(name string, runner *StoppableTasksRunner) *StoppableTask 
 		name:   name,
 		runner: runner,
 	}
-}
-
-func (t *StoppableTask) StopWhen(stops ...string) *StoppableTask {
-	t.setStopList(true, stops)
-	return t
-}
-
-func (t *StoppableTask) StopWhenNot(stops ...string) *StoppableTask {
-	t.setStopList(false, stops)
-	return t
-}
-
-func (t *StoppableTask) StopEveryPoint() *StoppableTask {
-	t.setStopList(false, nil)
-	return t
-}
-
-func (t *StoppableTask) setStopList(whiteList bool, stops []string) {
-	list := make(map[string]struct{})
-	for _, stopName := range stops {
-		list[stopName] = struct{}{}
-	}
-
-	t.stopList = list
-	t.whiteList = whiteList
 }
 
 func (t *StoppableTask) Create(fn TaskFunc) *StoppableTask {
@@ -126,26 +99,14 @@ func (t *StoppableTask) IsDone() bool {
 	return t.currentStop.Name() == "DONE"
 }
 
-func (t *StoppableTask) step() {
-	for {
-		if t.stepOne(); t.IsDone() {
-			break
-		}
-
-		if _, ok := t.stopList[t.currentStop.Name()]; t.whiteList == ok {
-			break
-		}
-	}
-}
-
 func (t *StoppableTask) record(stop *taskstop.StopPoint) {
 	t.path = append(t.path, stop)
 	t.runner.recordPath(t.name, stop)
 }
 
-func (t *StoppableTask) stepOne() {
+func (t *StoppableTask) step() {
 	if t.IsDone() {
-		panic("cannot step a done thread")
+		t.t.Fatal("cannot step a done task")
 	}
 	require.NoError(t.t, t.ch.SignalStep())
 	t.waitNextStop()
