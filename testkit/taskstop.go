@@ -46,12 +46,12 @@ func newStoppableTask(name string, runner *StoppableTasksRunner) *StoppableTask 
 	}
 }
 
-func (t *StoppableTask) StopWhen(stops []string) *StoppableTask {
+func (t *StoppableTask) StopWhen(stops ...string) *StoppableTask {
 	t.setStopList(true, stops)
 	return t
 }
 
-func (t *StoppableTask) StopWhenNot(stops []string) *StoppableTask {
+func (t *StoppableTask) StopWhenNot(stops ...string) *StoppableTask {
 	t.setStopList(false, stops)
 	return t
 }
@@ -71,7 +71,7 @@ func (t *StoppableTask) setStopList(whiteList bool, stops []string) {
 	t.whiteList = whiteList
 }
 
-func (t *StoppableTask) Start(fn TaskFunc) *StoppableTask {
+func (t *StoppableTask) Create(fn TaskFunc) *StoppableTask {
 	t.ch = taskstop.NewChan()
 	t.runFunc = fn
 
@@ -93,32 +93,33 @@ func (t *StoppableTask) CurrentStop() *taskstop.StopPoint {
 	return t.currentStop
 }
 
-func (t *StoppableTask) Step() *StoppableTask {
+func (t *StoppableTask) Start() *StoppableTask {
+	return t.ExpectWaitingStart().Continue()
+}
+
+func (t *StoppableTask) Continue() *StoppableTask {
 	t.step()
 	t.record(t.currentStop)
 	return t
 }
 
-func (t *StoppableTask) StepUntilDone() *StoppableTask {
-	if t.IsDone() {
-		return t
-	}
-
-	for !t.IsDone() {
-		t.step()
-	}
-	t.record(t.currentStop)
-	return t
-}
-
-func (t *StoppableTask) CheckStopAt(name string) *StoppableTask {
+func (t *StoppableTask) ExpectStoppedAt(name string) *StoppableTask {
 	require.Equal(t.t, name, t.currentStop.Name())
 	return t
 }
 
-func (t *StoppableTask) CheckDone() *StoppableTask {
+func (t *StoppableTask) ExpectWaitingStart() *StoppableTask {
+	require.Truef(t.t, t.IsWaitingStart(), "current stop: '%s'", t.currentStop.Name())
+	return t
+}
+
+func (t *StoppableTask) ExpectDone() *StoppableTask {
 	require.Truef(t.t, t.IsDone(), "current stop: '%s'", t.currentStop.Name())
 	return t
+}
+
+func (t *StoppableTask) IsWaitingStart() bool {
+	return t.currentStop.Name() == "START"
 }
 
 func (t *StoppableTask) IsDone() bool {
