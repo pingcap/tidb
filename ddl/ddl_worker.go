@@ -706,7 +706,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job) error {
 	if err != nil {
 		return err
 	}
-	w.needSync(job)
+	w.wait4Sync(job)
 
 	if runJobErr != nil {
 		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,

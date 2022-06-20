@@ -57,13 +57,13 @@ func (d *ddl) getRunningDDLJobIDs() string {
 	d.runningJobs.RLock()
 	defer d.runningJobs.RUnlock()
 	for id := range d.runningJobs.runningJobMap {
-		d.runningOrBlockedIDs = append(d.runningOrBlockedIDs, strconv.Itoa(int(id)))
+		d.runningJobIDs = append(d.runningJobIDs, strconv.Itoa(int(id)))
 	}
-	return strings.Join(d.runningOrBlockedIDs, ",")
+	return strings.Join(d.runningJobIDs, ",")
 }
 
 func (d *ddl) resetRunningIDs() {
-	d.runningOrBlockedIDs = d.runningOrBlockedIDs[:1]
+	d.runningJobIDs = d.runningJobIDs[:1]
 }
 
 const (

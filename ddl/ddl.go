@@ -225,8 +225,8 @@ type ddl struct {
 		sync.RWMutex
 		runningJobMap map[int64]struct{}
 	}
-	// used for build fetch DDL job SQL.
-	runningOrBlockedIDs []string
+	// it holds the running ddl jobs ID.
+	runningJobIDs []string
 }
 
 // waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
@@ -245,7 +245,7 @@ func newWaitSchemaSyncedController() *waitSchemaSyncedController {
 	}
 }
 
-func (w *waitSchemaSyncedController) needSync(job *model.Job) {
+func (w *waitSchemaSyncedController) wait4Sync(job *model.Job) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.job[job.ID] = struct{}{}
@@ -338,9 +338,12 @@ func (w *workerActivityManager) active(b bool) {
 	}
 }
 
+// schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
+// we use another transaction to update the schema version, so that we need to lock the schema version and unlock it until the job is committed.
 type schemaVersionManager struct {
-	schemaVersionMu    sync.Mutex
-	schemaVersionOwner atomicutil.Int64
+	schemaVersionMu sync.Mutex
+	// lockOwner stores the job ID that is holding the lock.
+	lockOwner atomicutil.Int64
 }
 
 func newSchemaVersionManager() *schemaVersionManager {
@@ -363,16 +366,16 @@ func (sv *schemaVersionManager) SetSchemaVersion(job *model.Job, store kv.Storag
 
 func (sv *schemaVersionManager) lockSchemaVersion(job *model.Job) {
 	sv.schemaVersionMu.Lock()
-	sv.schemaVersionOwner.Store(job.ID)
+	sv.lockOwner.Store(job.ID)
 }
 
 func (sv *schemaVersionManager) ResetSchemaVersion(job *model.Job) {
 	if job == nil {
 		return
 	}
-	ownerID := sv.schemaVersionOwner.Load()
+	ownerID := sv.lockOwner.Load()
 	if ownerID == job.ID {
-		sv.schemaVersionOwner.Store(0)
+		sv.lockOwner.Store(0)
 		sv.schemaVersionMu.Unlock()
 	}
 }
@@ -565,14 +568,14 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.concurrentDDL = newWorkerActivityManager()
 	ddlCtx.queueDDL = newWorkerActivityManager()
 	d := &ddl{
-		ddlCtx:              ddlCtx,
-		limitJobCh:          make(chan *limitJobTask, batchAddingJobs),
-		enableTiFlashPoll:   atomicutil.NewBool(true),
-		ddlJobCh:            make(chan struct{}, 100),
-		runningOrBlockedIDs: make([]string, 0, 16),
+		ddlCtx:            ddlCtx,
+		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
+		enableTiFlashPoll: atomicutil.NewBool(true),
+		ddlJobCh:          make(chan struct{}, 100),
+		runningJobIDs:     make([]string, 0, 16),
 	}
 	d.runningJobs.runningJobMap = make(map[int64]struct{})
-	d.runningOrBlockedIDs = append(d.runningOrBlockedIDs, "0")
+	d.runningJobIDs = append(d.runningJobIDs, "0")
 
 	return d
 }
