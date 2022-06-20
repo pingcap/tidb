@@ -53,7 +53,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var coprCacheHistogramEvict = tidbmetrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
+var coprCacheCounterEvict = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
@@ -676,7 +676,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		}
 	}
 	if worker.store.coprCache != nil && worker.store.coprCache.cache.Metrics != nil {
-		coprCacheHistogramEvict.Observe(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
+		coprCacheCounterEvict.Add(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
 	}
 }
 
