@@ -1100,7 +1100,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		statsVer = version
 	}
 	// 2. Save histograms.
-	maxAllowedPacket := h.mu.ctx.GetSessionVars().MaxAllowedPacket
+	const maxInsertLength = 1024 * 1024
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
 			// It's normal virtual column, skip it.
@@ -1136,7 +1136,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 						if k > j {
 							val = "," + val
 						}
-						if k > j && uint64(sql.Len())+uint64(len(val)) > maxAllowedPacket {
+						if k > j && sql.Len()+len(val) > maxInsertLength {
 							end = k
 							break
 						}
@@ -1194,7 +1194,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 					if k > j {
 						val = "," + val
 					}
-					if k > j && uint64(sql.Len())+uint64(len(val)) > maxAllowedPacket {
+					if k > j && sql.Len()+len(val) > maxInsertLength {
 						end = k
 						break
 					}
