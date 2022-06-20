@@ -302,7 +302,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	variable.RegisterStatistics(s)
-	variable.SetMaxConnections = s.SetMaxConnections
 
 	return s, nil
 }
@@ -515,11 +514,14 @@ func (s *Server) onConn(conn *clientConn) {
 			})
 			terror.Log(err)
 		}
-		if errors.Cause(err) == io.EOF {
+		switch errors.Cause(err) {
+		case io.EOF:
 			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
-		} else {
+		case errConCount:
+			_ = conn.writeError(ctx, err)
+		default:
 			metrics.HandShakeErrorCounter.Inc()
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Warn("Server.onConn handshake", zap.Error(err),
@@ -618,25 +620,6 @@ func (s *Server) checkConnectionCount() error {
 	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
 			zap.Uint32("max connections", s.cfg.Instance.MaxConnections), zap.Error(errConCount))
-		return errConCount
-	}
-	return nil
-}
-
-// SetMaxConnections checks and updates the value of max_connections.
-func (s *Server) SetMaxConnections(newMaxConnections uint32) error {
-	// When the value of newMaxConnections is 0, the number of connections is unlimited.
-	if int(newMaxConnections) == 0 {
-		return nil
-	}
-
-	s.rwlock.RLock()
-	conns := len(s.clients)
-	s.rwlock.RUnlock()
-
-	if conns > int(newMaxConnections) {
-		logutil.BgLogger().Error("Current connections number exceeds the setting value",
-			zap.Uint32("max connections", newMaxConnections), zap.Error(errConCount))
 		return errConCount
 	}
 	return nil

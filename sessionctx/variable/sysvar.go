@@ -416,13 +416,7 @@ var defaultSysVars = []*SysVar{
 		return config.GetGlobalConfig().Instance.PluginDir, nil
 	}},
 	{Scope: ScopeInstance, Name: MaxConnections, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000, SetGlobal: func(s *SessionVars, val string) error {
-		newVal := uint32(TidbOptInt64(val, 0))
-		if SetMaxConnections != nil {
-			if err := SetMaxConnections(newVal); err != nil {
-				return err
-			}
-		}
-		config.GetGlobalConfig().Instance.MaxConnections = newVal
+		config.GetGlobalConfig().Instance.MaxConnections = uint32(TidbOptInt64(val, 0))
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), nil
