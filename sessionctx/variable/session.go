@@ -2014,8 +2014,8 @@ const (
 	SlowLogPlan = "Plan"
 	// SlowLogPlanDigest is used to record the query plan digest.
 	SlowLogPlanDigest = "Plan_digest"
-	// SlowLogVisualPlan is used to record the visual plan.
-	SlowLogVisualPlan = "Visual_plan"
+	// SlowLogBinaryPlan is used to record the binary plan.
+	SlowLogBinaryPlan = "Binary_plan"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
@@ -2044,9 +2044,9 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 )
 
-// GenerateVisualPlan decides whether we should record visual plan in slow log and stmt summary.
-// It's controlled by the global variable `tidb_generate_visual_plan`.
-var GenerateVisualPlan atomic2.Bool
+// GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
+// It's controlled by the global variable `tidb_generate_binary_plan`.
+var GenerateBinaryPlan atomic2.Bool
 
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
@@ -2073,7 +2073,7 @@ type SlowQueryLogItems struct {
 	PrevStmt          string
 	Plan              string
 	PlanDigest        string
-	VisualPlan        string
+	BinaryPlan        string
 	RewriteInfo       RewritePhaseInfo
 	KVTotal           time.Duration
 	PDTotal           time.Duration
@@ -2257,8 +2257,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.PlanDigest) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
 	}
-	if len(logItems.VisualPlan) != 0 {
-		writeSlowLogItem(&buf, SlowLogVisualPlan, logItems.VisualPlan)
+	if len(logItems.BinaryPlan) != 0 {
+		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
 
 	if logItems.PrevStmt != "" {

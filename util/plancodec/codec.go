@@ -17,6 +17,7 @@ package plancodec
 import (
 	"bytes"
 	"encoding/base64"
+	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"strconv"
 	"strings"
@@ -43,8 +44,16 @@ const (
 
 var (
 	// PlanDiscardedEncoded indicates the discard plan because it is too long
-	PlanDiscardedEncoded = "[discard]"
-	planDiscardedDecoded = "(plan discarded because too long)"
+	PlanDiscardedEncoded       = "[discard]"
+	planDiscardedDecoded       = "(plan discarded because too long)"
+	BinaryPlanDiscardedEncoded = func() string {
+		binary := &tipb.ExplainData{DiscardedDueToTooLong: true}
+		proto, err := binary.Marshal()
+		if err != nil {
+			return ""
+		}
+		return Compress(proto)
+	}()
 )
 
 var decoderPool = sync.Pool{

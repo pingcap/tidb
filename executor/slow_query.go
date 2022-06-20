@@ -773,7 +773,7 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 		}, nil
 	case variable.SlowLogUserStr, variable.SlowLogHostStr, execdetails.BackoffTypesStr, variable.SlowLogDBStr, variable.SlowLogIndexNamesStr, variable.SlowLogDigestStr,
 		variable.SlowLogStatsInfoStr, variable.SlowLogCopProcAddr, variable.SlowLogCopWaitAddr, variable.SlowLogPlanDigest,
-		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr, variable.SlowLogVisualPlan:
+		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr, variable.SlowLogBinaryPlan:
 		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil

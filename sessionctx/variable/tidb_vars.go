@@ -677,8 +677,8 @@ const (
 	TiDBStatsCacheMemQuota = "tidb_stats_cache_mem_quota"
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
-	// TiDBGenerateVisualPlan indicates whether visual plan should be generated in slow log and statements summary.
-	TiDBGenerateVisualPlan = "tidb_generate_visual_plan"
+	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
+	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 )
 
 // TiDB intentional limits
@@ -856,7 +856,7 @@ const (
 	DefTiDBQueryLogMaxLen                        = 4096
 	DefTiDBBatchDMLIgnoreError                   = false
 	DefTiDBMemQuotaAnalyze                       = -1
-	DefTiDBGenerateVisualPlan                    = false
+	DefTiDBGenerateBinaryPlan                    = false
 )
 
 // Process global variables.

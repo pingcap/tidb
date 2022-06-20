@@ -17,13 +17,7 @@ package core
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
-	"strconv"
-	"strings"
-	"time"
-
-	"github.com/golang/snappy"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
@@ -54,10 +48,13 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+	"strconv"
+	"strings"
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -1274,8 +1271,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"dot contents"}
 	case format == types.ExplainFormatHint:
 		fieldNames = []string{"hint"}
-	case format == types.ExplainFormatVisual:
-		fieldNames = []string{"visual plan proto"}
+	case format == types.ExplainFormatBinary:
+		fieldNames = []string{"binary plan"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1313,10 +1310,10 @@ func (e *Explain) RenderResult() error {
 		hints := GenHintsFromFlatPlan(flat)
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
-	case types.ExplainFormatVisual:
+	case types.ExplainFormatBinary:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
 			flat := FlattenPhysicalPlan(physicalPlan, false)
-			str := VisualPlanStrFromFlatPlan(e.ctx, flat)
+			str := BinaryPlanStrFromFlatPlan(e.ctx, flat)
 			e.Rows = append(e.Rows, []string{str})
 		}
 	default:
@@ -1325,25 +1322,25 @@ func (e *Explain) RenderResult() error {
 	return nil
 }
 
-// VisualPlanStrFromFlatPlan generates the compressed and encoded visual plan from a FlatPhysicalPlan.
-func VisualPlanStrFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) string {
-	visual := visualDataFromFlatPlan(explainCtx, flat)
-	if visual == nil {
+// BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
+func BinaryPlanStrFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) string {
+	binary := binaryDataFromFlatPlan(explainCtx, flat)
+	if binary == nil {
 		return ""
 	}
-	proto, err := visual.Marshal()
+	proto, err := binary.Marshal()
 	if err != nil {
 		return ""
 	}
-	str := base64.StdEncoding.EncodeToString(snappy.Encode(nil, proto))
+	str := plancodec.Compress(proto)
 	return str
 }
 
-func visualDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) *tipb.VisualData {
+func binaryDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) *tipb.ExplainData {
 	if len(flat.Main) == 0 {
 		return nil
 	}
-	res := &tipb.VisualData{}
+	res := &tipb.ExplainData{}
 	for _, op := range flat.Main {
 		rootStats, copStats, _, _ := getRuntimeInfo(explainCtx, op.Origin, nil)
 		if rootStats != nil || copStats != nil {
@@ -1351,17 +1348,17 @@ func visualDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPla
 			break
 		}
 	}
-	res.Main = visualOpTreeFromFlatOps(explainCtx, flat.Main)
+	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main)
 	for _, explainedCTE := range flat.CTEs {
-		res.Ctes = append(res.Ctes, visualOpTreeFromFlatOps(explainCtx, explainedCTE))
+		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE))
 	}
 	return res
 }
 
-func visualOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *tipb.VisualOperator {
-	s := make([]tipb.VisualOperator, len(ops))
+func binaryOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *tipb.ExplainOperator {
+	s := make([]tipb.ExplainOperator, len(ops))
 	for i, op := range ops {
-		visualOpFromFlatOp(explainCtx, op, &s[i])
+		binaryOpFromFlatOp(explainCtx, op, &s[i])
 		for j := i - 1; j >= 0; j-- {
 			if ops[j].Depth == op.Depth-1 {
 				s[j].Children = append(s[j].Children, &s[i])
@@ -1372,10 +1369,41 @@ func visualOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *t
 	return &s[0]
 }
 
-func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *tipb.VisualOperator) {
+func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *tipb.ExplainOperator) {
 	out.Name = op.Origin.ExplainID().String()
-	out.RunAt = op.StoreType.Name()
-	rootStats, copStats, _, _ := getRuntimeInfo(explainCtx, op.Origin, nil)
+	switch op.DriverSide {
+	case BuildSide:
+		out.DriverSide = tipb.DriverSide_build
+	case ProbeSide:
+		out.DriverSide = tipb.DriverSide_probe
+	case SeedPart:
+		out.DriverSide = tipb.DriverSide_seed
+	case RecursivePart:
+		out.DriverSide = tipb.DriverSide_recursive
+	}
+	switch op.StoreType {
+	case kv.TiDB:
+		out.StoreType = tipb.StoreType_tidb
+	case kv.TiKV:
+		out.StoreType = tipb.StoreType_tikv
+	case kv.TiFlash:
+		out.StoreType = tipb.StoreType_tiflash
+	}
+	if op.IsRoot {
+		out.TaskType = tipb.TaskType_root
+	} else {
+		switch op.ReqType {
+		case Cop:
+			out.TaskType = tipb.TaskType_cop
+		case BatchCop:
+			out.TaskType = tipb.TaskType_batchCop
+		case MPP:
+			out.TaskType = tipb.TaskType_mpp
+		}
+	}
+
+	// Runtime info
+	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, op.Origin, nil)
 	if statsInfo := op.Origin.statsInfo(); statsInfo != nil {
 		out.EstRows = statsInfo.RowCount
 	}
@@ -1383,126 +1411,48 @@ func visualOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 		p := op.Origin.(PhysicalPlan)
 		out.Cost = p.Cost()
 	}
-	// Get TimeUs
 	if rootStats != nil {
-		if basicStats := rootStats.MergeBasicStats(); basicStats != nil {
-			out.TimeUs = float64(time.Duration(basicStats.GetTime()).Microseconds())
+		basic, groups := rootStats.MergeStats()
+		out.RootBasicExecInfo = basic.String()
+		for _, group := range groups {
+			out.RootGroupExecInfo = append(out.RootGroupExecInfo, group.String())
 		}
 		out.ActRows = uint64(rootStats.GetActRows())
-	} else if copStats != nil {
-		var totalTime time.Duration
-		if times, _, _, _ := copStats.MergeBasicStats(); len(times) > 0 {
-			for i := range times {
-				totalTime += times[i]
-			}
-			out.TimeUs = float64(totalTime.Microseconds())
-		}
+	}
+	if copStats != nil {
+		out.CopExecInfo = copStats.String()
 		out.ActRows = uint64(copStats.GetActRows())
 	}
-	// Get AccessXXX
+	if memTracker != nil {
+		out.MemoryBytes = memTracker.MaxConsumed()
+	} else {
+		out.MemoryBytes = -1
+	}
+	if diskTracker != nil {
+		out.DiskBytes = diskTracker.MaxConsumed()
+	} else {
+		out.DiskBytes = -1
+	}
+
+	// Operator info
+	if plan, ok := op.Origin.(dataAccesser); ok {
+		out.OperatorInfo = plan.OperatorInfo(false)
+	} else {
+		out.OperatorInfo = op.Origin.ExplainInfo()
+	}
+
+	// Access object
 	switch p := op.Origin.(type) {
-	case *PhysicalTableScan:
-		// Similar to (*PhysicalTableScan).AccessObject()
-		tblName := p.Table.Name.O
-		if p.TableAsName != nil && p.TableAsName.O != "" {
-			tblName = p.TableAsName.O
+	case dataAccesser:
+		ao := p.AccessObject()
+		if ao != nil {
+			ao.SetIntoPB(out)
 		}
-		out.AccessTable = tblName
-		if p.isPartition {
-			if pi := p.Table.GetPartitionInfo(); pi != nil {
-				out.AccessPartition = pi.GetNameByID(p.physicalTableID)
-			}
+	case partitionAccesser:
+		ao := p.accessObject(explainCtx)
+		if ao != nil {
+			ao.SetIntoPB(out)
 		}
-	case *PhysicalIndexScan:
-		// Similar to (*PhysicalIndexScan).AccessObject()
-		tblName := p.Table.Name.O
-		if p.TableAsName != nil && p.TableAsName.O != "" {
-			tblName = p.TableAsName.O
-		}
-		out.AccessTable = tblName
-		if p.isPartition {
-			if pi := p.Table.GetPartitionInfo(); pi != nil {
-				out.AccessPartition = pi.GetNameByID(p.physicalTableID)
-			}
-		}
-		if len(p.Index.Columns) > 0 {
-			out.AccessIndex = p.Index.Name.O
-		}
-	case *PhysicalMemTable:
-		// Similar to (*PhysicalMemTable).AccessObject()
-		out.AccessTable = p.Table.Name.O
-	case *PointGetPlan:
-		// Similar to (*PointGetPlan).AccessObject()
-		out.AccessTable = p.TblInfo.Name.O
-		if p.PartitionInfo != nil {
-			out.AccessPartition = p.PartitionInfo.Name.O
-		}
-		if p.IndexInfo != nil {
-			out.AccessIndex = p.IndexInfo.Name.O
-		}
-	case *BatchPointGetPlan:
-		// Similar to (*BatchPointGetPlan).AccessObject()
-		out.AccessTable = p.TblInfo.Name.O
-		if p.IndexInfo != nil {
-			out.AccessIndex = p.IndexInfo.Name.O
-		}
-	case *PhysicalTableReader:
-		// Similar to (*PhysicalTableReader).accessObject()
-		if !explainCtx.GetSessionVars().UseDynamicPartitionPrune() {
-			break
-		}
-		if len(p.PartitionInfos) == 0 {
-			ts := p.TablePlans[0].(*PhysicalTableScan)
-			out.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
-			break
-		}
-		if len(p.PartitionInfos) == 1 {
-			tsAndPartInfo := p.PartitionInfos[0]
-			out.AccessPartition, _ = getDynamicAccessPartition(explainCtx, tsAndPartInfo.tableScan.Table, &tsAndPartInfo.partitionInfo)
-			break
-		}
-		containsPartitionTable := false
-		for _, info := range p.PartitionInfos {
-			if info.tableScan.Table.GetPartitionInfo() != nil {
-				containsPartitionTable = true
-				break
-			}
-		}
-		if !containsPartitionTable {
-			break
-		}
-		var buffer bytes.Buffer
-		for index, info := range p.PartitionInfos {
-			if index > 0 {
-				buffer.WriteString(", ")
-			}
-
-			tblName := info.tableScan.Table.Name.O
-			if info.tableScan.TableAsName != nil && info.tableScan.TableAsName.O != "" {
-				tblName = info.tableScan.TableAsName.O
-			}
-
-			if info.tableScan.Table.GetPartitionInfo() == nil {
-				buffer.WriteString("table")
-			} else {
-				partition, _ := getDynamicAccessPartition(explainCtx, info.tableScan.Table, &info.partitionInfo)
-				buffer.WriteString(partition)
-			}
-			buffer.WriteString(" of " + tblName)
-			out.AccessPartition = buffer.String()
-		}
-	case *PhysicalIndexReader:
-		// Similar to (*PhysicalIndexReader).accessObject()
-		is := p.IndexPlans[0].(*PhysicalIndexScan)
-		out.AccessPartition, _ = getDynamicAccessPartition(explainCtx, is.Table, &p.PartitionInfo)
-	case *PhysicalIndexLookUpReader:
-		// Similar to (*PhysicalIndexLookUpReader).accessObject()
-		ts := p.TablePlans[0].(*PhysicalTableScan)
-		out.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
-	case *PhysicalIndexMergeReader:
-		// Similar to (*PhysicalIndexMergeReader).accessObject()
-		ts := p.TablePlans[0].(*PhysicalTableScan)
-		out.AccessPartition, _ = getDynamicAccessPartition(explainCtx, ts.Table, &p.PartitionInfo)
 	}
 }
 
@@ -1648,11 +1598,11 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
-		accessObject = plan.AccessObject(false)
+		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
 		if pa, ok := p.(partitionAccesser); ok && e.ctx != nil {
-			accessObject = pa.accessObject(e.ctx)
+			accessObject = pa.accessObject(e.ctx).String()
 		}
 		operatorInfo = p.ExplainInfo()
 	}

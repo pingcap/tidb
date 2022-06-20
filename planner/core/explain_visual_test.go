@@ -27,7 +27,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExplainVisual(t *testing.T) {
+func simplifyBinaryPlan(pb *tipb.ExplainData) {
+	if pb.Main != nil {
+		simplifyBinaryOperator(pb.Main)
+	}
+	for _, cte := range pb.Ctes {
+		if cte != nil {
+			simplifyBinaryOperator(cte)
+		}
+	}
+}
+
+func simplifyBinaryOperator(pb *tipb.ExplainOperator) {
+	pb.RootBasicExecInfo = ""
+	pb.RootGroupExecInfo = nil
+	pb.CopExecInfo = ""
+	// AccessObject field is an interface and json.Unmarshall can't handle it, so we don't check it.
+	pb.AccessObject = nil
+	if len(pb.Children) > 0 {
+		for _, op := range pb.Children {
+			if op != nil {
+				simplifyBinaryOperator(op)
+			}
+		}
+	}
+}
+
+func TestExplainBinary(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -35,10 +61,10 @@ func TestExplainVisual(t *testing.T) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Main *tipb.VisualData
+		SQL        string
+		BinaryPlan *tipb.ExplainData
 	}
-	planSuiteData := core.GetExplainVisualSuiteData()
+	planSuiteData := core.GetExplainBinarySuiteData()
 	planSuiteData.GetTestCases(t, &input, &output)
 
 	for i, test := range input {
@@ -47,7 +73,7 @@ func TestExplainVisual(t *testing.T) {
 			tk.MustExec(test)
 			testdata.OnRecord(func() {
 				output[i].SQL = test
-				output[i].Main = nil
+				output[i].BinaryPlan = nil
 			})
 			continue
 		}
@@ -58,13 +84,15 @@ func TestExplainVisual(t *testing.T) {
 		require.NoError(t, err)
 		b, err = snappy.Decode(nil, b)
 		require.NoError(t, err)
-		visual := &tipb.VisualData{}
-		err = visual.Unmarshal(b)
+		binary := &tipb.ExplainData{}
+		err = binary.Unmarshal(b)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = test
-			output[i].Main = visual
+			output[i].BinaryPlan = binary
 		})
-		require.Equal(t, output[i].Main, visual)
+		simplifyBinaryPlan(binary)
+		simplifyBinaryPlan(output[i].BinaryPlan)
+		require.Equal(t, output[i].BinaryPlan, binary)
 	}
 }

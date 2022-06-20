@@ -346,16 +346,20 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 }
 
 // MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
-func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, totalTasks, totalLoops, totalThreads int32) {
+func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, avgTime time.Duration, totalTasks, totalLoops, totalThreads int32) {
 	procTimes = make([]time.Duration, 0, 32)
+	var avgTimeNs int64
 	for _, instanceStats := range crs.stats {
 		for _, stat := range instanceStats {
 			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
 			totalLoops += stat.loop
 			totalThreads += stat.threads
 			totalTasks++
+			// Calculate the average time iteratively to avoid overflow.
+			avgTimeNs += (stat.consume - avgTimeNs) / int64(totalTasks)
 		}
 	}
+	avgTime = time.Duration(avgTimeNs)
 	return
 }
 
@@ -364,7 +368,7 @@ func (crs *CopRuntimeStats) String() string {
 		return ""
 	}
 
-	procTimes, totalTasks, totalLoops, totalThreads := crs.MergeBasicStats()
+	procTimes, avgTime, totalTasks, totalLoops, totalThreads := crs.MergeBasicStats()
 	isTiFlashCop := crs.storeType == "tiflash"
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
@@ -378,8 +382,8 @@ func (crs *CopRuntimeStats) String() string {
 	} else {
 		n := len(procTimes)
 		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
-			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
+		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
+			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]), FormatDuration(avgTime),
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalLoops, totalTasks))
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
@@ -507,32 +511,40 @@ func (e *RootRuntimeStats) MergeBasicStats() *BasicRuntimeStats {
 	return basic
 }
 
+// MergeGroupStats merges every slice in e.groupRss into single RuntimeStats.
+func (e *RootRuntimeStats) MergeGroupStats() (res []RuntimeStats) {
+	if len(e.groupRss) == 0 {
+		return nil
+	}
+	for _, rss := range e.groupRss {
+		if len(rss) == 0 {
+			continue
+		}
+		rs := rss[0].Clone()
+		for i := 1; i < len(rss); i++ {
+			rs.Merge(rss[i])
+		}
+		res = append(res, rs)
+	}
+	return
+}
+
+// MergeStats merges stats in the RootRuntimeStats and return the stats suitable for display directly.
+func (e *RootRuntimeStats) MergeStats() (basic *BasicRuntimeStats, groups []RuntimeStats) {
+	basic = e.MergeBasicStats()
+	groups = e.MergeGroupStats()
+	return
+}
+
 // String implements the RuntimeStats interface.
 func (e *RootRuntimeStats) String() string {
-	buf := bytes.NewBuffer(make([]byte, 0, 32))
-
-	buf.WriteString(e.MergeBasicStats().String())
-
-	if len(e.groupRss) > 0 {
-		if buf.Len() > 0 {
-			buf.WriteString(", ")
-		}
-		for i, rss := range e.groupRss {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			if len(rss) == 1 {
-				buf.WriteString(rss[0].String())
-				continue
-			}
-			rs := rss[0].Clone()
-			for i := 1; i < len(rss); i++ {
-				rs.Merge(rss[i])
-			}
-			buf.WriteString(rs.String())
-		}
+	basic, groups := e.MergeStats()
+	strs := make([]string, 0, len(groups)+1)
+	strs = append(strs, basic.String())
+	for _, group := range groups {
+		strs = append(strs, group.String())
 	}
-	return buf.String()
+	return strings.Join(strs, ", ")
 }
 
 // Record records executor's execution.

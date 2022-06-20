@@ -1463,8 +1463,8 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBGenerateVisualPlan, Value: BoolToOnOff(DefTiDBGenerateVisualPlan), Hidden: true, Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
-		GenerateVisualPlan.Store(TiDBOptOn(val))
+	{Scope: ScopeGlobal, Name: TiDBGenerateBinaryPlan, Value: BoolToOnOff(DefTiDBGenerateBinaryPlan), Hidden: true, Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		GenerateBinaryPlan.Store(TiDBOptOn(val))
 		return nil
 	}},
 }

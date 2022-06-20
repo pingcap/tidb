@@ -390,6 +390,8 @@ func (t *Tracker) BytesConsumed() int64 {
 }
 
 // MaxConsumed returns max number of bytes consumed during execution.
+// Note: Don't make this method return -1 for special meanings in the future. Because binary plan has used -1 to
+// distinguish between "0 bytes" and "N/A". ref: binaryOpFromFlatOp()
 func (t *Tracker) MaxConsumed() int64 {
 	return atomic.LoadInt64(&t.maxConsumed)
 }

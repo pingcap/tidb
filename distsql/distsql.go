@@ -127,17 +127,18 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		encodetype = tipb.EncodeType_TypeChunk
 	}
 	return &selectResult{
-		label:      "dag",
-		resp:       resp,
-		rowLen:     len(fieldTypes),
-		fieldTypes: fieldTypes,
-		ctx:        sctx,
-		feedback:   fb,
-		sqlType:    label,
-		memTracker: kvReq.MemTracker,
-		encodeType: encodetype,
-		storeType:  kvReq.StoreType,
-		paging:     kvReq.Paging,
+		label:              "dag",
+		resp:               resp,
+		rowLen:             len(fieldTypes),
+		fieldTypes:         fieldTypes,
+		ctx:                sctx,
+		feedback:           fb,
+		sqlType:            label,
+		memTracker:         kvReq.MemTracker,
+		encodeType:         encodetype,
+		storeType:          kvReq.StoreType,
+		paging:             kvReq.Paging,
+		distSQLConcurrency: kvReq.Concurrency,
 	}, nil
 }
 

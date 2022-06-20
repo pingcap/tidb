@@ -40,6 +40,7 @@ type FlatPhysicalPlan struct {
 	// InExplain means if the original plan tree contains Explain operator.
 	InExplain bool
 
+	// The fields below are only used when building the FlatPhysicalPlan.
 	buildSideFirst bool
 	ctesToFlatten  []*PhysicalCTE
 }
@@ -144,7 +145,7 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 
 	flattenedCTEPlan := make(map[int]struct{}, len(res.ctesToFlatten))
 
-	// Note that ctesToFlatten may be modified in the loop, so we manually loop over ctesToFlatten instead of using for...range.
+	// Note that ctesToFlatten may be modified during the loop, so we manually loop over it instead of using for...range.
 	for i := 0; i < len(res.ctesToFlatten); i++ {
 		cte := res.ctesToFlatten[i]
 		cteDef := (*CTEDefinition)(cte)
