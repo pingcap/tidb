@@ -1,1 +1,0 @@
-insert into pre_rebase values ('foo');

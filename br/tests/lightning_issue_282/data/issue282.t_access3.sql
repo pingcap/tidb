@@ -1,5 +1,0 @@
-/*!40103 SET TIME_ZONE='+00:00' */;
-INSERT INTO `t_access3` VALUES
-('@P&FLASHSHA');
-INSERT INTO `t_access3` VALUES
-('\Z');

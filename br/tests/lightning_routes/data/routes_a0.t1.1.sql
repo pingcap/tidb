@@ -1,1 +1,0 @@
-insert into t1 values (36.0);

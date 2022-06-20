@@ -1,1 +1,0 @@
-CREATE TABLE t(a INT PRIMARY KEY, b int);
