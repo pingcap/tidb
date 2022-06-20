@@ -233,6 +233,7 @@ type local struct {
 	importClientFactory ImportClientFactory
 
 	bufferPool *membuf.Pool
+	metrics    *metric.Metrics
 }
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
@@ -333,6 +334,9 @@ func NewLocalBackend(
 		errorMgr:                errorMgr,
 		importClientFactory:     importClientFactory,
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
+	}
+	if m, ok := metric.FromContext(ctx); ok {
+		local.metrics = m
 	}
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
 		return backend.MakeBackend(nil), common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
@@ -1247,7 +1251,9 @@ loopWrite:
 			engine.importedKVSize.Add(rangeStats.totalBytes)
 			engine.importedKVCount.Add(rangeStats.count)
 			engine.finishedRanges.add(finishedRange)
-			metric.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
+			if local.metrics != nil {
+				local.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
+			}
 		}
 		return errors.Trace(err)
 	}
@@ -1685,7 +1691,7 @@ func (local *local) MakeEmptyRows() kv.Rows {
 }
 
 func (local *local) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return kv.NewTableKVEncoder(tbl, options)
+	return kv.NewTableKVEncoder(tbl, options, local.metrics)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {

@@ -1341,6 +1341,12 @@ func TestSetTxnScope(t *testing.T) {
 }
 
 func TestDoDDLJobQuit(t *testing.T) {
+	// This is required since mock tikv does not support paging.
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/DisablePaging", `return`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/DisablePaging"))
+	}()
+
 	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
 	// use isolated store, because in below failpoint we will cancel its context
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
