@@ -98,8 +98,8 @@ func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
 	}
 }
 
-// AddEntranceForLockError is used only for test
-func AddEntranceForLockError(sctx sessionctx.Context, name string) {
+// AddAssertEntranceForLockError is used only for test
+func AddAssertEntranceForLockError(sctx sessionctx.Context, name string) {
 	records, ok := sctx.Value(AssertLockErr).(map[string]int)
 	if !ok {
 		records = make(map[string]int)

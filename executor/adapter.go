@@ -776,9 +776,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	}
 	failpoint.Inject("assertPessimisticLockErr", func() {
 		if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
-			sessiontxn.AddEntranceForLockError(a.Ctx, "errWriteConflict")
+			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errWriteConflict")
 		} else if terror.ErrorEqual(kv.ErrKeyExists, lockErr) {
-			sessiontxn.AddEntranceForLockError(a.Ctx, "errDuplicateKey")
+			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errDuplicateKey")
 		}
 	})
 
