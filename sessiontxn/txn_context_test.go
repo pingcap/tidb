@@ -733,7 +733,6 @@ func TestAA(t *testing.T) {
 	tk2.MustExec("update t1 set v=v+1")
 	s1.Step().CheckCurrentStop(sessiontxn.TestSessionOnStmtRetryAfterLockError)
 	s1.Step().CheckDone()
-	time.Sleep(time.Second)
 }
 
 // See issue: https://github.com/pingcap/tidb/issues/35459
