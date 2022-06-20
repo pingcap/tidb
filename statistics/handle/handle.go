@@ -1100,6 +1100,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		statsVer = version
 	}
 	// 2. Save histograms.
+	maxAllowedPacket := h.mu.ctx.GetSessionVars().MaxAllowedPacket
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
 			// It's normal virtual column, skip it.
@@ -1123,19 +1124,25 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 				return err
 			}
 			if topN := result.TopNs[i]; topN != nil {
-				for j := 0; j < len(topN.TopN); j += batchInsertSize {
+				for j := 0; j < len(topN.TopN); {
 					end := j + batchInsertSize
 					if end > len(topN.TopN) {
 						end = len(topN.TopN)
 					}
 					sql := new(strings.Builder)
-					sqlexec.MustFormatSQL(sql, "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ")
+					sql.WriteString("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ")
 					for k := j; k < end; k++ {
-						sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, topN.TopN[k].Encoded, topN.TopN[k].Count)
-						if k < end-1 {
-							sqlexec.MustFormatSQL(sql, ",")
+						val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, topN.TopN[k].Encoded, topN.TopN[k].Count)
+						if k > j {
+							val = "," + val
 						}
+						if k > j && uint64(sql.Len())+uint64(len(val)) > maxAllowedPacket {
+							end = k
+							break
+						}
+						sql.WriteString(val)
 					}
+					j = end
 					if _, err = exec.ExecuteInternal(ctx, sql.String()); err != nil {
 						return err
 					}
@@ -1158,13 +1165,13 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			}
 			sc := h.mu.ctx.GetSessionVars().StmtCtx
 			var lastAnalyzePos []byte
-			for j := 0; j < len(hg.Buckets); j += batchInsertSize {
+			for j := 0; j < len(hg.Buckets); {
 				end := j + batchInsertSize
 				if end > len(hg.Buckets) {
 					end = len(hg.Buckets)
 				}
 				sql := new(strings.Builder)
-				sqlexec.MustFormatSQL(sql, "insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
+				sql.WriteString("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
 				for k := j; k < end; k++ {
 					count := hg.Buckets[k].Count
 					if k > 0 {
@@ -1183,11 +1190,17 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 					if err != nil {
 						return err
 					}
-					sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, k, count, hg.Buckets[k].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[k].NDV)
-					if k < end-1 {
-						sqlexec.MustFormatSQL(sql, ",")
+					val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, k, count, hg.Buckets[k].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[k].NDV)
+					if k > j {
+						val = "," + val
 					}
+					if k > j && uint64(sql.Len())+uint64(len(val)) > maxAllowedPacket {
+						end = k
+						break
+					}
+					sql.WriteString(val)
 				}
+				j = end
 				if _, err = exec.ExecuteInternal(ctx, sql.String()); err != nil {
 					return err
 				}
