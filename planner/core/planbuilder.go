@@ -87,17 +87,18 @@ type indexNestedLoopJoinTables struct {
 
 type tableHintInfo struct {
 	indexNestedLoopJoinTables
-	sortMergeJoinTables []hintTableInfo
-	broadcastJoinTables []hintTableInfo
-	hashJoinTables      []hintTableInfo
-	indexHintList       []indexHintInfo
-	tiflashTables       []hintTableInfo
-	tikvTables          []hintTableInfo
-	aggHints            aggHintInfo
-	indexMergeHintList  []indexHintInfo
-	timeRangeHint       ast.HintTimeRange
-	limitHints          limitHintInfo
-	leadingJoinOrder    []hintTableInfo
+	sortMergeJoinTables   []hintTableInfo
+	broadcastJoinTables   []hintTableInfo
+	hashJoinTables        []hintTableInfo
+	orderedHashJoinTables []hintTableInfo
+	indexHintList         []indexHintInfo
+	tiflashTables         []hintTableInfo
+	tikvTables            []hintTableInfo
+	aggHints              aggHintInfo
+	indexMergeHintList    []indexHintInfo
+	timeRangeHint         ast.HintTimeRange
+	limitHints            limitHintInfo
+	leadingJoinOrder      []hintTableInfo
 }
 
 type limitHintInfo struct {
@@ -183,7 +184,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 			tableInfo.dbName = defaultDBName
 		}
 		switch hintName {
-		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, TiDBHashJoin, HintHJ, HintLeading:
+		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, TiDBHashJoin, HintHJ, HintOrderedHJ, HintLeading:
 			if len(tableInfo.partitions) > 0 {
 				isInapplicable = true
 			}
@@ -209,6 +210,10 @@ func (info *tableHintInfo) ifPreferBroadcastJoin(tableNames ...*hintTableInfo) b
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.hashJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferOrderedHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.orderedHashJoinTables[:1])
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {

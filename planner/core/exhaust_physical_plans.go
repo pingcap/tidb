@@ -376,30 +376,58 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return nil
 	}
+	useLeftToBuild := (p.preferJoinType & preferLeftAsHashJoinBuild) > 0
+	useRightToBuild := (p.preferJoinType & preferRightAsHashJoinBuild) > 0
+	// TODO: report warning when both are true
+	if useLeftToBuild && useRightToBuild {
+		useLeftToBuild = false
+		useRightToBuild = false
+		p.preferJoinType ^= preferLeftAsHashJoinBuild
+		p.preferJoinType ^= preferRightAsHashJoinBuild
+		// report warning
+	}
 	joins := make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
+		// TODO: warning
 	case LeftOuterJoin:
 		if ForceUseOuterBuild4Test {
+			// TODO: support ordered_Hash_Join hint for test
 			joins = append(joins, p.getHashJoin(prop, 1, true))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
-			joins = append(joins, p.getHashJoin(prop, 1, true))
+			if !useLeftToBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+			}
+			if !useRightToBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, true))
+			}
 		}
 	case RightOuterJoin:
 		if ForceUseOuterBuild4Test {
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 0, false))
-			joins = append(joins, p.getHashJoin(prop, 0, true))
+			if !useLeftToBuild {
+				joins = append(joins, p.getHashJoin(prop, 0, true))
+			}
+			if !useRightToBuild {
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+			}
 		}
 	case InnerJoin:
 		if ForcedHashLeftJoin4Test {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
-			joins = append(joins, p.getHashJoin(prop, 0, false))
+			if useLeftToBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, true))
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+			} else if useRightToBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+				joins = append(joins, p.getHashJoin(prop, 0, true))
+			} else {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+			}
 		}
 	}
 	return joins
@@ -1830,7 +1858,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	joins = append(joins, indexJoins...)
 
 	hashJoins := p.getHashJoins(prop)
-	if (p.preferJoinType&preferHashJoin) > 0 && len(hashJoins) > 0 {
+	if ((p.preferJoinType&preferHashJoin) > 0 || (p.preferJoinType&preferLeftAsHashJoinBuild) > 0 || (p.preferJoinType&preferRightAsHashJoinBuild) > 0) && len(hashJoins) > 0 {
 		return hashJoins, true, nil
 	}
 	joins = append(joins, hashJoins...)

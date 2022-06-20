@@ -197,6 +197,7 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	case *PhysicalMergeJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintSMJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalHashJoin:
+		// TODO: support the ordered hash join hint for auto capture
 		res = append(res, getJoinHints(p.SCtx(), HintHJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalIndexJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
