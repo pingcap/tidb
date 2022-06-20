@@ -1,0 +1,90 @@
+#!/bin/bash
+#
+# Copyright 2022 PingCAP, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -eux
+
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/EnableTestAPI=return"
+export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine=pause"
+
+run_lightning --backend='local' &
+shpid="$!"
+pid=
+port=
+
+ensure_lightning_is_started() {
+  for _ in {0..60}; do
+    pid=$(pstree -p "$shpid" | grep -Eo "tidb-lightning\.\([0-9]*\)" | grep -Eo "[0-9]*") || true
+    [ -n "$pid" ] && break
+    sleep 1
+  done
+  if [ -z "$pid" ]; then
+    echo "lightning doesn't start successfully, please check the log" >&2
+    exit 1
+  fi
+  echo "lightning is started, pid is $pid"
+}
+
+start_http_server() {
+  # Start http server to serve the test API.
+  kill -SIGUSR1 "$pid" &>/dev/null || true
+  for _ in {0..60}; do
+    port=$(grep "starting HTTP server" "$TEST_DIR"/lightning.log | grep -Eo "address=.*" | grep -Eo '[0-9]*') || true
+    [ -n "$port" ] && break
+  done
+  if [ -z "$port" ]; then
+    echo "http server doesn't start successfully, please check the log" >&2
+    exit 1
+  fi
+  echo "http server is started, port is $port"
+}
+
+ready_for_import_engine() {
+  for _ in {0..60}; do
+    grep -Fq "start import engine" "$TEST_DIR"/lightning.log && return
+    sleep 1
+  done
+  echo "lightning doesn't start import engine, please check the log" >&2
+  exit 1
+}
+
+run_curl() {
+  curl \
+    --cacert "$TEST_DIR/certs/ca.pem" \
+    --cert "$TEST_DIR/certs/curl.pem" \
+    --key "$TEST_DIR/certs/curl.key" \
+    "$@"
+}
+
+ensure_lightning_is_started
+start_http_server
+ready_for_import_engine
+
+length=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
+if [ "$length" -ne 1 ]; then
+  echo "region-label key-range rules should be 1, but got $length" >&2
+  exit 1
+fi
+
+run_curl -X DELETE "https://localhost:${port}/fail/github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine"
+wait "$shpid"
+
+run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules"
+
+length=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
+if [ "$length" -ne "0" ]; then
+  echo "region-label key-range rules should be 0, but got $length" >&2
+  exit 1
+fi

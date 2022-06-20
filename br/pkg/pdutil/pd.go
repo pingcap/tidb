@@ -753,12 +753,32 @@ func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule L
 		if lastErr == nil {
 			return nil
 		}
-		if err := errors.Cause(err); err == context.Canceled || err == context.DeadlineExceeded {
+		if err := errors.Cause(lastErr); err == context.Canceled || err == context.DeadlineExceeded {
 			return errors.Trace(err)
 		}
 
 		if i < len(p.addrs) {
 			log.Warn("failed to create or update region label rule, will try next pd address",
+				zap.Error(lastErr), zap.String("pdAddr", addr))
+		}
+	}
+	return errors.Trace(lastErr)
+}
+
+func (p *PdController) DeleteRegionLabelRule(ctx context.Context, ruleID string) error {
+	var lastErr error
+	for i, addr := range p.addrs {
+		_, lastErr = pdRequest(ctx, addr, fmt.Sprintf("%s/%s", regionLabelPrefix, ruleID),
+			p.cli, http.MethodDelete, nil)
+		if lastErr == nil {
+			return nil
+		}
+		if err := errors.Cause(lastErr); err == context.Canceled || err == context.DeadlineExceeded {
+			return errors.Trace(err)
+		}
+
+		if i < len(p.addrs) {
+			log.Warn("failed to delete region label rule, will try next pd address",
 				zap.Error(lastErr), zap.String("pdAddr", addr))
 		}
 	}
@@ -817,8 +837,8 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, star
 		defer cancel()
 		// Set ttl to 0 to remove the rule.
 		rule.Labels[0].TTL = time.Duration(0).String()
-		if err := p.CreateOrUpdateRegionLabelRule(recoverCtx, rule); err != nil {
-			log.Warn("failed to remove region label rule, the rule will be removed after ttl expires",
+		if err := p.DeleteRegionLabelRule(recoverCtx, rule.ID); err != nil {
+			log.Warn("failed to delete region label rule, the rule will be removed after ttl expires",
 				zap.String("rule-id", rule.ID), zap.Duration("ttl", ttl), zap.Error(err))
 		}
 	}()

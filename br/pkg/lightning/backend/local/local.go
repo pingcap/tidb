@@ -1386,6 +1386,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 
 	log.L().Info("start import engine", zap.Stringer("uuid", engineUUID),
 		zap.Int("ranges", len(ranges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
+
+	failpoint.Inject("ReadyForImportEngine", func() {})
+
 	for {
 		unfinishedRanges := lf.unfinishedRanges(ranges)
 		if len(unfinishedRanges) == 0 {
