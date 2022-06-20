@@ -801,9 +801,8 @@ func (e *ShowExec) sysVarHiddenForSem(sysVarNameInLower string) bool {
 
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
-		value               string
-		sessionVars         = e.ctx.GetSessionVars()
-		enableNoopVariables = variable.EnableNoopVariables.Load()
+		value       string
+		sessionVars = e.ctx.GetSessionVars()
 	)
 	var (
 		fieldPatternsLike collate.WildcardPattern
@@ -821,7 +820,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
-				if !enableNoopVariables && v.IsNoop {
+				if v.IsNoop && !variable.EnableNoopVariables.Load() {
 					continue
 				}
 				if fieldFilter != "" && v.Name != fieldFilter {
@@ -846,7 +845,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
-		if !enableNoopVariables && v.IsNoop {
+		if v.IsNoop && !variable.EnableNoopVariables.Load() {
 			continue
 		}
 		if fieldFilter != "" && v.Name != fieldFilter {
