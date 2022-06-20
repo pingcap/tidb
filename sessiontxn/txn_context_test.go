@@ -17,6 +17,7 @@ package sessiontxn_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -717,15 +718,15 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 	require.True(t, taskstop.IsGlobalSessionStopFailPointEnabled(), "should enable global session stop failPoint")
 	queries := []string{
 		"select * from t1 for update",
-		//"select * from t1 where id=1 for update",
-		//"select * from t1 where id in (1, 2, 3) for update",
-		//"select * from t1 where id=1 and v>0 for update",
-		//"select * from t1 where id=1 for update union select * from t1 where id=1 for update",
-		//"update t1 set v=v+1",
-		//"update t1 set v=v+1 where id=1",
-		//"update t1 set v=v+1 where id=1 and v>0",
-		//"update t1 set v=v+1 where id in (1, 2, 3)",
-		//"update t1 set v=v+1 where id in (1, 2, 3) and v>0",
+		"select * from t1 where id=1 for update",
+		"select * from t1 where id in (1, 2, 3) for update",
+		"select * from t1 where id=1 and v>0 for update",
+		"select * from t1 where id=1 for update union select * from t1 where id=1 for update",
+		"update t1 set v=v+1",
+		"update t1 set v=v+1 where id=1",
+		"update t1 set v=v+1 where id=1 and v>0",
+		"update t1 set v=v+1 where id in (1, 2, 3)",
+		"update t1 set v=v+1 where id in (1, 2, 3) and v>0",
 	}
 
 	tk := testkit.NewTestKit(t, store)
@@ -756,14 +757,21 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 				tk2.MustExec("set autocommit=0")
 			}
 			taskstop.EnableSessionStopPoint(tk2.Session(), ch)
-			tk2.MustQuery(sql).Check(testkit.Rows("1 12"))
-			taskstop.DisableSessionStopPoint(tk2.Session())
+			if strings.HasPrefix(sql, "update") {
+				tk2.MustExec(sql)
+				taskstop.DisableSessionStopPoint(tk2.Session())
+				tk2.MustExec("commit")
+				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
+			} else {
+				tk2.MustQuery(sql).Check(testkit.Rows("1 12"))
+				taskstop.DisableSessionStopPoint(tk2.Session())
+			}
 		})
 	}
 
-	for _, isolation := range []string{ast.RepeatableRead} {
+	for _, isolation := range []string{ast.RepeatableRead, ast.ReadCommitted} {
 		for _, query := range queries {
-			for _, autocommit := range []bool{true} {
+			for _, autocommit := range []bool{true, false} {
 				t.Run(fmt.Sprintf("%s,%s,autocommit=%v", isolation, query, autocommit), func(t *testing.T) {
 					task := prepareTask(t, isolation, autocommit, query)
 
