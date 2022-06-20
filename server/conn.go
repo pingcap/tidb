@@ -311,12 +311,6 @@ func (cc *clientConn) Close() error {
 
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
-<<<<<<< HEAD
-	err := cc.bufReadConn.Close()
-	terror.Log(err)
-	if cc.ctx != nil {
-		return cc.ctx.Close()
-=======
 	if cc.bufReadConn != nil {
 		err := cc.bufReadConn.Close()
 		if err != nil {
@@ -327,9 +321,8 @@ func closeConn(cc *clientConn, connections int) error {
 	}
 	// Close statements and session
 	// This will release advisory locks, row locks, etc.
-	if ctx := cc.getCtx(); ctx != nil {
-		return ctx.Close()
->>>>>>> 854c68d99... server: fix connection close on network timeout/read error (#34757)
+	if cc.ctx != nil {
+		return cc.ctx.Close()
 	}
 	return nil
 }
