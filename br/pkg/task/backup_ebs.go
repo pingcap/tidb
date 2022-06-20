@@ -23,6 +23,7 @@ import (
 
 const (
 	flagBackupVolumeFile = "volume-file"
+	flagBackupDryRun = "dry-run"
 )
 
 // BackupEBSConfig is the configuration specific for backup tasks.
@@ -30,11 +31,28 @@ type BackupEBSConfig struct {
 	Config
 
 	VolumeFile string `json:"volume-file"`
+	DryRun bool `json:"dry-run"`
+}
+
+// ParseFromFlags parses the backup-related flags from the flag set.
+func (cfg *BackupEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	var err error
+	cfg.DryRun, err = flags.GetBool(flagDryRun)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.VolumeFile, err = flags.GetString(flagBackupVolumeFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return cfg.ParseFromFlags(flags)
 }
 
 // DefineBackupEBSFlags defines common flags for the backup command.
 func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 	flags.String(flagBackupVolumeFile, "./backup.toml", "the file path of volume infos of TiKV node")
+	flags.Bool(flagBackupDryRun, false, "don't access to aws environment if set to true")
 }
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
@@ -129,22 +147,30 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	snapCount := backupInfo.GetSnapshotCount()
 
 	progress := g.StartProgress(ctx, cmdName, int64(snapCount), !cfg.LogProgress)
+	defer progress.Close()
 
 	sess, err := backup.NewEC2Session()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allVolumes, err := sess.StartsEBSSnapshot(backupInfo)
-	if err != nil {
-		// TODO maybe we should consider remove snapshots already exists in a failure
-		return errors.Trace(err)
+	if !cfg.DryRun {
+		allVolumes, err := sess.StartsEBSSnapshot(backupInfo)
+		if err != nil {
+			// TODO maybe we should consider remove snapshots already exists in a failure
+			return errors.Trace(err)
+		}
+		log.Info("all ebs snapshots are starts.", zap.Int("count", len(allVolumes)))
+		err = sess.WaitEBSSnapshotFinished(allVolumes, progress)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Info("all ebs snapshots are finished.", zap.Int("count", len(allVolumes)))
+	} else {
+		for i := 0; i < int(snapCount); i ++ {
+			progress.Inc()
+			log.Info("mock snapshot finished.", zap.Int("index", i))
+		}
 	}
-	log.Info("all ebs snapshots are starts.", zap.Int("count", len(allVolumes)))
-	err = sess.WaitEBSSnapshotFinished(allVolumes, progress)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Info("all ebs snapshots are finished.", zap.Int("count", len(allVolumes)))
 
 	// Step.3 save backup meta file to s3.
 	externalStorage := client.GetStorage()
