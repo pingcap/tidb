@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/util/taskstop"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -55,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/multithreadtest"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -418,10 +419,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
 
-	failpoint.Inject("sessionStop", func() {
-		multithreadtest.SessionStop(a.Ctx, sessiontxn.TestSessionStopBeforeExecutorFirstRun)
-	})
-
+	taskstop.InjectSessionStopPoint(a.Ctx, sessiontxn.StopPointBeforeExecutorFirstRun)
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, err
@@ -798,10 +796,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if err != nil {
 		return nil, err
 	}
-
-	failpoint.Inject("sessionStop", func() {
-		multithreadtest.SessionStop(a.Ctx, sessiontxn.TestSessionOnStmtRetryAfterLockError)
-	})
+	taskstop.InjectSessionStopPoint(a.Ctx, sessiontxn.StopPointOnStmtRetryAfterLockError)
 
 	e, err := a.buildExecutor()
 	if err != nil {

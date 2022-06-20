@@ -35,17 +35,13 @@ var AssertTxnInfoSchemaKey stringutil.StringerStr = "assertTxnInfoSchemaKey"
 // Only for test
 var AssertTxnInfoSchemaAfterRetryKey stringutil.StringerStr = "assertTxnInfoSchemaAfterRetryKey"
 
-// HookBeforeFirstRunExecutorKey is the hook key for the executor first run
+// StopPointBeforeExecutorFirstRun is the key for the stop point where session stops before executor's first run
 // Only for test
-var HookBeforeFirstRunExecutorKey stringutil.StringerStr = "testHookKeyBeforeFirstRunExecutor"
+var StopPointBeforeExecutorFirstRun = "before executor first run"
 
-// HookAfterOnStmtRetryWithLockErrorKey is the hook key for after OnStmtRetry with lock error
+// StopPointOnStmtRetryAfterLockError s the key for the stop point where session stops after OnStmtRetry when lock error happens
 // Only for test
-var HookAfterOnStmtRetryWithLockErrorKey stringutil.StringerStr = "testHookKeyAfterOnStmtRetryWithLockError"
-
-var TestSessionStopBeforeExecutorFirstRun = "before executor first run"
-
-var TestSessionOnStmtRetryAfterLockError = "lock error, OnStmtRetry called"
+var StopPointOnStmtRetryAfterLockError = "lock error, OnStmtRetry called"
 
 // RecordAssert is used only for test
 func RecordAssert(sctx sessionctx.Context, name string, value interface{}) {
