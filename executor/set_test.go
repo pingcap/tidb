@@ -414,8 +414,8 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set @@global.tidb_store_limit = 100")
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 	tk.MustExec("set @@global.tidb_store_limit = 0")
-	tk.MustExec("set global tidb_store_limit = 100")
-	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
+	tk.MustExec("set global tidb_store_limit = 10000")
+	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("10000"))
 
 	tk.MustQuery("select @@global.tidb_txn_commit_batch_size;").Check(testkit.Rows("16384"))
 	tk.MustExec("set @@global.tidb_txn_commit_batch_size = 100")
