@@ -711,6 +711,17 @@ func killConn(conn *clientConn) {
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
+	// killing connection...
+	// killing conn
+	fmt.Printf("#### kill level 2\n")
+
+	/*
+			errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+			e.errs, err = ddl.CancelJobs(txn, e.jobIDs)
+			return
+		})
+	*/
+
 	if cancelFunc != nil {
 		cancelFunc()
 	}
