@@ -437,13 +437,16 @@ func (c *innerItemLruCache) evictIfNeeded() {
 		prev := curr.Prev()
 		item := curr.Value.(*lruCacheItem)
 		oldMem := item.innerMemUsage
-		// evict cmSketches
 		item.innerItem.DropEvicted()
 		newMem := item.innerItem.MemoryUsage()
 		c.calculateCost(newMem, oldMem)
-		// remove from lru
-		c.cache.Remove(curr)
-		delete(c.elements[item.tblID][item.isIndex], item.id)
+		if newMem.TrackingMemUsage() == 0 {
+			// remove from lru
+			c.cache.Remove(curr)
+			delete(c.elements[item.tblID][item.isIndex], item.id)
+		} else {
+			c.cache.PushFront(curr)
+		}
 		if c.onEvict != nil {
 			c.onEvict(item.tblID)
 		}

@@ -1105,6 +1105,11 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 		columnMemUsage.CMSketchMemUsage = cmSketchMemUsage
 		sum += cmSketchMemUsage
 	}
+	if c.TopN != nil {
+		topnMemUsage := c.TopN.MemoryUsage()
+		columnMemUsage.TopNMemUsage = topnMemUsage
+		sum += topnMemUsage
+	}
 	if c.FMSketch != nil {
 		fmSketchMemUsage := c.FMSketch.MemoryUsage()
 		columnMemUsage.FMSketchMemUsage = fmSketchMemUsage
@@ -1315,9 +1320,24 @@ func (c *Column) ItemID() int64 {
 // DropEvicted implements TableCacheItem
 // DropEvicted drops evicted structures
 func (c *Column) DropEvicted() {
-	if c.StatsVer < Version2 && c.WasLoaded() {
-		c.CMSketch = nil
-		c.cmsEvicting = true
+	if !c.wasLoaded {
+		return
+	}
+	switch c.StatsVer {
+	case Version2:
+		c.TopN = nil
+		c.topnEvicting = true
+	default:
+		if !c.cmsEvicting {
+			c.CMSketch = nil
+			c.cmsEvicting = true
+			return
+		}
+		if !c.topnEvicting {
+			c.TopN = nil
+			c.topnEvicting = true
+			return
+		}
 	}
 }
 
@@ -1342,7 +1362,22 @@ func (idx *Index) ItemID() int64 {
 // DropEvicted implements TableCacheItem
 // DropEvicted drops evicted structures
 func (idx *Index) DropEvicted() {
-	idx.CMSketch = nil
+	switch idx.StatsVer {
+	case Version2:
+		if idx.TopN != nil {
+			idx.TopN = nil
+			return
+		}
+	default:
+		if idx.CMSketch != nil {
+			idx.CMSketch = nil
+			return
+		}
+		if idx.TopN != nil {
+			idx.TopN = nil
+			return
+		}
+	}
 }
 
 // IsEvicted returns whether index statistics got evicted
@@ -1386,6 +1421,11 @@ func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 		cmSketchMemUsage := idx.CMSketch.MemoryUsage()
 		indexMemUsage.CMSketchMemUsage = cmSketchMemUsage
 		sum += cmSketchMemUsage
+	}
+	if idx.TopN != nil {
+		topnMemUsage := idx.TopN.MemoryUsage()
+		indexMemUsage.TopNMemUsage = topnMemUsage
+		sum += topnMemUsage
 	}
 	indexMemUsage.TotalMemUsage = sum
 	return indexMemUsage
@@ -2314,4 +2354,9 @@ func (s ColLoadedStatus) IsNecessaryLoaded() bool {
 // IsCMSEvicting indicates whether the cms is during evicting
 func (s ColLoadedStatus) IsCMSEvicting() bool {
 	return s.wasLoaded && s.cmsEvicting
+}
+
+// IsTopNEvicting indicates whether the topn is during evicting
+func (s ColLoadedStatus) IsTopNEvicting() bool {
+	return s.wasLoaded && s.topnEvicting
 }

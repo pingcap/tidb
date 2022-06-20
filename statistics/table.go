@@ -161,6 +161,7 @@ type ColumnMemUsage struct {
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
 	FMSketchMemUsage  int64
+	TopNMemUsage      int64
 	TotalMemUsage     int64
 }
 
@@ -176,7 +177,7 @@ func (c *ColumnMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *ColumnMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage
 }
 
 // IndexMemUsage records index memory usage
@@ -184,6 +185,7 @@ type IndexMemUsage struct {
 	IndexID           int64
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
+	TopNMemUsage      int64
 	TotalMemUsage     int64
 }
 
@@ -199,7 +201,7 @@ func (c *IndexMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *IndexMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage
 }
 
 // MemoryUsage returns the total memory usage of this Table.
