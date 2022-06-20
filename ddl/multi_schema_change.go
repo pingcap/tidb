@@ -331,3 +331,25 @@ func appendMultiChangeWarningsToOwnerCtx(ctx sessionctx.Context, job *model.Job)
 	}
 
 }
+
+// rollingBackMultiSchemaChange updates a multi-schema change job
+// from cancelling state to rollingback state.
+func rollingBackMultiSchemaChange(job *model.Job) error {
+	if !job.MultiSchemaInfo.Revertible {
+		// Cannot rolling back because the jobs are non-revertible.
+		// Resume the job state to running.
+		job.State = model.JobStateRunning
+		return nil
+	}
+	// Mark all the jobs to cancelling.
+	for _, sub := range job.MultiSchemaInfo.SubJobs {
+		switch sub.State {
+		case model.JobStateRunning:
+			sub.State = model.JobStateCancelling
+		case model.JobStateNone, model.JobStateQueueing:
+			sub.State = model.JobStateCancelled
+		}
+	}
+	job.State = model.JobStateRollingback
+	return dbterror.ErrCancelledDDLJob
+}

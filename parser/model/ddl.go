@@ -427,13 +427,13 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 		}
 		if job.MultiSchemaInfo != nil {
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				// Only update the args of last executing sub-job.
-				if sub.Args != nil {
-					sub.RawArgs, err = json.Marshal(sub.Args)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					break
+				// Only update the args of executing sub-jobs.
+				if sub.Args == nil {
+					continue
+				}
+				sub.RawArgs, err = json.Marshal(sub.Args)
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
 			}
 		}
@@ -611,6 +611,8 @@ func (job *Job) IsRollbackable() bool {
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
 		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
 		return job.SchemaState == StateNone
+	case ActionMultiSchemaChange:
+		return job.MultiSchemaInfo.Revertible
 	}
 	return true
 }

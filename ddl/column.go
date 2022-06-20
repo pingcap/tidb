@@ -115,7 +115,7 @@ func createColumnInfoWithPosCheck(tblInfo *model.TableInfo, colInfo *model.Colum
 	return colInfo, pos, offset, nil
 }
 
-func initColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) *model.ColumnInfo {
+func initAndAddColumnToTable(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) *model.ColumnInfo {
 	cols := tblInfo.Columns
 	colInfo.ID = allocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
@@ -189,7 +189,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errors.Trace(err)
 	}
 	if columnInfo == nil {
-		columnInfo = initColumnInfo(tblInfo, colFromArgs)
+		columnInfo = initAndAddColumnToTable(tblInfo, colFromArgs)
 		logutil.BgLogger().Info("[ddl] run add column job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo))
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 			job.State = model.JobStateCancelled
