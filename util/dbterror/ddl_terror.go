@@ -388,4 +388,7 @@ var (
 	ErrCancelFinishedDDLJob = ClassDDL.NewStd(mysql.ErrCancelFinishedDDLJob)
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = ClassDDL.NewStd(mysql.ErrCannotCancelDDLJob)
+
+	// ErrColumnInChange indicates there is modification on the column in parallel.
+	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)
 )
