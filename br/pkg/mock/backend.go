@@ -375,4 +375,3 @@ func (mr *MockEngineWriterMockRecorder) IsSynced() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSynced", reflect.TypeOf((*MockEngineWriter)(nil).IsSynced))
 }
-
