@@ -121,12 +121,12 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 
 	// Generate the new index global-stats
 	globalIdxStatsTopNNum, globalIdxStatsBucketNum := 0, 0
-	for idx := range tblInfo.Indices {
-		globalIdxStatsTopN := globalStats.Indices[int64(idx)].TopN
+	for _, idx := range tblInfo.Indices {
+		globalIdxStatsTopN := globalStats.Indices[idx.ID].TopN
 		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) > globalIdxStatsTopNNum {
 			globalIdxStatsTopNNum = len(globalIdxStatsTopN.TopN)
 		}
-		globalIdxStats := globalStats.Indices[int64(idx)]
+		globalIdxStats := globalStats.Indices[idx.ID]
 		if globalIdxStats != nil && len(globalIdxStats.Buckets) > globalIdxStatsBucketNum {
 			globalIdxStatsBucketNum = len(globalIdxStats.Buckets)
 		}
@@ -136,7 +136,11 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if globalIdxStatsBucketNum != 0 {
 			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
 		}
+<<<<<<< HEAD
 		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, int64(idx))
+=======
+		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, []int64{idx.ID})
+>>>>>>> 2a45f2102... statistics: fix panic when using wrong globalStats.Indices key (#35424)
 		if err != nil {
 			return err
 		}
