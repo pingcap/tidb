@@ -2952,11 +2952,20 @@ func needToOverwriteColCharset(options []*ast.TableOption) bool {
 }
 
 func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec {
-	specs := make([]*ast.AlterTableSpec, len(spec.NewColumns))
-	for i, col := range spec.NewColumns {
+	specs := make([]*ast.AlterTableSpec, 0, len(spec.NewColumns)+len(spec.NewConstraints))
+	for _, col := range spec.NewColumns {
 		t := *spec
 		t.NewColumns = []*ast.ColumnDef{col}
-		specs[i] = &t
+		t.NewConstraints = []*ast.Constraint{}
+		specs = append(specs, &t)
+	}
+	for _, con := range spec.NewConstraints {
+		t := *spec
+		t.NewColumns = []*ast.ColumnDef{}
+		t.NewConstraints = []*ast.Constraint{}
+		t.Constraint = con
+		t.Tp = ast.AlterTableAddConstraint
+		specs = append(specs, &t)
 	}
 	return specs
 }
@@ -2974,7 +2983,7 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
-		if spec.Tp == ast.AlterTableAddColumns && len(spec.NewColumns) > 1 {
+		if spec.Tp == ast.AlterTableAddColumns && (len(spec.NewColumns) > 1 || len(spec.NewConstraints) > 0) {
 			validSpecs = append(validSpecs, resolveAlterTableAddColumns(spec)...)
 		} else {
 			validSpecs = append(validSpecs, spec)
