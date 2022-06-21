@@ -32,6 +32,7 @@ go_test(
         "rule_test.go",
     ],
     embed = [":placement"],
+    flaky = True,
     deps = [
         "//kv",
         "//meta",
