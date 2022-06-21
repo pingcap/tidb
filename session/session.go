@@ -3506,7 +3506,8 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 	for _, sv := range variable.GetSysVars() {
 		switch {
 		case sv.Hidden, sv.HasNoneScope(), sv.HasInstanceScope(), !sv.HasSessionScope():
-			// Hidden, none-scoped, and instance-scoped variables cannot be modified.
+			// Hidden and none-scoped variables cannot be modified.
+			// Instance-scoped variables don't need to be encoded.
 			// Noop variables should also be migrated even if they are noop.
 			continue
 		case sv.ReadOnly:
