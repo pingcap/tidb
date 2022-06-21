@@ -146,11 +146,6 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
-// SetStmtNode saves the current stmtNode in the TxnManager
-func (m *txnManager) SetStmtNode(node ast.StmtNode) {
-	m.stmtNode = node
-}
-
 func (m *txnManager) AdviseWarmup() error {
 	if m.ctxProvider != nil {
 		return m.ctxProvider.AdviseWarmup()
