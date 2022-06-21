@@ -266,6 +266,7 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 		glue:         glue,
 		promFactory:  l.promFactory,
 		promRegistry: l.promRegistry,
+		logger:       log.L(),
 	}
 	return l.run(taskCtx, taskCfg, o)
 }
