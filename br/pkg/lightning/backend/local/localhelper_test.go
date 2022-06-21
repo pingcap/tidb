@@ -419,6 +419,7 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	local := &local{
 		splitCli: client,
 		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
 	}
 
 	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
@@ -587,6 +588,7 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 	local := &local{
 		splitCli: client,
 		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -673,6 +675,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	local := &local{
 		splitCli: client,
 		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
 	}
 	ctx := context.Background()
 

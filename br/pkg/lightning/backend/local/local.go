@@ -234,6 +234,7 @@ type local struct {
 
 	bufferPool *membuf.Pool
 	metrics    *metric.Metrics
+	logger     log.Logger
 }
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
@@ -334,6 +335,8 @@ func NewLocalBackend(
 		errorMgr:                errorMgr,
 		importClientFactory:     importClientFactory,
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
+
+		logger: log.FromContext(ctx),
 	}
 	if m, ok := metric.FromContext(ctx); ok {
 		local.metrics = m
@@ -467,17 +470,10 @@ func (local *local) Close() {
 	allEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
 	local.engines = sync.Map{}
 
-	var (
-		engine *Engine
-		logger log.Logger
-	)
-
-	for _, engine = range allEngines {
+	for _, engine := range allEngines {
 		engine.Close()
 		engine.unlock()
 	}
-
-	logger = engine.logger
 
 	local.importClientFactory.Close()
 	local.bufferPool.Destroy()
@@ -488,22 +484,22 @@ func (local *local) Close() {
 		hasDuplicates := iter.First()
 		allIsWell := true
 		if err := iter.Error(); err != nil {
-			logger.Warn("iterate duplicate db failed", zap.Error(err))
+			local.logger.Warn("iterate duplicate db failed", zap.Error(err))
 			allIsWell = false
 		}
 		if err := iter.Close(); err != nil {
-			logger.Warn("close duplicate db iter failed", zap.Error(err))
+			local.logger.Warn("close duplicate db iter failed", zap.Error(err))
 			allIsWell = false
 		}
 		if err := local.duplicateDB.Close(); err != nil {
-			logger.Warn("close duplicate db failed", zap.Error(err))
+			local.logger.Warn("close duplicate db failed", zap.Error(err))
 			allIsWell = false
 		}
 		// If checkpoint is disabled, or we don't detect any duplicate, then this duplicate
 		// db dir will be useless, so we clean up this dir.
 		if allIsWell && (!local.checkpointEnabled || !hasDuplicates) {
 			if err := os.RemoveAll(filepath.Join(local.localStoreDir, duplicateDBName)); err != nil {
-				logger.Warn("remove duplicate db file failed", zap.Error(err))
+				local.logger.Warn("remove duplicate db file failed", zap.Error(err))
 			}
 		}
 		local.duplicateDB = nil
@@ -514,7 +510,7 @@ func (local *local) Close() {
 	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
 		err := os.RemoveAll(local.localStoreDir)
 		if err != nil {
-			logger.Warn("remove local db file failed", zap.Error(err))
+			local.logger.Warn("remove local db file failed", zap.Error(err))
 		}
 	}
 

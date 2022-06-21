@@ -440,6 +440,7 @@ func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*restore.R
 func TestIsIngestRetryable(t *testing.T) {
 	local := &local{
 		splitCli: &mockSplitClient{},
+		logger:   log.L(),
 	}
 
 	resp := &sst.IngestResponse{
@@ -1186,6 +1187,7 @@ func TestMultiIngest(t *testing.T) {
 					return importCli
 				},
 			},
+			logger: log.L(),
 		}
 		err := local.checkMultiIngestSupport(context.Background())
 		if err != nil {
