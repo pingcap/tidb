@@ -167,8 +167,8 @@ def go_deps():
         name = "com_github_blacktear23_go_proxyprotocol",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/blacktear23/go-proxyprotocol",
-        sum = "h1:rQlvB2AYWme2bIB18r/SipGiMEVJYE9U0z+MGoU/LtQ=",
-        version = "v0.0.0-20180807104634-af7a81e8dd0d",
+        sum = "h1:WmMmtZanGEfIHnJN9N3A4Pl6mM69D+GxEph2eOaCf7g=",
+        version = "v1.0.0",
     )
     go_repository(
         name = "com_github_burntsushi_toml",
