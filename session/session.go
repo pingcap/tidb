@@ -2140,12 +2140,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-<<<<<<< HEAD
-=======
 	} else if s.sessionVars.IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
 		is = temptable.AttachLocalTemporaryTableInfoSchema(s, is)
->>>>>>> 0703a64f7... planner: plan cache always check scheme valid in RC isolation level (#34523)
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
