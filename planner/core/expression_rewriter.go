@@ -1297,6 +1297,10 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		}
 		return
 	}
+	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
+		// The variable does nothing, append a warning to the statement output.
+		sessionVars.StmtCtx.AppendWarning(ErrGettingNoopVariable.GenWithStackByArgs(sysVar.Name))
+	}
 	if sem.IsEnabled() && sem.IsInvisibleSysVar(sysVar.Name) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
 		er.b.visitInfo = appendDynamicVisitInfo(er.b.visitInfo, "RESTRICTED_VARIABLES_ADMIN", false, err)
