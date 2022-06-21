@@ -1557,6 +1557,7 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 		return
 	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {
+		// todo: consider refining the code and reusing expression.BuildCollationFunction here
 		if er.ctxStack[i].GetType().EvalType() == types.ETString {
 			rowFunc, ok := er.ctxStack[i].(*expression.ScalarFunction)
 			if ok && rowFunc.FuncName.String() == ast.RowFunc {
@@ -1573,6 +1574,14 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 				} else {
 					continue
 				}
+			} else if coll.Charset == charset.CharsetBin {
+				// When cast character string to binary string, if we still use fixed length representation,
+				// then 0 padding will be used, which can affect later execution.
+				// e.g. https://github.com/pingcap/tidb/pull/35053#pullrequestreview-1008757770 gives an unexpected case.
+				// On the other hand, we can not directly return origin expr back,
+				// since we need binary collation to do string comparison later.
+				// Here we use VarString type of cast, i.e `cast(a as binary)`, to avoid this problem.
+				tp.SetType(mysql.TypeVarString)
 			}
 			tp.SetCharset(coll.Charset)
 			tp.SetCollate(coll.Collation)
