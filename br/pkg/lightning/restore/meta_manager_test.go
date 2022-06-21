@@ -384,3 +384,35 @@ func TestSingleTaskMetaMgr(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func TestReallocTableRowIDs(t *testing.T) {
+	s, clean := newMetaMgrSuite(t)
+	defer clean()
+
+	ctx := context.WithValue(context.Background(), &checksumManagerKey, s.checksumMgr)
+
+	rows := [][]driver.Value{
+		{int64(1), int64(998), int64(1008), uint64(0), uint64(0), uint64(0), metaStatusRowIDAllocated.String()},
+	}
+	checksum := verification.MakeKVChecksum(2, 1, 3)
+	s.prepareMock(rows, nil, nil, &checksum, nil)
+
+	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(998), rowIDBase)
+	require.Equal(t, &checksum, ck)
+	require.Equal(t, 1, s.checksumMgr.callCnt)
+	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").
+		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
+
+	s.mockDB.ExpectBegin()
+	s.mockDB.ExpectQuery("\\QSELECT MAX(row_id_max) from `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").WithArgs(int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"row_id_max"}).AddRow(1008))
+	s.mockDB.ExpectExec("\\QUPDATE `test`.`table_meta` SET row_id_max = ? WHERE table_id = ? AND task_id = ?\\E").WithArgs(int64(1018), int64(1), int64(1)).
+		WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
+	s.mockDB.ExpectCommit()
+	newBase, newMax, err := s.mgr.ReallocTableRowIDs(context.Background(), 10)
+	require.Nil(t, err)
+	require.Equal(t, int64(1009), newBase)
+	require.Equal(t, int64(1018), newMax)
+}
