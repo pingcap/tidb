@@ -2028,17 +2028,18 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				needCheck = taskCheckpoints == nil
 			}
 			if needCheck {
-				err = rc.localResource(ctx, estimatedDataSizeWithIndex)
+				withSizeCacheCtx := WithPreInfoGetterEstimatedSrcSizeCache(ctx, estimatedSizeResult)
+				err = rc.localResource(withSizeCacheCtx)
 				if err != nil {
 					return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
 				}
-				if err := rc.clusterResource(ctx, estimatedDataSizeWithIndex); err != nil {
+				if err := rc.clusterResource(withSizeCacheCtx); err != nil {
 					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
 						log.FromContext(ctx).Warn("cleanup task failed", zap.Error(err1))
 						return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 					}
 				}
-				if err := rc.checkClusterRegion(ctx); err != nil {
+				if err := rc.checkClusterRegion(withSizeCacheCtx); err != nil {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
 			}
@@ -2062,50 +2063,38 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 
 // DataCheck checks the data schema which needs #rc.restoreSchema finished.
 func (rc *Controller) DataCheck(ctx context.Context) error {
-	var err error
+	var (
+		err    error
+		result *CheckResult
+	)
 	if rc.cfg.App.CheckRequirements {
-		rc.HasLargeCSV(rc.dbMetas)
+		rc.HasLargeCSV(ctx)
 	}
-	checkPointCriticalMsgs := make([]string, 0, len(rc.dbMetas))
-	schemaCriticalMsgs := make([]string, 0, len(rc.dbMetas))
-	var msgs []string
-	for _, dbInfo := range rc.dbMetas {
-		for _, tableInfo := range dbInfo.Tables {
-			// if hasCheckpoint is true, the table will start import from the checkpoint
-			// so we can skip TableHasDataInCluster and SchemaIsValid check.
-			noCheckpoint := true
-			if rc.cfg.Checkpoint.Enable {
-				msgs, noCheckpoint = rc.CheckpointIsValid(ctx, tableInfo)
-				if len(msgs) != 0 {
-					checkPointCriticalMsgs = append(checkPointCriticalMsgs, msgs...)
-				}
-			}
 
-			if rc.cfg.App.CheckRequirements && noCheckpoint && rc.cfg.TikvImporter.Backend != config.BackendTiDB {
-				if msgs, err = rc.SchemaIsValid(ctx, tableInfo); err != nil {
-					return errors.Trace(err)
-				}
-				if len(msgs) != 0 {
-					schemaCriticalMsgs = append(schemaCriticalMsgs, msgs...)
-				}
-			}
+	if rc.cfg.Checkpoint.Enable {
+		result, err = NewCheckpointCheckItem(rc.cfg, rc.preInfoGetter, rc.dbMetas, rc.checkpointsDB).Check(ctx)
+		if err != nil {
+			return errors.Trace(err)
 		}
+		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
 	}
-	if len(checkPointCriticalMsgs) != 0 {
-		rc.checkTemplate.Collect(Critical, false, strings.Join(checkPointCriticalMsgs, "\n"))
-	} else {
-		rc.checkTemplate.Collect(Critical, true, "checkpoints are valid")
-	}
-	if len(schemaCriticalMsgs) != 0 {
-		rc.checkTemplate.Collect(Critical, false, strings.Join(schemaCriticalMsgs, "\n"))
-	} else {
-		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
+
+	if rc.cfg.App.CheckRequirements && rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+		checkSchemaCtx := ctx
+		if rc.checkpointsDB != nil {
+			checkSchemaCtx = WithPrecheckKey(ctx, checkpointDBKey, rc.checkpointsDB)
+		}
+		result, err = NewSchemaCheckItem(rc.cfg, rc.preInfoGetter, rc.dbMetas).Check(checkSchemaCtx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
 	}
 
 	if err := rc.checkTableEmpty(ctx); err != nil {
 		return common.ErrCheckTableEmpty.Wrap(err).GenWithStackByArgs()
 	}
-	if err = rc.checkCSVHeader(ctx, rc.dbMetas); err != nil {
+	if err = rc.checkCSVHeader(ctx); err != nil {
 		return common.ErrCheckCSVHeader.Wrap(err).GenWithStackByArgs()
 	}
 

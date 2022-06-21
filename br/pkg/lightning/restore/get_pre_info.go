@@ -543,7 +543,6 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sysVars := p.GetTargetSysVariablesForImport(ctx)
 	for _, db := range p.dbMetas {
 		info, ok := dbInfos[db.Name]
 		if !ok {
@@ -560,6 +559,7 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
 				} else {
+					sysVars := p.GetTargetSysVariablesForImport(ctx)
 					sampledIndexRatio, isRowOrderedFromSample, err := p.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core, errMgr, sysVars)
 					if err != nil {
 						return nil, errors.Trace(err)

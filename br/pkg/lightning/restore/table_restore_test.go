@@ -1136,7 +1136,10 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			return nil
 		})
 		require.NoError(s.T(), err)
-		err = rc.clusterResource(ctx, sourceSize)
+		err = rc.clusterResource(WithPreInfoGetterEstimatedSrcSizeCache(ctx, &EstimateSourceDataSizeResult{
+			SizeWithIndex:    sourceSize,
+			SizeWithoutIndex: sourceSize,
+		}))
 		require.NoError(s.T(), err)
 
 		require.Equal(s.T(), ca.expectErrorCount, template.FailedCount(Critical))
@@ -1353,11 +1356,18 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	mockStore, err := storage.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
-		rc := &Controller{cfg: cfg, checkTemplate: template, store: mockStore}
-		rc.HasLargeCSV(ca.dbMetas)
+		rc := &Controller{
+			cfg:           cfg,
+			checkTemplate: template,
+			store:         mockStore,
+			dbMetas:       ca.dbMetas,
+		}
+		rc.HasLargeCSV(ctx)
 		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(Warn))
 		require.Equal(s.T(), ca.expectResult, template.Success())
 		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
@@ -1808,7 +1818,6 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 	}
 
 	for _, ca := range cases {
-		template := NewSimpleTemplate()
 		cfg := &config.Config{
 			Mydumper: config.MydumperRuntime{
 				ReadBlockSize: config.ReadBlockSize,
@@ -1830,16 +1839,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			srcStorage: mockStore,
 			ioWorkers:  ioWorkers,
 		}
-		rc := &Controller{
-			cfg:           cfg,
-			checkTemplate: template,
-			store:         mockStore,
-			dbInfos:       ca.dbInfos,
-			ioWorkers:     ioWorkers,
-			preInfoGetter: preInfoGetter,
-		}
-		ctx = WithPreInfoGetterTableStructuresCache(ctx, ca.dbInfos)
-		msgs, err := rc.SchemaIsValid(ctx, ca.tableMeta)
+		ci := NewSchemaCheckItem(cfg, preInfoGetter, nil).(*schemaCheckItem)
+		msgs, err := ci.SchemaIsValid(WithPreInfoGetterTableStructuresCache(ctx, ca.dbInfos), ca.tableMeta)
 		require.NoError(s.T(), err)
 		require.Len(s.T(), msgs, ca.MsgNum)
 		if len(msgs) > 0 {
@@ -1908,16 +1909,8 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 		srcStorage: mockStore,
 		ioWorkers:  ioWorkers,
 	}
-	rc := &Controller{
-		cfg:           cfg,
-		checkTemplate: NewSimpleTemplate(),
-		store:         mockStore,
-		dbInfos:       dbInfos,
-		ioWorkers:     ioWorkers,
-		preInfoGetter: preInfoGetter,
-	}
-	ctx = WithPreInfoGetterTableStructuresCache(ctx, dbInfos)
-	msgs, err := rc.SchemaIsValid(ctx, &mydump.MDTableMeta{
+	ci := NewSchemaCheckItem(cfg, preInfoGetter, nil).(*schemaCheckItem)
+	msgs, err := ci.SchemaIsValid(WithPreInfoGetterTableStructuresCache(ctx, dbInfos), &mydump.MDTableMeta{
 		DB:   "db1",
 		Name: "gbk_table",
 		DataFiles: []mydump.FileInfo{
