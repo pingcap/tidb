@@ -75,6 +75,8 @@ type PreRestoreInfoGetter interface {
 type TargetInfoGetter interface {
 	// FetchRemoteTableModels fetches the table structures from the remote target.
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+	// CheckVersionRequirements performs the check whether the target satisfies the version requirements.
+	CheckVersionRequirements(ctx context.Context) error
 	// DoesTableContainData checks whether the specified table on the target DB contains data or not.
 	DoesTableContainData(ctx context.Context, schemaName string, tableName string) (bool, error)
 	// GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
@@ -85,6 +87,16 @@ type TargetInfoGetter interface {
 	GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error)
 	// GetEmptyRegionsInfo gets the region information of all the empty regions on the target.
 	GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error)
+}
+
+type preInfoGetterKey string
+
+const (
+	preInfoGetterKeyDBMetas preInfoGetterKey = "PRE_INFO_GETTER/DB_METAS"
+)
+
+func withPreInfoGetterKeyValue(ctx context.Context, key preInfoGetterKey, val any) context.Context {
+	return context.WithValue(ctx, key, val)
 }
 
 // TargetInfoGetterImpl implements the operations to get information from the target.
@@ -110,7 +122,7 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls)
+		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDBGlue, cfg.TiDB.PdAddr)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
@@ -128,6 +140,22 @@ func (g *TargetInfoGetterImpl) FetchRemoteTableModels(ctx context.Context, schem
 		return g.targetDBGlue.GetTables(ctx, schemaName)
 	}
 	return g.backend.FetchRemoteTableModels(ctx, schemaName)
+}
+
+// CheckVersionRequirements performs the check whether the target satisfies the version requirements.
+// It implements the TargetInfoGetter interface.
+// Mydump database metas are retrieved from the context.
+func (g *TargetInfoGetterImpl) CheckVersionRequirements(ctx context.Context) error {
+	var dbMetas []*mydump.MDDatabaseMeta
+	dbmetasVal := ctx.Value(preInfoGetterKeyDBMetas)
+	if dbmetasVal != nil {
+		if m, ok := dbmetasVal.([]*mydump.MDDatabaseMeta); ok {
+			dbMetas = m
+		}
+	}
+	return g.backend.CheckRequirements(ctx, &backend.CheckCtx{
+		DBMetas: dbMetas,
+	})
 }
 
 // DoesTableContainData checks whether the specified table on the target DB contains data or not.
@@ -698,6 +726,13 @@ func (p *PreRestoreInfoGetterImpl) DoesTableContainData(ctx context.Context, sch
 // It implements the PreRestoreInfoGetter interface.
 func (p *PreRestoreInfoGetterImpl) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return p.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
+}
+
+// CheckVersionRequirements performs the check whether the target satisfies the version requirements.
+// It implements the PreRestoreInfoGetter interface.
+// Mydump database metas are retrieved from the context.
+func (g *PreRestoreInfoGetterImpl) CheckVersionRequirements(ctx context.Context) error {
+	return g.targetInfoGetter.CheckVersionRequirements(ctx)
 }
 
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.

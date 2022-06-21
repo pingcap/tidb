@@ -232,6 +232,11 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 	return tables, err
 }
 
+func (b *targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
+	log.L().Info("skipping check requirements for tidb backend")
+	return nil
+}
+
 type tidbBackend struct {
 	db               *sql.DB
 	onDuplicate      string
@@ -543,11 +548,6 @@ func (be *tidbBackend) ShouldPostProcess() bool {
 	return true
 }
 
-func (be *tidbBackend) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
-	log.L().Info("skipping check requirements for tidb backend")
-	return nil
-}
-
 func (be *tidbBackend) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
 	return be.kvEncBuilder.NewEncoder(tbl, options)
 }
@@ -725,6 +725,10 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
 	})
 	return nil
+}
+
+func (be *tidbBackend) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
+	return be.targetInfoGetter.CheckRequirements(ctx, nil)
 }
 
 // TODO: refactor

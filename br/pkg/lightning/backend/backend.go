@@ -140,6 +140,9 @@ type TargetInfoGetter interface {
 	//     * Offset (must be 0, 1, 2, ...)
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+
+	// CheckRequirements performs the check whether the backend satisfies the version requirements.
+	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
 }
 
 // KVEncodingBuilder consists of operations to handle encoding KVs from source.
@@ -176,10 +179,6 @@ type AbstractBackend interface {
 	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error
 
 	CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
-
-	// CheckRequirements performs the check whether the backend satisfies the
-	// version requirements
-	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
 
 	// FlushEngine ensures all KV pairs written to an open engine has been
 	// synchronized, such that kill-9'ing Lightning afterwards and resuming from

@@ -271,3 +271,9 @@ func (t *MockTargetInfo) DoesTableContainData(ctx context.Context, schemaName st
 	}
 	return (tblInfo.RowCount > 0), nil
 }
+
+// CheckVersionRequirements performs the check whether the target satisfies the version requirements.
+// It implements the TargetInfoGetter interface.
+func (t *MockTargetInfo) CheckVersionRequirements(ctx context.Context) error {
+	return nil
+}
