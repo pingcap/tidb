@@ -58,6 +58,7 @@ go_test(
     flaky = True,
     deps = [
         "//expression",
+        "//kv",
         "//parser/ast",
         "//parser/mysql",
         "//sessionctx",
