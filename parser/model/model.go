@@ -1488,7 +1488,7 @@ func (p *PlacementSettings) String() string {
 }
 
 func (p *PlacementSettings) Clone() *PlacementSettings {
-	var cloned PlacementSettings = *p
+	cloned := *p
 	return &cloned
 }
 
