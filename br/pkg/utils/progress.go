@@ -48,6 +48,11 @@ func (pp *ProgressPrinter) Inc() {
 	atomic.AddInt64(&pp.progress, 1)
 }
 
+// GetCurrent get the current progress.
+func (pp *ProgressPrinter) GetCurrent() int64 {
+	return atomic.LoadInt64(&pp.progress)
+}
+
 // Close closes the current progress bar.
 func (pp *ProgressPrinter) Close() {
 	pp.closeMu.Lock()

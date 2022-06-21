@@ -5,6 +5,8 @@ package task
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -23,7 +25,7 @@ import (
 
 const (
 	flagBackupVolumeFile = "volume-file"
-	flagBackupDryRun = "dry-run"
+	flagBackupDryRun     = "dry-run"
 )
 
 // BackupEBSConfig is the configuration specific for backup tasks.
@@ -31,7 +33,7 @@ type BackupEBSConfig struct {
 	Config
 
 	VolumeFile string `json:"volume-file"`
-	DryRun bool `json:"dry-run"`
+	DryRun     bool   `json:"dry-run"`
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -154,12 +156,30 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	backupInfo.SetAllocID(allocID)
 	log.Info("get backup info from file", zap.Any("info", backupInfo))
 	snapCount := backupInfo.GetSnapshotCount()
+	if snapCount == 0 {
+		log.Info("nothing to backup")
+		return nil
+	}
 
 	progress := g.StartProgress(ctx, cmdName, int64(snapCount), !cfg.LogProgress)
 
 	// write progress in tmp file for tidb-operator, so tidb-operator can retrieve the
 	// progress of ebs backup. and user can get the progress through `kubectl get job`
 	go func() {
+		fileName := "progress.txt"
+		// remove tmp file
+		defer os.Remove(fileName)
+
+		for progress.GetCurrent() < int64(snapCount) {
+			time.Sleep(500 * time.Millisecond)
+			cur := progress.GetCurrent()
+			p := float64(cur) / float64(snapCount)
+			p *= 100
+			err = os.WriteFile(fileName, []byte(fmt.Sprintf("%.2f", p)), 0644)
+			if err != nil {
+				log.Warn("failed to update tmp progress file", zap.Error(err))
+			}
+		}
 	}()
 
 	sess, err := backup.NewEC2Session()
@@ -179,11 +199,11 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		}
 		log.Info("all ebs snapshots are finished.", zap.Int("count", len(allVolumes)))
 	} else {
-		for i := 0; i < int(snapCount); i ++ {
+		for i := 0; i < int(snapCount); i++ {
 			progress.Inc()
 			totalSize = 1024
 			log.Info("mock snapshot finished.", zap.Int("index", i))
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(800 * time.Millisecond)
 		}
 	}
 	progress.Close()
