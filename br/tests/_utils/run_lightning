@@ -29,4 +29,4 @@ bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out" DEV
     --sorted-kv-dir "$TEST_DIR/$TEST_NAME.sorted" \
     --enable-checkpoint=0 \
     --check-requirements=0 \
-    "$@" 2>&1
+    "$@"
