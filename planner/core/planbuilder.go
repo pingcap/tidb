@@ -213,7 +213,11 @@ func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 }
 
 func (info *tableHintInfo) ifPreferOrderedHashJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.orderedHashJoinTables)
+	if len(info.orderedHashJoinTables) == 0 {
+		return false
+	}
+	info.matchTableName(tableNames, info.orderedHashJoinTables[1:])
+	return info.matchTableName(tableNames, info.orderedHashJoinTables[:1])
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {

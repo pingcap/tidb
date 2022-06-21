@@ -943,6 +943,8 @@
 
       // invalid hint
       "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t1) ORDERED_HASH_JOIN(t2) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t1, t2) ORDERED_HASH_JOIN(t2) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t1, t2) ORDERED_HASH_JOIN(t2, t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
       "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t1) ORDERED_HASH_JOIN(t2) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
       "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t2) ORDERED_HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
       "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t2) ORDERED_HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
@@ -963,7 +965,19 @@
       "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
       "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
       "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a"
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, test.t) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t2, test.t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, test.t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, test.t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t2, t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t1, s) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a"
     ]
   }
 ]

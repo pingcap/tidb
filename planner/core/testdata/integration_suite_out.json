@@ -7075,7 +7075,33 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
+          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t1, t2) ORDERED_HASH_JOIN(t2) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
+        "Plan": [
+          "MergeJoin 12500.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t1, t2) ORDERED_HASH_JOIN(t2, t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
+        "Plan": [
+          "MergeJoin 12500.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
         ]
       },
       {
@@ -7088,7 +7114,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
+          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
         ]
       },
       {
@@ -7101,7 +7127,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
+          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
         ]
       },
       {
@@ -7114,7 +7140,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
+          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
         ]
       },
       {
@@ -7347,6 +7373,200 @@
       },
       {
         "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, test.t) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t2, test.t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "│ └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]There are no matching table names for (t) in optimizer hint /*+ ORDERED_HASH_JOIN(s, t) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, test.t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, test.t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t2, t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "│ └─TableReader(Probe) 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select /*+ ORDERED_HASH_JOIN(t3, t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "│ ├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(t1, s) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": [
+          "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ORDERED_HASH_JOIN(s, t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Plan": [
           "HashJoin 15609.38 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",

@@ -3527,6 +3527,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		limitHints                                                                                             limitHintInfo
 		leadingJoinOrder                                                                                       []hintTableInfo
 		leadingHintCnt                                                                                         int
+		orderedHJHintCnt                                                                                       int
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -3553,7 +3554,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintOrderedHJ:
-			orderedHashJoinTables = append(orderedHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			if orderedHJHintCnt == 0 {
+				orderedHashJoinTables = append(orderedHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			}
+			orderedHJHintCnt++
 		case HintHashAgg:
 			aggHints.preferAggType |= preferHashAgg
 		case HintStreamAgg:
@@ -3648,6 +3652,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		} else if b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
 		}
+	}
+	if orderedHJHintCnt > 1 {
+		orderedHashJoinTables = orderedHashJoinTables[:0]
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"))
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 		sortMergeJoinTables:       sortMergeTables,
