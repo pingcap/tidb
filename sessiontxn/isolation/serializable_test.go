@@ -250,7 +250,7 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "SERIALIZABLE")
 			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 			provider = assert.CheckAndGetProvider(t)
-			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()
 			assertAfterUseSnapshot.Check(t)
 		}()
