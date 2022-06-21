@@ -27,7 +27,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -162,10 +161,8 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) {
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
-	checkCtx := &backend.CheckCtx{
-		DBMetas: rc.dbMetas,
-	}
-	if err := rc.backend.CheckRequirements(ctx, checkCtx); err != nil {
+	checkCtx := withPreInfoGetterKeyValue(ctx, preInfoGetterKeyDBMetas, rc.dbMetas)
+	if err := rc.preInfoGetter.CheckVersionRequirements(checkCtx); err != nil {
 		err = common.NormalizeError(err)
 		passed = false
 		message = fmt.Sprintf("cluster available check failed: %s", err.Error())
