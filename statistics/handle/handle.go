@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1099,6 +1100,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		statsVer = version
 	}
 	// 2. Save histograms.
+	const maxInsertLength = 1024 * 1024
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
 			// It's normal virtual column, skip it.
@@ -1122,8 +1124,26 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 				return err
 			}
 			if topN := result.TopNs[i]; topN != nil {
-				for _, meta := range topN.TopN {
-					if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, meta.Encoded, meta.Count); err != nil {
+				for j := 0; j < len(topN.TopN); {
+					end := j + batchInsertSize
+					if end > len(topN.TopN) {
+						end = len(topN.TopN)
+					}
+					sql := new(strings.Builder)
+					sql.WriteString("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ")
+					for k := j; k < end; k++ {
+						val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, topN.TopN[k].Encoded, topN.TopN[k].Count)
+						if k > j {
+							val = "," + val
+						}
+						if k > j && sql.Len()+len(val) > maxInsertLength {
+							end = k
+							break
+						}
+						sql.WriteString(val)
+					}
+					j = end
+					if _, err = exec.ExecuteInternal(ctx, sql.String()); err != nil {
 						return err
 					}
 				}
@@ -1145,25 +1165,43 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			}
 			sc := h.mu.ctx.GetSessionVars().StmtCtx
 			var lastAnalyzePos []byte
-			for j := range hg.Buckets {
-				count := hg.Buckets[j].Count
-				if j > 0 {
-					count -= hg.Buckets[j-1].Count
+			for j := 0; j < len(hg.Buckets); {
+				end := j + batchInsertSize
+				if end > len(hg.Buckets) {
+					end = len(hg.Buckets)
 				}
-				var upperBound types.Datum
-				upperBound, err = hg.GetUpper(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
-				if err != nil {
-					return err
+				sql := new(strings.Builder)
+				sql.WriteString("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
+				for k := j; k < end; k++ {
+					count := hg.Buckets[k].Count
+					if k > 0 {
+						count -= hg.Buckets[k-1].Count
+					}
+					var upperBound types.Datum
+					upperBound, err = hg.GetUpper(k).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+					if err != nil {
+						return err
+					}
+					if k == len(hg.Buckets)-1 {
+						lastAnalyzePos = upperBound.GetBytes()
+					}
+					var lowerBound types.Datum
+					lowerBound, err = hg.GetLower(k).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+					if err != nil {
+						return err
+					}
+					val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, k, count, hg.Buckets[k].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[k].NDV)
+					if k > j {
+						val = "," + val
+					}
+					if k > j && sql.Len()+len(val) > maxInsertLength {
+						end = k
+						break
+					}
+					sql.WriteString(val)
 				}
-				if j == len(hg.Buckets)-1 {
-					lastAnalyzePos = upperBound.GetBytes()
-				}
-				var lowerBound types.Datum
-				lowerBound, err = hg.GetLower(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
-				if err != nil {
-					return err
-				}
-				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, j, count, hg.Buckets[j].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[j].NDV); err != nil {
+				j = end
+				if _, err = exec.ExecuteInternal(ctx, sql.String()); err != nil {
 					return err
 				}
 			}
