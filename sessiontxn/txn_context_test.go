@@ -828,3 +828,22 @@ func testStillWriteConflictAfterRetry(t *testing.T, store kv.Storage, isolation 
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
 	tk.MustExec("rollback")
 }
+
+func TestSomething(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 1), (2,2)")
+	tk.MustExec("select * from t where id=1 for update union all select * from t where id = 2 for update")
+
+	tk.MustExec("rollback")
+}

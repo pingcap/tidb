@@ -517,62 +517,83 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
 func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) PhysicalPlan {
-	var pointGet *PointGetPlan
-	var batchPointGet *BatchPointGetPlan
-	var physLock *PhysicalLock
-	var unionScan *PhysicalUnionScan
-	iteratePhysicalPlan(p, func(p PhysicalPlan) bool {
-		if len(p.Children()) > 1 {
-			return false
-		}
+	type Pairs struct {
+		// Point get and batch point get cannot be not nil simultaneously
+		pointGet      *PointGetPlan
+		batchPointGet *BatchPointGetPlan
+
+		physicalLock *PhysicalLock
+	}
+
+	pairs := make([]*Pairs, 0)
+	physicalLockSet := make(map[PhysicalPlan]interface{})
+	unionScanSet := make(map[PhysicalPlan]interface{})
+	iteratePhysicalPlan(p, nil, func(p PhysicalPlan, physicalLock *PhysicalLock) *PhysicalLock {
 		switch x := p.(type) {
 		case *PointGetPlan:
-			pointGet = x
+			if physicalLock != nil {
+				pairs = append(pairs, &Pairs{
+					pointGet:     x,
+					physicalLock: physicalLock,
+				})
+			}
 		case *BatchPointGetPlan:
-			batchPointGet = x
+			if physicalLock != nil {
+				pairs = append(pairs, &Pairs{
+					batchPointGet: x,
+					physicalLock:  physicalLock,
+				})
+			}
 		case *PhysicalLock:
-			physLock = x
+			physicalLockSet[x] = nil
+			return x
 		case *PhysicalUnionScan:
-			unionScan = x
+			unionScanSet[x] = nil
 		}
-		return true
+		return nil
 	})
-	if pointGet == nil && batchPointGet == nil {
+	if len(pairs) == 0 {
 		return p
 	}
-	if physLock == nil && unionScan == nil {
+	if len(physicalLockSet) == 0 && len(unionScanSet) == 0 {
 		return p
 	}
-	if physLock != nil {
-		lock, waitTime := getLockWaitTime(sctx, physLock.Lock)
+
+	for _, pair := range pairs {
+		lock, waitTime := getLockWaitTime(sctx, pair.physicalLock.Lock)
 		if !lock {
-			return p
+			delete(physicalLockSet, pair.physicalLock)
+			continue
 		}
-		if pointGet != nil {
-			pointGet.Lock = lock
-			pointGet.LockWaitTime = waitTime
+		if pair.pointGet != nil {
+			pair.pointGet.Lock = lock
+			pair.pointGet.LockWaitTime = waitTime
 		} else {
-			batchPointGet.Lock = lock
-			batchPointGet.LockWaitTime = waitTime
+			pair.batchPointGet.Lock = lock
+			pair.batchPointGet.LockWaitTime = waitTime
 		}
 	}
+
 	return transformPhysicalPlan(p, func(p PhysicalPlan) PhysicalPlan {
-		if p == physLock {
+		if _, exist := physicalLockSet[p]; exist {
 			return p.Children()[0]
 		}
-		if p == unionScan {
+		if _, exist := unionScanSet[p]; exist {
 			return p.Children()[0]
 		}
 		return p
 	})
 }
 
-func iteratePhysicalPlan(p PhysicalPlan, f func(p PhysicalPlan) bool) {
-	if !f(p) {
-		return
+func iteratePhysicalPlan(p PhysicalPlan, physicalLock *PhysicalLock, f func(p PhysicalPlan, physicalLock *PhysicalLock) *PhysicalLock) {
+	v := f(p, physicalLock)
+
+	if physicalLock == nil {
+		physicalLock = v
 	}
+
 	for _, child := range p.Children() {
-		iteratePhysicalPlan(child, f)
+		iteratePhysicalPlan(child, physicalLock, f)
 	}
 }
 
