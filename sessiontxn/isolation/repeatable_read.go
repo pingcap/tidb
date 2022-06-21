@@ -166,7 +166,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point session
 //     We expect that the data that the point get acquires has not been changed.
 // Benefit: Save the cost of acquiring ts from PD.
 // Drawbacks: If the data has been changed since the ts we used, we need to retry.
-// One exception is insert operation, when it does not fetch data, we do not fetch the latest ts immediately. We only update ts
+// One exception is insert operation, when it has no select plan, we do not fetch the latest ts immediately. We only update ts
 // if write conflict is incurred.
 func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
@@ -190,14 +190,17 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 // optimizeForNotFetchingLatestTS searches for optimization condition recursively
 // Note: For point get and batch point get (name it plan), if one of the ancestor node is update/delete/physicalLock,
 // we should check whether the plan.Lock is true or false. See comments in needNotToBeOptimized.
-// flag = true means one of the ancestor node is update/delete/physicalLock.
-func optimizeForNotFetchingLatestTS(plan plannercore.Plan, flag bool) bool {
+// inLockOrWriteStmt = true means one of the ancestor node is update/delete/physicalLock.
+func optimizeForNotFetchingLatestTS(plan plannercore.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
-	case *plannercore.PointGetPlan, *plannercore.BatchPointGetPlan:
-		if needNotToBeOptimized(plan, flag) {
-			return false
-		}
-		return true
+	case *plannercore.PointGetPlan:
+		// We do not optimize the point get/ batch point get if plan.lock = false and inLockOrWriteStmt = true.
+		// Theoretically, the plan.lock should be true if the flag is true. But due to the bug describing in Issue35524,
+		// the plan.lock can be false in the case of inLockOrWriteStmt being true. In this case, optimization here can lead to different results
+		// which cannot be accepted as AdviseOptimizeWithPlan cannot change results.
+		return !inLockOrWriteStmt || v.Lock
+	case *plannercore.BatchPointGetPlan:
+		return !inLockOrWriteStmt || v.Lock
 	case plannercore.PhysicalPlan:
 		if v.Children() == nil {
 			return false
@@ -205,7 +208,7 @@ func optimizeForNotFetchingLatestTS(plan plannercore.Plan, flag bool) bool {
 		allChildrenArePointGet := true
 		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
 		for _, p := range v.Children() {
-			allChildrenArePointGet = allChildrenArePointGet && optimizeForNotFetchingLatestTS(p, isPhysicalLock || flag)
+			allChildrenArePointGet = allChildrenArePointGet && optimizeForNotFetchingLatestTS(p, isPhysicalLock || inLockOrWriteStmt)
 		}
 		return allChildrenArePointGet
 	case *plannercore.Update:
@@ -216,24 +219,6 @@ func optimizeForNotFetchingLatestTS(plan plannercore.Plan, flag bool) bool {
 		return v.SelectPlan == nil
 	}
 	return false
-}
-
-// needNotToBeOptimized
-// The argument `flag` means whether one of the ancestor of the plan is update/delete/physicalLock.
-// We do not optimize the point get/ batch point get if plan.lock = false and flag = true.
-// Theoretically, the plan.lock should be true if the flag is true. But due to the bug describing in Issue35524,
-// the plan.lock can be false in the case of flag being true. In this case, optimization here can lead to different results
-// which cannot be accepted as AdviseOptimizeWithPlan cannot change results.
-func needNotToBeOptimized(plan plannercore.Plan, flag bool) bool {
-	locked := true
-	switch v := plan.(type) {
-	case *plannercore.PointGetPlan:
-		locked = v.Lock
-	case *plannercore.BatchPointGetPlan:
-		locked = v.Lock
-	}
-
-	return flag && !locked
 }
 
 func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
