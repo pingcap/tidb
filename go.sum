@@ -753,8 +753,8 @@ github.com/tikv/client-go/v2 v2.0.1-0.20220510032238-ff5e35ac2869 h1:yOApqwZVzC1
 github.com/tikv/client-go/v2 v2.0.1-0.20220510032238-ff5e35ac2869/go.mod h1:0scaG+seu7L56apm+Gjz9vckyO7ABIzM6T7n00mrIXs=
 github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710 h1:jxgmKOscXSjaFEKQGRyY5qOpK8hLqxs2irb/uDJMtwk=
 github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710/go.mod h1:AtvppPwkiyUgQlR1W9qSqfTB+OsOIu19jDCOxOsPkmU=
-github.com/time-and-fate/tipb v0.0.0-20220422062657-6cbe68f6f792 h1:0qivTgwynumUOEniZdvhRXhCJhuab6ionraB2PapMbM=
-github.com/time-and-fate/tipb v0.0.0-20220422062657-6cbe68f6f792/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
+github.com/time-and-fate/tipb v0.0.0-20220620062228-0abb96df1346 h1:piwDubHK1EBkMJbOoDbQ1swQFpMEe9v0VKrCKEFRjOk=
+github.com/time-and-fate/tipb v0.0.0-20220620062228-0abb96df1346/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/tklauser/go-sysconf v0.3.9 h1:JeUVdAOWhhxVcU6Eqr/ATFHgXk/mmiItdKeJPev3vTo=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
 github.com/tklauser/numcpus v0.3.0 h1:ILuRUQBtssgnxw0XXIjKUC56fgnOrFoQQ/4+DeU2biQ=
