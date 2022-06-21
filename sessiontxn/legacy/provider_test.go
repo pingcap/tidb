@@ -37,7 +37,7 @@ func TestErrorHandle(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	provider := newSimpleProvider(tk, do)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	expectedForUpdateTS := getForUpdateTS(t, provider)
 
 	var lockErr error
@@ -80,7 +80,7 @@ func TestErrorHandle(t *testing.T) {
 	require.Nil(t, err)
 
 	tk.Session().GetSessionVars().StmtCtx.RCCheckTS = true
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, lockErr)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, action)
 	require.Nil(t, err)

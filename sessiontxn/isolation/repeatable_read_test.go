@@ -342,7 +342,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
 	txnManager := sessiontxn.GetTxnManager(se)
 
-	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err := parser.New().ParseOneStmt("delete from t where id = 1", "", "")
 	require.NoError(t, err)
 	compareTs := getOracleTS(t, se)
@@ -356,7 +356,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.Greater(t, compareTs, ts)
 	require.Equal(t, ts, forUpdateTS)
 
-	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
 	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
@@ -368,7 +368,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ts, forUpdateTS)
 
-	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err = parser.New().ParseOneStmt("select * from (select * from t where id = 1 for update) as t1 for update", "", "")
 	require.NoError(t, err)
 	compiler = executor.Compiler{Ctx: se}
@@ -381,7 +381,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.Equal(t, ts, forUpdateTS)
 
 	// Now, test for one that does not use the optimization
-	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err = parser.New().ParseOneStmt("select * from t for update", "", "")
 	compareTs = getOracleTS(t, se)
 	require.NoError(t, err)
@@ -397,7 +397,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	// Test use startTS after optimize when autocommit=0
 	activeAssert := activePessimisticRRAssert(t, tk.Session(), true)
 	provider = initializeRepeatableReadProvider(t, tk, false)
-	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
 	require.NoError(t, err)
 	execStmt, err = compiler.Compile(context.TODO(), stmt)
@@ -413,7 +413,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	compareTs = getOracleTS(t, se)
 	activeAssert = activePessimisticRRAssert(t, tk.Session(), true)
 	provider = initializeRepeatableReadProvider(t, tk, false)
-	require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
+	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err = parser.New().ParseOneStmt("select * from t", "", "")
 	require.NoError(t, err)
 	execStmt, err = compiler.Compile(context.TODO(), stmt)

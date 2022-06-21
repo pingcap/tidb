@@ -1096,7 +1096,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 			_, digest := s.sessionVars.StmtCtx.SQLDigest()
 			s.txn.onStmtStart(digest.String())
-			if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx, nil); err == nil {
+			if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx); err == nil {
 				_, err = st.Exec(ctx)
 			}
 			s.txn.onStmtEnd()
@@ -1902,7 +1902,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
-	if err := s.onTxnManagerStmtStartOrRetry(ctx, stmtNode); err != nil {
+	sessiontxn.GetTxnManager(s).SetStmtNode(stmtNode)
+	if err := s.onTxnManagerStmtStartOrRetry(ctx); err != nil {
 		return nil, err
 	}
 
@@ -1965,11 +1966,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return recordSet, nil
 }
 
-func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.StmtNode) error {
+func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context) error {
 	if s.sessionVars.RetryInfo.Retrying {
 		return sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
 	}
-	return sessiontxn.GetTxnManager(s).OnStmtStart(ctx, node)
+	return sessiontxn.GetTxnManager(s).OnStmtStart(ctx)
 }
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
@@ -2183,7 +2184,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
-	if err = s.onTxnManagerStmtStartOrRetry(ctx, nil); err != nil {
+	if err = s.onTxnManagerStmtStartOrRetry(ctx); err != nil {
 		return
 	}
 
@@ -2399,6 +2400,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
+	txnManager.SetStmtNode(preparedStmt.PreparedAst.Stmt)
 
 	staleness := snapshotTS > 0
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
@@ -2409,7 +2411,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
 
-	if err = s.onTxnManagerStmtStartOrRetry(ctx, preparedStmt.PreparedAst.Stmt); err != nil {
+	if err = s.onTxnManagerStmtStartOrRetry(ctx); err != nil {
 		return nil, err
 	}
 

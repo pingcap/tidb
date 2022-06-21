@@ -48,6 +48,7 @@ func getTxnManager(sctx sessionctx.Context) sessiontxn.TxnManager {
 type txnManager struct {
 	sctx sessionctx.Context
 
+	stmtNode    ast.StmtNode
 	ctxProvider sessiontxn.TxnContextProvider
 }
 
@@ -106,11 +107,11 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+func (m *txnManager) OnStmtStart(ctx context.Context) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	return m.ctxProvider.OnStmtStart(ctx, node)
+	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -127,6 +128,11 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 		return errors.New("context provider not set")
 	}
 	return m.ctxProvider.OnStmtRetry(ctx)
+}
+
+// SetStmtNode saves the current stmtNode in the TxnManager
+func (m *txnManager) SetStmtNode(node ast.StmtNode) {
+	m.stmtNode = node
 }
 
 func (m *txnManager) AdviseWarmup() error {
