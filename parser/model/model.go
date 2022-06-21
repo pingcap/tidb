@@ -1426,7 +1426,7 @@ type PolicyInfo struct {
 }
 
 func (p *PolicyInfo) Clone() *PolicyInfo {
-	var cloned PolicyInfo = *p
+	cloned := *p
 	cloned.PlacementSettings = p.PlacementSettings.Clone()
 	return &cloned
 }
