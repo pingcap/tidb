@@ -94,7 +94,6 @@ go_library(
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
-        "//sessiontxn/legacy",
         "//sessiontxn/staleread",
         "//statistics",
         "//statistics/handle",
