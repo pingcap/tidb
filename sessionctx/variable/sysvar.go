@@ -583,9 +583,7 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		return setTiDBTableValue(s, "tikv_gc_run_interval", val, "GC run interval, at least 10m, in Go format.")
 	}},
-	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: uint64(time.Hour * 24 * 365), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		return checkTiKVGCLifeTime(vars, normalizedValue, originalValue, scope)
-	}, GetGlobal: func(s *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: uint64(time.Hour * 24 * 365), GetGlobal: func(s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_life_time", "10m0s")
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		return setTiDBTableValue(s, "tikv_gc_life_time", val, "All versions within life time will not be collected by GC, at least 10m, in Go format.")
@@ -612,13 +610,10 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		return setTiDBTableValue(s, "tikv_gc_scan_lock_mode", val, "Mode of scanning locks, \"physical\" or \"legacy\"")
 	}},
-	{Scope: ScopeGlobal, Name: TiDBGCMaxWaitTime, Value: strconv.Itoa(DefTiDBGCMaxWaitTime), Type: TypeInt, MinValue: 600, MaxValue: 31536000,
-		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			return checkGCTxnMaxWaitTime(vars, normalizedValue, originalValue, scope)
-		}, SetGlobal: func(s *SessionVars, val string) error {
-			GCMaxWaitTime.Store(TidbOptInt64(val, DefTiDBGCMaxWaitTime))
-			return nil
-		}},
+	{Scope: ScopeGlobal, Name: TiDBGCMaxWaitTime, Value: strconv.Itoa(DefTiDBGCMaxWaitTime), Type: TypeInt, MinValue: 600, MaxValue: 31536000, SetGlobal: func(s *SessionVars, val string) error {
+		GCMaxWaitTime.Store(TidbOptInt64(val, DefTiDBGCMaxWaitTime))
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBTableCacheLease, Value: strconv.Itoa(DefTiDBTableCacheLease), Type: TypeUnsigned, MinValue: 1, MaxValue: 10, SetGlobal: func(s *SessionVars, sVal string) error {
 		var val int64
 		val, err := strconv.ParseInt(sVal, 10, 64)
