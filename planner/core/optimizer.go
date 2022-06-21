@@ -517,7 +517,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
 func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) PhysicalPlan {
-	type Pairs struct {
+	type Tuple struct {
 		// Point get and batch point get cannot be not nil simultaneously
 		pointGet      *PointGetPlan
 		batchPointGet *BatchPointGetPlan
@@ -525,57 +525,64 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 		physicalLock *PhysicalLock
 	}
 
-	pairs := make([]*Pairs, 0)
-	physicalLockSet := make(map[PhysicalPlan]interface{})
+	tuples := make([]*Tuple, 0)
+	physicalLockMap := make(map[PhysicalPlan]PhysicalPlan)
 	unionScanSet := make(map[PhysicalPlan]interface{})
-	iteratePhysicalPlan(p, nil, func(p PhysicalPlan, physicalLock *PhysicalLock) *PhysicalLock {
-		switch x := p.(type) {
-		case *PointGetPlan:
-			if physicalLock != nil {
-				pairs = append(pairs, &Pairs{
-					pointGet:     x,
-					physicalLock: physicalLock,
-				})
+
+	iteratePhysicalPlan(p, nil, nil,
+		func(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan) (*PhysicalLock, *PhysicalUnionScan) {
+			switch x := p.(type) {
+			case *PointGetPlan:
+				if physicalLock != nil {
+					tuples = append(tuples, &Tuple{
+						pointGet:     x,
+						physicalLock: physicalLock,
+					})
+				}
+			case *BatchPointGetPlan:
+				if physicalLock != nil {
+					tuples = append(tuples, &Tuple{
+						batchPointGet: x,
+						physicalLock:  physicalLock,
+					})
+				}
+			case *PhysicalLock:
+				physicalLockMap[x] = unionScan
+				return x, nil
+			case *PhysicalUnionScan:
+				unionScanSet[x] = nil
+				return nil, x
 			}
-		case *BatchPointGetPlan:
-			if physicalLock != nil {
-				pairs = append(pairs, &Pairs{
-					batchPointGet: x,
-					physicalLock:  physicalLock,
-				})
-			}
-		case *PhysicalLock:
-			physicalLockSet[x] = nil
-			return x
-		case *PhysicalUnionScan:
-			unionScanSet[x] = nil
-		}
-		return nil
-	})
-	if len(pairs) == 0 {
+			return nil, nil
+		})
+	if len(tuples) == 0 {
 		return p
 	}
-	if len(physicalLockSet) == 0 && len(unionScanSet) == 0 {
+	if len(physicalLockMap) == 0 && len(unionScanSet) == 0 {
 		return p
 	}
 
-	for _, pair := range pairs {
-		lock, waitTime := getLockWaitTime(sctx, pair.physicalLock.Lock)
+	for _, tuple := range tuples {
+		lock, waitTime := getLockWaitTime(sctx, tuple.physicalLock.Lock)
 		if !lock {
-			delete(physicalLockSet, pair.physicalLock)
+			unionScan := physicalLockMap[tuple.physicalLock]
+			if unionScan != nil {
+				delete(unionScanSet, unionScan)
+			}
+			delete(physicalLockMap, tuple.physicalLock)
 			continue
 		}
-		if pair.pointGet != nil {
-			pair.pointGet.Lock = lock
-			pair.pointGet.LockWaitTime = waitTime
+		if tuple.pointGet != nil {
+			tuple.pointGet.Lock = lock
+			tuple.pointGet.LockWaitTime = waitTime
 		} else {
-			pair.batchPointGet.Lock = lock
-			pair.batchPointGet.LockWaitTime = waitTime
+			tuple.batchPointGet.Lock = lock
+			tuple.batchPointGet.LockWaitTime = waitTime
 		}
 	}
 
 	return transformPhysicalPlan(p, func(p PhysicalPlan) PhysicalPlan {
-		if _, exist := physicalLockSet[p]; exist {
+		if _, exist := physicalLockMap[p]; exist {
 			return p.Children()[0]
 		}
 		if _, exist := unionScanSet[p]; exist {
@@ -585,15 +592,20 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 	})
 }
 
-func iteratePhysicalPlan(p PhysicalPlan, physicalLock *PhysicalLock, f func(p PhysicalPlan, physicalLock *PhysicalLock) *PhysicalLock) {
-	v := f(p, physicalLock)
+func iteratePhysicalPlan(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan,
+	f func(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan) (*PhysicalLock, *PhysicalUnionScan)) {
+	lock, scan := f(p, physicalLock, unionScan)
 
 	if physicalLock == nil {
-		physicalLock = v
+		physicalLock = lock
+	}
+
+	if unionScan == nil {
+		unionScan = scan
 	}
 
 	for _, child := range p.Children() {
-		iteratePhysicalPlan(child, physicalLock, f)
+		iteratePhysicalPlan(child, physicalLock, unionScan, f)
 	}
 }
 

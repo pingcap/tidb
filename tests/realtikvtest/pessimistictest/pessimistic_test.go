@@ -1332,6 +1332,85 @@ func TestPessimisticLockNonExistsKey(t *testing.T) {
 	tk1.MustExec("rollback")
 }
 
+func TestUnionAllPointGetLockBlockInsert(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+
+	type test struct {
+		sql         string
+		shouldBlock bool
+
+		concurrentSql string
+	}
+
+	cases := []test{
+		{
+			"select * from t where id=1 for update union all select * from t where id = 2 for update",
+			true,
+			"insert into t values (1, 1), (2, 2)",
+		},
+		{
+			"select * from t where id=1 for update union all select * from t where id = 2",
+			false,
+			"insert into t values (2, 2)",
+		},
+		{
+			"select * from t where id=1 union all select * from t where id = 2 for update",
+			false,
+			"insert into t values (1, 1)",
+		},
+	}
+
+	for _, c := range cases {
+		ch := make(chan string, 1)
+
+		tk.MustExec("truncate t")
+		tk.MustExec("begin pessimistic")
+		tk.MustExec(c.sql)
+
+		var wg sync.WaitGroup
+		go func() {
+			wg.Add(1)
+
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec(c.concurrentSql)
+
+			ch <- "done"
+			wg.Done()
+		}()
+
+		if c.shouldBlock {
+			select {
+			case <-ch:
+				panic("Should receive nothing!")
+			case <-time.After(time.Second * 3):
+				break
+			}
+
+			tk.MustExec("commit")
+		} else {
+			select {
+			case <-ch:
+				break
+			case <-time.After(time.Second * 3):
+				panic("Timeout!")
+			}
+
+			tk.MustExec("commit")
+		}
+
+		wg.Wait()
+		close(ch)
+	}
+
+	tk.MustExec("rollback")
+}
+
 func TestPessimisticCommitReadLock(t *testing.T) {
 	// tk1 lock wait timeout is 2s
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
