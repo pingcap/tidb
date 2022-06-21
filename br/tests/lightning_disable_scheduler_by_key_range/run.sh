@@ -22,7 +22,6 @@ export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/lightning/
 run_lightning --backend='local' &
 shpid="$!"
 pid=
-port=
 
 ensure_lightning_is_started() {
   for _ in {0..60}; do
@@ -35,20 +34,6 @@ ensure_lightning_is_started() {
     exit 1
   fi
   echo "lightning is started, pid is $pid"
-}
-
-start_http_server() {
-  # Start http server to serve the test API.
-  kill -SIGUSR1 "$pid" &>/dev/null || true
-  for _ in {0..60}; do
-    port=$(grep "starting HTTP server" "$TEST_DIR"/lightning.log | grep -Eo "address=.*" | grep -Eo '[0-9]*') || true
-    [ -n "$port" ] && break
-  done
-  if [ -z "$port" ]; then
-    echo "http server doesn't start successfully, please check the log" >&2
-    exit 1
-  fi
-  echo "http server is started, port is $port"
 }
 
 ready_for_import_engine() {
@@ -70,7 +55,6 @@ run_wget() {
 }
 
 ensure_lightning_is_started
-start_http_server
 ready_for_import_engine
 
 run_wget "https://${PD_ADDR}/pd/api/v1/config/cluster-version"
@@ -82,7 +66,7 @@ if [ "$length" != "1" ]; then
 fi
 
 wget --help
-run_wget --method=DELETE "https://localhost:${port}/fail/github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine"
+run_wget --method=DELETE "https://localhost:8289/fail/github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine"
 wait "$shpid"
 
 length=$(run_wget "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
