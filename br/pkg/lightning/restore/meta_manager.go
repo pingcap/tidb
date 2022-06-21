@@ -96,8 +96,6 @@ type dbTableMetaMgr struct {
 	tr           *TableRestore
 	tableName    string
 	needChecksum bool
-
-	logger log.Logger
 }
 
 func (m *dbTableMetaMgr) InitTableMeta(ctx context.Context) error {
