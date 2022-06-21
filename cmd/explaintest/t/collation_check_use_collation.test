@@ -80,5 +80,28 @@ insert ignore into tbl_2 values ( 5888267793391993829,5371,94.63,-109,5728076076
 select col_25 from tbl_2 where ( tbl_2.col_27 > 'nSWYrpTH' or not( tbl_2.col_27 between 'CsWIuxlSjU' and 'SfwoyjUEzgg' ) ) and ( tbl_2.col_23 <= -95);
 select col_25 from tbl_2 use index(primary) where ( tbl_2.col_27 > 'nSWYrpTH' or not( tbl_2.col_27 between 'CsWIuxlSjU' and 'SfwoyjUEzgg' ) ) and ( tbl_2.col_23 <= -95);
 
+# check implicit binary collation cast
+drop table if exists t1;
+drop table if exists t2;
+# issue 34823
+create table t1(a char(20));
+create table t2(b binary(20), c binary(20));
+insert into t1 value('-1');
+insert into t2 value(0x2D31, 0x67);
+insert into t2 value(0x2D31, 0x73);
+select a from t1, t2 where t1.a between t2.b and t2.c;
+select a from t1, t2 where cast(t1.a as binary(20)) between t2.b and t2.c;
+# binary collation in single side
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a char(20)) collate utf8mb4_general_ci;
+create table t2(b binary(20), c char(20)) collate utf8mb4_general_ci;
+insert into t1 values ('a');
+insert into t2 values (0x0, 'A');
+select * from t1, t2 where t1.a between t2.b and t2.c;
+insert into t1 values ('-1');
+insert into t2 values (0x2d31, '');
+select * from t1, t2 where t1.a in (t2.b, 3);
+
 # cleanup environment
 use test
