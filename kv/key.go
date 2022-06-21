@@ -374,7 +374,7 @@ func (ch *CommonHandle) MemUsage() uint64 {
 
 // ExtraMemSize implements the Handle interface.
 func (ch *CommonHandle) ExtraMemSize() uint64 {
-	return uint64(len(ch.encoded) + len(ch.colEndOffsets)*2)
+	return uint64(cap(ch.encoded) + cap(ch.colEndOffsets)*2)
 }
 
 // HandleMap is the map for Handle.
@@ -551,7 +551,7 @@ func (ph PartitionHandle) MemUsage() uint64 {
 	return ph.Handle.MemUsage() + 8
 }
 
-// ExtraMemUsage implements the Handle interface.
-func (ph PartitionHandle) ExtraMemUsage() uint64 {
+// ExtraMemSize implements the Handle interface.
+func (ph PartitionHandle) ExtraMemSize() uint64 {
 	return ph.Handle.ExtraMemSize()
 }
