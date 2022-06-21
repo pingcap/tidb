@@ -219,4 +219,4 @@ replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.
 
 replace honnef.co/go/tools => honnef.co/go/tools v0.3.2
 
-replace github.com/tikv/client-go/v2 => github.com/joccau/client-go/v2 v2.0.0-rc.0.20220605151620-6ef5835b20a6
+replace github.com/tikv/client-go/v2 => github.com/joccau/client-go/v2 v2.0.0-rc.0.20220621023121-e36a43d8c763
