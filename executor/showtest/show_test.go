@@ -404,6 +404,7 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
     	partition p0 values in ((3, '1'), (5, '5')),
     	partition p1 values in ((1, '1')));`)
+	// The strings are single quoted in MySQL even if sql_mode doesn't contain ANSI_QUOTES.
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) DEFAULT NULL,\n"+
@@ -411,8 +412,8 @@ func TestShowCreateTable(t *testing.T) {
 			"  UNIQUE KEY `idx` (`id`,`name`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 			"PARTITION BY LIST COLUMNS(`id`,`name`)\n"+
-			"(PARTITION `p0` VALUES IN ((3,\"1\"),(5,\"5\")),\n"+
-			" PARTITION `p1` VALUES IN ((1,\"1\")))"))
+			"(PARTITION `p0` VALUES IN ((3,'1'),(5,'5')),\n"+
+			" PARTITION `p1` VALUES IN ((1,'1')))"))
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec(`create table t (id int primary key, v varchar(255) not null, key idx_v (v) comment 'foo\'bar')`)
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
@@ -525,8 +526,8 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 		"PARTITION BY LIST COLUMNS(`b`)\n"+
-		"(PARTITION `pLow` VALUES IN (\"1\",\"2\",\"3\",\"5\",\"8\") COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
-		" PARTITION `pMax` VALUES IN (\"10\",\"11\",\"12\"))",
+		"(PARTITION `pLow` VALUES IN ('1','2','3','5','8') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		" PARTITION `pMax` VALUES IN ('10','11','12'))",
 	))
 
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
@@ -540,8 +541,8 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 		"PARTITION BY LIST COLUMNS(`a`,`b`)\n"+
-		"(PARTITION `pLow` VALUES IN ((1,\"1\"),(2,\"2\"),(3,\"3\"),(5,\"5\"),(8,\"8\")) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
-		" PARTITION `pMax` VALUES IN ((10,\"10\"),(11,\"11\"),(12,\"12\")))",
+		"(PARTITION `pLow` VALUES IN ((1,'1'),(2,'2'),(3,'3'),(5,'5'),(8,'8')) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		" PARTITION `pMax` VALUES IN ((10,'10'),(11,'11'),(12,'12')))",
 	))
 
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
@@ -570,7 +571,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 		"PARTITION BY RANGE COLUMNS(`b`)\n"+
-		"(PARTITION `pLow` VALUES LESS THAN (\"1000000\") COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		"(PARTITION `pLow` VALUES LESS THAN ('1000000') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))",
 	))
 
