@@ -569,6 +569,7 @@ func TestLocalIngestLoop(t *testing.T) {
 			CompactThreshold:   100,
 			CompactConcurrency: 4,
 		},
+		logger: log.L(),
 	}
 	f.sstIngester = testIngester{}
 	f.wg.Add(1)
