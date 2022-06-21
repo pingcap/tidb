@@ -1979,6 +1979,11 @@ func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
 }
 
+// Indices implements table.Table Indices interface.
+func (vt *VirtualTable) Indices() []table.Index {
+	return nil
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return nil, table.ErrUnsupportedOp
@@ -2047,8 +2052,8 @@ func (vt *VirtualTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return nil
 }
 
-// Indices implements table.Table Indices interface.
-func (vt *VirtualTable) Indices() []table.Index {
+// IndexPrefix implements table.Table RecordPrefix interface.
+func (vt *VirtualTable) IndexPrefix() kv.Key {
 	return nil
 }
 
@@ -2056,6 +2061,12 @@ func (vt *VirtualTable) Indices() []table.Index {
 func (vt *VirtualTable) RecordPrefix() kv.Key {
 	return nil
 }
+
+// IndexPrefix implements table.Table RecordPrefix interface.
+func (it *infoschemaTable) IndexPrefix() kv.Key {
+	return nil
+}
+
 
 // AddRecord implements table.Table AddRecord interface.
 func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {

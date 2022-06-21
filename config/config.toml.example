@@ -15,6 +15,9 @@ store = "unistore"
 # TiDB storage path.
 path = "/tmp/tidb"
 
+# TiDB DDL temp storage path
+lightning-sort-path = "/tidb/data/"
+
 # The socket file to use for connection.
 socket = "/tmp/tidb-{Port}.sock"
 

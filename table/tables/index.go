@@ -214,7 +214,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	return handle, kv.ErrKeyExists
 }
 
-// Create creates a new entry in the kvIndex data.
+// Create4SST creates a new entry in the kvIndex data for lightning backfiller.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
 func (c *index) Create4SST(sctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) ([]byte, []byte, bool, error) {
@@ -280,13 +280,49 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	if err != nil {
 		return err
 	}
+	var tempKey []byte
+	if c.idxInfo.State == model.StateWriteReorganization {
+		switch c.idxInfo.SubState {
+	    case model.StateNone:
+		    // Do nothing.
+		case model.StateBackFillSync, model.StateBackFill:
+			// Write to the temporary index.
+			tempKey = append(tempKey, key...)
+			key = nil
+			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
+		case model.StateMergeSync, model.StateMerge:
+			// Double write
+			tempKey = append(tempKey, key...)
+			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
+		}
+	}
 	if distinct {
 		err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+		if len(key) > 0 {
+			err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+			if err != nil {
+				return err
+			}
+		}
+		if len(tempKey) > 0 {
+			err = txn.GetMemBuffer().Set(tempKey, []byte("deleteu"))
+			if err != nil {
+				return err
+			}
+		}
 	} else {
-		err = txn.GetMemBuffer().Delete(key)
-	}
-	if err != nil {
-		return err
+		if len(key) > 0 {
+			err = txn.GetMemBuffer().Delete(key)
+			if err != nil {
+				return err
+			}
+		}
+		if len(tempKey) > 0 {
+			err = txn.GetMemBuffer().Set(tempKey, []byte("delete"))
+			if err != nil {
+				return err
+			}
+		}
 	}
 	if c.idxInfo.State == model.StatePublic {
 		// If the index is in public state, delete this index means it must exists.

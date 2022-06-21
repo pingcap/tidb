@@ -37,7 +37,7 @@ const (
 	_pb                      = 1024 * _tb
 	flush_size               = 1 * _mb
 	diskQuota                = 100 * _gb
-	importThreadhold float32 = 0.85
+	importThreadhold float32 = 0.15
 )
 
 type ClusterInfo struct {
@@ -164,13 +164,13 @@ func (l *LightningEnv) parseDiskQuota(val int) error {
 
 // Generate lightning local store dir in TiDB datadir.
 func genLightningDataDir(sortPath string) (string, error) {
-	sortPath = filepath.Join(sortPath, "/lightning")
+	sortPath = filepath.Join(sortPath, "/tmp_ddl")
 	shouldCreate := true
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
 			log.L().Error(LERR_CREATE_DIR_FAILED, zap.String("Sort path:", sortPath),
 				zap.String("Error:", err.Error()))
-			return "/tmp/lightning", err
+			return "/tmp/tmp_ddl", err
 		}
 	} else if info.IsDir() {
 		shouldCreate = false
@@ -181,15 +181,15 @@ func genLightningDataDir(sortPath string) (string, error) {
 		if err != nil {
 			log.L().Error(LERR_CREATE_DIR_FAILED, zap.String("Sort path:", sortPath),
 				zap.String("Error:", err.Error()))
-			return "/tmp/lightning", err
+			return "/tmp/tmp_ddl", err
 		}
 	}
 	log.L().Info(LINFO_SORTED_DIR, zap.String("data path:", sortPath))
 	return sortPath, nil
 }
 
-func (g *LightningEnv) NeedImportEngineData(UsedDisk int64) bool {
-	if UsedDisk > int64(importThreadhold * float32(g.diskQuota)) {
+func (g *LightningEnv) NeedImportEngineData(availDisk uint64) bool {
+	if availDisk <= uint64(importThreadhold * float32(g.diskQuota)) {
 		return true
 	}
 	return false

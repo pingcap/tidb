@@ -23,6 +23,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/parser/model"
@@ -404,13 +405,15 @@ func (m *LightningMemoryRoot) workerDegree(workerCnt int, engineKey string) int 
 	return workerCnt
 }
 
-func (m *LightningMemoryRoot) TotalDiskUsage() int64 {
-	var totalDiskUsed int64
-	for _, bc := range m.backendCache {
-		_, _, bcDiskUsed, _ := bc.Backend.CheckDiskQuota(GlobalLightningEnv.diskQuota)
-		totalDiskUsed += bcDiskUsed
+func (m *LightningMemoryRoot) TotalDiskAvailable() uint64 {
+    sz, err := lcom.GetStorageSize(GlobalLightningEnv.SortPath)
+	if err != nil {
+		log.L().Error(LERR_GET_STORAGE_QUOTA,
+			zap.String("OS error:", err.Error()),
+			zap.String("default disk quota", strconv.FormatInt(GlobalLightningEnv.diskQuota, 10)))
+		return uint64(GlobalLightningEnv.diskQuota)
 	}
-	return totalDiskUsed
+	return sz.Available
 }
 
 // defaultImportantVariables is used in ObtainImportantVariables to retrieve the system

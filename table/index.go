@@ -78,8 +78,3 @@ type Index interface {
 	// Add one method for lightning create index
 	Create4SST(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) ([]byte, []byte, bool, error)
 }
-
-// TODO: delete later. just for cycle import test.
-func ref() {
-	// addindex.IndexCycleReference()
-}

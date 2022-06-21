@@ -48,6 +48,18 @@ const (
 	StateReplicaOnly
 	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
 	StateGlobalTxnOnly
+	// Below sub states are only used for add index lightning ways currently, other place should 
+	// if you want to use them, you have to use it carefullly.
+	// StateBackFillSync means we use lightning to do backfill and start to sync to all TiDB
+	StateBackFillSync
+	// StateBackFill2 means now all the user transaction will know that new backfill solution is
+	// adapted and will write update to temp index to record delta part during backfill process.
+	StateBackFill
+	// StateMerge1 means backfill finished and start to sync to all TiDB to update both
+	// full copy index and delta part temp index.
+	StateMergeSync
+	// StateMerge2 means start merge delta part of index into full copy index.
+	StateMerge
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
@@ -70,6 +82,14 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
+	case StateBackFillSync:
+		return "StateBackFillSync"
+	case StateBackFill:
+		return "StateBackFill"
+	case StateMergeSync:
+		return "StateMergeSync"
+	case StateMerge:
+		return "StateMerge"
 	default:
 		return "none"
 	}
@@ -1174,6 +1194,7 @@ type IndexInfo struct {
 	Table     CIStr          `json:"tbl_name"` // Table name.
 	Columns   []*IndexColumn `json:"idx_cols"` // Index columns.
 	State     SchemaState    `json:"state"`
+	SubState  SchemaState    `json:"sub_state"`
 	Comment   string         `json:"comment"`      // Comment
 	Tp        IndexType      `json:"index_type"`   // Index type: Btree, Hash or Rtree
 	Unique    bool           `json:"is_unique"`    // Whether the index is unique.

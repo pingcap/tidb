@@ -642,7 +642,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
 	// Caculate worker count for lightnint.
-	// if litWorkerCnt is 0 or err exist, means not good for lightning execution, 
+	// if litWorkerCnt is 0 or err exist, means not good for lightning execution,
 	// then go back use kernel way to reorg index.
 	var litWorkerCnt int
 	if reorgInfo.Meta.IsLightningEnabled {
@@ -653,7 +653,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			if workerCnt > int32(litWorkerCnt) {
 				workerCnt = int32(litWorkerCnt)
 			}
-	    }
+		}
     }
 	backfillWorkers := make([]*backfillWorker, 0, workerCnt)
 	defer func() {
@@ -678,11 +678,11 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		}
 
 		if reorgInfo.Meta.IsLightningEnabled && workerCnt > int32(litWorkerCnt) {
-			count, err := prepareLightningEngine(job, indexInfo.ID, int(workerCnt - int32(litWorkerCnt)))
-		    if err != nil || count == 0 {
+			count, err := prepareLightningEngine(job, indexInfo.ID, int(workerCnt-int32(litWorkerCnt)))
+			if err != nil || count == 0 {
 				workerCnt = int32(litWorkerCnt)
 			} else {
-				workerCnt = int32(litWorkerCnt + count)
+				workerCnt = int32(litWorkerCnt+count)
 			}
 		}
 
@@ -777,7 +777,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			if importPartialDataToTiKV(job.ID, indexInfo.ID) != nil {
 				return errors.Trace(err)
 			}
-	    }
+		}
 		remains, err := w.sendRangeTaskToWorkers(t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
 		if err != nil {
 			return errors.Trace(err)
@@ -795,6 +795,45 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
+// indexIterFunc is used for low-level record iteration.
+type indexIterFunc func(rowKey kv.Key, rawRecord []byte) (more bool, err error)
+
+func iterateSnapshotIndexes(ctx *JobContext, store kv.Storage, priority int, t table.Table, version uint64,
+	startKey kv.Key, endKey kv.Key, fn indexIterFunc) error {
+	ver := kv.Version{Ver: version}
+	snap := store.GetSnapshot(ver)
+	snap.SetOption(kv.Priority, priority)
+	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
+		snap.SetOption(kv.ResourceGroupTagger, tagger)
+	}
+
+	it, err := snap.Iter(startKey, endKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+
+	for it.Valid() {
+		if !it.Key().HasPrefix(t.IndexPrefix()) {
+			break
+		}
+
+		more, err := fn(it.Key(), it.Value())
+		if !more || err != nil {
+			return errors.Trace(err)
+		}
+
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key()))
+		if err != nil {
+			if kv.ErrNotExist.Equal(err) {
+				break
+			}
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
 
 func iterateSnapshotRows(ctx *JobContext, store kv.Storage, priority int, t table.Table, version uint64,
 	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
