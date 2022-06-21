@@ -16,8 +16,10 @@ package session
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
@@ -71,7 +73,20 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
 	}
-	return m.ctxProvider.GetStmtForUpdateTS()
+
+	ts, err := m.ctxProvider.GetStmtForUpdateTS()
+	if err != nil {
+		return 0, err
+	}
+
+	failpoint.Inject("assertTxnManagerForUpdateTSEqual", func() {
+		sessVars := m.sctx.GetSessionVars()
+		if txnCtxForUpdateTS := sessVars.TxnCtx.GetForUpdateTS(); sessVars.SnapshotTS == 0 && ts != txnCtxForUpdateTS {
+			panic(fmt.Sprintf("forUpdateTS not equal %d != %d", ts, txnCtxForUpdateTS))
+		}
+	})
+
+	return ts, nil
 }
 
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
@@ -148,8 +163,12 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) se
 		case ast.ReadCommitted:
 			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
 		case ast.Serializable:
-			// todo: Add pessimistic serializable transaction context provider
-			break
+			// The Oracle serializable isolation is actually SI in pessimistic mode.
+			// Do not update ForUpdateTS when the user is using the Serializable isolation level.
+			// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
+			// Support for this does not mean that TiDB supports serializable isolation of MySQL.
+			// tidb_skip_isolation_level_check should still be disabled by default.
+			return isolation.NewPessimisticSerializableTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
 		default:
 			// We use Repeatable read for all other cases.
 			return isolation.NewPessimisticRRTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
