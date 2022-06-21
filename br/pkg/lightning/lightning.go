@@ -287,6 +287,7 @@ func (l *Lightning) RunServer() error {
 		o := &options{
 			promFactory:  l.promFactory,
 			promRegistry: l.promRegistry,
+			logger:       log.L(),
 		}
 		err = l.run(context.Background(), task, o)
 		if err != nil && !common.IsContextCanceledError(err) {
