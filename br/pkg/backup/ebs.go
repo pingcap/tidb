@@ -189,7 +189,7 @@ func (e *EC2Session) StartsEBSSnapshot(backupInfo *EBSBackupInfo) ([]*EBSVolume,
 // WaitEBSSnapshotFinished waits all snapshots finished.
 // according to EBS snapshot will do real snapshot background.
 // so we'll check whether all snapshots finished.
-func (e *EC2Session) WaitEBSSnapshotFinished(allVolumes []*EBSVolume, progress glue.Progress) error {
+func (e *EC2Session) WaitEBSSnapshotFinished(allVolumes []*EBSVolume, progress glue.Progress) (int64, error) {
 	pendingSnapshots := make([]*string, 0, len(allVolumes))
 	// snapshot id -> status
 	pendingMap := make(map[string]bool)
@@ -197,12 +197,13 @@ func (e *EC2Session) WaitEBSSnapshotFinished(allVolumes []*EBSVolume, progress g
 		pendingSnapshots = append(pendingSnapshots, &v.SnapshotID)
 		pendingMap[v.SnapshotID] = false
 	}
+	totalVolumeSize := int64(0)
 
 	log.Info("starts check pending snapshots", zap.Any("snapshots", pendingSnapshots))
 	for {
 		if len(pendingSnapshots) == 0 {
 			log.Info("all pending volume snapshots are finished.")
-			return nil
+			return totalVolumeSize, nil
 		}
 
 		select {
@@ -214,12 +215,13 @@ func (e *EC2Session) WaitEBSSnapshotFinished(allVolumes []*EBSVolume, progress g
 			})
 			if err != nil {
 				// TODO build retry mechanism
-				return errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 			for _, s := range resp.Snapshots {
 				if *s.State == StateSuccess {
 					// this snapshot has finished.
 					pendingMap[*s.SnapshotId] = true
+					totalVolumeSize += *s.VolumeSize
 					progress.Inc()
 				}
 			}

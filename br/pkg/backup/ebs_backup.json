@@ -64,7 +64,7 @@
   "kubernetes": {
     "pvs": [],
     "pvcs": [],
-    "crd": {},
+    "crd_tidb_cluster": {},
     "options": {}
   },
   "options": {}

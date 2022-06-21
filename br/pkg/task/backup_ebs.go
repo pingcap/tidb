@@ -57,7 +57,16 @@ func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
 func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBSConfig) error {
-	defer summary.Summary(cmdName)
+	var finished bool
+	var totalSize int64
+	var resolvedTs uint64
+	defer func() {
+		if finished {
+			summary.Log("EBS backup success", zap.Int64("size", totalSize), zap.Uint64("resolved_ts", resolvedTs))
+		} else {
+			summary.Log("EBS backup failed, please check the log for details.")
+		}
+	}()
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 
@@ -95,7 +104,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 
 	// Step.1.1 get global resolved ts and stop gc until all volumes ebs snapshot starts.
 	// TODO: get resolved ts
-	resolvedTs, err := client.GetTS(ctx, 10*time.Minute, 0)
+	resolvedTs, err = client.GetTS(ctx, 10*time.Minute, 0)
 	sp := utils.BRServiceSafePoint{
 		BackupTS: resolvedTs,
 		TTL:      utils.DefaultBRGCSafePointTTL,
@@ -147,7 +156,11 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	snapCount := backupInfo.GetSnapshotCount()
 
 	progress := g.StartProgress(ctx, cmdName, int64(snapCount), !cfg.LogProgress)
-	defer progress.Close()
+
+	// write progress in tmp file for tidb-operator, so tidb-operator can retrieve the
+	// progress of ebs backup. and user can get the progress through `kubectl get job`
+	go func() {
+	}()
 
 	sess, err := backup.NewEC2Session()
 	if err != nil {
@@ -160,7 +173,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 			return errors.Trace(err)
 		}
 		log.Info("all ebs snapshots are starts.", zap.Int("count", len(allVolumes)))
-		err = sess.WaitEBSSnapshotFinished(allVolumes, progress)
+		totalSize, err = sess.WaitEBSSnapshotFinished(allVolumes, progress)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -168,9 +181,12 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	} else {
 		for i := 0; i < int(snapCount); i ++ {
 			progress.Inc()
+			totalSize = 1024
 			log.Info("mock snapshot finished.", zap.Int("index", i))
+			time.Sleep(500 * time.Millisecond)
 		}
 	}
+	progress.Close()
 
 	// Step.3 save backup meta file to s3.
 	externalStorage := client.GetStorage()
@@ -184,7 +200,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("finished ebs backup.")
-	summary.SetSuccessStatus(true)
+	finished = true
 	return nil
 }
