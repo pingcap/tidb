@@ -885,9 +885,11 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 			}
 		}
 	}
-	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(estimatedChunkCount)
-	metric.ProcessedEngineCounter.WithLabelValues(metric.ChunkStateEstimated, metric.TableResultSuccess).
-		Add(float64(estimatedEngineCnt))
+	if m, ok := metric.FromContext(ctx); ok {
+		m.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(estimatedChunkCount)
+		m.ProcessedEngineCounter.WithLabelValues(metric.ChunkStateEstimated, metric.TableResultSuccess).
+			Add(float64(estimatedEngineCnt))
+	}
 	rc.tidbGlue.Record(glue.RecordEstimatedChunk, uint64(estimatedChunkCount))
 	return nil
 }
@@ -921,10 +923,12 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 		rc.errorSummaries.record(tableName, err, statusIfSucceed)
 	}
 
-	if engineID == checkpoints.WholeTableEngineID {
-		metric.RecordTableCount(statusIfSucceed.MetricName(), err)
-	} else {
-		metric.RecordEngineCount(statusIfSucceed.MetricName(), err)
+	if m, ok := metric.FromContext(ctx); ok {
+		if engineID == checkpoints.WholeTableEngineID {
+			m.RecordTableCount(statusIfSucceed.MetricName(), err)
+		} else {
+			m.RecordEngineCount(statusIfSucceed.MetricName(), err)
+		}
 	}
 
 	waitCh := make(chan error, 1)
@@ -1107,29 +1111,34 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					rc.switchToImportMode(ctx)
 
 				case <-logProgressChan:
+					metrics, ok := metric.FromContext(ctx)
+					if !ok {
+						log.L().Warn("couldn't find metrics from context, skip log progress")
+						continue
+					}
 					// log the current progress periodically, so OPS will know that we're still working
 					nanoseconds := float64(time.Since(start).Nanoseconds())
-					totalRestoreBytes := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore))
-					restoredBytes := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateRestored))
+					totalRestoreBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore))
+					restoredBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateRestored))
 					// the estimated chunk is not accurate(likely under estimated), but the actual count is not accurate
 					// before the last table start, so use the bigger of the two should be a workaround
-					estimated := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
-					pending := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+					estimated := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
+					pending := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 					if estimated < pending {
 						estimated = pending
 					}
-					finished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
-					totalTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
-					completedTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStateCompleted, metric.TableResultSuccess))
-					bytesRead := metric.ReadHistogramSum(metric.RowReadBytesHistogram)
-					engineEstimated := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues(metric.ChunkStateEstimated, metric.TableResultSuccess))
-					enginePending := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues(metric.ChunkStatePending, metric.TableResultSuccess))
+					finished := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
+					totalTables := metric.ReadCounter(metrics.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
+					completedTables := metric.ReadCounter(metrics.TableCounter.WithLabelValues(metric.TableStateCompleted, metric.TableResultSuccess))
+					bytesRead := metric.ReadHistogramSum(metrics.RowReadBytesHistogram)
+					engineEstimated := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues(metric.ChunkStateEstimated, metric.TableResultSuccess))
+					enginePending := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues(metric.ChunkStatePending, metric.TableResultSuccess))
 					if engineEstimated < enginePending {
 						engineEstimated = enginePending
 					}
-					engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues(metric.TableStateImported, metric.TableResultSuccess))
-					bytesWritten := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten))
-					bytesImported := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateImported))
+					engineFinished := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues(metric.TableStateImported, metric.TableResultSuccess))
+					bytesWritten := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten))
+					bytesImported := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateImported))
 
 					var state string
 					var remaining zap.Field
@@ -1164,7 +1173,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					totalPercent := 0.0
 					if restoredBytes > 0 {
 						restorePercent := math.Min(restoredBytes/totalRestoreBytes, 1.0)
-						metric.ProgressGauge.WithLabelValues(metric.ProgressPhaseRestore).Set(restorePercent)
+						metrics.ProgressGauge.WithLabelValues(metric.ProgressPhaseRestore).Set(restorePercent)
 						if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
 							var importPercent float64
 							if bytesWritten > 0 {
@@ -1179,7 +1188,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 								importBytesField = zap.String("import-bytes", fmt.Sprintf("%s/%s(estimated)",
 									units.BytesSize(bytesImported), units.BytesSize(totalImportBytes)))
 							}
-							metric.ProgressGauge.WithLabelValues(metric.ProgressPhaseImport).Set(importPercent)
+							metrics.ProgressGauge.WithLabelValues(metric.ProgressPhaseImport).Set(importPercent)
 							totalPercent = (restorePercent + importPercent) / 2
 						} else {
 							totalPercent = restorePercent
@@ -1191,7 +1200,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						restoreBytesField = zap.String("restore-bytes", fmt.Sprintf("%s/%s",
 							units.BytesSize(restoredBytes), units.BytesSize(totalRestoreBytes)))
 					}
-					metric.ProgressGauge.WithLabelValues(metric.ProgressPhaseTotal).Set(totalPercent)
+					metrics.ProgressGauge.WithLabelValues(metric.ProgressPhaseTotal).Set(totalPercent)
 
 					formatPercent := func(num, denom float64) string {
 						if denom > 0 {
@@ -1225,8 +1234,10 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					rc.enforceDiskQuota(ctx)
 
 				case <-glueProgressTicker.C:
-					finished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
-					rc.tidbGlue.Record(glue.RecordFinishedChunk, uint64(finished))
+					if m, ok := metric.FromContext(ctx); ok {
+						finished := metric.ReadCounter(m.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
+						rc.tidbGlue.Record(glue.RecordFinishedChunk, uint64(finished))
+					}
 				}
 			}
 		}, func(do bool) {
@@ -1457,7 +1468,9 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
-				metric.RecordTableCount(metric.TableStateCompleted, err)
+				if m, ok := metric.FromContext(ctx2); ok {
+					m.RecordTableCount(metric.TableStateCompleted, err)
+				}
 				restoreErr.Set(err)
 				if needPostProcess {
 					postProcessTaskChan <- task
@@ -1506,7 +1519,9 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 		}
 	}
 
-	metric.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore).Add(float64(totalDataSizeToRestore))
+	if m, ok := metric.FromContext(ctx); ok {
+		m.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore).Add(float64(totalDataSizeToRestore))
+	}
 
 	for i := range allTasks {
 		wg.Add(1)
@@ -1582,6 +1597,9 @@ func (tr *TableRestore) restoreTable(
 			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > rowIDMax {
 				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
+		}
+		if rowIDMax > tr.curMaxRowID {
+			tr.curMaxRowID = rowIDMax
 		}
 		db, _ := rc.tidbGlue.GetDB()
 		versionStr, err := version.FetchVersion(ctx, db)
@@ -1766,8 +1784,10 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 
 			quota := int64(rc.cfg.TikvImporter.DiskQuota)
 			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := rc.backend.CheckDiskQuota(quota)
-			metric.LocalStorageUsageBytesGauge.WithLabelValues("disk").Set(float64(totalDiskSize))
-			metric.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
+			if m, ok := metric.FromContext(ctx); ok {
+				m.LocalStorageUsageBytesGauge.WithLabelValues("disk").Set(float64(totalDiskSize))
+				m.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
+			}
 
 			logger := log.With(
 				zap.Int64("diskSize", totalDiskSize),
@@ -2023,9 +2043,16 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 }
 
 type chunkRestore struct {
-	parser mydump.Parser
-	index  int
-	chunk  *checkpoints.ChunkCheckpoint
+	parser           mydump.Parser
+	index            int
+	chunk            *checkpoints.ChunkCheckpoint
+	originalRowIDMax int64
+	curRowIDBase     int64
+	curRowIDMax      int64
+	tableRestore     *TableRestore
+
+	rowCount       int
+	curAccmRowSize uint64 // has a maximum of 18446744.07370955 TB
 }
 
 func newChunkRestore(
@@ -2036,6 +2063,7 @@ func newChunkRestore(
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
 	tableInfo *checkpoints.TidbTableInfo,
+	tableRestore *TableRestore,
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
@@ -2059,12 +2087,12 @@ func newChunkRestore(
 		if err != nil {
 			return nil, err
 		}
-		parser, err = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	case mydump.SourceTypeSQL:
-		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 		if err != nil {
@@ -2082,9 +2110,11 @@ func newChunkRestore(
 	}
 
 	return &chunkRestore{
-		parser: parser,
-		index:  index,
-		chunk:  chunk,
+		parser:           parser,
+		index:            index,
+		chunk:            chunk,
+		originalRowIDMax: chunk.Chunk.RowIDMax,
+		tableRestore:     tableRestore,
 	}, nil
 }
 
@@ -2137,13 +2167,52 @@ type deliverResult struct {
 	err      error
 }
 
+func (cr *chunkRestore) adjustRowID(rowID int64, rc *Controller) (int64, error) {
+	if rowID <= cr.originalRowIDMax {
+		// no need to ajust
+		return rowID, nil
+	}
+	// need to adjust rowID
+	// rowID should be within [curRowIDBase, curRowIDMax]
+	if cr.curRowIDBase == 0 || cr.curRowIDBase > cr.curRowIDMax {
+		logger := cr.tableRestore.logger.With(
+			zap.String("tableName", cr.tableRestore.tableName),
+			zap.Int("fileIndex", cr.index),
+			zap.Stringer("path", &cr.chunk.Key),
+			zap.String("task", "re-allocate rowID"),
+		)
+		logger.Info("start re-allocating")
+		// 1. curRowIDBase == 0 -> no previous re-allocation
+		// 2. curRowIDBase > curRowIDMax -> run out of allocated IDs
+		pos, _ := cr.parser.Pos()
+		leftFileSize := cr.chunk.Chunk.EndOffset - pos
+		avgRowSize := cr.curAccmRowSize / uint64(cr.rowCount)
+		newRowIDCount := leftFileSize/int64(avgRowSize) + 1 // plus the current row
+		newBase, newMax, err := cr.tableRestore.allocateRowIDs(newRowIDCount, rc)
+		if err != nil {
+			logger.Error("fail to re-allocate rowIDs", zap.Error(err))
+			return 0, err
+		}
+		cr.curRowIDBase = newBase
+		cr.curRowIDMax = newMax
+	}
+	rowID = cr.curRowIDBase
+	cr.curRowIDBase++
+	return rowID, nil
+}
+
+func (cr *chunkRestore) updateRowStats(rowSize int) {
+	cr.curAccmRowSize += uint64(rowSize)
+	cr.rowCount++
+}
+
 //nolint:nakedret // TODO: refactor
 func (cr *chunkRestore) deliverLoop(
 	ctx context.Context,
 	kvsCh <-chan []deliveredKVs,
 	t *TableRestore,
 	engineID int32,
-	dataEngine, indexEngine *backend.LocalEngineWriter,
+	dataWriter, indexWriter *backend.LocalEngineWriter,
 	rc *Controller,
 ) (deliverTotalDur time.Duration, err error) {
 	deliverLogger := t.logger.With(
@@ -2167,7 +2236,6 @@ func (cr *chunkRestore) deliverLoop(
 		startOffset := cr.chunk.Chunk.Offset
 		currOffset := startOffset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
-
 	populate:
 		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
 			select {
@@ -2202,7 +2270,7 @@ func (cr *chunkRestore) deliverLoop(
 			for !rc.diskQuotaLock.TryRLock() {
 				// try to update chunk checkpoint, this can help save checkpoint after importing when disk-quota is triggered
 				if !dataSynced {
-					dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataEngine, indexEngine)
+					dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataWriter, indexWriter)
 				}
 				time.Sleep(time.Millisecond)
 			}
@@ -2211,27 +2279,29 @@ func (cr *chunkRestore) deliverLoop(
 			// Write KVs into the engine
 			start := time.Now()
 
-			if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
+			if err = dataWriter.WriteRows(ctx, columns, dataKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					deliverLogger.Error("write to data engine failed", log.ShortError(err))
 				}
 
 				return errors.Trace(err)
 			}
-			if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
+			if err = indexWriter.WriteRows(ctx, columns, indexKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					deliverLogger.Error("write to index engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
 			}
 
-			deliverDur := time.Since(start)
-			deliverTotalDur += deliverDur
-			metric.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
-			metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumSize()))
-			metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumSize()))
-			metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
-			metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
+			if m, ok := metric.FromContext(ctx); ok {
+				deliverDur := time.Since(start)
+				deliverTotalDur += deliverDur
+				m.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
+				m.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumSize()))
+				m.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumSize()))
+				m.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
+				m.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
+			}
 			return nil
 		}()
 		if err != nil {
@@ -2252,11 +2322,13 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Chunk.Offset = currOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
 
-		metric.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+		if m, ok := metric.FromContext(ctx); ok {
+			m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+		}
 
 		if currOffset > lastOffset || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
 			// No need to save checkpoint if nothing was delivered.
-			dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataEngine, indexEngine)
+			dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataWriter, indexWriter)
 		}
 		failpoint.Inject("SlowDownWriteRows", func() {
 			deliverLogger.Warn("Slowed down write rows")
@@ -2427,6 +2499,11 @@ func (cr *chunkRestore) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			// sql -> kv
+			if lastRow.RowID, err = cr.adjustRowID(lastRow.RowID, rc); err != nil {
+				return
+			}
+			cr.updateRowStats(lastRow.Length)
+			rowID = lastRow.RowID
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 
@@ -2463,17 +2540,21 @@ func (cr *chunkRestore) encodeLoop(
 			}
 		}
 		encodeTotalDur += encodeDur
-		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 		readTotalDur += readDur
-		metric.RowReadSecondsHistogram.Observe(readDur.Seconds())
-		metric.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+		if m, ok := metric.FromContext(ctx); ok {
+			m.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
+			m.RowReadSecondsHistogram.Observe(readDur.Seconds())
+			m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+		}
 
 		if len(kvPacket) != 0 {
 			deliverKvStart := time.Now()
 			if err = send(kvPacket); err != nil {
 				return
 			}
-			metric.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
+			if m, ok := metric.FromContext(ctx); ok {
+				m.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
+			}
 		}
 	}
 
@@ -2485,7 +2566,7 @@ func (cr *chunkRestore) restore(
 	ctx context.Context,
 	t *TableRestore,
 	engineID int32,
-	dataEngine, indexEngine *backend.LocalEngineWriter,
+	dataWriter, indexWriter *backend.LocalEngineWriter,
 	rc *Controller,
 ) error {
 	// Create the encoder.
@@ -2506,7 +2587,7 @@ func (cr *chunkRestore) restore(
 
 	go func() {
 		defer close(deliverCompleteCh)
-		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
+		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataWriter, indexWriter, rc)
 		select {
 		case <-ctx.Done():
 		case deliverCompleteCh <- deliverResult{dur, err}:

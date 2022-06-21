@@ -540,6 +540,7 @@ import (
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
 	san                   "SAN"
+	savepoint             "SAVEPOINT"
 	second                "SECOND"
 	secondaryEngine       "SECONDARY_ENGINE"
 	secondaryLoad         "SECONDARY_LOAD"
@@ -737,6 +738,7 @@ import (
 	run                        "RUN"
 	samples                    "SAMPLES"
 	sampleRate                 "SAMPLERATE"
+	sessionStates              "SESSION_STATES"
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsMeta                  "STATS_META"
@@ -919,6 +921,8 @@ import (
 	RevokeStmt                 "Revoke statement"
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
+	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
+	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
 	ChangeStmt                 "Change statement"
@@ -4729,6 +4733,18 @@ ExplainFormatType:
 |	"VERBOSE"
 |	"TRUE_CARD_COST"
 
+SavepointStmt:
+	"SAVEPOINT" Identifier
+	{
+		$$ = &ast.SavepointStmt{Name: $2}
+	}
+
+ReleaseSavepointStmt:
+	"RELEASE" "SAVEPOINT" Identifier
+	{
+		$$ = &ast.ReleaseSavepointStmt{Name: $3}
+	}
+
 /*******************************************************************
  * Backup / restore / import statements
  *
@@ -5987,6 +6003,7 @@ UnReservedKeyword:
 |	"PRECEDING"
 |	"QUERY"
 |	"QUERIES"
+|	"SAVEPOINT"
 |	"SECOND"
 |	"SEPARATOR"
 |	"SHARE"
@@ -6163,6 +6180,7 @@ TiDBKeyword:
 |	"PUMP"
 |	"SAMPLES"
 |	"SAMPLERATE"
+|	"SESSION_STATES"
 |	"STATISTICS"
 |	"STATS"
 |	"STATS_META"
@@ -6747,6 +6765,17 @@ BitExpr:
 				$1,
 				$4,
 				&ast.TimeUnitExpr{Unit: $5.(ast.TimeUnitType)},
+			},
+		}
+	}
+|	"INTERVAL" Expression TimeUnit '+' BitExpr %prec '+'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr("DATE_ADD"),
+			Args: []ast.ExprNode{
+				$5,
+				$2,
+				&ast.TimeUnitExpr{Unit: $3.(ast.TimeUnitType)},
 			},
 		}
 	}
@@ -8098,6 +8127,14 @@ RollbackStmt:
 	{
 		$$ = &ast.RollbackStmt{CompletionType: $2.(ast.CompletionType)}
 	}
+|	"ROLLBACK" "TO" Identifier
+	{
+		$$ = &ast.RollbackStmt{SavepointName: $3}
+	}
+|	"ROLLBACK" "TO" "SAVEPOINT" Identifier
+	{
+		$$ = &ast.RollbackStmt{SavepointName: $4}
+	}
 
 CompletionTypeWithinTransaction:
 	"AND" "CHAIN" "NO" "RELEASE"
@@ -8148,7 +8185,7 @@ HelpStmt:
 	}
 
 SelectStmtBasic:
-	"SELECT" SelectStmtOpts SelectStmtFieldList
+	"SELECT" SelectStmtOpts SelectStmtFieldList HavingClause
 	{
 		st := &ast.SelectStmt{
 			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
@@ -8158,6 +8195,9 @@ SelectStmtBasic:
 		}
 		if st.SelectStmtOpts.TableHints != nil {
 			st.TableHints = st.SelectStmtOpts.TableHints
+		}
+		if $4 != nil {
+			st.Having = $4.(*ast.HavingClause)
 		}
 		$$ = st
 	}
@@ -9682,6 +9722,10 @@ SetStmt:
 	{
 		$$ = &ast.SetConfigStmt{Instance: $3, Name: $4, Value: $6}
 	}
+|	"SET" "SESSION_STATES" stringLit
+	{
+		$$ = &ast.SetSessionStatesStmt{SessionStates: $3}
+	}
 
 SetRoleStmt:
 	"SET" "ROLE" SetRoleOpt
@@ -9989,11 +10033,11 @@ Username:
 	}
 |	StringName '@' StringName
 	{
-		$$ = &auth.UserIdentity{Username: $1, Hostname: $3}
+		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.ToLower($3)}
 	}
 |	StringName singleAtIdentifier
 	{
-		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.TrimPrefix($2, "@")}
+		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.ToLower(strings.TrimPrefix($2, "@"))}
 	}
 |	"CURRENT_USER" OptionalBraces
 	{
@@ -10027,11 +10071,11 @@ RoleNameString:
 RolenameComposed:
 	StringName '@' StringName
 	{
-		$$ = &auth.RoleIdentity{Username: $1, Hostname: $3}
+		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.ToLower($3)}
 	}
 |	StringName singleAtIdentifier
 	{
-		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.TrimPrefix($2, "@")}
+		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.ToLower(strings.TrimPrefix($2, "@"))}
 	}
 
 RolenameWithoutIdent:
@@ -10767,6 +10811,10 @@ ShowTargetFilterable:
 			Tp: ast.ShowPlugins,
 		}
 	}
+|	"SESSION_STATES"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowSessionStates}
+	}
 |	"STATS_EXTENDED"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsExtended}
@@ -11089,9 +11137,11 @@ Statement:
 |	RenameUserStmt
 |	ReplaceIntoStmt
 |	RecoverTableStmt
+|	ReleaseSavepointStmt
 |	ResumeImportStmt
 |	RevokeStmt
 |	RevokeRoleStmt
+|	SavepointStmt
 |	SetOprStmt
 |	SelectStmt
 |	SelectStmtWithClause
@@ -11151,6 +11201,8 @@ TraceableStmt:
 |	LoadDataStmt
 |	BeginTransactionStmt
 |	CommitStmt
+|	SavepointStmt
+|	ReleaseSavepointStmt
 |	RollbackStmt
 |	SetStmt
 

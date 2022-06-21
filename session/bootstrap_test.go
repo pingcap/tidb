@@ -55,6 +55,7 @@ func TestBootstrap(t *testing.T) {
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
 	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
+	r.Close()
 
 	ok := se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""))
 	require.True(t, ok)
@@ -180,13 +181,13 @@ func TestBootstrapWithError(t *testing.T) {
 
 	mustExec(t, se, "USE test")
 	// Check privilege tables.
-	mustExec(t, se, "SELECT * from mysql.global_priv")
-	mustExec(t, se, "SELECT * from mysql.db")
-	mustExec(t, se, "SELECT * from mysql.tables_priv")
-	mustExec(t, se, "SELECT * from mysql.columns_priv")
+	mustExec(t, se, "SELECT * from mysql.global_priv").Close()
+	mustExec(t, se, "SELECT * from mysql.db").Close()
+	mustExec(t, se, "SELECT * from mysql.tables_priv").Close()
+	mustExec(t, se, "SELECT * from mysql.columns_priv").Close()
 	// Check role tables.
-	mustExec(t, se, "SELECT * from mysql.role_edges")
-	mustExec(t, se, "SELECT * from mysql.default_roles")
+	mustExec(t, se, "SELECT * from mysql.role_edges").Close()
+	mustExec(t, se, "SELECT * from mysql.default_roles").Close()
 	// Check global variables.
 	r = mustExec(t, se, "SELECT COUNT(*) from mysql.global_variables")
 	req = r.NewChunk(nil)

@@ -225,6 +225,9 @@ func TestSelectWithoutFrom(t *testing.T) {
 	tk.MustQuery("select 1 + 2*3;").Check(testkit.Rows("7"))
 	tk.MustQuery(`select _utf8"string";`).Check(testkit.Rows("string"))
 	tk.MustQuery("select 1 order by 1;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT  'a' as f1 having f1 = 'a';").Check(testkit.Rows("a"))
+	tk.MustQuery("SELECT (SELECT * FROM (SELECT 'a') t) AS f1 HAVING (f1 = 'a' OR TRUE);").Check(testkit.Rows("a"))
+	tk.MustQuery("SELECT (SELECT * FROM (SELECT 'a') t) + 1 AS f1 HAVING (f1 = 'a' OR TRUE)").Check(testkit.Rows("1"))
 }
 
 // TestSelectBackslashN Issue 3685.
@@ -1640,12 +1643,14 @@ func TestTimezonePushDown(t *testing.T) {
 		require.NoError(t, proto.Unmarshal(req.Data, dagReq))
 		require.Equal(t, systemTZ.String(), dagReq.GetTimeZoneName())
 	})
-	_, err := tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	rs, err := tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 	require.NoError(t, err)
+	rs[0].Close()
 
 	tk.MustExec(`set time_zone="System"`)
-	_, err = tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	rs, err = tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 	require.NoError(t, err)
+	rs[0].Close()
 
 	require.Equal(t, 2, count) // Make sure the hook function is called.
 }
@@ -2062,42 +2067,6 @@ func TestCheckTableClusterIndex(t *testing.T) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c1, c2), index (c1), unique key(c2));")
 	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
 	tk.MustExec("admin check table admin_test;")
-}
-
-func TestCoprocessorStreamingFlag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, value int, index idx(id))")
-	// Add some data to make statistics work.
-	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
-
-	tests := []struct {
-		sql    string
-		expect bool
-	}{
-		{"select * from t", true},                         // TableReader
-		{"select * from t where id = 5", true},            // IndexLookup
-		{"select * from t where id > 5", true},            // Filter
-		{"select * from t limit 3", false},                // Limit
-		{"select avg(id) from t", false},                  // Aggregate
-		{"select * from t order by value limit 3", false}, // TopN
-	}
-
-	ctx := context.Background()
-	for _, test := range tests {
-		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
-			comment := fmt.Sprintf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.Streaming)
-			require.Equal(t, test.expect, req.Streaming, comment)
-		})
-		rs, err := tk.Session().Execute(ctx1, test.sql)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs[0], fmt.Sprintf("sql: %v", test.sql))
-	}
 }
 
 func TestIncorrectLimitArg(t *testing.T) {
@@ -4424,19 +4393,18 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	jobID, err := strconv.Atoi(row[0].(string))
 	require.NoError(t, err)
 
-	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMeta(txn)
-		job, err := tt.GetHistoryDDLJob(int64(jobID))
-		require.NoError(t, err)
-		require.NotNil(t, job)
-		// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
-		// See PR: 11561.
-		job.BinlogInfo = nil
-		job.SchemaName = ""
-		err = tt.AddHistoryDDLJob(job, true)
-		require.NoError(t, err)
-		return nil
-	})
+	job, err := ddl.GetHistoryJobByID(tk.Session(), int64(jobID))
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
+	// See PR: 11561.
+	job.BinlogInfo = nil
+	job.SchemaName = ""
+	err = sessiontxn.NewTxnInStmt(context.Background(), tk.Session())
+	require.NoError(t, err)
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	err = ddl.AddHistoryDDLJob(meta.NewMeta(txn), job, true)
 	require.NoError(t, err)
 
 	re = tk.MustQuery("admin show ddl jobs 1")

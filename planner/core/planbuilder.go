@@ -714,10 +714,10 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt, *ast.BRIEStmt,
-		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
+		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt, *ast.NonTransactionalDeleteStmt:
+		*ast.RenameUserStmt, *ast.NonTransactionalDeleteStmt, *ast.SetSessionStatesStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -2933,26 +2933,15 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	isSequence := false
 
 	switch show.Tp {
-	case ast.ShowColumns:
-		var extractor ShowColumnsTableExtractor
-		if extractor.Extract(show) {
-			p.Extractor = &extractor
-			// avoid to build Selection.
-			show.Pattern = nil
-		}
-	case ast.ShowTables:
-		if p.DBName == "" {
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation:
+		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
 			return nil, ErrNoDB
 		}
-		var extractor ShowTablesTableExtractor
-		if extractor.Extract(show) {
-			p.Extractor = &extractor
+		extractor := newShowBaseExtractor(*show)
+		if extractor.Extract() {
+			p.Extractor = extractor
 			// Avoid building Selection.
 			show.Pattern = nil
-		}
-	case ast.ShowTableStatus:
-		if p.DBName == "" {
-			return nil, ErrNoDB
 		}
 	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
@@ -3013,14 +3002,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
 		}
 	}
-	if show.Tp == ast.ShowVariables {
-		var extractor ShowVariablesExtractor
-		if extractor.Extract(show) {
-			p.Extractor = &extractor
-			// Avoid building Selection.
-			show.Pattern = nil
-		}
-	}
+
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
 	p.names = names
@@ -3251,6 +3233,7 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	}
 	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
+	authErr := genAuthErrForGrantStmt(sctx, dbName)
 	for _, item := range stmt.Privs {
 		if item.Priv == mysql.ExtendedPriv {
 			// The observed MySQL behavior is that the error is:
@@ -3280,18 +3263,35 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 			}
 			break
 		}
-		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
+		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", authErr)
 	}
 
 	for _, priv := range allPrivs {
-		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
+		vi = appendVisitInfo(vi, priv, dbName, tableName, "", authErr)
 	}
 	if nonDynamicPrivilege {
 		// Dynamic privileges use their own GRANT OPTION. If there were any non-dynamic privilege requests,
 		// we need to attach the "GLOBAL" version of the GRANT OPTION.
-		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
+		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", authErr)
 	}
 	return vi, nil
+}
+
+func genAuthErrForGrantStmt(sctx sessionctx.Context, dbName string) error {
+	if !strings.EqualFold(dbName, variable.PerformanceSchema) {
+		return nil
+	}
+	user := sctx.GetSessionVars().User
+	if user == nil {
+		return nil
+	}
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrDBaccessDenied.FastGenByArgs(u, h, dbName)
 }
 
 func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
@@ -3408,7 +3408,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	user := b.ctx.GetSessionVars().User
 	var authErr error
 	if user != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("INSERT", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
 	}
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tn.DBInfo.Name.L,
@@ -3425,7 +3425,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	if extraPriv != 0 {
 		if user != nil {
 			cmd := strings.ToUpper(mysql.Priv2Str[extraPriv])
-			authErr = ErrTableaccessDenied.GenWithStackByArgs(cmd, user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
+			authErr = ErrTableaccessDenied.FastGenByArgs(cmd, user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, extraPriv, tn.DBInfo.Name.L, tableInfo.Name.L, "", authErr)
 	}
@@ -4772,6 +4772,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowPlacement, ast.ShowPlacementForDatabase, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		names = []string{"Target", "Placement", "Scheduling_State"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowSessionStates:
+		names = []string{"Session_states", "Session_token"}
+		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

@@ -451,9 +451,21 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 
 	var bindSQL string
+
+	// In rc or for update read, we need the latest schema version to decide whether we need to
+	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
+	var latestSchemaVersion int64
+
 	if prepared.UseCache {
 		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
-		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
+			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
+			// last time. If it changed, we should rebuild the plan. Here, we use a different and more
+			// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
+			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+		}
+		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText,
+			preparedStmt.StmtDB, prepared.SchemaVersion, latestSchemaVersion); err != nil {
 			return err
 		}
 	}
@@ -586,7 +598,8 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB,
+				prepared.SchemaVersion, latestSchemaVersion); err != nil {
 				return err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
@@ -1283,7 +1296,7 @@ func (e *Explain) prepareSchema() error {
 	switch {
 	case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == types.ExplainFormatVerbose:
+	case format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost:
 		if e.Analyze || e.RuntimeStatsColl != nil {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
@@ -1317,8 +1330,20 @@ func (e *Explain) RenderResult() error {
 	if e.TargetPlan == nil {
 		return nil
 	}
+
+	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+		pp, ok := e.TargetPlan.(PhysicalPlan)
+		if ok {
+			if _, err := pp.GetPlanCost(property.RootTaskType, CostFlagRecalculate|CostFlagUseTrueCardinality); err != nil {
+				return err
+			}
+		} else {
+			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
+		}
+	}
+
 	switch strings.ToLower(e.Format) {
-	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost:
 		if e.Rows == nil || e.Analyze {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
@@ -1528,14 +1553,14 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 			row = append(row, estCost)
 		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 			row = append(row, estCost)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)

@@ -415,6 +415,7 @@ func TestSelectCheckVisibility(t *testing.T) {
 	checkSelectResultError := func(sql string, expectErr *terror.Error) {
 		re, err := tk.Exec(sql)
 		require.NoError(t, err)
+		defer re.Close()
 		_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), re)
 		require.Error(t, err)
 		require.True(t, expectErr.Equal(err))

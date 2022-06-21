@@ -1914,7 +1914,7 @@
               "refId": "A"
             },
             {
-              "expr": "go_memstats_heap_sys_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_memory_classes_heap_objects_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} + go_memory_classes_heap_unused_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} + go_memory_classes_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} + go_memory_classes_heap_free_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
               "format": "time_series",
               "hide": true,
               "intervalFactor": 1,
@@ -1922,14 +1922,14 @@
               "refId": "B"
             },
             {
-              "expr": "go_memstats_heap_inuse_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_memory_classes_heap_objects_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} + go_memory_classes_heap_unused_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "HeapInuse-{{instance}}",
               "refId": "C"
             },
             {
-              "expr": "go_memstats_heap_alloc_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_memory_classes_heap_objects_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
               "format": "time_series",
               "hide": true,
               "intervalFactor": 1,
@@ -1937,7 +1937,7 @@
               "refId": "D"
             },
             {
-              "expr": "go_memstats_heap_idle_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_memory_classes_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} + go_memory_classes_heap_free_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
               "format": "time_series",
               "hide": true,
               "intervalFactor": 1,
@@ -1945,14 +1945,14 @@
               "refId": "E"
             },
             {
-              "expr": "go_memstats_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "expr": "go_memory_classes_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
               "hide": true,
               "interval": "",
               "legendFormat": "HeapReleased-{{instance}}",
               "refId": "F"
             },
             {
-              "expr": "go_memstats_next_gc_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
+              "expr": "go_gc_heap_goal_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
               "hide": true,
               "interval": "",
               "legendFormat": "GCTrigger-{{instance}}",
@@ -2453,7 +2453,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": " go_goroutines{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=~\"tidb.*\"}",
+              "expr": "go_sched_goroutines_goroutines{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=~\"tidb.*\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}}",

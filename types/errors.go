@@ -49,7 +49,7 @@ var (
 	ErrTooBigSet = dbterror.ClassTypes.NewStd(mysql.ErrTooBigSet)
 	// ErrTooBigScale is returned when type DECIMAL/NUMERIC scale is bigger than mysql.MaxDecimalScale.
 	ErrTooBigScale = dbterror.ClassTypes.NewStd(mysql.ErrTooBigScale)
-	// ErrTooBigPrecision is returned when type DECIMAL/NUMERIC precision is bigger than mysql.MaxDecimalWidth
+	// ErrTooBigPrecision is returned when type DECIMAL/NUMERIC or DATETIME precision is bigger than mysql.MaxDecimalWidth or types.MaxFsp
 	ErrTooBigPrecision = dbterror.ClassTypes.NewStd(mysql.ErrTooBigPrecision)
 	// ErrBadNumber is return when parsing an invalid binary decimal number.
 	ErrBadNumber = dbterror.ClassTypes.NewStd(mysql.ErrBadNumber)

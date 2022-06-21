@@ -31,12 +31,14 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
@@ -981,7 +983,7 @@ func TestParallelAlterModifyColumnWithData(t *testing.T) {
 	sql := "ALTER TABLE t MODIFY COLUMN c int;"
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
-		require.EqualError(t, err2, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
+		require.EqualError(t, err2, "[ddl:8245]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
 		rs, err := tk.Exec("select * from t")
 		require.NoError(t, err)
 		sRows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
@@ -1055,7 +1057,7 @@ func TestParallelAlterModifyColumnToNotNullWithData(t *testing.T) {
 	sql := "ALTER TABLE t MODIFY COLUMN c int not null;"
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
-		require.EqualError(t, err2, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
+		require.EqualError(t, err2, "[ddl:8245]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
 		rs, err := tk.Exec("select * from t")
 		require.NoError(t, err)
 		sRows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
@@ -1357,21 +1359,20 @@ func TestParallelAlterAndDropSchema(t *testing.T) {
 func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain) (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if times != 0 {
 			return
 		}
 		var qLen int
 		for {
-			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err1 := ddl.GetDDLJobs(txn)
-				if err1 != nil {
-					return err1
-				}
-				qLen = len(jobs)
-				return nil
-			})
+			sess := testkit.NewTestKit(t, store).Session()
+			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
+			txn, err := sess.Txn(true)
+			require.NoError(t, err)
+			jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+			require.NoError(t, err)
+			qLen = len(jobs)
 			if qLen == 2 {
 				break
 			}
@@ -1393,17 +1394,15 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *doma
 	go func() {
 		var qLen int
 		for {
-			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err3 := ddl.GetDDLJobs(txn)
-				if err3 != nil {
-					return err3
-				}
-				qLen = len(jobs)
-				return nil
-			})
+			sess := testkit.NewTestKit(t, store).Session()
+			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
+			txn, err := sess.Txn(true)
+			require.NoError(t, err)
+			jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+			require.NoError(t, err)
+			qLen = len(jobs)
 			if qLen == 1 {
-				// Make sure sql2 is executed after the sql1.
 				close(ch)
 				break
 			}

@@ -265,7 +265,7 @@ func SetMockTiFlash(tiflash *MockTiFlash) {
 
 	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
 	if ok {
-		m.tiflash = tiflash
+		m.SetMockTiFlash(tiflash)
 	}
 }
 
@@ -641,8 +641,9 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	now := oracle.GetTimeFromTS(currentVer.Ver)
 	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
 	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
-
 	minStartTS := oracle.GoTimeToTS(now)
+	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
+		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
 	for _, info := range pl {
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
@@ -650,6 +651,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	}
 
 	for _, innerTS := range innerSessionStartTSList {
+		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("Internal Session Transaction StartTS", innerTS))
 		kv.PrintLongTimeInternalTxn(now, innerTS, false)
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
 			minStartTS = innerTS
@@ -662,6 +664,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
 	}
+	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("final minStartTS", is.minStartTS))
 }
 
 // Done returns a channel that closes when the info syncer is no longer being refreshed.

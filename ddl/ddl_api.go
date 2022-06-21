@@ -146,7 +146,7 @@ func (d *ddl) CreateSchemaWithInfo(
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -176,7 +176,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 		Args:       []interface{}{toCharset, toCollate},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -206,7 +206,7 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 		Args:       []interface{}{placementPolicyRef},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -364,7 +364,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 			Args:       []interface{}{*tiflashReplica},
 		}
 		err := d.DoDDLJob(sctx, job)
-		err = d.callHookOnChanged(err)
+		err = d.callHookOnChanged(job, err)
 		if err != nil {
 			oneFail = tbl.ID
 			fail += 1
@@ -419,7 +419,7 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -535,7 +535,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1160,6 +1160,13 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 			// For BIT fields, convert int into BinaryLiteral.
 			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), false, nil
 		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeFloat, mysql.TypeDouble:
+		// For these types, convert it to standard format firstly.
+		// like integer fields, convert it into integer string literals. like convert "1.25" into "1" and "2.8" into "3".
+		// if raise a error, we will use original expression. We will handle it in check phase
+		if temp, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err == nil {
+			v = temp
+		}
 	}
 
 	val, err := v.ToString()
@@ -1621,59 +1628,11 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 	if tblInfo.PKIsHandle {
 		return nil
 	}
-	pk := getPrimaryKey(tblInfo)
+	pk := tblInfo.GetPrimaryKey()
 	if pk != nil && pk.Invisible {
 		return dbterror.ErrPKIndexCantBeInvisible
 	}
 	return nil
-}
-
-// getPrimaryKey extract the primary key in a table and return `IndexInfo`
-// The returned primary key could be explicit or implicit.
-// If there is no explicit primary key in table,
-// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
-// For more information about implicit primary key, see
-// https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
-func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
-	var implicitPK *model.IndexInfo
-
-	for _, key := range tblInfo.Indices {
-		if key.Primary {
-			// table has explicit primary key
-			return key
-		}
-		// The case index without any columns should never happen, but still do a check here
-		if len(key.Columns) == 0 {
-			continue
-		}
-		// find the first unique key with NOT NULL columns
-		if implicitPK == nil && key.Unique {
-			// ensure all columns in unique key have NOT NULL flag
-			allColNotNull := true
-			skip := false
-			for _, idxCol := range key.Columns {
-				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
-				// This index has a column in DeleteOnly state,
-				// or it is expression index (it defined on a hidden column),
-				// it can not be implicit PK, go to next index iterator
-				if col == nil || col.Hidden {
-					skip = true
-					break
-				}
-				if !mysql.HasNotNullFlag(col.GetFlag()) {
-					allColNotNull = false
-					break
-				}
-			}
-			if skip {
-				continue
-			}
-			if allColNotNull {
-				implicitPK = key
-			}
-		}
-	}
-	return implicitPK
 }
 
 func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
@@ -1821,7 +1780,7 @@ func buildTableInfo(
 			continue
 		}
 		// build index info.
-		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
+		idxInfo, err := buildIndexInfo(ctx, tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2366,7 +2325,7 @@ func (d *ddl) CreateTableWithInfo(
 		err = d.createTableWithInfoPost(ctx, tbInfo, job.SchemaID)
 	}
 
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -2455,12 +2414,12 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
-		return errors.Trace(d.callHookOnChanged(err))
+		return errors.Trace(d.callHookOnChanged(jobs, err))
 	}
 
 	for j := range args {
 		if err = d.createTableWithInfoPost(ctx, args[j], jobs.SchemaID); err != nil {
-			return errors.Trace(d.callHookOnChanged(err))
+			return errors.Trace(d.callHookOnChanged(jobs, err))
 		}
 	}
 
@@ -2507,7 +2466,7 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 		Args:       []interface{}{policy, onExist == OnExistReplace},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -2572,7 +2531,7 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 			recoverInfo.OldSchemaName, recoverInfo.OldTableName},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -2994,7 +2953,7 @@ func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
 }
 
 func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error {
-	if !sctx.GetSessionVars().EnableChangeMultiSchema {
+	if !variable.EnableChangeMultiSchema.Load() {
 		if len(specs) > 1 {
 			return dbterror.ErrRunMultiSchemaChanges
 		}
@@ -3052,6 +3011,10 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			return errors.Trace(err)
 		}
 		return nil
+	}
+
+	if len(validSpecs) > 1 {
+		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
 	}
 
 	for _, spec := range validSpecs {
@@ -3241,6 +3204,13 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		}
 	}
 
+	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		err = d.MultiSchemaChange(sctx, ident)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	return nil
 }
 
@@ -3296,7 +3266,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		Args:       []interface{}{newBase, force},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3347,7 +3317,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		Args:       []interface{}{uVal},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3523,7 +3493,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3598,7 +3568,7 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3664,7 +3634,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if err == nil {
 		d.preSplitAndScatter(ctx, meta, partInfo)
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3756,7 +3726,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3807,7 +3777,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		}
 		return errors.Trace(err)
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -3999,7 +3969,7 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4018,12 +3988,12 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return nil
 	}
 	colName := spec.OldColumnName.Name
-	err = checkDropVisibleColumnCnt(t, 1)
+	err = checkVisibleColumnCnt(t, 0, 1)
 	if err != nil {
 		return err
 	}
 	var multiSchemaInfo *model.MultiSchemaInfo
-	if ctx.GetSessionVars().EnableChangeMultiSchema {
+	if variable.EnableChangeMultiSchema.Load() {
 		multiSchemaInfo = &model.MultiSchemaInfo{}
 	}
 
@@ -4045,7 +4015,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4097,12 +4067,12 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		return dbterror.ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
 			tblInfo.Name)
 	}
-	err = checkDropVisibleColumnCnt(t, len(colNames))
+	err = checkVisibleColumnCnt(t, 0, len(colNames))
 	if err != nil {
 		return err
 	}
 	var multiSchemaInfo *model.MultiSchemaInfo
-	if ctx.GetSessionVars().EnableChangeMultiSchema {
+	if variable.EnableChangeMultiSchema.Load() {
 		multiSchemaInfo = &model.MultiSchemaInfo{}
 	}
 
@@ -4121,7 +4091,7 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4139,28 +4109,35 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 		return false, err
 	}
 
-	if err = isDroppableColumn(ctx.GetSessionVars().EnableChangeMultiSchema, tblInfo, colName); err != nil {
+	if err = isDroppableColumn(variable.EnableChangeMultiSchema.Load(), tblInfo, colName); err != nil {
 		return false, errors.Trace(err)
 	}
 	// We don't support dropping column with PK handle covered now.
 	if col.IsPKHandleColumn(tblInfo) {
 		return false, dbterror.ErrUnsupportedPKHandle
 	}
+	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
+		return false, dbterror.ErrCantDropColWithAutoInc
+	}
 	return true, nil
 }
 
-func checkDropVisibleColumnCnt(t table.Table, columnCnt int) error {
+func checkVisibleColumnCnt(t table.Table, addCnt, dropCnt int) error {
 	tblInfo := t.Meta()
 	visibleColumCnt := 0
 	for _, column := range tblInfo.Columns {
 		if !column.Hidden {
 			visibleColumCnt++
 		}
-		if visibleColumCnt > columnCnt {
-			return nil
-		}
 	}
-	return dbterror.ErrTableMustHaveColumns
+	if visibleColumCnt+addCnt > dropCnt {
+		return nil
+	}
+	if len(tblInfo.Columns)-visibleColumCnt > 0 {
+		// There are only invisible columns.
+		return dbterror.ErrTableMustHaveColumns
+	}
+	return dbterror.ErrCantRemoveAllFields
 }
 
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
@@ -4626,7 +4603,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if err := checkIndexColumn(col, prefixLength); err != nil {
+		if err := checkIndexColumn(nil, col, prefixLength); err != nil {
 			return err
 		}
 	}
@@ -4720,7 +4697,7 @@ func (d *ddl) ChangeColumn(ctx context.Context, sctx sessionctx.Context, ident a
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4792,7 +4769,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		Args: []interface{}{&newCol, oldColName, spec.Position, 0, 0},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4823,7 +4800,7 @@ func (d *ddl) ModifyColumn(ctx context.Context, sctx sessionctx.Context, ident a
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4850,11 +4827,12 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	// Clean the NoDefaultValueFlag value.
 	col.DelFlag(mysql.NoDefaultValueFlag)
 	if len(specNewColumn.Options) == 0 {
+		col.DefaultIsExpr = false
 		err = col.SetDefaultValue(nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		setNoDefaultValueFlag(col, false)
+		col.AddFlag(mysql.NoDefaultValueFlag)
 	} else {
 		if IsAutoRandomColumnID(t.Meta(), col.ID) {
 			return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
@@ -4879,7 +4857,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4910,7 +4888,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4932,7 +4910,7 @@ func (d *ddl) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, new
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -4984,7 +4962,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		Args:       []interface{}{toCharset, toCollate, needsOverwriteCols},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5042,7 +5020,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		Args:       []interface{}{*replicaInfo},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5152,7 +5130,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 		Args:       []interface{}{available, physicalID},
 	}
 	err := d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5259,7 +5237,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5291,7 +5269,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5326,7 +5304,7 @@ func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5364,7 +5342,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}})
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	if err != nil {
 		if config.TableLockEnabled() {
 			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
@@ -5413,7 +5391,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5461,7 +5439,7 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5608,7 +5586,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, err := buildIndexColumns(tblInfo.Columns, indexPartSpecifications)
+	indexColumns, err := buildIndexColumns(ctx, tblInfo.Columns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5660,7 +5638,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5806,7 +5784,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, err := buildIndexColumns(finalColumns, indexPartSpecifications)
+	indexColumns, err := buildIndexColumns(ctx, finalColumns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5856,7 +5834,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -5972,7 +5950,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6000,7 +5978,7 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6062,7 +6040,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6111,7 +6089,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6326,7 +6304,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		ctx.ReleaseTableLocks(unlockTables)
 		ctx.AddTableLock(lockTables)
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6354,7 +6332,7 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6381,7 +6359,7 @@ func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 	}
 	defer d.sessPool.put(ctx)
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6445,7 +6423,7 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 	if err == nil {
 		ctx.ReleaseTableLocks(cleanupTables)
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6533,7 +6511,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 		// Remove the old TableInfo from repairInfo before domain reload.
 		domainutil.RepairInfo.RemoveFromRepairInfo(oldDBInfo.Name.L, oldTableInfo.Name.L)
 	}
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6609,7 +6587,7 @@ func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt)
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6639,7 +6617,7 @@ func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) 
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6673,7 +6651,7 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6707,7 +6685,7 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		return errors.Trace(err)
 	}
 
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6749,7 +6727,7 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		return errors.Trace(err)
 	}
 
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6814,7 +6792,7 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -6993,7 +6971,7 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 		Args:       []interface{}{policyName},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -7027,7 +7005,7 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 		Args:       []interface{}{newPolicyInfo},
 	}
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
+	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
@@ -7083,7 +7061,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	return d.callHookOnChanged(err)
+	return d.callHookOnChanged(job, err)
 }
 
 func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
@@ -7140,7 +7118,7 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	return d.callHookOnChanged(err)
+	return d.callHookOnChanged(job, err)
 }
 
 // checkTooBigFieldLengthAndTryAutoConvert will check whether the field length is too big

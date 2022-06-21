@@ -774,6 +774,17 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	}
 	plan4Agg.SetChildren(np)
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
+
+	// Currently, firstrow agg function is treated like the exact representation of aggregate group key,
+	// so the data type is the same with group key, even if the group key is not null.
+	// However, the return type of firstrow should be nullable, we clear the null flag here instead of
+	// during invoking NewAggFuncDesc, in order to keep compatibility with the existing presumption
+	// that the return type firstrow does not change nullability, whatsoever.
+	// Cloning it because the return type is the same object with argument's data type.
+	newRetTp := firstRowFunc.RetTp.Clone()
+	newRetTp.DelFlag(mysql.NotNullFlag)
+	firstRowFunc.RetTp = newRetTp
+
 	firstRowResultCol := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
@@ -1286,6 +1297,10 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		}
 		return
 	}
+	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
+		// The variable does nothing, append a warning to the statement output.
+		sessionVars.StmtCtx.AppendWarning(ErrGettingNoopVariable.GenWithStackByArgs(sysVar.Name))
+	}
 	if sem.IsEnabled() && sem.IsInvisibleSysVar(sysVar.Name) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
 		er.b.visitInfo = appendDynamicVisitInfo(er.b.visitInfo, "RESTRICTED_VARIABLES_ADMIN", false, err)
@@ -1546,6 +1561,7 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 		return
 	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {
+		// todo: consider refining the code and reusing expression.BuildCollationFunction here
 		if er.ctxStack[i].GetType().EvalType() == types.ETString {
 			rowFunc, ok := er.ctxStack[i].(*expression.ScalarFunction)
 			if ok && rowFunc.FuncName.String() == ast.RowFunc {
@@ -1562,6 +1578,14 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 				} else {
 					continue
 				}
+			} else if coll.Charset == charset.CharsetBin {
+				// When cast character string to binary string, if we still use fixed length representation,
+				// then 0 padding will be used, which can affect later execution.
+				// e.g. https://github.com/pingcap/tidb/pull/35053#pullrequestreview-1008757770 gives an unexpected case.
+				// On the other hand, we can not directly return origin expr back,
+				// since we need binary collation to do string comparison later.
+				// Here we use VarString type of cast, i.e `cast(a as binary)`, to avoid this problem.
+				tp.SetType(mysql.TypeVarString)
 			}
 			tp.SetCharset(coll.Charset)
 			tp.SetCollate(coll.Collation)
