@@ -736,6 +736,31 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows("2"))
 }
 
+func TestGetSetNoopVars(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	// By default you can get/set noop sysvars without issue.
+	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("OFF"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'query_cache_type'").Check(testkit.Rows("query_cache_type OFF"))
+	tk.MustExec("SET query_cache_type=2")
+	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("DEMAND"))
+	// When tidb_enable_noop_variables is OFF, you can GET in @@ context
+	// and always SET. But you can't see in SHOW VARIABLES.
+	// Warnings are also returned.
+	tk.MustExec("SET GLOBAL tidb_enable_noop_variables = OFF")
+	defer tk.MustExec("SET GLOBAL tidb_enable_noop_variables = ON")
+	tk.MustQuery("SELECT @@global.tidb_enable_noop_variables").Check(testkit.Rows("OFF"))
+	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("DEMAND"))
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8145 variable query_cache_type has no effect in TiDB"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'query_cache_type'").Check(testkit.Rows())
+	tk.MustExec("SET query_cache_type = OFF")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8144 setting query_cache_type has no effect in TiDB"))
+	// but the change is still effective.
+	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("OFF"))
+}
+
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
