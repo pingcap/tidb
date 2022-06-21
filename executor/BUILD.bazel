@@ -185,6 +185,7 @@ go_library(
         "//util/stmtsummary",
         "//util/stringutil",
         "//util/table-filter",
+        "//util/taskstop",
         "//util/timeutil",
         "//util/tls",
         "//util/topsql",

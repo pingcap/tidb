@@ -731,52 +731,45 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	prepareTask := func(t *testing.T, isolation string, autocommit bool, sql string) *testkit.StoppableTask {
-		tk.MustExec("rollback")
-		tk.MustExec("truncate table t1")
-		tk.MustExec("insert into t1 values(1, 10)")
-		return testkit.NewStoppableTasksRunner(t).CreateTask("s2", func(ch *taskstop.Chan) {
-			tk2 := testkit.NewTestKit(t, store)
-			defer func() {
-				taskstop.DisableSessionStopPoint(tk2.Session())
-				tk2.MustExec("rollback")
-			}()
-
-			tk2.MustExec("use test")
-			tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
-			tk2.MustExec(fmt.Sprintf("set tx_isolation = '%s'", isolation))
-			if autocommit {
-				tk2.MustExec("set autocommit=1")
-				tk2.MustExec("begin")
-			} else {
-				tk2.MustExec("set autocommit=0")
-			}
-			taskstop.EnableSessionStopPoint(
-				tk2.Session(),
-				ch,
-				sessiontxn.StopPointBeforeExecutorFirstRun,
-				sessiontxn.StopPointOnStmtRetryAfterLockError,
-			)
-			if strings.HasPrefix(sql, "update") {
-				tk2.MustExec(sql)
-				taskstop.DisableSessionStopPoint(tk2.Session())
-				tk2.MustExec("commit")
-				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
-			} else {
-				tk2.MustQuery(sql).Check(testkit.Rows("1 12"))
-				taskstop.DisableSessionStopPoint(tk2.Session())
-			}
-		})
-	}
-
 	for _, isolation := range []string{ast.RepeatableRead, ast.ReadCommitted} {
 		for _, query := range queries {
 			for _, autocommit := range []bool{true, false} {
 				t.Run(fmt.Sprintf("%s,%s,autocommit=%v", isolation, query, autocommit), func(t *testing.T) {
-					task := prepareTask(t, isolation, autocommit, query)
+					tk.MustExec("truncate table t1")
+					tk.MustExec("insert into t1 values(1, 10)")
+					tk2 := testkit.NewSteppedTasksRunner(t).CreateSteppedTestKit("s2", store)
+					defer tk2.Close()
+
+					tk2.MustExec("use test")
+					tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+					tk2.MustExec(fmt.Sprintf("set tx_isolation = '%s'", isolation))
+					if autocommit {
+						tk2.MustExec("set autocommit=1")
+						tk2.MustExec("begin")
+					} else {
+						tk2.MustExec("set autocommit=0")
+					}
+
+					tk2.EnableSessionStopPoint(
+						sessiontxn.StopPointBeforeExecutorFirstRun,
+						sessiontxn.StopPointOnStmtRetryAfterLockError,
+					)
+
+					var task *testkit.SteppedCommandTask
+					var isSelect, isUpdate bool
+					switch {
+					case strings.HasPrefix(query, "select"):
+						isSelect = true
+						task = tk2.SteppedMustQuery(query)
+					case strings.HasPrefix(query, "update"):
+						isUpdate = true
+						task = tk2.SteppedMustExec(query)
+					default:
+						require.FailNowf(t, "invalid query: ", query)
+					}
 
 					// Pause the session before the executor first run and then update the record in another session
-					task.Start().ExpectStoppedAt(sessiontxn.StopPointBeforeExecutorFirstRun)
+					task.ExpectStoppedAt(sessiontxn.StopPointBeforeExecutorFirstRun)
 					tk.MustExec("update t1 set v=v+1")
 
 					// Session continues, it should get a lock error and retry, we pause the session before the executor's next run
@@ -787,6 +780,13 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 					// Because the record is updated by another session again, when this session continues, it will get a lock error again.
 					task.Continue().ExpectStoppedAt(sessiontxn.StopPointOnStmtRetryAfterLockError)
 					task.Continue().ExpectDone()
+					switch {
+					case isSelect:
+						task.GetQueryResult().Check(testkit.Rows("1 12"))
+					case isUpdate:
+						tk2.MustExec("commit")
+						tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
+					}
 				})
 			}
 		}

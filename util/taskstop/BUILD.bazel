@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "taskstop",
+    srcs = ["stop.go"],
+    importpath = "github.com/pingcap/tidb/util/taskstop",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//sessionctx",
+        "//util/stringutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)

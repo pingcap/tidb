@@ -15,11 +15,19 @@
 package taskstop
 
 import (
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/stringutil"
 )
+
+// StartPointName is the stop point for start
+var StartPointName = "START"
+
+// DonePointName is the stop point for done
+var DonePointName = "DONE"
 
 // StopPoint is stop point object
 type StopPoint struct {
@@ -38,7 +46,7 @@ func (p *StopPoint) Name() string {
 	return p.name
 }
 
-// Chan is used to communicate with between stoppable task and other thread
+// Chan is used to communicate with between stepped task and other thread
 type Chan struct {
 	ch1 chan *StopPoint
 	ch2 chan any
@@ -57,7 +65,7 @@ func (ch *Chan) SignalOnStopAt(stopName string) error {
 	select {
 	case ch.ch1 <- NewStopPoint(stopName):
 		return nil
-	default:
+	case <-time.After(time.Second * 10):
 		return errors.New("Cannot signal stop at")
 	}
 
@@ -69,11 +77,11 @@ func (ch *Chan) WaitOnStop() chan *StopPoint {
 }
 
 // SignalStep writes the chan to tell the task to continue
-func (ch *Chan) SignalStep() error {
+func (ch *Chan) SignalStep(val any) error {
 	select {
-	case ch.ch2 <- struct{}{}:
+	case ch.ch2 <- val:
 		return nil
-	default:
+	case <-time.After(time.Second * 10):
 		return errors.New("Cannot signal step")
 	}
 }
