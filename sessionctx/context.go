@@ -112,10 +112,10 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit(ctx context.Context)
+	StmtCommit()
 	// StmtRollback provides statement level rollback. The parameter `forPessimisticRetry` should be true iff it's used
 	// for auto-retrying execution of DMLs in pessimistic transactions.
-	StmtRollback(ctx context.Context, forPessimisticRetry bool)
+	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.

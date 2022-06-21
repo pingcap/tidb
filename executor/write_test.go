@@ -1889,7 +1889,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *t
 		}
 		ld.SetMessage()
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage())
-		ctx.StmtCommit(context.Background())
+		ctx.StmtCommit()
 		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
@@ -2319,7 +2319,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 	ld.SetMaxRowsInBatch(20000)
 	ld.SetMessage()
-	ctx.StmtCommit(context.Background())
+	ctx.StmtCommit()
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())

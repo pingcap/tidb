@@ -302,10 +302,10 @@ func (c *Context) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (c *Context) StmtCommit(context.Context) {}
+func (c *Context) StmtCommit() {}
 
 // StmtRollback implements the sessionctx.Context interface.
-func (c *Context) StmtRollback(context.Context, bool) {}
+func (c *Context) StmtRollback() {}
 
 // StmtGetMutation implements the sessionctx.Context interface.
 func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {

@@ -276,7 +276,7 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 	var err error
 	defer func() {
 		if err != nil {
-			e.Ctx.StmtRollback(context.Background(), false)
+			e.Ctx.StmtRollback()
 		}
 	}()
 	err = e.CheckAndInsertOneBatch(ctx, task.rows, task.cnt)
@@ -287,7 +287,7 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 	failpoint.Inject("commitOneTaskErr", func() error {
 		return errors.New("mock commit one task error")
 	})
-	e.Ctx.StmtCommit(ctx)
+	e.Ctx.StmtCommit()
 	// Make sure process stream routine never use invalid txn
 	e.txnInUse.Lock()
 	defer e.txnInUse.Unlock()
@@ -313,7 +313,7 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 			e.ForceQuit()
 		}
 		if err != nil {
-			e.ctx.StmtRollback(context.Background(), false)
+			e.ctx.StmtRollback()
 		}
 	}()
 	var tasks uint64

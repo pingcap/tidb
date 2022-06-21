@@ -607,14 +607,10 @@ func (s *session) HasDirtyContent(tid int64) bool {
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit(ctx context.Context) {
+func (s *session) StmtCommit() {
 	defer func() {
 		s.txn.cleanup()
 	}()
-
-	if s.txn.IsInAggressiveLockingMode() {
-		s.txn.DoneAggressiveLocking(ctx)
-	}
 
 	st := &s.txn
 	st.flushStmtBuf()
@@ -627,14 +623,7 @@ func (s *session) StmtCommit(ctx context.Context) {
 }
 
 // StmtRollback implements the sessionctx.Context interface.
-func (s *session) StmtRollback(ctx context.Context, forPessimisticRetry bool) {
-	if s.txn.IsInAggressiveLockingMode() {
-		if forPessimisticRetry {
-			s.txn.RetryAggressiveLocking(ctx)
-		} else {
-			s.txn.CancelAggressiveLocking(ctx)
-		}
-	}
+func (s *session) StmtRollback() {
 	s.txn.cleanup()
 }
 

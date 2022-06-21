@@ -1099,10 +1099,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 			s.txn.onStmtEnd()
 			if err != nil {
-				s.StmtRollback(ctx, false)
+				s.StmtRollback()
 				break
 			}
-			s.StmtCommit(ctx)
+			s.StmtCommit()
 		}
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),

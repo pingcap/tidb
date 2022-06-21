@@ -604,11 +604,14 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
+			tryCancelAggressiveLocking(ctx, txn)
 			return nil, err
 		}
 		if e == nil {
+			tryDoneAggressiveLocking(ctx, txn)
 			return rs, nil
 		}
+		tryRetryAggressiveLocking(ctx, txn)
 	}
 }
 
@@ -687,10 +690,18 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		logutil.Logger(ctx).Info("start aggressive locking", zap.Stringer("txn", txn), zap.String("sql", a.OriginText()), zap.Stack("stackTrace"))
 		txn.StartAggressiveLocking()
 	}
+	isFirstAttempt := true
 	for {
+		if isFirstAttempt {
+			isFirstAttempt = false
+		} else {
+			tryRetryAggressiveLocking(ctx, txn)
+		}
+
 		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
+			tryCancelAggressiveLocking(ctx, txn)
 			return err
 		}
 		if err != nil {
@@ -700,16 +711,19 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 				if ErrDeadlock.Equal(err) {
 					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startPointGetLocking).Seconds())
 				}
+				tryCancelAggressiveLocking(ctx, txn)
 				return err
 			}
 			continue
 		}
 		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
+			tryCancelAggressiveLocking(ctx, txn)
 			return err1
 		}
 		keys = txnCtx.CollectUnchangedRowKeys(keys)
 		if len(keys) == 0 {
+			tryDoneAggressiveLocking(ctx, txn)
 			return nil
 		}
 		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
@@ -724,6 +738,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
 		}
 		if err == nil {
+			tryDoneAggressiveLocking(ctx, txn)
 			return nil
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
@@ -732,6 +747,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			if ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
 			}
+			tryCancelAggressiveLocking(ctx, txn)
 			return err
 		}
 	}
@@ -828,7 +844,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, err
 	}
 	// Rollback the statement change before retry it.
-	a.Ctx.StmtRollback(ctx, true)
+	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
@@ -1428,4 +1444,22 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 		planDigest = d.Bytes()
 	}
 	return sqlDigest, planDigest
+}
+
+func tryRetryAggressiveLocking(ctx context.Context, c kv.AggressiveLockingController) {
+	if c.IsInAggressiveLockingMode() {
+		c.RetryAggressiveLocking(ctx)
+	}
+}
+
+func tryCancelAggressiveLocking(ctx context.Context, c kv.AggressiveLockingController) {
+	if c.IsInAggressiveLockingMode() {
+		c.CancelAggressiveLocking(ctx)
+	}
+}
+
+func tryDoneAggressiveLocking(ctx context.Context, c kv.AggressiveLockingController) {
+	if c.IsInAggressiveLockingMode() {
+		c.DoneAggressiveLocking(ctx)
+	}
 }

@@ -237,9 +237,9 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		// Handle the stmt commit/rollback.
 		if se.txn.Valid() {
 			if meetsErr != nil {
-				se.StmtRollback(ctx, false)
+				se.StmtRollback()
 			} else {
-				se.StmtCommit(ctx)
+				se.StmtCommit()
 			}
 		}
 	}
