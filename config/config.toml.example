@@ -226,6 +226,9 @@ stmt-count-limit = 5000
 # Set keep alive option for tcp connection.
 tcp-keep-alive = true
 
+# Set nodelay option for tcp connection.
+tcp-no-delay = true
+
 # Whether support cartesian product.
 cross-join = true
 
