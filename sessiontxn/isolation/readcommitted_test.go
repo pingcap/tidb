@@ -263,7 +263,7 @@ func TestRCProviderInitialize(t *testing.T) {
 	// non-active txn and then active it
 	tk.MustExec("rollback")
 	tk.MustExec("set @@autocommit=0")
-	assert = inActiveRCTxnAssert(se)
+	assert = inactiveRCTxnAssert(se)
 	assertAfterActive := activeRCTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider := assert.CheckAndGetProvider(t)
@@ -276,7 +276,7 @@ func TestRCProviderInitialize(t *testing.T) {
 
 	// Case Pessimistic Autocommit
 	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
-	assert = inActiveRCTxnAssert(se)
+	assert = inactiveRCTxnAssert(se)
 	assertAfterActive = activeRCTxnAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
@@ -355,23 +355,28 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	checkUseTxn(false)
 
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
-	tk.MustExec("rollback")
-	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
-	tk.MustExec("set @@autocommit=0")
-	assert = inActiveRCTxnAssert(se)
-	assertAfterActive := activeRCTxnAssert(t, se, true)
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	tk.MustExec("set @@tidb_snapshot=@a")
-	checkUseSnapshot()
-	txn, err = se.Txn(false)
-	require.NoError(t, err)
-	require.False(t, txn.Valid())
-	tk.MustExec("set @@tidb_snapshot=''")
-	checkUseTxn(true)
-	assertAfterActive.Check(t)
-	tk.MustExec("rollback")
+	for _, autocommit := range []int{0, 1} {
+		func() {
+			tk.MustExec("rollback")
+			tk.MustExec("set @@tidb_txn_mode='pessimistic'")
+			tk.MustExec(fmt.Sprintf("set @@autocommit=%d", autocommit))
+			tk.MustExec("set @@tidb_snapshot=@a")
+			if autocommit == 1 {
+				origPessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+				config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+				defer func() {
+					config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
+				}()
+			}
+			assert = inactiveRCTxnAssert(se)
+			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "READ-COMMITTED")
+			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+			provider = assert.CheckAndGetProvider(t)
+			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			checkUseSnapshot()
+			assertAfterUseSnapshot.Check(t)
+		}()
+	}
 }
 
 func TestConflictErrorsInRC(t *testing.T) {
@@ -467,7 +472,7 @@ func activeRCTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool) *txnAs
 	}
 }
 
-func inActiveRCTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
+func inactiveRCTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticRCTxnContextProvider]{
 		sctx:         sctx,
 		isolation:    "READ-COMMITTED",
