@@ -75,7 +75,6 @@ type Lightning struct {
 
 	promFactory  promutil.Factory
 	promRegistry promutil.Registry
-	logger       log.Logger
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -112,7 +111,6 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		shutdown:     shutdown,
 		promFactory:  promFactory,
 		promRegistry: promRegistry,
-		logger:       log.L(),
 	}
 }
 
@@ -312,18 +310,10 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	o := &options{
 		promFactory:  l.promFactory,
 		promRegistry: l.promRegistry,
+		logger:       log.L(),
 	}
 	for _, opt := range opts {
 		opt(o)
-	}
-
-	if o.logger != nil {
-		loggerBackup := l.logger
-		// restore the logger to server's logger, after this task is finished.
-		defer func() {
-			l.logger = loggerBackup
-		}()
-		l.logger = log.Logger{Logger: o.logger}
 	}
 
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
@@ -368,7 +358,7 @@ var (
 
 func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
-	l.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
+	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
 
 	utils.LogEnvVariables()
 
@@ -379,7 +369,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}()
 
 	ctx := metric.NewContext(taskCtx, metrics)
-	ctx = log.NewContext(ctx, l.logger)
+	ctx = log.NewContext(ctx, o.logger)
 	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
@@ -469,7 +459,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		return common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
 	}
 
-	loadTask := l.logger.Begin(zap.InfoLevel, "load data source")
+	loadTask := o.logger.Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
 	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, taskCfg, s)
 	loadTask.End(zap.ErrorLevel, err)
@@ -478,13 +468,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}
 	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
 	if err != nil {
-		l.logger.Error("check system requirements failed", zap.Error(err))
+		o.logger.Error("check system requirements failed", zap.Error(err))
 		return common.ErrSystemRequirementNotMet.Wrap(err).GenWithStackByArgs()
 	}
 	// check table schema conflicts
 	err = checkSchemaConflict(taskCfg, mdl.GetDatabases())
 	if err != nil {
-		l.logger.Error("checkpoint schema conflicts with data files", zap.Error(err))
+		o.logger.Error("checkpoint schema conflicts with data files", zap.Error(err))
 		return errors.Trace(err)
 	}
 
@@ -505,7 +495,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
 	if err != nil {
-		l.logger.Error("restore failed", log.ShortError(err))
+		o.logger.Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
 	}
 	defer procedure.Close()
@@ -521,7 +511,7 @@ func (l *Lightning) Stop() {
 	}
 	l.cancelLock.Unlock()
 	if err := l.server.Shutdown(l.ctx); err != nil {
-		l.logger.Warn("failed to shutdown HTTP server", log.ShortError(err))
+		log.L().Warn("failed to shutdown HTTP server", log.ShortError(err))
 	}
 	l.shutdown()
 }

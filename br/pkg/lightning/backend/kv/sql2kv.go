@@ -272,7 +272,7 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 		log.ShortError(err),
 	)
 
-	logger.Error("failed to covert kv value", logutil.RedactAny("origVal", original.GetValue()),
+	logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
 		zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
 		zap.Int("columnID", j+1))
 	return errors.Annotatef(
