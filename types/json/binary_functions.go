@@ -216,6 +216,15 @@ func (bj BinaryJSON) Extract(pathExprList []PathExpression) (ret BinaryJSON, fou
 	}
 	if len(buf) == 0 {
 		found = false
+	} else if len(pathExprList) == 1 && len(buf) == 1 {
+		// If pathExpr contains asterisks, len(elemList) won't be 1
+		// even if len(pathExprList) equals to 1.
+		found = true
+		ret = buf[0]
+		// Fix https://github.com/pingcap/tidb/issues/30352
+		if pathExprList[0].ContainsAnyAsterisk() {
+			ret = buildBinaryArray(buf)
+		}
 	} else {
 		found = true
 		ret = buildBinaryArray(buf)
