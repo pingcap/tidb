@@ -2406,7 +2406,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
 
-	execAst := &ast.ExecuteStmt{ExecID: stmtID}
+	execAst := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
 	if err = s.onTxnManagerStmtStartOrRetry(ctx, execAst); err != nil {
 		return nil, err
 	}
