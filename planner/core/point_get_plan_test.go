@@ -720,40 +720,47 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		"Batch_Point_Get_1 3.00 root table:t, partition:p1,p2, index:b(b) keep order:false, desc:false"))
 
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (id int primary key, name_id int) PARTITION BY LIST(id) (" +
+		"partition p0 values IN (1, 2), " +
+		"partition p1 values IN (3, 4), " +
+		"partition p3 values IN (5))")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustQuery("explain format='brief' select * from t where id in (1, 3)").Check(testkit.Rows(
+		"Batch_Point_Get 2.00 root table:t, partition:p0,p1 handle:[1 3], keep order:false, desc:false"))
+
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t0")
-	tk.MustExec("CREATE TABLE t0 (id int, name int) PARTITION BY LIST COLUMNS(id) (" +
+	tk.MustExec("CREATE TABLE t0 (id int primary key, name_id int) PARTITION BY LIST COLUMNS(id) (" +
 		"partition p0 values IN (1, 2), " +
 		"partition p1 values IN (3, 4), " +
 		"partition p3 values IN (5))")
 	tk.MustExec("insert into t0 values(1, 1), (2, 2), (3, 3), (4, 4)")
 	tk.MustQuery("explain format='brief' select * from t0 where id in (1, 3)").Check(testkit.Rows(
-		"TableReader 20.00 root partition:p0,p1 data:Selection]\n" +
-			"[└─Selection 20.00 cop[tikv]  in(test.t0.id, 1, 3)]\n" +
-			"[  └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo"))
+		"TableReader 2.00 root partition:p0,p1 data:TableRangeScan]\n" +
+			"[└─TableRangeScan 2.00 cop[tikv] table:t0 range:[1,1], [3,3], keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("CREATE TABLE t1 (id int, name int) PARTITION BY LIST COLUMNS(id,name) (" +
+	tk.MustExec("CREATE TABLE t1 (id int, name_id int, unique key(id, name_id)) PARTITION BY LIST COLUMNS(id, name_id) (" +
 		"partition p0 values IN ((1, 1),(2, 2)), " +
 		"partition p1 values IN ((3, 3),(4, 4)), " +
 		"partition p3 values IN ((5, 5)))")
 	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustQuery("explain format='brief' select * from t1 where (id, name) in ((1, 1), (3, 3))").Check(testkit.Rows("" +
-		"TableReader 0.02 root partition:p0,p1 data:Selection]\n" +
-		"[└─Selection 0.02 cop[tikv]  or(and(eq(test.t1.id, 1), eq(test.t1.name, 1)), and(eq(test.t1.id, 3), eq(test.t1.name, 3)))]\n" +
-		"[  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format='brief' select * from t1 where (id, name_id) in ((1, 1), (3, 3))").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan]\n" +
+			"[└─IndexRangeScan 2.00 cop[tikv] table:t1, index:id(id, name_id) range:[1 1,1 1], [3 3,3 3], keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t2")
-	tk.MustExec("CREATE TABLE t2 (id int, name varchar(10)) PARTITION BY LIST COLUMNS(id,name) (" +
+	tk.MustExec("CREATE TABLE t2 (id int, name varchar(10), unique key(id, name)) PARTITION BY LIST COLUMNS(id, name) (" +
 		"partition p0 values IN ((1,'a'),(2,'b')), " +
 		"partition p1 values IN ((3,'c'),(4,'d')), " +
 		"partition p3 values IN ((5,'e')))")
 	tk.MustExec("insert into t2 values(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')")
 	tk.MustQuery("explain format='brief' select * from t2 where (id, name) in ((1, 'a'), (3, 'c'))").Check(testkit.Rows(
-		"TableReader 0.02 root partition:p0,p1 data:Selection]\n" +
-			"[└─Selection 0.02 cop[tikv]  or(and(eq(test.t2.id, 1), eq(test.t2.name, \"a\")), and(eq(test.t2.id, 3), eq(test.t2.name, \"c\")))]\n" +
-			"[  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+		"IndexReader 2.00 root partition:p0,p1 index:IndexRangeScan]\n" +
+			"[└─IndexRangeScan 2.00 cop[tikv] table:t2, index:id(id, name) range:[1 \"a\",1 \"a\"], [3 \"c\",3 \"c\"], keep order:false, stats:pseudo"))
 }
 
 func TestIssue19141(t *testing.T) {
