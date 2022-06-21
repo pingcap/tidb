@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	osuser "os/user"
 	"runtime/debug"
 	"strconv"
@@ -444,6 +445,7 @@ func bootstrap(s Session) {
 		if dom.DDL().OwnerManager().IsOwner() {
 			doDDLWorks(s)
 			doDMLWorks(s)
+			doBootstrapSQLFile(s)
 			logutil.BgLogger().Info("bootstrap successful",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -1969,6 +1971,35 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAnalyzeJobs)
 	// Create advisory_locks table.
 	mustExecute(s, CreateAdvisoryLocks)
+}
+
+// doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
+// It is useful for setting the initial value of GLOBAL variables.
+func doBootstrapSQLFile(s Session) {
+	sqlFile := config.GetGlobalConfig().InitializeSQLFile
+	if sqlFile == "" {
+		return
+	}
+	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
+	b, err := ioutil.ReadFile(sqlFile)
+	if err != nil {
+		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
+	}
+	stmts, err := s.Parse(context.Background(), string(b))
+	if err != nil {
+		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))
+	}
+	for _, stmt := range stmts {
+		rs, err := s.ExecuteStmt(context.Background(), stmt)
+		if err != nil {
+			logutil.BgLogger().Warn("InitializeSQLFile error", zap.Error(err))
+		}
+		if rs != nil {
+			// I don't believe we need to drain the result-set in bootstrap mode
+			// but if required we can do this here in future.
+			rs.Close()
+		}
+	}
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
