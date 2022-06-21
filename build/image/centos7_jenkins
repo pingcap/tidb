@@ -12,7 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM hub.pingcap.net/wangweizhen/base_image:20220621
-RUN git clone  https://github.com/pingcap/tidb.git && cd tidb && make bazel_coverage_test && cd ~ && rm -rf tidb && \
-    go install github.com/hawkingrei/bazel_collect@latest && \
-    go install github.com/bazelbuild/bazel-gazelle/cmd/gazelle@latest
+FROM hub.pingcap.net/jenkins/centos7_jenkins
+
+USER root
+WORKDIR /root
+
+ENV GOLANG_VERSION 1.18.3
+ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-amd64.tar.gz
+ENV GOLANG_DOWNLOAD_SHA256 956f8507b302ab0bb747613695cdae10af99bbd39a90cae522b7c0302cc27245
+ENV GOPATH /go
+ENV GOROOT /usr/local/go
+ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH
+ADD https://github.com/bazelbuild/bazel/releases/download/5.1.1/bazel-5.1.1-linux-x86_64 /usr/bin/bazel
+ADD https://uploader.codecov.io/latest/linux/codecov /usr/bin/codecov
+RUN curl https://setup.ius.io | sh || true && \
+    chmod u+x /usr/bin/bazel && yum update -y && \
+    yum install -y supervisor tree libcurl-devel gettext autoconf python-pip python3-pip patch git wget gcc python autoconf make curl-devel expat-devel gettext-devel openssl-devel zlib-devel perl-CPAN perl-devel && \
+    git clone --depth=1 --branch=v2.36.1 https://github.com/git/git && cd git && yum remove -y git && make configure && ./configure --prefix=/usr/local &&  make -j16 install && cd .. && rm -rf git && \
+    pip3 install s3cmd requests && pip3 install requests && \
+    curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
+	&& echo "$GOLANG_DOWNLOAD_SHA256  golang.tar.gz" | sha256sum -c - \
+	&& tar -C /usr/local -xzf golang.tar.gz \
+	&& rm golang.tar.gz && \
+    mkdir /go && chown jenkins:jenkins /go && \
+    curl -fsSL "http://pingcap-dev.hk.ufileos.com/jenkins/jenkins-slave-docker-sqllogictest.tar.gz" | tar xz -C "/git" \
+        && chown -R jenkins:jenkins /git && \
+    chown jenkins:jenkins /usr/bin/bazel && \
+    chown jenkins:jenkins /usr/bin/codecov && \
+    chmod +x /usr/bin/codecov
+
+USER jenkins
+WORKDIR /home/jenkins
