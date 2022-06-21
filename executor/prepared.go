@@ -338,7 +338,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
-	execStmt := &ast.ExecuteStmt{ExecID: ID}
+	execStmt := &ast.ExecuteStmt{ExecID: ID, BinaryArgs: args}
 	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, false, false, err
 	}

@@ -120,7 +120,10 @@ func (m *txnManager) OnTxnEnd() {
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (m *txnManager) OnStmtStart(ctx context.Context) error {
+func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+	if node != nil {
+		m.stmtNode = node
+	}
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
