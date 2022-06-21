@@ -143,7 +143,7 @@ func TestSerializableInitialize(t *testing.T) {
 	// non-active txn and then active it
 	tk.MustExec("rollback")
 	tk.MustExec("set @@autocommit=0")
-	assert = inActiveSerializableAssert(se)
+	assert = inactiveSerializableAssert(se)
 	assertAfterActive := activeSerializableAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider := assert.CheckAndGetProvider(t)
@@ -156,7 +156,7 @@ func TestSerializableInitialize(t *testing.T) {
 
 	// Case Pessimistic Autocommit
 	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
-	assert = inActiveSerializableAssert(se)
+	assert = inactiveSerializableAssert(se)
 	assertAfterActive = activeSerializableAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
@@ -232,23 +232,29 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 	checkUseTxn()
 
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
-	tk.MustExec("rollback")
-	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
-	tk.MustExec("set @@autocommit=0")
-	assert = inActiveSerializableAssert(se)
-	assertAfterActive := activeSerializableAssert(t, se, true)
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-	tk.MustExec("set @@tidb_snapshot=@a")
-	checkUseSnapshot()
-	txn, err = se.Txn(false)
-	require.NoError(t, err)
-	require.False(t, txn.Valid())
-	tk.MustExec("set @@tidb_snapshot=''")
-	checkUseTxn()
-	assertAfterActive.Check(t)
-	tk.MustExec("rollback")
+	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
+	for _, autocommit := range []int{0, 1} {
+		func() {
+			tk.MustExec("rollback")
+			tk.MustExec("set @@tidb_txn_mode='pessimistic'")
+			tk.MustExec(fmt.Sprintf("set @@autocommit=%d", autocommit))
+			tk.MustExec("set @@tidb_snapshot=@a")
+			if autocommit == 1 {
+				origPessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+				config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+				defer func() {
+					config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
+				}()
+			}
+			assert = inactiveSerializableAssert(se)
+			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "SERIALIZABLE")
+			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+			provider = assert.CheckAndGetProvider(t)
+			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			checkUseSnapshot()
+			assertAfterUseSnapshot.Check(t)
+		}()
+	}
 }
 
 func activeSerializableAssert(t *testing.T, sctx sessionctx.Context,
@@ -263,7 +269,7 @@ func activeSerializableAssert(t *testing.T, sctx sessionctx.Context,
 	}
 }
 
-func inActiveSerializableAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticSerializableTxnContextProvider] {
+func inactiveSerializableAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticSerializableTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticSerializableTxnContextProvider]{
 		sctx:         sctx,
 		isolation:    "SERIALIZABLE",

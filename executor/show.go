@@ -820,6 +820,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
+				if v.IsNoop && !variable.EnableNoopVariables.Load() {
+					continue
+				}
 				if fieldFilter != "" && v.Name != fieldFilter {
 					continue
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
@@ -842,6 +845,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
+		if v.IsNoop && !variable.EnableNoopVariables.Load() {
+			continue
+		}
 		if fieldFilter != "" && v.Name != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {

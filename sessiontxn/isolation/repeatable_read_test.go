@@ -311,23 +311,28 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 	checkUseTxn()
 
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
-	tk.MustExec("rollback")
-	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
-	tk.MustExec("set @@autocommit=0")
-	assert = inactivePessimisticRRAssert(se)
-	assertAfterActive := activePessimisticRRAssert(t, se, true)
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-	tk.MustExec("set @@tidb_snapshot=@a")
-	checkUseSnapshot()
-	txn, err = se.Txn(false)
-	require.NoError(t, err)
-	require.False(t, txn.Valid())
-	tk.MustExec("set @@tidb_snapshot=''")
-	checkUseTxn()
-	assertAfterActive.Check(t)
-	tk.MustExec("rollback")
+	for _, autocommit := range []int{0, 1} {
+		func() {
+			tk.MustExec("rollback")
+			tk.MustExec("set @@tidb_txn_mode='pessimistic'")
+			tk.MustExec(fmt.Sprintf("set @@autocommit=%d", autocommit))
+			tk.MustExec("set @@tidb_snapshot=@a")
+			if autocommit == 1 {
+				origPessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+				config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+				defer func() {
+					config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
+				}()
+			}
+			assert = inactivePessimisticRRAssert(se)
+			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "REPEATABLE-READ")
+			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+			provider = assert.CheckAndGetProvider(t)
+			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			checkUseSnapshot()
+			assertAfterUseSnapshot.Check(t)
+		}()
+	}
 }
 
 func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {

@@ -69,7 +69,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	}
 
 	var txn kv.Transaction
-	if txn, err = p.activeTxn(); err != nil {
+	if txn, err = p.activateTxn(); err != nil {
 		return 0, err
 	}
 

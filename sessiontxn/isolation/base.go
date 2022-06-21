@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -27,13 +26,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
-	"github.com/pingcap/tidb/table/temptable"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
 // It provides some common functions below:
 //   - Provides a default `OnInitialize` method to initialize its inner state.
-//   - Provides some methods like `activeTxn` and `prepareTxn` to manage the inner transaction.
+//   - Provides some methods like `activateTxn` and `prepareTxn` to manage the inner transaction.
 //   - Provides default methods `GetTxnInfoSchema`, `GetStmtReadTS` and `GetStmtForUpdateTS` and return the snapshot information schema or ts when `tidb_snapshot` is set.
 //   - Provides other default methods like `Advise`, `OnStmtStart`, `OnStmtRetry` and `OnStmtErrorForNextAction`
 // The subclass can set some inner property of `baseTxnContextProvider` when it is constructed.
@@ -61,16 +60,20 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.New("ts functions should not be nil")
 	}
 
-	activeNow := false
+	sessVars := p.sctx.GetSessionVars()
+	activeNow := true
 	switch tp {
-	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
-		shouldReuseTxn := tp == sessiontxn.EnterNewTxnWithBeginStmt && sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx)
-		if !shouldReuseTxn {
+	case sessiontxn.EnterNewTxnDefault:
+		if err = p.sctx.NewTxn(ctx); err != nil {
+			return err
+		}
+	case sessiontxn.EnterNewTxnWithBeginStmt:
+		if !sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx) {
 			if err = p.sctx.NewTxn(ctx); err != nil {
 				return err
 			}
 		}
-		activeNow = true
+		sessVars.SetInTxn(true)
 	case sessiontxn.EnterNewTxnBeforeStmt:
 		activeNow = false
 	default:
@@ -78,8 +81,10 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 
 	p.ctx = ctx
-	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, domain.GetDomain(p.sctx).InfoSchema())
-	sessVars := p.sctx.GetSessionVars()
+	// For normal `sessionctx.Context` the `GetDomainInfoSchema` should always return a non-nil value with type `infoschema.InfoSchema`
+	// However for some test cases we are using `mock.Context` which will return nil for this method,
+	// so we use `p.infoSchema, _ = ...` to avoid panic in test cases
+	p.infoSchema, _ = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
@@ -92,8 +97,14 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		p.onInitializeTxnCtx(txnCtx)
 	}
 	sessVars.TxnCtx = txnCtx
+
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTSFuture() != nil
 	if activeNow {
-		_, err = p.activeTxn()
+		_, err = p.activateTxn()
 	}
 
 	return err
@@ -107,6 +118,10 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
+	if _, err := p.activateTxn(); err != nil {
+		return 0, err
+	}
+
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return snapshotTS, nil
 	}
@@ -114,6 +129,10 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 }
 
 func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
+	if _, err := p.activateTxn(); err != nil {
+		return 0, err
+	}
+
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return snapshotTS, nil
 	}
@@ -141,14 +160,14 @@ func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtE
 }
 
 func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
-	txn, err := p.activeTxn()
+	txn, err := p.activateTxn()
 	if err != nil {
 		return 0, err
 	}
 	return txn.StartTS(), nil
 }
 
-func (p *baseTxnContextProvider) activeTxn() (kv.Transaction, error) {
+func (p *baseTxnContextProvider) activateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
@@ -182,7 +201,33 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 		return nil
 	}
 
-	p.sctx.PrepareTSFuture(p.ctx)
+	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		return p.prepareTxnWithTS(snapshotTS)
+	}
+
+	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	return p.replaceTxnTsFuture(future)
+}
+
+func (p *baseTxnContextProvider) prepareTxnWithTS(ts uint64) error {
+	return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(ts))
+}
+
+func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+
+	if txn.Valid() {
+		return nil
+	}
+
+	txnScope := p.sctx.GetSessionVars().TxnCtx.TxnScope
+	if err = p.sctx.PrepareTSFuture(p.ctx, future, txnScope); err != nil {
+		return err
+	}
+
 	p.isTxnPrepared = true
 	return nil
 }
