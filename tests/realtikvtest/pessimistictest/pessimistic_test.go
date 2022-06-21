@@ -1344,7 +1344,7 @@ func TestUnionAllPointGetLockBlockInsert(t *testing.T) {
 		sql         string
 		shouldBlock bool
 
-		concurrentSql string
+		concurrentSQL string
 	}
 
 	cases := []test{
@@ -1373,12 +1373,12 @@ func TestUnionAllPointGetLockBlockInsert(t *testing.T) {
 		tk.MustExec(c.sql)
 
 		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
-			wg.Add(1)
 
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
-			tk2.MustExec(c.concurrentSql)
+			tk2.MustExec(c.concurrentSQL)
 
 			ch <- "done"
 			wg.Done()

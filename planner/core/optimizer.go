@@ -547,9 +547,19 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 					})
 				}
 			case *PhysicalLock:
+				// There may be multiple PhysicalLock nodes in a single chain.
+				// In this case, we only eliminate the last one.
+				if physicalLock != nil {
+					delete(physicalLockMap, physicalLock)
+				}
 				physicalLockMap[x] = unionScan
 				return x, nil
 			case *PhysicalUnionScan:
+				// There may be multiple PhysicalUnionScan nodes in a single chain.
+				// In this case, we only eliminate the last one.
+				if unionScan != nil {
+					delete(unionScanSet, unionScan)
+				}
 				unionScanSet[x] = nil
 				return nil, x
 			}
@@ -596,11 +606,11 @@ func iteratePhysicalPlan(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *
 	f func(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan) (*PhysicalLock, *PhysicalUnionScan)) {
 	lock, scan := f(p, physicalLock, unionScan)
 
-	if physicalLock == nil {
+	if lock != nil {
 		physicalLock = lock
 	}
 
-	if unionScan == nil {
+	if scan != nil {
 		unionScan = scan
 	}
 
