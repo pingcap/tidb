@@ -127,15 +127,12 @@ MemTableScan	10000.00	root	table:COLUMNS	table_schema:["test"], table_name:["t1"
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
-└─Apply	10000.00	root		CARTESIAN left outer join
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Limit(Probe)	1.00	root		offset:0, count:1
-    └─Projection	1.00	root		test.t2.c1, test.t2.c2
-      └─IndexLookUp	1.00	root		
-        ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-        │ └─IndexRangeScan	1.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true, stats:pseudo
-        └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─HashJoin 10000.00 root  left outer join, equal:[eq(test.t1.c1, test.t2.c1)]
+  ├─TableReader(Build) 2.00 root  data:Selection
+  │ └─Selection 2.00 cop[tikv]  not(isnull(test.t2.c1))
+  │   └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false, stats:pseudo
+  └─TableReader(Probe) 10000.00 root data:TableFullScan
+    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
