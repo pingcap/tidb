@@ -626,6 +626,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		duplicateDB:        local.duplicateDB,
 		errorMgr:           local.errorMgr,
 		keyAdapter:         local.keyAdapter,
+		logger:             log.FromContext(ctx),
 	})
 	engine := e.(*Engine)
 	engine.db = db
