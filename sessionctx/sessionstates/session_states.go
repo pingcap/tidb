@@ -24,4 +24,5 @@ import (
 type SessionStates struct {
 	UserVars     map[string]*types.Datum      `json:"user-var-values,omitempty"`
 	UserVarTypes map[string]*ptypes.FieldType `json:"user-var-types,omitempty"`
+	SystemVars   map[string]string            `json:"sys-vars,omitempty"`
 }
