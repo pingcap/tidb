@@ -74,11 +74,12 @@ start_http_server
 ready_for_import_engine
 
 length=$(run_wget "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
-if [ "$length" -ne 1 ]; then
+if [ "$length" != "1" ]; then
   echo "region-label key-range rules should be 1, but got $length" >&2
   exit 1
 fi
 
+wget --help
 run_wget --method=DELETE "https://localhost:${port}/fail/github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine"
 wait "$shpid"
 
