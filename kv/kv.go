@@ -184,6 +184,7 @@ type LockCtx = tikvstore.LockCtx
 type Transaction interface {
 	RetrieverMutator
 	AssertionProto
+	AggressiveLockingController
 	// Size returns sum of keys and values length.
 	Size() int
 	// Len returns the number of entries in the DB.
@@ -243,6 +244,14 @@ type AssertionProto interface {
 	// TODO: Use a special type instead of `FlagsOp`. Otherwise there's risk that the assertion flag is incorrectly used
 	// in other places like `MemBuffer.SetWithFlags`.
 	SetAssertion(key []byte, assertion ...FlagsOp) error
+}
+
+type AggressiveLockingController interface {
+	StartAggressiveLocking()
+	RetryAggressiveLocking(ctx context.Context)
+	CancelAggressiveLocking(ctx context.Context)
+	DoneAggressiveLocking(ctx context.Context)
+	IsInAggressiveLockingMode() bool
 }
 
 // Client is used to send request to KV layer.

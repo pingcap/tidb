@@ -1463,6 +1463,10 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionAggressiveLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionAggressiveLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PessimisticTransactionAggressiveLocking = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

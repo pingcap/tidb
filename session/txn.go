@@ -60,6 +60,8 @@ type LazyTxn struct {
 	mutations     map[int64]*binlog.TableMutation
 	writeSLI      sli.TxnWriteThroughputSLI
 
+	enterAggressiveLockingOnValid bool
+
 	// TxnInfo is added for the lock view feature, the data is frequent modified but
 	// rarely read (just in query select * from information_schema.tidb_trx).
 	// The data in this session would be query by other sessions, so Mutex is necessary.
@@ -172,7 +174,10 @@ func (txn *LazyTxn) String() string {
 		return txn.Transaction.String()
 	}
 	if txn.txnFuture != nil {
-		return "txnFuture"
+		res := "txnFuture"
+		if txn.enterAggressiveLockingOnValid {
+			res += " (pending aggressive locking)"
+		}
 	}
 	return "invalid transaction"
 }
@@ -247,6 +252,11 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 	txn.Transaction = t
 	txn.initStmtBuf()
 
+	if txn.enterAggressiveLockingOnValid {
+		txn.enterAggressiveLockingOnValid = false
+		txn.Transaction.StartAggressiveLocking()
+	}
+
 	// The txnInfo may already recorded the first statement (usually "begin") when it's pending, so keep them.
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
@@ -268,6 +278,8 @@ func (txn *LazyTxn) changeToInvalid() {
 	txn.stagingHandle = kv.InvalidStagingHandle
 	txn.Transaction = nil
 	txn.txnFuture = nil
+
+	txn.enterAggressiveLockingOnValid = false
 
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
@@ -376,7 +388,7 @@ func (txn *LazyTxn) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
-// LockKeys Wrap the inner transaction's `LockKeys` to record the status
+// LockKeys wraps the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	failpoint.Inject("beforeLockKeys", func() {})
 	t := time.Now()
@@ -398,6 +410,67 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
 	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
 	return err
+}
+
+// StartAggressiveLocking wraps the inner transaction to support using aggressive locking with lazy initialization.
+func (txn *LazyTxn) StartAggressiveLocking() {
+	if txn.Valid() {
+		txn.Transaction.StartAggressiveLocking()
+	} else if txn.pending() {
+		txn.enterAggressiveLockingOnValid = true
+	} else {
+		panic("trying to start aggressive locking on a transaction in invalid state")
+	}
+}
+
+// RetryAggressiveLocking wraps the inner transaction to support using aggressive locking with lazy initialization.
+func (txn *LazyTxn) RetryAggressiveLocking(ctx context.Context) {
+	if txn.Valid() {
+		txn.Transaction.RetryAggressiveLocking(ctx)
+	} else if !txn.pending() {
+		panic("trying to retry aggressive locking on a transaction in invalid state")
+	}
+}
+
+// CancelAggressiveLocking wraps the inner transaction to support using aggressive locking with lazy initialization.
+func (txn *LazyTxn) CancelAggressiveLocking(ctx context.Context) {
+	if txn.Valid() {
+		txn.Transaction.CancelAggressiveLocking(ctx)
+	} else if txn.pending() {
+		if txn.enterAggressiveLockingOnValid {
+			txn.enterAggressiveLockingOnValid = false
+		} else {
+			panic("trying to cancel aggressive locking when it's not started")
+		}
+	} else {
+		panic("trying to cancel aggressive locking on a transaction in invalid state")
+	}
+}
+
+// DoneAggressiveLocking wraps the inner transaction to support using aggressive locking with lazy initialization.
+func (txn *LazyTxn) DoneAggressiveLocking(ctx context.Context) {
+	if txn.Valid() {
+		txn.Transaction.DoneAggressiveLocking(ctx)
+	} else if txn.pending() {
+		if txn.enterAggressiveLockingOnValid {
+			txn.enterAggressiveLockingOnValid = false
+		} else {
+			panic("trying to finish aggressive locking when it's not started")
+		}
+	} else {
+		panic("trying to cancel aggressive locking on a transaction in invalid state")
+	}
+}
+
+// IsInAggressiveLockingMode wraps the inner transaction to support using aggressive locking with lazy initialization.
+func (txn *LazyTxn) IsInAggressiveLockingMode() bool {
+	if txn.Valid() {
+		return txn.Transaction.IsInAggressiveLockingMode()
+	}
+	if txn.pending() {
+		return txn.enterAggressiveLockingOnValid
+	}
+	return false
 }
 
 func (txn *LazyTxn) reset() {
@@ -534,10 +607,14 @@ func (s *session) HasDirtyContent(tid int64) bool {
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() {
+func (s *session) StmtCommit(ctx context.Context) {
 	defer func() {
 		s.txn.cleanup()
 	}()
+
+	if s.txn.IsInAggressiveLockingMode() {
+		s.txn.DoneAggressiveLocking(ctx)
+	}
 
 	st := &s.txn
 	st.flushStmtBuf()
@@ -550,7 +627,14 @@ func (s *session) StmtCommit() {
 }
 
 // StmtRollback implements the sessionctx.Context interface.
-func (s *session) StmtRollback() {
+func (s *session) StmtRollback(ctx context.Context, forPessimisticRetry bool) {
+	if s.txn.IsInAggressiveLockingMode() {
+		if forPessimisticRetry {
+			s.txn.RetryAggressiveLocking(ctx)
+		} else {
+			s.txn.CancelAggressiveLocking(ctx)
+		}
+	}
 	s.txn.cleanup()
 }
 

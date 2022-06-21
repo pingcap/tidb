@@ -592,6 +592,14 @@ func (c *chunkRowRecordSet) Close() error {
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
+	txn, err := a.Ctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+	if a.Ctx.GetSessionVars().PessimisticTransactionAggressiveLocking {
+		logutil.Logger(ctx).Info("start aggressive locking", zap.Stringer("txn", txn), zap.String("sql", a.OriginText()), zap.Stack("stackTrace"))
+		txn.StartAggressiveLocking()
+	}
 	for {
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
 		e, err = a.handlePessimisticLockError(ctx, err)
@@ -675,6 +683,10 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
+	if sctx.GetSessionVars().PessimisticTransactionAggressiveLocking {
+		logutil.Logger(ctx).Info("start aggressive locking", zap.Stringer("txn", txn), zap.String("sql", a.OriginText()), zap.Stack("stackTrace"))
+		txn.StartAggressiveLocking()
+	}
 	for {
 		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
@@ -765,7 +777,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, err
 	}
 	txnCtx := sessVars.TxnCtx
-	var newForUpdateTS uint64
 	if deadlock, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
 		if !deadlock.IsRetryable {
 			return nil, ErrDeadlock
@@ -808,7 +819,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	}
 	a.retryCount++
 	a.retryStartTime = time.Now()
-	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
+	err = UpdateForUpdateTS(a.Ctx, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -817,7 +828,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, err
 	}
 	// Rollback the statement change before retry it.
-	a.Ctx.StmtRollback()
+	a.Ctx.StmtRollback(ctx, true)
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 

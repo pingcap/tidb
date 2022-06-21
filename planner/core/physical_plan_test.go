@@ -372,7 +372,7 @@ func TestDAGPlanBuilderUnionScan(t *testing.T) {
 		require.NoError(t, err)
 		err = txn.Set(kv.Key("AAA"), []byte("BBB"))
 		require.NoError(t, err)
-		tk.Session().StmtCommit()
+		tk.Session().StmtCommit(context.Background())
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {

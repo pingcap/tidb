@@ -1037,6 +1037,10 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// PessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// is enabled.
+	PessimisticTransactionAggressiveLocking bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
