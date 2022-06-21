@@ -363,8 +363,9 @@ type local struct {
 	errorMgr            *errormanager.ErrorManager
 	importClientFactory ImportClientFactory
 
-	bufferPool *membuf.Pool
-	metrics    *metric.Metrics
+	bufferPool   *membuf.Pool
+	metrics      *metric.Metrics
+	writeLimiter StoreWriteLimiter
 
 	kvEncBuilder     backend.KVEncodingBuilder
 	targetInfoGetter backend.TargetInfoGetter
@@ -442,6 +443,12 @@ func NewLocalBackend(
 	if duplicateDetection {
 		keyAdapter = dupDetectKeyAdapter{}
 	}
+	var writeLimiter StoreWriteLimiter
+	if cfg.TikvImporter.StoreWriteBWLimit > 0 {
+		writeLimiter = newStoreWriteLimiter(int(cfg.TikvImporter.StoreWriteBWLimit))
+	} else {
+		writeLimiter = noopStoreWriteLimiter{}
+	}
 	local := &local{
 		engines:  sync.Map{},
 		pdCtl:    pdCtl,
@@ -468,6 +475,7 @@ func NewLocalBackend(
 		errorMgr:                errorMgr,
 		importClientFactory:     importClientFactory,
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
+		writeLimiter:            writeLimiter,
 		kvEncBuilder:            NewKVEncodingBuilder(ctx),
 		targetInfoGetter:        NewTargetInfoGetter(tls, g, cfg.TiDB.PdAddr),
 	}
@@ -920,6 +928,7 @@ func (local *local) WriteToTiKV(
 
 	leaderID := region.Leader.GetId()
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
+	storeIDs := make([]uint64, 0, len(region.Region.GetPeers()))
 	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
 	for _, peer := range region.Region.GetPeers() {
 		cli, err := local.getImportClient(ctx, peer.StoreId)
@@ -948,6 +957,7 @@ func (local *local) WriteToTiKV(
 		}
 		clients = append(clients, wstream)
 		requests = append(requests, req)
+		storeIDs = append(storeIDs, peer.StoreId)
 	}
 
 	bytesBuf := local.bufferPool.NewBuffer()
@@ -955,43 +965,57 @@ func (local *local) WriteToTiKV(
 	pairs := make([]*sst.Pair, 0, local.batchWriteKVPairs)
 	count := 0
 	size := int64(0)
+	totalSize := int64(0)
 	totalCount := int64(0)
-	firstLoop := true
 	// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
 	// because the range-properties is not 100% accurate
 	regionMaxSize := regionSplitSize
 	if regionSplitSize <= int64(config.SplitRegionSize) {
 		regionMaxSize = regionSplitSize * 4 / 3
 	}
+	// Set a lower flush limit to make the speed of write more smooth.
+	flushLimit := int64(local.writeLimiter.Limit() / 10)
+
+	flushKVs := func() error {
+		for i := range clients {
+			if err := local.writeLimiter.WaitN(ctx, storeIDs[i], int(size)); err != nil {
+				return errors.Trace(err)
+			}
+			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+			if err := clients[i].Send(requests[i]); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
 
 	for iter.First(); iter.Valid(); iter.Next() {
-		size += int64(len(iter.Key()) + len(iter.Value()))
+		kvSize := int64(len(iter.Key()) + len(iter.Value()))
 		// here we reuse the `*sst.Pair`s to optimize object allocation
-		if firstLoop {
+		if count < len(pairs) {
+			pairs[count].Key = bytesBuf.AddBytes(iter.Key())
+			pairs[count].Value = bytesBuf.AddBytes(iter.Value())
+		} else {
 			pair := &sst.Pair{
 				Key:   bytesBuf.AddBytes(iter.Key()),
 				Value: bytesBuf.AddBytes(iter.Value()),
 			}
 			pairs = append(pairs, pair)
-		} else {
-			pairs[count].Key = bytesBuf.AddBytes(iter.Key())
-			pairs[count].Value = bytesBuf.AddBytes(iter.Value())
 		}
 		count++
 		totalCount++
+		size += kvSize
+		totalSize += kvSize
 
-		if count >= local.batchWriteKVPairs {
-			for i := range clients {
-				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-				if err := clients[i].Send(requests[i]); err != nil {
-					return nil, Range{}, stats, errors.Trace(err)
-				}
+		if count >= local.batchWriteKVPairs || size >= flushLimit {
+			if err := flushKVs(); err != nil {
+				return nil, Range{}, stats, err
 			}
 			count = 0
+			size = 0
 			bytesBuf.Reset()
-			firstLoop = false
 		}
-		if size >= regionMaxSize || totalCount >= regionSplitKeys {
+		if totalSize >= regionMaxSize || totalCount >= regionSplitKeys {
 			break
 		}
 	}
@@ -1001,12 +1025,12 @@ func (local *local) WriteToTiKV(
 	}
 
 	if count > 0 {
-		for i := range clients {
-			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-			if err := clients[i].Send(requests[i]); err != nil {
-				return nil, Range{}, stats, errors.Trace(err)
-			}
+		if err := flushKVs(); err != nil {
+			return nil, Range{}, stats, err
 		}
+		count = 0
+		size = 0
+		bytesBuf.Reset()
 	}
 
 	var leaderPeerMetas []*sst.SSTMeta
@@ -1049,7 +1073,7 @@ func (local *local) WriteToTiKV(
 			logutil.Region(region.Region), logutil.Leader(region.Leader))
 	}
 	stats.count = totalCount
-	stats.totalBytes = size
+	stats.totalBytes = totalSize
 
 	return leaderPeerMetas, finishedRange, stats, nil
 }

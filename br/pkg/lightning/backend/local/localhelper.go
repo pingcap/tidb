@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"math"
 	"regexp"
 	"runtime"
 	"sort"
@@ -40,6 +41,7 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -591,4 +593,76 @@ func intersectRange(region *metapb.Region, rg Range) Range {
 	}
 
 	return Range{start: startKey, end: endKey}
+}
+
+type StoreWriteLimiter interface {
+	WaitN(ctx context.Context, storeID uint64, n int) error
+	Limit() int
+}
+
+type storeWriteLimiter struct {
+	rwm      sync.RWMutex
+	limiters map[uint64]*rate.Limiter
+	limit    int
+	burst    int
+}
+
+func newStoreWriteLimiter(limit int) *storeWriteLimiter {
+	var burst int
+	// Allow burst of at most 20% of the limit.
+	if limit <= math.MaxInt-limit/5 {
+		burst = limit + limit/5
+	} else {
+		// If overflowed, set burst to math.MaxInt.
+		burst = math.MaxInt
+	}
+	return &storeWriteLimiter{
+		limiters: make(map[uint64]*rate.Limiter),
+		limit:    limit,
+		burst:    burst,
+	}
+}
+
+func (s *storeWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) error {
+	limiter := s.getLimiter(storeID)
+	// The original WaitN doesn't allow n > burst,
+	// so we call WaitN with burst multiple times.
+	for n > limiter.Burst() {
+		if err := limiter.WaitN(ctx, limiter.Burst()); err != nil {
+			return err
+		}
+		n -= limiter.Burst()
+	}
+	return limiter.WaitN(ctx, n)
+}
+
+func (s *storeWriteLimiter) Limit() int {
+	return s.limit
+}
+
+func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
+	s.rwm.RLock()
+	limiter, ok := s.limiters[storeID]
+	s.rwm.RUnlock()
+	if ok {
+		return limiter
+	}
+	s.rwm.Lock()
+	defer s.rwm.Unlock()
+	limiter, ok = s.limiters[storeID]
+	if !ok {
+		limiter = rate.NewLimiter(rate.Limit(s.limit), s.burst)
+		s.limiters[storeID] = limiter
+	}
+	return limiter
+}
+
+type noopStoreWriteLimiter struct{}
+
+func (noopStoreWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) error {
+	return nil
+}
+
+func (noopStoreWriteLimiter) Limit() int {
+	return math.MaxInt
 }
