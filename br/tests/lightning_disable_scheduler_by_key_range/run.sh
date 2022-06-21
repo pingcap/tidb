@@ -73,6 +73,8 @@ ensure_lightning_is_started
 start_http_server
 ready_for_import_engine
 
+run_wget "https://${PD_ADDR}/pd/api/v1/config/cluster-version"
+
 length=$(run_wget "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
 if [ "$length" != "1" ]; then
   echo "region-label key-range rules should be 1, but got $length" >&2
