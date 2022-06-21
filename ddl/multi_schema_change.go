@@ -96,7 +96,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, err
 		}
 
-		// Save tblInfo and subJobs for rollback, because some DDLs update the transaction aggressively.
+		// Save table info and sub-jobs for rolling back.
 		tblInfo, _ := t.GetTable(job.SchemaID, job.TableID)
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
@@ -113,6 +113,8 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
 				}
 				handleRevertibleException(job, sub, proxyJob.Error)
+				// The TableInfo and sub-jobs should be restored
+				// because some schema changes update the transaction aggressively.
 				return updateVersionAndTableInfo(d, t, job, tblInfo, true)
 			}
 		}
@@ -143,10 +145,6 @@ func handleRevertibleException(job *model.Job, subJob *model.SubJob, err *terror
 	// Flush the cancelling state and cancelled state to sub-jobs.
 	for _, sub := range job.MultiSchemaInfo.SubJobs {
 		switch sub.State {
-		case model.JobStateCancelled:
-			if !sub.Revertible {
-				sub.State = model.JobStateCancelling
-			}
 		case model.JobStateRunning:
 			sub.State = model.JobStateCancelling
 		case model.JobStateNone, model.JobStateQueueing:
