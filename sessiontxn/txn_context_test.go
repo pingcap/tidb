@@ -715,7 +715,6 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 	store, _, deferFunc := setupTxnContextTest(t)
 	defer deferFunc()
 
-	require.True(t, taskstop.IsGlobalSessionStopFailPointEnabled(), "should enable global session stop failPoint")
 	queries := []string{
 		"select * from t1 for update",
 		"select * from t1 where id=1 for update",
@@ -737,8 +736,8 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 				t.Run(fmt.Sprintf("%s,%s,autocommit=%v", isolation, query, autocommit), func(t *testing.T) {
 					tk.MustExec("truncate table t1")
 					tk.MustExec("insert into t1 values(1, 10)")
-					tk2 := testkit.NewSteppedTasksRunner(t).CreateSteppedTestKit("s2", store)
-					defer tk2.Close()
+					tk2 := testkit.NewSteppedTestKit(t, store)
+					defer tk2.MustExec("rollback")
 
 					tk2.MustExec("use test")
 					tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
@@ -750,39 +749,38 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 						tk2.MustExec("set autocommit=0")
 					}
 
-					tk2.EnableSessionStopPoint(
+					tk2.SetBreakPoints([]string{
 						sessiontxn.StopPointBeforeExecutorFirstRun,
 						sessiontxn.StopPointOnStmtRetryAfterLockError,
-					)
+					})
 
-					var task *testkit.SteppedCommandTask
 					var isSelect, isUpdate bool
 					switch {
 					case strings.HasPrefix(query, "select"):
 						isSelect = true
-						task = tk2.SteppedMustQuery(query)
+						tk2.SteppedMustQuery(query)
 					case strings.HasPrefix(query, "update"):
 						isUpdate = true
-						task = tk2.SteppedMustExec(query)
+						tk2.SteppedMustExec(query)
 					default:
 						require.FailNowf(t, "invalid query: ", query)
 					}
 
 					// Pause the session before the executor first run and then update the record in another session
-					task.ExpectStoppedAt(sessiontxn.StopPointBeforeExecutorFirstRun)
+					tk2.ExpectStopOnBreakPoint(sessiontxn.StopPointBeforeExecutorFirstRun)
 					tk.MustExec("update t1 set v=v+1")
 
 					// Session continues, it should get a lock error and retry, we pause the session before the executor's next run
 					// and then update the record in another session again.
-					task.Continue().ExpectStoppedAt(sessiontxn.StopPointOnStmtRetryAfterLockError)
+					tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.StopPointOnStmtRetryAfterLockError)
 					tk.MustExec("update t1 set v=v+1")
 
 					// Because the record is updated by another session again, when this session continues, it will get a lock error again.
-					task.Continue().ExpectStoppedAt(sessiontxn.StopPointOnStmtRetryAfterLockError)
-					task.Continue().ExpectDone()
+					tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.StopPointOnStmtRetryAfterLockError)
+					tk2.Continue().ExpectIdle()
 					switch {
 					case isSelect:
-						task.GetQueryResult().Check(testkit.Rows("1 12"))
+						tk2.GetQueryResult().Check(testkit.Rows("1 12"))
 					case isUpdate:
 						tk2.MustExec("commit")
 						tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))

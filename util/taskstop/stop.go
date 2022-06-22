@@ -15,94 +15,21 @@
 package taskstop
 
 import (
-	"time"
-
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-// StartPointName is the stop point for start
-var StartPointName = "START"
-
-// DonePointName is the stop point for done
-var DonePointName = "DONE"
-
-// StopPoint is stop point object
-type StopPoint struct {
-	name string
-}
-
-// NewStopPoint creates a new stop point
-func NewStopPoint(name string) *StopPoint {
-	return &StopPoint{
-		name: name,
-	}
-}
-
-// Name returns the name of the stop point
-func (p *StopPoint) Name() string {
-	return p.name
-}
-
-// Chan is used to communicate with between stepped task and other thread
-type Chan struct {
-	ch1 chan *StopPoint
-	ch2 chan any
-}
-
-// NewChan creates a new Chan
-func NewChan() *Chan {
-	return &Chan{
-		ch1: make(chan *StopPoint),
-		ch2: make(chan any),
-	}
-}
-
-// SignalOnStopAt writes the chan to indicate that task now stopped at a point
-func (ch *Chan) SignalOnStopAt(stopName string) error {
-	select {
-	case ch.ch1 <- NewStopPoint(stopName):
-		return nil
-	case <-time.After(time.Second * 10):
-		return errors.New("Cannot signal stop at")
-	}
-
-}
-
-// WaitOnStop returns a chan to wait on stop signal
-func (ch *Chan) WaitOnStop() chan *StopPoint {
-	return ch.ch1
-}
-
-// SignalStep writes the chan to tell the task to continue
-func (ch *Chan) SignalStep(val any) error {
-	select {
-	case ch.ch2 <- val:
-		return nil
-	case <-time.After(time.Second * 10):
-		return errors.New("Cannot signal step")
-	}
-}
-
-// WaitStepSignal returns a chan to wait step signal
-func (ch *Chan) WaitStepSignal() chan any {
-	return ch.ch2
-}
-
 type sessionStopInjection struct {
-	ch             *Chan
-	stopEveryPoint bool
-	stopList       []string
+	fn          func(string)
+	breakPoints []string
 }
 
 // EnableSessionStopPoint enables the stop points for a session
-func EnableSessionStopPoint(sctx sessionctx.Context, c *Chan, stopList ...string) {
+func EnableSessionStopPoint(sctx sessionctx.Context, fn func(string), breakPoints ...string) {
 	sctx.SetValue(stringutil.StringerStr("sessionStopInjection"), &sessionStopInjection{
-		ch:             c,
-		stopEveryPoint: len(stopList) == 0,
-		stopList:       stopList,
+		fn:          fn,
+		breakPoints: breakPoints,
 	})
 }
 
@@ -112,26 +39,15 @@ func DisableSessionStopPoint(sctx sessionctx.Context) {
 }
 
 // InjectSessionStopPoint injects a stop point
-func InjectSessionStopPoint(sctx sessionctx.Context, stopName string) {
+func InjectSessionStopPoint(sctx sessionctx.Context, breakPoint string) {
 	failpoint.Inject("sessionStop", func() {
 		if inject, ok := sctx.Value(stringutil.StringerStr("sessionStopInjection")).(*sessionStopInjection); ok {
-			if !inject.stopEveryPoint {
-				shouldStop := false
-				for _, stop := range inject.stopList {
-					if stop == stopName {
-						shouldStop = true
-					}
-				}
-
-				if !shouldStop {
-					return
+			for _, p := range inject.breakPoints {
+				if p == breakPoint {
+					inject.fn(breakPoint)
+					break
 				}
 			}
-
-			if err := inject.ch.SignalOnStopAt(stopName); err != nil {
-				panic(err)
-			}
-			<-inject.ch.WaitStepSignal()
 		}
 	})
 }
