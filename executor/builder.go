@@ -2222,14 +2222,6 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
-		startTS = uint64(val.(int))
-	})
 
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
@@ -2240,9 +2232,8 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts:     opts,
-		job:      job,
-		snapshot: startTS,
+		opts: opts,
+		job:  job,
 	}
 	e := &AnalyzeIndexExec{
 		baseAnalyzeExec: base,
@@ -2343,14 +2334,6 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
-		startTS = uint64(val.(int))
-	})
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
 	if err != nil {
@@ -2401,9 +2384,8 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts:     opts,
-		job:      job,
-		snapshot: startTS,
+		opts: opts,
+		job:  job,
 	}
 	e := &AnalyzeColumnsExec{
 		baseAnalyzeExec:         base,
@@ -2536,14 +2518,6 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
-		startTS = uint64(val.(int))
-	})
 
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
@@ -2554,9 +2528,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts:     opts,
-		job:      job,
-		snapshot: startTS,
+		opts: opts,
+		job:  job,
 	}
 	e := &AnalyzeColumnsExec{
 		baseAnalyzeExec: base,
@@ -2659,18 +2632,12 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 		if b.err != nil {
 			return
 		}
-		startTS, err := b.getSnapshotTS()
-		if err != nil {
-			b.err = err
-			return
-		}
 		base := baseAnalyzeExec{
 			ctx:         b.ctx,
 			tableID:     task.TableID,
 			opts:        opts,
 			concurrency: concurrency,
 			job:         job,
-			snapshot:    startTS,
 		}
 		fastExec := &AnalyzeFastExec{
 			baseAnalyzeExec: base,
@@ -2707,18 +2674,12 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 		if b.err != nil {
 			return
 		}
-		startTS, err := b.getSnapshotTS()
-		if err != nil {
-			b.err = err
-			return
-		}
 		base := baseAnalyzeExec{
 			ctx:         b.ctx,
 			tableID:     task.TableID,
 			opts:        opts,
 			concurrency: concurrency,
 			job:         job,
-			snapshot:    startTS,
 		}
 		fastExec := &AnalyzeFastExec{
 			baseAnalyzeExec: base,
@@ -2739,11 +2700,20 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 }
 
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+		startTS = uint64(val.(int))
+	})
 	e := &AnalyzeExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		opts:         v.Opts,
 		OptionsMap:   v.OptionsMap,
+		snapshot:     startTS,
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""

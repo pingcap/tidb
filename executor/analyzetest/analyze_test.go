@@ -581,7 +581,7 @@ func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T)
 	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
 }
 
-func TestSnapshotAnalyze(t *testing.T) {
+func TestConcurrentAnalyze(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -610,7 +610,8 @@ func TestSnapshotAnalyze(t *testing.T) {
 	tk.MustExec("analyze table t")
 	rows := tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, "3", rows[0][0])
+	// Analyze use max ts to read data, so it can see the second insert even if we set snapshot to startTS1.
+	require.Equal(t, "6", rows[0][0])
 	s1Str := rows[0][1].(string)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS2)))
 	tk.MustExec("analyze table t")
@@ -626,6 +627,7 @@ func TestSnapshotAnalyze(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][0])
 	s3Str := rows[0][1].(string)
+	// The third analyze doesn't write results into mysql.stats_xxx because its snapshot is smaller than the second analyze.
 	require.Equal(t, s2Str, s3Str)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
 }

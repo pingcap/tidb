@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -111,7 +112,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
-		SetStartTS(e.snapshot).
+		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		SetMemTracker(e.memTracker).
@@ -333,7 +334,6 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 			Job:      e.job,
 			StatsVer: e.StatsVersion,
 			Count:    int64(PKresult.Hist[0].TotalRowCount()),
-			Snapshot: e.snapshot,
 		}
 	}
 	var ars []*statistics.AnalyzeResult
@@ -367,7 +367,6 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 		StatsVer: e.StatsVersion,
 		ExtStats: extStats,
 		Count:    cnt,
-		Snapshot: e.snapshot,
 	}
 }
 

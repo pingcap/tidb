@@ -87,7 +87,6 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) *statistics.A
 		Job:      idxExec.job,
 		StatsVer: statsVer,
 		Count:    cnt,
-		Snapshot: idxExec.snapshot,
 	}
 }
 
@@ -131,6 +130,5 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.Analyze
 		Job:      colExec.job,
 		StatsVer: statistics.Version1,
 		Count:    cnt,
-		Snapshot: colExec.snapshot,
 	}
 }

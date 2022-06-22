@@ -1034,7 +1034,7 @@ func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (int64, int64, erro
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
-func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS bool) (err error) {
+func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS bool, snapshot uint64) (err error) {
 	tableID := results.TableID.GetStatisticsID()
 	statsVer := uint64(0)
 	defer func() {
@@ -1072,16 +1072,16 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 	}
 	var curCnt, curModifyCnt int64
 	if len(rows) > 0 {
-		snapshot := rows[0].GetUint64(0)
+		snapshotInMeta := rows[0].GetUint64(0)
 		// A newer version analyze result has been written, so skip this writing.
-		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 {
+		if snapshotInMeta >= snapshot && results.StatsVer == statistics.Version2 {
 			return nil
 		}
 		curCnt = int64(rows[0].GetUint64(1))
 		curModifyCnt = rows[0].GetInt64(2)
 	}
 	if len(rows) == 0 || results.StatsVer != statistics.Version2 {
-		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)", version, tableID, results.Count, results.Snapshot); err != nil {
+		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)", version, tableID, results.Count, snapshot); err != nil {
 			return err
 		}
 		statsVer = version
@@ -1094,7 +1094,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		if cnt < 0 {
 			cnt = 0
 		}
-		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
+		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, snapshot, tableID); err != nil {
 			return err
 		}
 		statsVer = version

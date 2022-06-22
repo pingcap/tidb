@@ -75,7 +75,6 @@ type AnalyzeResults struct {
 	Err      error
 	Job      *AnalyzeJob
 	StatsVer int
-	Snapshot uint64
 	// BaseCount is the original count in mysql.stats_meta at the beginning of analyze.
 	BaseCount int64
 	// BaseModifyCnt is the original modify_count in mysql.stats_meta at the beginning of analyze.

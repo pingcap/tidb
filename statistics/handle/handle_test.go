@@ -3266,12 +3266,14 @@ func TestIncrementalModifyCountUpdate(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseModifyCount", "return(0)"))
 	tk.MustExec("analyze table t")
 	// Check the count / modify_count changes during the analyze are not lost.
+	// Since analyze use max ts to read data, count and modify_count are overestimated here. Analyze finds the row count is 6
+	// and the increment of count and modify_count is +3, +3. Hence, we see count is 9 and modify_count is 3.
 	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
-		"6 3",
+		"9 3",
 	))
-	// Check the histogram is correct for the snapshot analyze.
+	// Check the histogram is collected from the latest data rather than the snapshot at startTS.
 	tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
-		"3",
+		"6",
 	))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"))

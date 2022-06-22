@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -84,7 +85,6 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults 
 		Job:      idxExec.job,
 		StatsVer: statsVer,
 		Count:    cnt,
-		Snapshot: idxExec.snapshot,
 	}
 }
 
@@ -144,7 +144,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
-		SetStartTS(e.snapshot).
+		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()

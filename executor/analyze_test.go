@@ -95,19 +95,12 @@ func TestAnalyzeFastSample(t *testing.T) {
 	}
 	opts := make(map[ast.AnalyzeOptionType]uint64)
 	opts[ast.AnalyzeOptNumSamples] = 20
-	// Get a start_ts later than the above inserts.
-	tk.MustExec("begin")
-	txn, err := tk.Session().Txn(false)
-	require.NoError(t, err)
-	ts := txn.StartTS()
-	tk.MustExec("commit")
 	mockExec := &executor.AnalyzeTestFastExec{
 		Ctx:         tk.Session().(sessionctx.Context),
 		HandleCols:  handleCols,
 		ColsInfo:    colsInfo,
 		IdxsInfo:    indicesInfo,
 		Concurrency: 1,
-		Snapshot:    ts,
 		TableID: statistics.AnalyzeTableID{
 			PartitionID: -1,
 			TableID:     tbl.(table.PhysicalTable).GetPhysicalID(),
