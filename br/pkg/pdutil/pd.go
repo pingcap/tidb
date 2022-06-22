@@ -753,8 +753,8 @@ func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule L
 		if lastErr == nil {
 			return nil
 		}
-		if err := errors.Cause(lastErr); err == context.Canceled || err == context.DeadlineExceeded {
-			return errors.Trace(err)
+		if berrors.IsContextCanceled(lastErr) {
+			return errors.Trace(lastErr)
 		}
 
 		if i < len(p.addrs) {
@@ -773,8 +773,8 @@ func (p *PdController) DeleteRegionLabelRule(ctx context.Context, ruleID string)
 		if lastErr == nil {
 			return nil
 		}
-		if err := errors.Cause(lastErr); err == context.Canceled || err == context.DeadlineExceeded {
-			return errors.Trace(err)
+		if berrors.IsContextCanceled(lastErr) {
+			return errors.Trace(lastErr)
 		}
 
 		if i < len(p.addrs) {
