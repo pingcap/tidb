@@ -33,7 +33,8 @@ func (em *EngineManager) StoreEngineInfo(key string, ei *engineInfo) {
 func (em *EngineManager) LoadEngineInfo(key string) (*engineInfo, bool) {
 	ei, exist := em.enginePool[key]
 	if !exist {
-		log.L().Error(LERR_GET_ENGINE_FAILED, zap.String("Engine_Manager:", "Not found"))
+		log.L().Error(LERR_GET_ENGINE_FAILED, zap.String("Engine_Manager:", "Not found"),
+		zap.Stack("stack trace"))
 		return nil, exist
 	}
 	return ei, exist
