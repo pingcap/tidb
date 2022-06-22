@@ -17,14 +17,14 @@
 package testkit
 
 import (
+	"flag"
 	"testing"
 	"time"
-	"flag"
 
-	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
