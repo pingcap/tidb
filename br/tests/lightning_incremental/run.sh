@@ -25,8 +25,6 @@ run_lightning_and_check_meta() {
   check_not_contains "Database: lightning_metadata"
 }
 
-DB_NAME=incr
-
 run_sql "DROP DATABASE IF EXISTS incr;"
 run_sql "DROP DATABASE IF EXISTS lightning_metadata;"
 run_lightning_and_check_meta
@@ -48,7 +46,7 @@ for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
 done
 
 for tbl in pk_auto_inc rowid_uk_inc; do
-  run_sql "SELECT group_concat(v) from incr.$tbl group by 'all';"
+  run_sql "SELECT group_concat(v) from incr.$tbl order by v;"
   check_contains "group_concat(v): a,b,c"
 done
 
@@ -75,7 +73,7 @@ for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
 done
 
 for tbl in pk_auto_inc rowid_uk_inc; do
-  run_sql "SELECT group_concat(v) from incr.$tbl group by 'all';"
+  run_sql "SELECT group_concat(v) from incr.$tbl order by v;"
   check_contains "group_concat(v): a,b,c,d,e,f"
 done
 
