@@ -25,10 +25,11 @@ import (
 	"honnef.co/go/tools/analysis/report"
 )
 
-type SkipType int
+//
+type skipType int
 
 const (
-	SkipNone SkipType = iota
+	skipNone skipType = iota
 	skipLinter
 	skipFile
 )
@@ -36,13 +37,13 @@ const (
 // Directive is a comment of the form '//lint:<command> [arguments...]' and `//nolint:<command>`.
 // It represents instructions to the static analysis tool.
 type Directive struct {
-	Command   SkipType
+	Command   skipType
 	Linters   []string
 	Directive *ast.Comment
 	Node      ast.Node
 }
 
-func parseDirective(s string) (cmd SkipType, args []string) {
+func parseDirective(s string) (cmd skipType, args []string) {
 	if strings.HasPrefix(s, "//lint:") {
 		s = strings.TrimPrefix(s, "//lint:")
 		fields := strings.Split(s, " ")
@@ -52,7 +53,7 @@ func parseDirective(s string) (cmd SkipType, args []string) {
 		case "file-ignore":
 			return skipFile, fields[1:]
 		}
-		return SkipNone, nil
+		return skipNone, nil
 	}
 	s = strings.TrimPrefix(s, "//nolint: ")
 	return skipLinter, []string{s}
