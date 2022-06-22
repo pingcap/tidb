@@ -1657,7 +1657,7 @@ func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, sche
 }
 
 func trimQuotation(str string) string {
-	return strings.Trim(str, "\"")
+	return strings.Trim(str, "'")
 }
 
 func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
