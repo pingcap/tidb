@@ -1460,8 +1460,6 @@ func (s *testSuiteAgg) TestIssue23277(c *C) {
 	tk.MustExec("drop table t;")
 }
 
-<<<<<<< HEAD
-=======
 func TestAvgDecimal(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1484,7 +1482,6 @@ func TestAvgDecimal(t *testing.T) {
 	tk.MustExec("drop table td;")
 }
 
->>>>>>> e3c56b75e... executor: buildWindow cannot call typeInfer twice (#30773)
 // https://github.com/pingcap/tidb/issues/23314
 func (s *testSuiteAgg) TestIssue23314(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
