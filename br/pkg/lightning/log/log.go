@@ -230,3 +230,21 @@ func (task *Task) End(level zapcore.Level, err error, extraFields ...zap.Field) 
 	}
 	return elapsed
 }
+
+type ctxKeyType struct{}
+
+var ctxKey ctxKeyType
+
+// NewContext returns a new context with the provided logger.
+func NewContext(ctx context.Context, logger Logger) context.Context {
+	return context.WithValue(ctx, ctxKey, logger)
+}
+
+// FromContext returns the logger stored in the context.
+func FromContext(ctx context.Context) Logger {
+	m, ok := ctx.Value(ctxKey).(Logger)
+	if !ok {
+		return appLogger
+	}
+	return m
+}
