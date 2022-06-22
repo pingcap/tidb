@@ -930,7 +930,7 @@ func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot, isMPP bool, costF
 	aggFuncFactor := p.getAggFuncCostFactor(false)
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
-	if taskType == property.RootTaskType {
+	if isRoot {
 		cpuCost = inputRows * sessVars.GetCPUFactor() * aggFuncFactor
 	} else if isMPP {
 		if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
