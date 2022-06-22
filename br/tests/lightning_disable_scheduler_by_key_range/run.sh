@@ -17,7 +17,7 @@
 set -eux
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/EnableTestAPI=return"
-export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine=pause"
+export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine=sleep(10000)"
 
 run_lightning --backend='local' &
 shpid="$!"
@@ -45,31 +45,20 @@ ready_for_import_engine() {
   exit 1
 }
 
-# FIXME: use `wget` instead of `curl` because the latter rejects ECC certs on our CI.
-run_wget() {
-  wget -q -O - \
-    --ca-certificate="$TEST_DIR/certs/ca.pem" \
-    --certificate="$TEST_DIR/certs/curl.pem" \
-    --private-key="$TEST_DIR/certs/curl.key" \
-    "$@"
-}
-
 ensure_lightning_is_started
 ready_for_import_engine
 
-run_wget "https://${PD_ADDR}/pd/api/v1/config/cluster-version"
+run_curl "https://${PD_ADDR}/pd/api/v1/config/cluster-version"
 
-length=$(run_wget "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
+length=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
 if [ "$length" != "1" ]; then
   echo "region-label key-range rules should be 1, but got $length" >&2
   exit 1
 fi
 
-wget --help
-run_wget --method=DELETE "https://localhost:8289/fail/github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine"
 wait "$shpid"
 
-length=$(run_wget "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
+length=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
 if [ -n "$length" ] && [ "$length" -ne 0 ]; then
   echo "region-label key-range rules should be 0, but got $length" >&2
   exit 1
