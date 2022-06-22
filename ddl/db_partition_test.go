@@ -1283,15 +1283,15 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	require.Equal(t, "id", part.Columns[0].O)
 	require.Equal(t, "name", part.Columns[1].O)
 	require.Len(t, part.Definitions, 5)
-	require.Equal(t, [][]string{{"1", `"a"`}, {"2", `"b"`}}, part.Definitions[0].InValues)
+	require.Equal(t, [][]string{{"1", `'a'`}, {"2", `'b'`}}, part.Definitions[0].InValues)
 	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
-	require.Equal(t, [][]string{{"3", `"a"`}, {"4", `"b"`}}, part.Definitions[1].InValues)
+	require.Equal(t, [][]string{{"3", `'a'`}, {"4", `'b'`}}, part.Definitions[1].InValues)
 	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
 	require.Equal(t, [][]string{{"5", `NULL`}}, part.Definitions[2].InValues)
 	require.Equal(t, model.NewCIStr("p3"), part.Definitions[2].Name)
-	require.Equal(t, [][]string{{"7", `"a"`}}, part.Definitions[3].InValues)
+	require.Equal(t, [][]string{{"7", `'a'`}}, part.Definitions[3].InValues)
 	require.Equal(t, model.NewCIStr("p4"), part.Definitions[3].Name)
-	require.Equal(t, [][]string{{"8", `"a"`}}, part.Definitions[4].InValues)
+	require.Equal(t, [][]string{{"8", `'a'`}}, part.Definitions[4].InValues)
 	require.Equal(t, model.NewCIStr("p5"), part.Definitions[4].Name)
 
 	errorCases := []struct {
@@ -1387,9 +1387,9 @@ func TestAlterTableDropPartitionByListColumns(t *testing.T) {
 	require.Equal(t, "id", part.Columns[0].O)
 	require.Equal(t, "name", part.Columns[1].O)
 	require.Len(t, part.Definitions, 2)
-	require.Equal(t, [][]string{{"1", `"a"`}, {"2", `"b"`}}, part.Definitions[0].InValues)
+	require.Equal(t, [][]string{{"1", `'a'`}, {"2", `'b'`}}, part.Definitions[0].InValues)
 	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
-	require.Equal(t, [][]string{{"5", `"a"`}, {"NULL", "NULL"}}, part.Definitions[1].InValues)
+	require.Equal(t, [][]string{{"5", `'a'`}, {"NULL", "NULL"}}, part.Definitions[1].InValues)
 	require.Equal(t, model.NewCIStr("p3"), part.Definitions[1].Name)
 
 	sql := "alter table t drop partition p10;"
@@ -1454,7 +1454,7 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	part := tbl.Meta().Partition
 	require.True(t, part.Type == model.PartitionTypeList)
 	require.Len(t, part.Definitions, 3)
-	require.Equal(t, [][]string{{"3", `"a"`}, {"4", `"b"`}}, part.Definitions[1].InValues)
+	require.Equal(t, [][]string{{"3", `'a'`}, {"4", `'b'`}}, part.Definitions[1].InValues)
 	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
 	require.False(t, part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID)
 
@@ -3614,4 +3614,64 @@ func TestDuplicatePartitionNames(t *testing.T) {
 		"PARTITION BY LIST (`a`)\n" +
 		"(PARTITION `p2` VALUES IN (2),\n" +
 		" PARTITION `p3` VALUES IN (3))"))
+}
+
+func TestPartitionTableWithAnsiQuotes(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database partitionWithAnsiQuotes")
+	defer tk.MustExec("drop database partitionWithAnsiQuotes")
+	tk.MustExec("use partitionWithAnsiQuotes")
+	tk.MustExec("SET SESSION sql_mode='ANSI_QUOTES'")
+
+	// Test single quotes.
+	tk.MustExec(`create table t(created_at datetime) PARTITION BY RANGE COLUMNS(created_at) (
+		PARTITION p0 VALUES LESS THAN ('2021-12-01 00:00:00'),
+		PARTITION p1 VALUES LESS THAN ('2022-01-01 00:00:00'))`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"created_at\" datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(\"created_at\")\n" +
+		"(PARTITION \"p0\" VALUES LESS THAN ('2021-12-01 00:00:00'),\n" +
+		" PARTITION \"p1\" VALUES LESS THAN ('2022-01-01 00:00:00'))"))
+	tk.MustExec("drop table t")
+
+	// Test expression with single quotes.
+	tk.MustExec(`create table t(created_at timestamp) PARTITION BY RANGE (unix_timestamp(created_at)) (
+		PARTITION p0 VALUES LESS THAN (unix_timestamp('2021-12-01 00:00:00')),
+		PARTITION p1 VALUES LESS THAN (unix_timestamp('2022-01-01 00:00:00')))`)
+	// FIXME: should be "created_at" instead of `created_at`, see #35389.
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"created_at\" timestamp NULL DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (UNIX_TIMESTAMP(`created_at`))\n" +
+		"(PARTITION \"p0\" VALUES LESS THAN (1638288000),\n" +
+		" PARTITION \"p1\" VALUES LESS THAN (1640966400))"))
+	tk.MustExec("drop table t")
+
+	// Test values in.
+	tk.MustExec(`CREATE TABLE t (a int DEFAULT NULL, b varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a,b) (
+		PARTITION p0 VALUES IN ((1,'1'),(2,'2')),
+ 		PARTITION p1 VALUES IN ((10,'10'),(11,'11')))`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" int(11) DEFAULT NULL,\n" +
+		"  \"b\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(\"a\",\"b\")\n" +
+		"(PARTITION \"p0\" VALUES IN ((1,'1'),(2,'2')),\n" +
+		" PARTITION \"p1\" VALUES IN ((10,'10'),(11,'11')))"))
+	tk.MustExec("drop table t")
+
+	// Test escaped characters in single quotes.
+	tk.MustExec(`CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
+		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
+ 		PARTITION p1 VALUES IN ('""','\\','\\\'\t\n'))`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(\"a\")\n" +
+		"(PARTITION \"p0\" VALUES IN ('''','''''',''''''''),\n" +
+		" PARTITION \"p1\" VALUES IN ('\"\"','\\\\','\\\\''\t\n'))"))
+	tk.MustExec("drop table t")
 }
