@@ -735,38 +735,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	}
 }
 
-// UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
-func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
-	txn, err := seCtx.Txn(false)
-	if err != nil {
-		return err
-	}
-	if !txn.Valid() {
-		return errors.Trace(kv.ErrInvalidTxn)
-	}
-
-	// The Oracle serializable isolation is actually SI in pessimistic mode.
-	// Do not update ForUpdateTS when the user is using the Serializable isolation level.
-	// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
-	// Support for this does not mean that TiDB supports serializable isolation of MySQL.
-	// tidb_skip_isolation_level_check should still be disabled by default.
-	if seCtx.GetSessionVars().IsIsolation(ast.Serializable) {
-		return nil
-	}
-	if newForUpdateTS == 0 {
-		// Because the ForUpdateTS is used for the snapshot for reading data in DML.
-		// We can avoid allocating a global TSO here to speed it up by using the local TSO.
-		version, err := seCtx.GetStore().CurrentVersion(seCtx.GetSessionVars().TxnCtx.TxnScope)
-		if err != nil {
-			return err
-		}
-		newForUpdateTS = version.Ver
-	}
-	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
-	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
-	return nil
-}
-
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
 func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error) (_ Executor, err error) {
 	if lockErr == nil {
