@@ -247,6 +247,10 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 
+		if rowCount == 0 {
+			reorgInfo.Meta.IsEmptyTable = true
+		}
+
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
@@ -410,6 +414,8 @@ type reorgInfo struct {
 type reorgMeta struct {
 	// Mark whether the lightning execution environment is built or not
 	IsLightningEnabled bool
+	// it is an empty table
+	IsEmptyTable bool
 }
 
 func (r *reorgInfo) String() string {

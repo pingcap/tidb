@@ -341,7 +341,7 @@ func (m *LightningMemoryRoot) deleteBackendEngines(bcKey string) error {
 	// Delete EngienInfo registed in m.engineManager.engineCache
 	for _, ei := range bc.EngineCache {
 		eiKey := ei.key
-		m.currUsage -= m.structSize[ei.key]
+		m.currUsage -= m.structSize[eiKey]
 		delete(m.structSize, eiKey)
 		delete(m.EngineMgr.enginePool, eiKey)
 		count++

@@ -74,13 +74,14 @@ func prepareLightningEngine(job *model.Job, indexId int64, workerCnt int) (wCnt 
 // Import local index sst file into TiKV.
 func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexId int64, unique bool, tbl table.Table) error {
 	if reorg.Meta.IsLightningEnabled {
-		engineInfoKey := lit.GenEngineInfoKey(reorg.ID, indexId)
-		// just log info.
-		err := lit.FinishIndexOp(ctx, engineInfoKey, tbl, unique)
-		if err != nil {
-			err = errors.Trace(err)
+		if !reorg.Meta.IsEmptyTable {
+			engineInfoKey := lit.GenEngineInfoKey(reorg.ID, indexId)
+			// just log info.
+			err := lit.FinishIndexOp(ctx, engineInfoKey, tbl, unique)
+			if err != nil {
+				err = errors.Trace(err)
+			}
 		}
-		
 		// After import local data into TiKV, then the progress set to 100.
 		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
 	}
