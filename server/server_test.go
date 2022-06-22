@@ -850,6 +850,144 @@ func (cli *testServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRow
 	require.Equal(t, strings.Join(expectedRows, "\n"), strings.Join(result, "\n"))
 }
 
+func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *Server) {
+	fp, err := os.CreateTemp("", "load_data_test.csv")
+	require.NoError(t, err)
+	path := fp.Name()
+	require.NotNil(t, fp)
+	defer func() {
+		err = fp.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+
+	_, err = fp.WriteString("dsadasdas\n" +
+		"\"1\",\"1\",,\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"\n" +
+		"\"1\",\"2\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"\n" +
+		"\"1\",\"3\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"\n" +
+		"\"1\",\"4\",\"a\",\"2022-04-19\",\"a\",\"2022-04-19 00:00:01\"")
+
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (k,id,c,dt,vv,ts)", path))
+		rows := db.MustQuery("select * from t66")
+		var (
+			id sql.NullString
+			k  sql.NullString
+			c  sql.NullString
+			dt sql.NullString
+			vv sql.NullString
+			ts sql.NullString
+		)
+		columns := []*sql.NullString{&k, &id, &c, &dt, &vv, &ts}
+		require.Truef(t, rows.Next(), "unexpected data")
+		err := rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,1,,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,2,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,3,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,4,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+	})
+
+	// Also test cases where column list only specifies partial columns
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (k,id,c)", path))
+		rows := db.MustQuery("select * from t66")
+		var (
+			id sql.NullString
+			k  sql.NullString
+			c  sql.NullString
+			dt sql.NullString
+			vv sql.NullString
+			ts sql.NullString
+		)
+		columns := []*sql.NullString{&k, &id, &c, &dt, &vv, &ts}
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,1,,,,", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,2,a,,,", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,3,a,,,", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,4,a,,,", ","))
+	})
+
+	// Also test for case-insensitivity
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key,k int,c varchar(10),dt date,vv char(1),ts datetime)")
+		// We modify the upper case and lower case in the column list to test the case-insensitivity
+		db.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (K,Id,c,dT,Vv,Ts)", path))
+		rows := db.MustQuery("select * from t66")
+		var (
+			id sql.NullString
+			k  sql.NullString
+			c  sql.NullString
+			dt sql.NullString
+			vv sql.NullString
+			ts sql.NullString
+		)
+		columns := []*sql.NullString{&k, &id, &c, &dt, &vv, &ts}
+		require.Truef(t, rows.Next(), "unexpected data")
+		err := rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,1,,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,2,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,3,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&id, &k, &c, &dt, &vv, &ts)
+		require.NoError(t, err)
+		columnsAsExpected(t, columns, strings.Split("1,4,a,2022-04-19,a,2022-04-19 00:00:01", ","))
+	})
+}
+
+func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []string) {
+	require.Equal(t, len(columns), len(expected))
+
+	for i := 0; i < len(columns); i++ {
+		require.Equal(t, expected[i], columns[i].String)
+	}
+}
+
 func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 	fp, err := os.CreateTemp("", "load_data_test.csv")
 	require.NoError(t, err)
@@ -1405,6 +1543,39 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		require.NoError(t, rows.Close())
 		dbt.MustExec("drop table if exists pn")
 	})
+
+	// Test with upper case variables.
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists pn")
+		dbt.MustExec("create table pn (c1 int, c2 int, c3 int)")
+		dbt.MustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, @VAL1, @VAL2) SET c3 = @VAL2 * 100, c2 = CAST(@VAL1 AS UNSIGNED)`, path))
+		require.NoError(t, err1)
+		var (
+			a int
+			b int
+			c int
+		)
+		rows := dbt.MustQuery("select * from pn")
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&a, &b, &c)
+		require.NoError(t, err)
+		require.Equal(t, 1, a)
+		require.Equal(t, 2, b)
+		require.Equal(t, 300, c)
+		require.Truef(t, rows.Next(), "unexpected data")
+		err = rows.Scan(&a, &b, &c)
+		require.NoError(t, err)
+		require.Equal(t, 4, a)
+		require.Equal(t, 5, b)
+		require.Equal(t, 600, c)
+		require.Falsef(t, rows.Next(), "unexpected data")
+		require.NoError(t, rows.Close())
+		dbt.MustExec("drop table if exists pn")
+	})
 }
 
 func (cli *testServerClient) runTestConcurrentUpdate(t *testing.T) {
@@ -1861,6 +2032,21 @@ func (cli *testServerClient) runTestTLSConnection(t *testing.T, overrider config
 		require.NoError(t, err)
 	}()
 	_, err = db.Exec("USE test")
+	if err != nil {
+		return errors.Annotate(err, "dsn:"+dsn)
+	}
+	return err
+}
+
+func (cli *testServerClient) runTestEnableSecureTransport(t *testing.T, overrider configOverrider) error {
+	dsn := cli.getDSN(overrider)
+	db, err := sql.Open("mysql", dsn)
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	_, err = db.Exec("SET GLOBAL require_secure_transport = 1")
 	if err != nil {
 		return errors.Annotate(err, "dsn:"+dsn)
 	}

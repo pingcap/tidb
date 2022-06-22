@@ -119,6 +119,50 @@ func TestBitColErrorMessage(t *testing.T) {
 	tk.MustGetErrCode("create table bit_col_t (a bit(65))", mysql.ErrTooBigDisplaywidth)
 }
 
+func TestAggPushDownLeftJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists customer")
+	tk.MustExec("create table customer (C_CUSTKEY bigint(20) NOT NULL, C_NAME varchar(25) NOT NULL, " +
+		"C_ADDRESS varchar(25) NOT NULL, PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */)")
+	tk.MustExec("drop table if exists orders")
+	tk.MustExec("create table orders (O_ORDERKEY bigint(20) NOT NULL, O_CUSTKEY bigint(20) NOT NULL, " +
+		"O_TOTALPRICE decimal(15,2) NOT NULL, PRIMARY KEY (`O_ORDERKEY`) /*T![clustered_index] CLUSTERED */)")
+	tk.MustExec("insert into customer values (6, \"xiao zhang\", \"address1\");")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1;")
+
+	tk.MustQuery("select c_custkey, count(o_orderkey) as c_count from customer left outer join orders " +
+		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows("6 0"))
+	tk.MustQuery("explain format='brief' select c_custkey, count(o_orderkey) as c_count from customer left outer join orders " +
+		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows(
+		"Projection 10000.00 root  test.customer.c_custkey, Column#7",
+		"└─Projection 10000.00 root  if(isnull(Column#8), 0, 1)->Column#7, test.customer.c_custkey",
+		"  └─HashJoin 10000.00 root  left outer join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
+		"    ├─HashAgg(Build) 8000.00 root  group by:test.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
+		"    │ └─TableReader 8000.00 root  data:HashAgg",
+		"    │   └─HashAgg 8000.00 cop[tikv]  group by:test.orders.o_custkey, funcs:count(test.orders.o_orderkey)->Column#9",
+		"    │     └─TableFullScan 10000.00 cop[tikv] table:orders keep order:false, stats:pseudo",
+		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"      └─TableFullScan 10000.00 cop[tikv] table:customer keep order:false, stats:pseudo"))
+
+	tk.MustQuery("select c_custkey, count(o_orderkey) as c_count from orders right outer join customer " +
+		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows("6 0"))
+	tk.MustQuery("explain format='brief' select c_custkey, count(o_orderkey) as c_count from orders right outer join customer " +
+		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows(
+		"Projection 10000.00 root  test.customer.c_custkey, Column#7",
+		"└─Projection 10000.00 root  if(isnull(Column#8), 0, 1)->Column#7, test.customer.c_custkey",
+		"  └─HashJoin 10000.00 root  right outer join, equal:[eq(test.orders.o_custkey, test.customer.c_custkey)]",
+		"    ├─HashAgg(Build) 8000.00 root  group by:test.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
+		"    │ └─TableReader 8000.00 root  data:HashAgg",
+		"    │   └─HashAgg 8000.00 cop[tikv]  group by:test.orders.o_custkey, funcs:count(test.orders.o_orderkey)->Column#9",
+		"    │     └─TableFullScan 10000.00 cop[tikv] table:orders keep order:false, stats:pseudo",
+		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"      └─TableFullScan 10000.00 cop[tikv] table:customer keep order:false, stats:pseudo"))
+}
+
 func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -132,6 +176,9 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
 	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
 	tk.MustExec("analyze table tbl")
+
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -434,6 +481,9 @@ func TestVerboseExplain(t *testing.T) {
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	tk.MustExec("analyze table t3")
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -1053,7 +1103,7 @@ func TestPartitionTableDynamicModeUnderNewCollation(t *testing.T) {
 	tk.MustQuery("select * from strrange where a in ('a', 'y')").Sort().Check(testkit.Rows("A 1", "Y 1", "a 1", "y 1"))
 
 	// list partition and partitioned by utf8mb4_general_ci
-	tk.MustExec(`create table strlist(a varchar(10) charset utf8mb4 collate utf8mb4_general_ci, b int) partition by list(a) (
+	tk.MustExec(`create table strlist(a varchar(10) charset utf8mb4 collate utf8mb4_general_ci, b int) partition by list columns (a) (
 						partition p0 values in ('a', 'b'),
 						partition p1 values in ('c', 'd'),
 						partition p2 values in ('e', 'f'))`)
@@ -3634,6 +3684,10 @@ func TestExtendedStatsSwitch(t *testing.T) {
 	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
 		"1.000000 1",
 	))
+
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	// Estimated index scan count is 4 using extended stats.
 	tk.MustQuery("explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1").Check(testkit.Rows(
 		"Limit 1.00 root  offset:0, count:1",
@@ -4503,6 +4557,9 @@ func TestLimitIndexLookUpKeepOrder(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a,b,c));")
 
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -4701,6 +4758,9 @@ func TestMultiColMaxOneRow(t *testing.T) {
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a,b))")
 
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -4746,11 +4806,13 @@ func TestPanicWhileQueryTableWithIsNull(t *testing.T) {
 
 	tk.MustExec("drop table if exists NT_HP27193")
 	tk.MustExec("CREATE TABLE `NT_HP27193` (  `COL1` int(20) DEFAULT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH ( `COL1`%`COL3` ) PARTITIONS 10;")
-	_, err := tk.Exec("select col1 from NT_HP27193 where col1 is null;")
+	rs, err := tk.Exec("select col1 from NT_HP27193 where col1 is null;")
 	require.NoError(t, err)
+	rs.Close()
 	tk.MustExec("INSERT INTO NT_HP27193 (COL2, COL4, COL3, COL5) VALUES ('m',  '2020-05-04 13:15:27', 8,  2602)")
-	_, err = tk.Exec("select col1 from NT_HP27193 where col1 is null;")
+	rs, err = tk.Exec("select col1 from NT_HP27193 where col1 is null;")
 	require.NoError(t, err)
+	rs.Close()
 	tk.MustExec("drop table if exists NT_HP27193")
 }
 
@@ -5348,6 +5410,9 @@ func TestIndexJoinCost(t *testing.T) {
 	tk.MustExec(`create table t_inner_pk (a int primary key)`)
 	tk.MustExec(`create table t_inner_idx (a int, b int, key(a))`)
 
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_pk) */ * from t_outer, t_inner_pk where t_outer.a=t_inner_pk.a`).Check(testkit.Rows( // IndexJoin with inner TableScan
 		`IndexJoin_11 12487.50 206368.09 root  inner join, inner:TableReader_8, outer key:test.t_outer.a, inner key:test.t_inner_pk.a, equal cond:eq(test.t_outer.a, test.t_inner_pk.a)`,
 		`├─TableReader_18(Build) 9990.00 36412.58 root  data:Selection_17`,
@@ -5402,6 +5467,9 @@ func TestHeuristicIndexSelection(t *testing.T) {
 	tk.MustExec("create table t3(a bigint, b varchar(255), c bigint, primary key(a, b) clustered)")
 	tk.MustExec("create table t4(a bigint, b varchar(255), c bigint, primary key(a, b) nonclustered)")
 
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	var input []string
 	var output []struct {
 		SQL      string
@@ -5428,6 +5496,9 @@ func TestOutputSkylinePruningInfo(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	var input []string
 	var output []struct {
@@ -5459,6 +5530,11 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 	do, _ := session.GetDomain(store)
 	require.Nil(t, do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table t")
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5497,6 +5573,9 @@ func TestIssue27083(t *testing.T) {
 	do, _ := session.GetDomain(store)
 	require.Nil(t, do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table t")
+
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -6589,4 +6668,52 @@ func TestIssue29663(t *testing.T) {
 		"      └─TableReader_26 2.00 root  data:Selection_25",
 		"        └─Selection_25 2.00 cop[tikv]  eq(test.t2.c, test.t1.b)",
 		"          └─TableFullScan_24 2000.00 cop[tikv] table:two keep order:false, stats:pseudo"))
+}
+
+func TestIssue31609(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("explain select rank() over (partition by table_name) from information_schema.tables").Check(testkit.Rows(
+		"Projection_7 10000.00 root  Column#27",
+		"└─Shuffle_11 10000.00 root  execution info: concurrency:5, data sources:[MemTableScan_9]",
+		"  └─Window_8 10000.00 root  rank()->Column#27 over(partition by Column#3)",
+		"    └─Sort_10 10000.00 root  Column#3",
+		"      └─MemTableScan_9 10000.00 root table:TABLES ",
+	))
+}
+
+func TestDecimalOverflow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table deci (a decimal(65,30),b decimal(65,0))")
+	tk.MustExec("insert into deci values (1234567890.123456789012345678901234567890,987654321098765432109876543210987654321098765432109876543210)")
+	tk.MustQuery("select a from deci union ALL select b from deci;").Sort().Check(testkit.Rows("1234567890.123456789012345678901234567890", "99999999999999999999999999999999999.999999999999999999999999999999"))
+}
+
+func TestIssue35083(t *testing.T) {
+	defer func() {
+		variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown))
+	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ProjectionPushDown = true
+	})
+	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown))
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a varchar(100), b int)")
+	tk.MustQuery("select @@tidb_opt_projection_push_down").Check(testkit.Rows("1"))
+	tk.MustQuery("explain format = 'brief' select cast(a as datetime) from t1").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:Projection",
+		"└─Projection 10000.00 cop[tikv]  cast(test.t1.a, datetime BINARY)->Column#4",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }

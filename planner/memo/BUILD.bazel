@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "memo",
+    srcs = [
+        "expr_iterator.go",
+        "group.go",
+        "group_expr.go",
+        "implementation.go",
+        "pattern.go",
+    ],
+    importpath = "github.com/pingcap/tidb/planner/memo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//expression",
+        "//planner/core",
+        "//planner/property",
+    ],
+)
+
+go_test(
+    name = "memo_test",
+    srcs = [
+        "expr_iterator_test.go",
+        "group_expr_test.go",
+        "group_test.go",
+        "main_test.go",
+        "pattern_test.go",
+    ],
+    embed = [":memo"],
+    deps = [
+        "//domain",
+        "//expression",
+        "//infoschema",
+        "//parser",
+        "//parser/model",
+        "//planner/core",
+        "//planner/property",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -128,6 +128,19 @@ func (t *TableMemoryUsage) TotalIdxTrackingMemUsage() (sum int64) {
 	return sum
 }
 
+// TotalColTrackingMemUsage returns total columns' tracking memory usage
+func (t *TableMemoryUsage) TotalColTrackingMemUsage() (sum int64) {
+	for _, col := range t.ColumnsMemUsage {
+		sum += col.TrackingMemUsage()
+	}
+	return sum
+}
+
+// TotalTrackingMemUsage return total tracking memory usage
+func (t *TableMemoryUsage) TotalTrackingMemUsage() int64 {
+	return t.TotalIdxTrackingMemUsage() + t.TotalColTrackingMemUsage()
+}
+
 // TableCacheItem indicates the unit item stored in statsCache, eg: Column/Index
 type TableCacheItem interface {
 	ItemID() int64
@@ -298,11 +311,17 @@ func (t *Table) ColumnByName(colName string) *Column {
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
 func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch) {
 	if isIndex {
-		idxStatsInfo := t.Indices[ID]
-		return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy()
+		if idxStatsInfo, ok := t.Indices[ID]; ok {
+			return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy()
+		}
+		// newly added index which is not analyzed yet
+		return 0, nil, nil, nil, nil
 	}
-	colStatsInfo := t.Columns[ID]
-	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
+	if colStatsInfo, ok := t.Columns[ID]; ok {
+		return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
+	}
+	// newly added column which is not analyzed yet
+	return 0, nil, nil, nil, nil
 }
 
 // GetColRowCount tries to get the row count of the a column if possible.
@@ -315,6 +334,21 @@ func (t *Table) GetColRowCount() float64 {
 		}
 	}
 	return -1
+}
+
+// GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
+// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, ture.
+func (t *Table) GetStatsHealthy() (int64, bool) {
+	if t == nil || t.Pseudo {
+		return 0, false
+	}
+	var healthy int64
+	if t.ModifyCount < t.Count {
+		healthy = int64((1.0 - float64(t.ModifyCount)/float64(t.Count)) * 100.0)
+	} else if t.ModifyCount == 0 {
+		healthy = 100
+	}
+	return healthy, true
 }
 
 type tableColumnID struct {

@@ -742,6 +742,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
+	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
 	return do
 }
 
@@ -793,7 +794,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	sysFac := func() (pools.Resource, error) {
 		return sysExecutorFactory(do)
 	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
+	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
@@ -817,7 +818,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		}
 	})
 
-	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
+	if config.GetGlobalConfig().EnableGlobalKill {
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
 			if err != nil {
@@ -1291,9 +1292,6 @@ func (do *Domain) SetStatsUpdating(val bool) {
 	}
 }
 
-// RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
-var RunAutoAnalyze = true
-
 // LoadAndUpdateStatsLoop loads and updates stats info.
 func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
 	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
@@ -1328,9 +1326,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	do.SetStatsUpdating(true)
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
-	if RunAutoAnalyze {
-		do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
-	}
+	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
 	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
 	return nil
 }
@@ -1509,7 +1505,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if owner.IsOwner() {
+			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
 		case <-do.exit:
@@ -1833,12 +1829,6 @@ func (do *Domain) serverIDKeeper() {
 			return
 		}
 	}
-}
-
-// MockInfoCacheAndLoadInfoSchema only used in unit test
-func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
-	do.infoCache = infoschema.NewCache(16)
-	do.infoCache.Insert(is, 0)
 }
 
 func init() {

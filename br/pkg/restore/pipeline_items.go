@@ -196,8 +196,8 @@ type TiKVRestorer interface {
 		rewriteRules *RewriteRules,
 		updateCh glue.Progress,
 		isRawKv bool) error
-	// RestoreFiles import the files to the TiKV.
-	RestoreFiles(ctx context.Context,
+	// RestoreSSTFiles import the files to the TiKV.
+	RestoreSSTFiles(ctx context.Context,
 		files []*backuppb.File,
 		rewriteRules *RewriteRules,
 		updateCh glue.Progress) error
@@ -376,10 +376,10 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 				return
 			}
 			files := r.result.Files()
-			// There has been a worker in the `RestoreFiles` procedure.
+			// There has been a worker in the `RestoreSSTFiles` procedure.
 			// Spawning a raw goroutine won't make too many requests to TiKV.
 			eg.Go(func() error {
-				e := b.client.RestoreFiles(ectx, files, r.result.RewriteRules, b.updateCh)
+				e := b.client.RestoreSSTFiles(ectx, files, r.result.RewriteRules, b.updateCh)
 				if e != nil {
 					log.Error("restore batch meet error", logutil.ShortError(e), logutil.Files(files))
 					r.done()

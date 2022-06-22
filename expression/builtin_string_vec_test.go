@@ -115,9 +115,9 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP()},
 			geners: []dataGenerator{newRandLenStrGener(0, 20), newRangeInt64Gener(-25, 25), newRangeInt64Gener(-25, 25)},
 		},
 	},
@@ -163,84 +163,84 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{nil,
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 			geners: []dataGenerator{newRandLenStrGener(0, 10), newRandLenStrGener(0, 20)},
 		},
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{nil,
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 			geners: []dataGenerator{newRandLenStrGener(1, 2), newRandLenStrGener(0, 20)},
 		},
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{nil,
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 			geners: []dataGenerator{newSelectStringGener([]string{"01", "10", "001", "110", "0001", "1110"}), newSelectStringGener([]string{"010010001000010", "101101110111101"})},
 		},
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(), nil},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(), nil},
 			geners: []dataGenerator{newRandLenStrGener(0, 10), newRandLenStrGener(0, 20)},
 		},
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(), nil},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(), nil},
 			geners: []dataGenerator{newRandLenStrGener(1, 2), newRandLenStrGener(0, 20)},
 		},
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(), nil},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(), nil},
 			geners: []dataGenerator{newSelectStringGener([]string{"01", "10", "001", "110", "0001", "1110"}), newSelectStringGener([]string{"010010001000010", "101101110111101"})},
 		},
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 			geners: []dataGenerator{newRandLenStrGener(0, 10), newRandLenStrGener(0, 20)},
 		},
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 			geners: []dataGenerator{newRandLenStrGener(1, 2), newRandLenStrGener(0, 20)},
 		},
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 			geners: []dataGenerator{newSelectStringGener([]string{"01", "10", "001", "110", "0001", "1110"}), newSelectStringGener([]string{"010010001000010", "101101110111101"})},
 		},
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeInt24).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).BuildP()},
 			geners: []dataGenerator{newRandLenStrGener(0, 10), newRandLenStrGener(0, 20), newRangeInt64Gener(-10, 20)},
 		},
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeInt24).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).BuildP()},
 			geners: []dataGenerator{newSelectStringGener([]string{"01", "10", "001", "110", "0001", "1110"}), newSelectStringGener([]string{"010010001000010", "101101110111101"}), newRangeInt64Gener(-10, 20)},
 		},
 	},
@@ -301,14 +301,14 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 			geners: []dataGenerator{newRandLenStrGener(0, 20), newRangeInt64Gener(168435456, 368435456), newRandLenStrGener(0, 10)},
 		},
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 			geners: []dataGenerator{newDefaultGener(0.2, types.ETString), newDefaultGener(0.2, types.ETInt), newDefaultGener(0.2, types.ETString)},
 		},
 	},
@@ -327,14 +327,14 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 			geners: []dataGenerator{newRandLenStrGener(0, 20), newRangeInt64Gener(168435456, 368435456), newRandLenStrGener(0, 10)},
 		},
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 			},
 			geners: []dataGenerator{newDefaultGener(0.2, types.ETString), newDefaultGener(0.2, types.ETInt), newDefaultGener(0.2, types.ETString)},
 		},
@@ -343,7 +343,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 			},
 		},
 	},
@@ -431,8 +431,8 @@ var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 		// need to add BinaryFlag for the Binary func
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP()},
 			geners: []dataGenerator{
 				newRandLenStrGener(10, 20),
 				newRangeInt64Gener(-10, 20),
@@ -444,8 +444,8 @@ var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 		// need to add BinaryFlag for the Binary func
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP()},
 			geners: []dataGenerator{
 				newRandLenStrGener(10, 20),
 				newRangeInt64Gener(-10, 20),
@@ -462,7 +462,7 @@ var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 		// need to add BinaryFlag for the Binary func
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 		},
 	},
 	ast.Instr: {
@@ -471,21 +471,21 @@ var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{"test,case"}, &constStrGener{"testcase"}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 			},
 			geners: []dataGenerator{&constStrGener{"test,case"}, &constStrGener{"case"}},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 			},
 			geners: []dataGenerator{&constStrGener{"test,case"}, &constStrGener{""}},
 		},
@@ -497,10 +497,10 @@ var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString}, geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(-10, 20), newRangeInt64Gener(0, 100), newRandLenStrGener(0, 10)}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt, types.ETString},
 			childrenFieldTypes: []*types.FieldType{
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP(),
-				types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 			},
 		},
 	},

@@ -315,6 +315,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 		RetType:  expr.GetType().Clone(),
 	}
 	col.SetCoercibility(expr.Coercibility())
+	col.SetRepertoire(expr.Repertoire())
 	p.schema.Append(col)
 	// reset ParseToJSONFlag in order to keep the flag away from json column
 	if col.GetType().GetType() == mysql.TypeJSON {

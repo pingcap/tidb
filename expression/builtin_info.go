@@ -478,8 +478,7 @@ func (b *builtinTiDBIsDDLOwnerSig) Clone() builtinFunc {
 
 // evalInt evals a builtinTiDBIsDDLOwnerSig.
 func (b *builtinTiDBIsDDLOwnerSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
-	ddlOwnerChecker := b.ctx.DDLOwnerChecker()
-	if ddlOwnerChecker.IsOwner() {
+	if b.ctx.IsDDLOwner() {
 		res = 1
 	}
 

@@ -320,7 +320,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	require.NoErrorf(t, err, "Error get ts: %s", err)
 
 	cipher := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, &cipher)
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.cluster.Storage, lastTS, ts)

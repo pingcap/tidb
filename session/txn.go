@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -225,7 +224,7 @@ func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
 		nil)
 }
 
-func (txn *LazyTxn) changeInvalidToPending(future *txnFuture) {
+func (txn *LazyTxn) changeToPending(future *txnFuture) {
 	txn.Transaction = nil
 	txn.txnFuture = future
 }
@@ -376,6 +375,13 @@ func (txn *LazyTxn) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
+// RollbackMemDBToCheckpoint overrides the Transaction interface.
+func (txn *LazyTxn) RollbackMemDBToCheckpoint(savepoint *tikv.MemDBCheckpoint) {
+	txn.flushStmtBuf()
+	txn.Transaction.RollbackMemDBToCheckpoint(savepoint)
+	txn.cleanup()
+}
+
 // LockKeys Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	failpoint.Inject("beforeLockKeys", func() {})
@@ -498,27 +504,6 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
-}
-
-func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	oracleStore := s.store.GetOracle()
-	var tsFuture oracle.Future
-	if s.sessionVars.LowResolutionTSO {
-		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
-	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
-	}
-	ret := &txnFuture{future: tsFuture, store: s.store, txnScope: s.sessionVars.CheckAndGetTxnScope()}
-	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
-		ret.future = txnFailFuture{}
-	})
-	return ret
 }
 
 // HasDirtyContent checks whether there's dirty update on the given table.

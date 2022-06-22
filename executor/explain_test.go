@@ -355,6 +355,9 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 		},
 	}
 
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	for _, test := range tests {
 		checkActRows(t, tk, test.sql, test.expected)
 	}
@@ -420,4 +423,22 @@ func TestFix29401(t *testing.T) {
   KEY f (f)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
 	tk.MustExec(" explain select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;")
+}
+
+func TestIssue35296(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int , c int, d int, e int,index ia(a), index ib(b), index ic(c), index idd(d), index ie(e));")
+
+	rows := tk.MustQuery("explain analyze select * from t where a = 10 or b = 30 or c = 10 or d = 1 or e = 90;").Rows()
+
+	require.Contains(t, rows[0][0], "IndexMerge")
+	require.NotRegexp(t, "^time:0s", rows[1][5])
+	require.NotRegexp(t, "^time:0s", rows[2][5])
+	require.NotRegexp(t, "^time:0s", rows[3][5])
+	require.NotRegexp(t, "^time:0s", rows[4][5])
+	require.NotRegexp(t, "^time:0s", rows[5][5])
 }

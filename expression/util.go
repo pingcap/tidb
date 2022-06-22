@@ -547,8 +547,8 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 
 func locateStringWithCollation(str, substr, coll string) int64 {
 	collator := collate.GetCollator(coll)
-	strKey := collator.Key(str)
-	subStrKey := collator.Key(substr)
+	strKey := collator.KeyWithoutTrimRightSpace(str)
+	subStrKey := collator.KeyWithoutTrimRightSpace(substr)
 
 	index := bytes.Index(strKey, subStrKey)
 	if index == -1 || index == 0 {
@@ -560,8 +560,8 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 	for {
 		r, size := utf8.DecodeRuneInString(str)
 		count += 1
-		index -= len(collator.Key(string(r)))
-		if index == 0 {
+		index -= len(collator.KeyWithoutTrimRightSpace(string(r)))
+		if index <= 0 {
 			return count + 1
 		}
 		str = str[size:]
@@ -922,6 +922,26 @@ func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, ne
 		}
 	}
 	return value, nil
+}
+
+// ParamMarkerInPrepareChecker checks whether the given ast tree has paramMarker and is in prepare statement.
+type ParamMarkerInPrepareChecker struct {
+	InPrepareStmt bool
+}
+
+// Enter implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch v := in.(type) {
+	case *driver.ParamMarkerExpr:
+		pc.InPrepareStmt = !v.InExecute
+		return v, true
+	}
+	return in, false
+}
+
+// Leave implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
 }
 
 // DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.

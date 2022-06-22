@@ -86,19 +86,78 @@ func TestGCS(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, exist)
 
-	list := ""
-	var totalSize int64 = 0
-	err = stg.WalkDir(ctx, nil, func(name string, size int64) error {
-		list += name
-		totalSize += size
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, "keykey1key2", list)
-	require.Equal(t, int64(42), totalSize)
+	checkWalkDir := func(stg *gcsStorage, opt *WalkOption) {
+		var totalSize int64 = 0
+		err = stg.WalkDir(ctx, opt, func(name string, size int64) error {
+			totalSize += size
+			// also test can use this path open file
+			_, err := stg.Open(ctx, name)
+			require.NoError(t, err)
+			return nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, int64(42), totalSize)
+	}
+	// test right prefix without sub dir opt
+	{
+		checkWalkDir(stg, nil)
+	}
+
+	// test right prefix with sub dir opt
+	{
+		gcs := &backuppb.GCS{
+			Bucket:          bucketName,
+			Prefix:          "a/", // right prefix is /a/b/
+			StorageClass:    "NEARLINE",
+			PredefinedAcl:   "private",
+			CredentialsBlob: "Fake Credentials",
+		}
+		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+			SendCredentials:  false,
+			CheckPermissions: []Permission{AccessBuckets},
+			HTTPClient:       server.HTTPClient(),
+		})
+		require.NoError(t, err)
+		checkWalkDir(stg, &WalkOption{SubDir: "b/"})
+	}
+
+	// test prefix without slash in new bucket without sub dir opt
+	{
+		gcs := &backuppb.GCS{
+			Bucket:          bucketName,
+			Prefix:          "a/b", // right prefix is "a/b/"
+			StorageClass:    "NEARLINE",
+			PredefinedAcl:   "private",
+			CredentialsBlob: "Fake Credentials",
+		}
+		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+			SendCredentials:  false,
+			CheckPermissions: []Permission{AccessBuckets},
+			HTTPClient:       server.HTTPClient(),
+		})
+		require.NoError(t, err)
+		checkWalkDir(stg, nil)
+	}
+	// test prefix without slash in new bucket with sub dir opt
+	{
+		gcs := &backuppb.GCS{
+			Bucket:          bucketName,
+			Prefix:          "a", // right prefix is "a/b/"
+			StorageClass:    "NEARLINE",
+			PredefinedAcl:   "private",
+			CredentialsBlob: "Fake Credentials",
+		}
+		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+			SendCredentials:  false,
+			CheckPermissions: []Permission{AccessBuckets},
+			HTTPClient:       server.HTTPClient(),
+		})
+		require.NoError(t, err)
+		checkWalkDir(stg, &WalkOption{SubDir: "b/"})
+	}
 
 	// test 1003 files
-	totalSize = 0
+	var totalSize int64 = 0
 	for i := 0; i < 1000; i += 1 {
 		err = stg.WriteFile(ctx, fmt.Sprintf("f%d", i), []byte("data"))
 		require.NoError(t, err)

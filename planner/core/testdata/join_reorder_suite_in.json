@@ -1,0 +1,302 @@
+[
+  {
+    "name": "TestStraightJoinHint",
+    "cases": [
+      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t2, t1, t3, t where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t3, t2, t1, t where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t3, t1, t, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ straight_join() */ * from t3 join t1 on t1.b=t3.b join t2 on t2.a=t1.a;",
+      "select /*+ straight_join() */ * from t3 join t2 on t2.b=t3.b join t1 on t2.a=t1.a;",
+      "select /*+ straight_join() */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ straight_join() */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from t1 join (t2 join t3 on t2.a=t3.a) on t1.a=t3.a;",
+      "select /*+ straight_join() */ * from t3 join (t1 join t2 on t1.a=t2.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from t2 join t1 on t1.a=t2.a join t3 on t2.b=t3.b;",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
+      "select /*+ straight_join() */ * from t2 join t3 on t3.a=t2.a join t1 on t2.a=t1.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t1.a=t4.a;",
+      "select /*+ straight_join() */ * from (t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t4.a;",
+      "select /*+ straight_join() */ * from (t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from ((select t3.a, t3.b from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join ((select t3.a, t3.b from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join ((select t3.a, t3.b from t1, t3, t2, t where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from (t1 join t2 on t1.a=t2.a) join ((select t3.a, t3.b from t3, t2, t1, t where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) on t1.a=t4.a;",
+      "select /*+ straight_join() */ * from ((select t3.a, t3.b from t1, t2, t, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t4.a;",
+      "select /*+ straight_join() */ * from ((select t3.a, t3.b from t2, t1, t, t3 where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t2.a=t3.a;",
+      "select /*+ straight_join() */ * from ((select t3.a, t3.b from t3, t2, t1, t where t.a = t1.a and t1.b=t2.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;"
+    ]
+  },
+  {
+    "name": "TestLeadingJoinHint",
+    "cases": [
+      "select /*+ leading(t, t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2, t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t3, t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t, t1, t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2, t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t3, t1, t) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2, t3, t) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2, t3, t, t4) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t3, t2) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ leading(t3, t1) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ leading(t1, t2) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ leading(t3) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ leading(t2) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ leading(t1) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ leading(t3, t2, t1) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ leading(t1, t2, t3) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ leading(t3, t1, t2) */ * from t2 join t1 on t2.a=t1.a join t3 on t1.b=t3.b;",
+      "select /*+ leading(t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ leading(t1) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ leading(t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ leading(t2, t1) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ leading(t2, t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ leading(t3, t1) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ leading(t2, t1, t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ leading(t1, t3, t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ leading(t2, t3, t1) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=1;",
+      "select /*+ leading(t1) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+      "select /*+ leading(t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+      "select /*+ leading(t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+      "select /*+ leading(t1, t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+      "select /*+ leading(t3, t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+      "select /*+ leading(t1, t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+      "select /*+ leading(t1, t2, t3) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+      "select /*+ leading(t3, t1, t2) */ * from t2 join (t1 join t3 on t1.a=t3.a) on t2.a=t3.a;",
+      "select /*+ leading(t1) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t2) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t3) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t4) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t1, t2) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t1, t3) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t4, t1) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t4, t2) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t3, t2) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t3, t4) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t1, t2, t3) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t1, t4, t3) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t4, t2, t3) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t1, t2, t3, t4) */ * from (t1 join t2 on t1.a=t2.a) join (t3 join t4 on t3.a=t4.a) on t2.a=t4.a;",
+      "select /*+ leading(t1) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t2) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t3) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t4) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t2, t1) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t2, t3) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t4, t1) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t3, t1) */ * from ((select t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select * from ((select /*+ leading(t5) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select * from ((select /*+ leading(t6) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select * from ((select /*+ leading(t5, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select * from ((select /*+ leading(t6, t8, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t3) */ * from ((select /*+ leading(t5) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t3, t1) */ * from ((select /*+ leading(t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t3, t1, t2) */ * from ((select /*+ leading(t6, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;",
+      "select /*+ leading(t3, t4) */ * from ((select /*+ leading(t5, t7, t8) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 join t4 on t3.a=t4.a) join (t1 join t2 on t1.a=t2.a) on t1.a=t4.a;"
+    ]
+  },
+  {
+    "name": "TestJoinOrderHint",
+    "cases": [
+      // test cases for using the join order hint and join algorithm hint
+      "select /*+ straight_join() hash_join(t) */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() merge_join(t1) */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() INL_JOIN(t1) */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2) hash_join(t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2) hash_join(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2) INL_JOIN(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2) merge_join(t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t1) merge_join(t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2) INL_JOIN(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;"
+    ]
+  },
+  {
+    "name": "TestJoinOrderHint4StaticPartitionTable",
+    "cases": [
+      "select /*+ straight_join() */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;"
+    ]
+  },
+  {
+    "name": "TestJoinOrderHint4DynamicPartitionTable",
+    "cases": [
+      "select /*+ straight_join() */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;"
+    ]
+  },
+  {
+    "name": "TestJoinOrderHint4DifferentJoinType",
+    "cases": [
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ straight_join() */ * from t1 straight_join t2 straight_join t3",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a cross join t3",
+
+      // inner join
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+
+      // straight join
+      "select /*+ leading(t2) */ * from t1 straight_join t2 straight_join t3",
+      "select /*+ leading(t3) */ * from t1 straight_join t2 straight_join t3",
+      "select /*+ leading(t2, t3) */ * from t1 straight_join t2 straight_join t3",
+      "select /*+ leading(t3, t2) */ * from t1 straight_join t2 straight_join t3",
+      "select /*+ leading(t3, t1) */ * from t1 straight_join t2 straight_join t3",
+
+      // left outer join
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+
+      // right outer join
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b",
+
+      // cross join
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a cross join t3",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a cross join t3"
+    ]
+  },
+  {
+    "name": "TestJoinOrderHint4TiFlash",
+    "cases": [
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+      "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b"
+    ]
+  },
+  {
+    "name": "TestJoinOrderHint4Subquery",
+    "cases": [
+      // straight join hint + correlated subquery
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1;",
+      "select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+
+      // straight join hint + uncorrelated subquery
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+      "select /*+ straight_join() */ * from t1 join (select * from t4) t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
+      "select /*+ straight_join() */ * from (select * from t4) t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
+      "select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join (select * from t4) t3 on t2.b=t3.b;",
+      "select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1;",
+      "select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+
+      // leading hint + correlated subquery
+      "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+
+      "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+
+      "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+
+      "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+
+      "select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t1, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t3@sel_2, t2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t3@sel_2, t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+
+      "select /*+ leading(t4, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+
+      "select /*+ leading(t4, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+
+      // leading hint + uncorrelated subquery
+      "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+
+      "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+
+      "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+
+      "select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where not exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+
+      "select /*+ leading(t4@sel_2, t1) */ * from t1 join (select * from t4) t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
+      "select /*+ leading(t2, t4@sel_2) */ * from (select * from t4) t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
+      "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join (select * from t4) t3 on t2.b=t3.b;",
+
+      "select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;"
+    ]
+  }
+]

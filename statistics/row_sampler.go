@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"math/rand"
+	"unsafe"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -43,6 +45,7 @@ type baseCollector struct {
 	FMSketches []*FMSketch
 	TotalSizes []int64
 	Count      int64
+	MemSize    int64
 }
 
 // ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
@@ -63,6 +66,21 @@ type ReservoirRowSampleItem struct {
 	Columns []types.Datum
 	Weight  int64
 	Handle  kv.Handle
+}
+
+// EmptyReservoirSampleItemSize = (24 + 16 + 8) now.
+const EmptyReservoirSampleItemSize = int64(unsafe.Sizeof(ReservoirRowSampleItem{}))
+
+// MemUsage returns the memory usage of sample item.
+func (i ReservoirRowSampleItem) MemUsage() (sum int64) {
+	sum = EmptyReservoirSampleItemSize
+	for _, col := range i.Columns {
+		sum += col.MemUsage()
+	}
+	if i.Handle != nil {
+		sum += i.Handle.MemUsage()
+	}
+	return sum
 }
 
 // WeightedRowSampleHeap implements the Heap interface.
@@ -250,7 +268,7 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	return collector
 }
 
-func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
+func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) {
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
@@ -258,20 +276,33 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
 		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
 	}
 	s.TotalSizes = pbCollector.TotalSize
-	s.Samples = make(WeightedRowSampleHeap, 0, len(pbCollector.Samples))
+	sampleNum := len(pbCollector.Samples)
+	s.Samples = make(WeightedRowSampleHeap, 0, sampleNum)
+	// consume mandatory memory at the beginning, including all empty ReservoirRowSampleItems and all empty Datums of all sample rows, if exceeds, fast fail
+	if len(pbCollector.Samples) > 0 {
+		rowLen := len(pbCollector.Samples[0].Row)
+		// 8 is the size of reference
+		initMemSize := int64(sampleNum) * (int64(rowLen)*types.EmptyDatumSize + EmptyReservoirSampleItemSize + 8)
+		s.MemSize += initMemSize
+		memTracker.Consume(initMemSize)
+	}
+	bufferedMemSize := int64(0)
 	for _, pbSample := range pbCollector.Samples {
-		data := make([]types.Datum, 0, len(pbSample.Row))
+		rowLen := len(pbSample.Row)
+		data := make([]types.Datum, 0, rowLen)
 		for _, col := range pbSample.Row {
 			b := make([]byte, len(col))
 			copy(b, col)
 			data = append(data, types.NewBytesDatum(b))
 		}
 		// Directly copy the weight.
-		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
-			Columns: data,
-			Weight:  pbSample.Weight,
-		})
+		sampleItem := &ReservoirRowSampleItem{Columns: data, Weight: pbSample.Weight}
+		s.Samples = append(s.Samples, sampleItem)
+		deltaSize := sampleItem.MemUsage() - EmptyReservoirSampleItemSize - int64(rowLen)*types.EmptyDatumSize
+		memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+		s.MemSize += deltaSize
 	}
+	memTracker.Consume(bufferedMemSize)
 }
 
 // Base implements the RowSampleCollector interface.
@@ -326,8 +357,17 @@ func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	for i, totSize := range subCollector.Base().TotalSizes {
 		s.TotalSizes[i] += totSize
 	}
+	oldSampleNum := len(s.Samples)
 	for _, sample := range subCollector.Base().Samples {
 		s.sampleZippedRow(sample)
+	}
+	subSampleNum := len(subCollector.Base().Samples)
+	newSampleNum := len(s.Samples)
+	totalSampleNum := oldSampleNum + subSampleNum
+	if totalSampleNum == 0 {
+		s.MemSize = 0
+	} else {
+		s.MemSize = (s.MemSize + subCollector.Base().MemSize) * int64(newSampleNum) / int64(totalSampleNum)
 	}
 }
 
@@ -405,6 +445,7 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
 	}
 	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
+	s.MemSize += subCollector.Base().MemSize
 }
 
 // Base implements the interface RowSampleCollector.

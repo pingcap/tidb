@@ -19,6 +19,7 @@ import (
 	"os"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 
@@ -59,12 +60,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	registry := prometheus.NewRegistry()
-	registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
-	registry.MustRegister(prometheus.NewGoCollector())
-	export.InitMetricsVector(conf.Labels)
-	export.RegisterMetrics(registry)
-	prometheus.DefaultGatherer = registry
+	registry := conf.PromRegistry
+	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	registry.MustRegister(collectors.NewGoCollector())
+	if gatherer, ok := registry.(prometheus.Gatherer); ok {
+		prometheus.DefaultGatherer = gatherer
+	}
+
 	dumper, err := export.NewDumper(context.Background(), conf)
 	if err != nil {
 		fmt.Printf("\ncreate dumper failed: %s\n", err.Error())

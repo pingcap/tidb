@@ -15,6 +15,7 @@
 package types
 
 import (
+	gjson "encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
@@ -546,6 +548,59 @@ func TestStringToMysqlBit(t *testing.T) {
 	}
 }
 
+func TestMarshalDatum(t *testing.T) {
+	e, err := ParseSetValue([]string{"a", "b", "c", "d", "e"}, uint64(1))
+	require.NoError(t, err)
+	tests := []Datum{
+		NewIntDatum(1),
+		NewUintDatum(72),
+		NewFloat32Datum(1.23),
+		NewFloat64Datum(1.23),
+		NewDatum(math.Inf(-1)),
+		NewDecimalDatum(NewDecFromStringForTest("1.2345")),
+		NewStringDatum("abcde"),
+		NewCollationStringDatum("abcde", charset.CollationBin),
+		NewDurationDatum(Duration{Duration: time.Duration(1)}),
+		NewTimeDatum(NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)),
+		NewBytesDatum([]byte("abcde")),
+		NewBinaryLiteralDatum([]byte{0x81}),
+		NewMysqlBitDatum(NewBinaryLiteralFromUint(0x98765432, 4)),
+		NewMysqlEnumDatum(Enum{Name: "a", Value: 1}),
+		NewCollateMysqlEnumDatum(Enum{Name: "a", Value: 1}, charset.CollationASCII),
+		NewMysqlSetDatum(e, charset.CollationGBKBin),
+		NewJSONDatum(json.CreateBinary(int64(1))),
+		MinNotNullDatum(),
+		MaxValueDatum(),
+	}
+	// Marshal the datum and then unmarshal it to see if they are equal.
+	for i, tt := range tests {
+		msg := fmt.Sprintf("failed at %dth test", i)
+		bytes, err := gjson.Marshal(&tt)
+		require.NoError(t, err, msg)
+		var datum Datum
+		err = gjson.Unmarshal(bytes, &datum)
+		require.NoError(t, err, msg)
+		require.Equal(t, tt.k, datum.k, msg)
+		require.Equal(t, tt.decimal, datum.decimal, msg)
+		require.Equal(t, tt.length, datum.length, msg)
+		require.Equal(t, tt.i, datum.i, msg)
+		require.Equal(t, tt.collation, datum.collation, msg)
+		require.Equal(t, tt.b, datum.b, msg)
+		if tt.x == nil {
+			require.Nil(t, datum.x, msg)
+		}
+		require.Equal(t, reflect.TypeOf(tt.x), reflect.TypeOf(datum.x), msg)
+		switch tt.x.(type) {
+		case Time:
+			require.Equal(t, 0, tt.x.(Time).Compare(datum.x.(Time)))
+		case *MyDecimal:
+			require.Equal(t, 0, tt.x.(*MyDecimal).Compare(datum.x.(*MyDecimal)))
+		default:
+			require.EqualValues(t, tt.x, datum.x, msg)
+		}
+	}
+}
+
 func BenchmarkCompareDatum(b *testing.B) {
 	vals, vals1 := prepareCompareDatums()
 	sc := new(stmtctx.StatementContext)
@@ -597,7 +652,7 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
-		tp := NewFieldTypeBuilderP().SetType(mysql.TypeNewDecimal).SetFlen(tt.flen).SetDecimal(tt.frac).BuildP()
+		tp := NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(tt.flen).SetDecimal(tt.frac).BuildP()
 		dec := NewDecFromStringForTest(tt.dec)
 		newDec, err := ProduceDecWithSpecifiedTp(dec, tp, sc)
 		if tt.isOverflow {

@@ -411,7 +411,7 @@ const (
 		end_time TIMESTAMP,
 		state ENUM('pending', 'running', 'finished', 'failed') NOT NULL,
 		fail_reason TEXT,
-		instance CHAR(64) NOT NULL comment 'address of the TiDB instance executing the analyze job',
+		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the analyze job',
 		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
 		PRIMARY KEY (id),
 		KEY (update_time)
@@ -615,11 +615,15 @@ const (
 	version88 = 88
 	// version89 adds the tables mysql.advisory_locks
 	version89 = 89
+	// version90 converts enable-batch-dml, mem-quota-query, query-log-max-len, committer-concurrency, run-auto-analyze, and oom-action to a sysvar
+	version90 = 90
+	// version91 converts prepared-plan-cache to sysvars
+	version91 = 91
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version89
+var currentBootstrapVersion int64 = version91
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -712,6 +716,8 @@ var (
 		upgradeToVer87,
 		upgradeToVer88,
 		upgradeToVer89,
+		upgradeToVer90,
+		upgradeToVer91,
 	}
 )
 
@@ -1822,10 +1828,57 @@ func upgradeToVer89(s Session, ver int64) {
 	doReentrantDDL(s, CreateAdvisoryLocks)
 }
 
+// importConfigOption is a one-time import.
+// It is intended to be used to convert a config option to a sysvar.
+// It reads the config value from the tidb-server executing the bootstrap
+// (not guaranteed to be the same on all servers), and writes a message
+// to the error log. The message is important since the behavior is weird
+// (changes to the config file will no longer take effect past this point).
+func importConfigOption(s Session, configName, svName, valStr string) {
+	message := fmt.Sprintf("%s is now configured by the system variable %s. One-time importing the value specified in tidb.toml file", configName, svName)
+	logutil.BgLogger().Warn(message, zap.String("value", valStr))
+	// We use insert ignore, since if its a duplicate we don't want to overwrite any user-set values.
+	sql := fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, svName, valStr)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer90(s Session, ver int64) {
+	if ver >= version90 {
+		return
+	}
+	valStr := variable.BoolToOnOff(config.GetGlobalConfig().EnableBatchDML)
+	importConfigOption(s, "enable-batch-dml", variable.TiDBEnableBatchDML, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().MemQuotaQuery)
+	importConfigOption(s, "mem-quota-query", variable.TiDBMemQuotaQuery, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Log.QueryLogMaxLen)
+	importConfigOption(s, "query-log-max-len", variable.TiDBQueryLogMaxLen, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Performance.CommitterConcurrency)
+	importConfigOption(s, "committer-concurrency", variable.TiDBCommitterConcurrency, valStr)
+	valStr = variable.BoolToOnOff(config.GetGlobalConfig().Performance.RunAutoAnalyze)
+	importConfigOption(s, "run-auto-analyze", variable.TiDBEnableAutoAnalyze, valStr)
+	valStr = config.GetGlobalConfig().OOMAction
+	importConfigOption(s, "oom-action", variable.TiDBMemOOMAction, valStr)
+}
+
+func upgradeToVer91(s Session, ver int64) {
+	if ver >= version91 {
+		return
+	}
+	valStr := variable.BoolToOnOff(config.GetGlobalConfig().PreparedPlanCache.Enabled)
+	importConfigOption(s, "prepared-plan-cache.enable", variable.TiDBEnablePrepPlanCache, valStr)
+
+	valStr = strconv.Itoa(int(config.GetGlobalConfig().PreparedPlanCache.Capacity))
+	importConfigOption(s, "prepared-plan-cache.capacity", variable.TiDBPrepPlanCacheSize, valStr)
+
+	valStr = strconv.FormatFloat(config.GetGlobalConfig().PreparedPlanCache.MemoryGuardRatio, 'f', -1, 64)
+	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", variable.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
-		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, variable.OOMActionLog, comment, variable.OOMActionLog,
 	)
 }
 
@@ -1918,6 +1971,12 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAdvisoryLocks)
 }
 
+// inTestSuite checks if we are bootstrapping in the context of tests.
+// There are some historical differences in behavior between tests and non-tests.
+func inTestSuite() bool {
+	return flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
+}
+
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
 // TODO: sanitize.
@@ -1938,47 +1997,55 @@ func doDMLWorks(s Session) {
 		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
 	}
 
-	// Init global system variables table.
+	// For GLOBAL scoped system variables, insert the initial value
+	// into the mysql.global_variables table. This is only run on initial
+	// bootstrap, and in some cases we will use a different default value
+	// for new installs versus existing installs.
+
 	values := make([]string, 0, len(variable.GetSysVars()))
 	for k, v := range variable.GetSysVars() {
-		// Only global variables should be inserted.
-		if v.HasGlobalScope() {
-			vVal := v.Value
-			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
+		if !v.HasGlobalScope() {
+			continue
+		}
+		vVal := v.Value
+		switch v.Name {
+		case variable.TiDBTxnMode:
+			if config.GetGlobalConfig().Store == "tikv" {
 				vVal = "pessimistic"
 			}
-			if v.Name == variable.TiDBRowFormatVersion {
-				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
+		case variable.TiDBEnableAsyncCommit, variable.TiDBEnable1PC:
+			if config.GetGlobalConfig().Store == "tikv" {
+				vVal = variable.On
 			}
-			if v.Name == variable.TiDBPartitionPruneMode {
-				vVal = variable.DefTiDBPartitionPruneMode
-				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
-					// enable Dynamic Prune by default in test case.
-					vVal = string(variable.Dynamic)
-				}
+		case variable.TiDBPartitionPruneMode:
+			if inTestSuite() || config.CheckTableBeforeDrop {
+				vVal = string(variable.Dynamic)
 			}
-			if v.Name == variable.TiDBEnableChangeMultiSchema {
+		case variable.TiDBEnableChangeMultiSchema:
+			if inTestSuite() {
+				vVal = variable.On
+			}
+		case variable.TiDBMemOOMAction:
+			if inTestSuite() {
+				vVal = variable.OOMActionLog
+			}
+		case variable.TiDBEnableAutoAnalyze:
+			if inTestSuite() {
 				vVal = variable.Off
-				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-					// enable change multi schema in test case for compatibility with old cases.
-					vVal = variable.On
-				}
 			}
-			if v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.On
-			}
-			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.On
-			}
-			if v.Name == variable.TiDBEnableMutationChecker {
-				vVal = variable.On
-			}
-			if v.Name == variable.TiDBTxnAssertionLevel {
-				vVal = variable.AssertionFastStr
-			}
-			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
-			values = append(values, value)
+		// For the following sysvars, we change the default
+		// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
+		// It is better to change the value in the Sysvar struct, so that
+		// all installs will have the same value.
+		case variable.TiDBRowFormatVersion:
+			vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
+		case variable.TiDBTxnAssertionLevel:
+			vVal = variable.AssertionFastStr
+		case variable.TiDBEnableMutationChecker:
+			vVal = variable.On
 		}
+		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
+		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))

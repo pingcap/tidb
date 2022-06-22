@@ -972,43 +972,43 @@ func newDateFieldType() *types.FieldType {
 }
 
 func newIntFieldType() *types.FieldType {
-	return types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).BuildP()
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).BuildP()
 }
 
 func newDurFieldType() *types.FieldType {
-	return types.NewFieldTypeBuilderP().SetType(mysql.TypeDuration).SetDecimal(types.DefaultFsp).BuildP()
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetDecimal(types.DefaultFsp).BuildP()
 }
 
 func newStringFieldType() *types.FieldType {
-	return types.NewFieldTypeBuilderP().SetType(mysql.TypeVarString).SetFlen(types.UnspecifiedLength).BuildP()
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlen(types.UnspecifiedLength).BuildP()
 }
 
 func newRealFieldType() *types.FieldType {
-	return types.NewFieldTypeBuilderP().SetType(mysql.TypeFloat).SetFlen(types.UnspecifiedLength).BuildP()
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).SetFlen(types.UnspecifiedLength).BuildP()
 }
 
 func newDecimalFieldType() *types.FieldType {
-	return types.NewFieldTypeBuilderP().SetType(mysql.TypeNewDecimal).SetFlen(types.UnspecifiedLength).BuildP()
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(types.UnspecifiedLength).BuildP()
 }
 
 func newJSONFieldType() *types.FieldType {
-	return types.NewFieldTypeBuilderP().SetType(mysql.TypeJSON).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 }
 
 func newFloatFieldType() *types.FieldType {
-	return types.NewFieldTypeBuilderP().SetType(mysql.TypeFloat).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 }
 
 func newBinaryLiteralFieldType() *types.FieldType {
-	return types.NewFieldTypeBuilderP().SetType(mysql.TypeBit).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeBit).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 }
 
 func newBlobFieldType() *types.FieldType {
-	return types.NewFieldTypeBuilderP().SetType(mysql.TypeBlob).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeBlob).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 }
 
 func newEnumFieldType() *types.FieldType {
-	return types.NewFieldTypeBuilderP().SetType(mysql.TypeEnum).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
+	return types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetFlen(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 }
 
 func scalarFunctionExpr(sigCode tipb.ScalarFuncSig, retType *tipb.FieldType, args ...*tipb.Expr) *tipb.Expr {

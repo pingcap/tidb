@@ -5,11 +5,16 @@ package conn
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -24,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
@@ -37,6 +43,13 @@ import (
 )
 
 const (
+	// DefaultMergeRegionSizeBytes is the default region split size, 96MB.
+	// See https://github.com/tikv/tikv/blob/v4.0.8/components/raftstore/src/coprocessor/config.rs#L35-L38
+	DefaultMergeRegionSizeBytes uint64 = 96 * units.MiB
+
+	// DefaultMergeRegionKeyCount is the default region key count, 960000.
+	DefaultMergeRegionKeyCount uint64 = 960000
+
 	dialTimeout = 30 * time.Second
 
 	resetRetryTimes = 3
@@ -445,4 +458,128 @@ func (mgr *Mgr) Close() {
 	}
 
 	mgr.PdController.Close()
+}
+
+// GetTS gets current ts from pd.
+func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
+	p, l, err := mgr.GetPDClient().GetTS(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return oracle.ComposeTS(p, l), nil
+}
+
+// GetMergeRegionSizeAndCount returns the tikv config `coprocessor.region-split-size` and `coprocessor.region-split-key`.
+func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64, error) {
+	regionSplitSize := DefaultMergeRegionSizeBytes
+	regionSplitKeys := DefaultMergeRegionKeyCount
+	type coprocessor struct {
+		RegionSplitKeys uint64 `json:"region-split-keys"`
+		RegionSplitSize string `json:"region-split-size"`
+	}
+
+	type config struct {
+		Cop coprocessor `json:"coprocessor"`
+	}
+	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
+		c := &config{}
+		e := json.NewDecoder(resp.Body).Decode(c)
+		if e != nil {
+			return e
+		}
+		rs, e := units.RAMInBytes(c.Cop.RegionSplitSize)
+		if e != nil {
+			return e
+		}
+		urs := uint64(rs)
+		if regionSplitSize == DefaultMergeRegionSizeBytes || urs < regionSplitSize {
+			regionSplitSize = urs
+			regionSplitKeys = c.Cop.RegionSplitKeys
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	return regionSplitSize, regionSplitKeys, nil
+}
+
+// GetConfigFromTiKV get configs from all alive tikv stores.
+func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func(*http.Response) error) error {
+	allStores, err := GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), SkipTiFlash)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	httpPrefix := "http://"
+	if mgr.GetTLSConfig() != nil {
+		httpPrefix = "https://"
+	}
+
+	for _, store := range allStores {
+		if store.State != metapb.StoreState_Up {
+			continue
+		}
+		// we need make sure every available store support backup-stream otherwise we might lose data.
+		// so check every store's config
+		addr, err := handleTiKVAddress(store, httpPrefix)
+		if err != nil {
+			return err
+		}
+		configAddr := fmt.Sprintf("%s/config", addr.String())
+
+		err = utils.WithRetry(ctx, func() error {
+			resp, e := cli.Get(configAddr)
+			if e != nil {
+				return e
+			}
+			err = fn(resp)
+			if err != nil {
+				return err
+			}
+			_ = resp.Body.Close()
+			return nil
+		}, utils.NewPDReqBackoffer())
+		if err != nil {
+			// if one store failed, break and return error
+			return err
+		}
+	}
+	return nil
+}
+
+func handleTiKVAddress(store *metapb.Store, httpPrefix string) (*url.URL, error) {
+	statusAddr := store.GetStatusAddress()
+	nodeAddr := store.GetAddress()
+	if !strings.HasPrefix(statusAddr, "http") {
+		statusAddr = httpPrefix + statusAddr
+	}
+	if !strings.HasPrefix(nodeAddr, "http") {
+		nodeAddr = httpPrefix + nodeAddr
+	}
+
+	statusUrl, err := url.Parse(statusAddr)
+	if err != nil {
+		return nil, err
+	}
+	nodeUrl, err := url.Parse(nodeAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	// we try status address as default
+	addr := statusUrl
+	// but in sometimes we may not get the correct status address from PD.
+	if statusUrl.Hostname() != nodeUrl.Hostname() {
+		// if not matched, we use the address as default, but change the port
+		addr.Host = nodeUrl.Hostname() + ":" + statusUrl.Port()
+		log.Warn("store address and status address mismatch the host, we will use the store address as hostname",
+			zap.Uint64("store", store.Id),
+			zap.String("status address", statusAddr),
+			zap.String("node address", nodeAddr),
+			zap.Any("request address", statusUrl),
+		)
+	}
+	return addr, nil
 }

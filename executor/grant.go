@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -118,7 +119,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	// Commit the old transaction, like DDL.
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		return err
 	}
 	defer func() { e.ctx.GetSessionVars().SetInTxn(false) }()
@@ -162,12 +163,12 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				return errors.Trace(ErrPasswordFormat)
 			}
 			authPlugin := mysql.AuthNativePassword
-			if user.AuthOpt.AuthPlugin != "" {
+			if user.AuthOpt != nil && user.AuthOpt.AuthPlugin != "" {
 				authPlugin = user.AuthOpt.AuthPlugin
 			}
 			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx,
 				`INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES (%?, %?, %?, %?);`,
-				mysql.SystemDB, mysql.UserTable, strings.ToLower(user.User.Hostname), user.User.Username, pwd, authPlugin)
+				mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd, authPlugin)
 			if err != nil {
 				return err
 			}
@@ -488,7 +489,7 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 	if err != nil {
 		return err
 	}
-	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%?`, user.User.Username, strings.ToLower(user.User.Hostname))
+	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%?`, user.User.Username, user.User.Hostname)
 
 	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql.String())
 	return err
@@ -508,13 +509,6 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
-	}
-
-	// Some privilege can not be granted to performance_schema.* in MySQL.
-	// As TiDB ignores the privilege management part for this system database,
-	// check is performed here
-	if strings.EqualFold(dbName, "performance_schema") && e.checkPerformanceSchemaPriv(priv.Priv) {
-		return e.dbAccessDenied(dbName)
 	}
 
 	sql := new(strings.Builder)
@@ -579,28 +573,6 @@ func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 		}
 	}
 	return nil
-}
-
-func (e *GrantExec) dbAccessDenied(dbName string) error {
-	user := e.ctx.GetSessionVars().User
-	u := user.Username
-	h := user.Hostname
-	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
-		u = user.AuthUsername
-		h = user.AuthHostname
-	}
-	return ErrDBaccessDenied.GenWithStackByArgs(u, h, dbName)
-}
-
-// If the privilege can not be granted, return true
-func (e *GrantExec) checkPerformanceSchemaPriv(privType mysql.PrivilegeType) bool {
-	// Attempts to use GRANT ALL as shorthand for granting privileges
-	// at the database leval fail with an error
-	// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-table-characteristics.html for more detail
-	// Others are rejected in MySQL 8.0
-	return privType == mysql.AllPriv || privType == mysql.CreatePriv ||
-		privType == mysql.ReferencesPriv || privType == mysql.AlterPriv || privType == mysql.ExecutePriv ||
-		privType == mysql.IndexPriv || privType == mysql.CreateViewPriv || privType == mysql.ShowViewPriv
 }
 
 // composeGlobalPrivUpdate composes update stmt assignment list string for global scope privilege update.

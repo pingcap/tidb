@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -73,13 +74,6 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	}
 }
 
-// WithExecuteInfoSchemaUpdate return a PreprocessOpt to update the `Execute` infoSchema under some conditions.
-func WithExecuteInfoSchemaUpdate(pe *PreprocessExecuteISUpdate) PreprocessOpt {
-	return func(p *preprocessor) {
-		p.PreprocessExecuteISUpdate = pe
-	}
-}
-
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
 func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
@@ -129,9 +123,6 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
-
-	v.initTxnContextProviderIfNecessary(node)
-
 	return errors.Trace(v.err)
 }
 
@@ -170,12 +161,6 @@ type PreprocessorReturn struct {
 	ReadReplicaScope string
 }
 
-// PreprocessExecuteISUpdate is used to update information schema for special Execute statement in the preprocessor.
-type PreprocessExecuteISUpdate struct {
-	ExecuteInfoSchemaUpdate func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema
-	Node                    ast.Node
-}
-
 // preprocessWith is used to record info from WITH statements like CTE name.
 type preprocessWith struct {
 	cteCanUsed      []string
@@ -199,7 +184,6 @@ type preprocessor struct {
 
 	// values that may be returned
 	*PreprocessorReturn
-	*PreprocessExecuteISUpdate
 	err error
 }
 
@@ -1638,6 +1622,12 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			return
 		}
 	}
+	if node.Tp.EvalType() == types.ETDatetime {
+		if node.Tp.GetDecimal() > types.MaxFsp {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.GetDecimal(), "CAST", types.MaxFsp)
+			return
+		}
+	}
 }
 
 func (p *preprocessor) updateStateFromStaleReadProcessor() error {
@@ -1655,12 +1645,15 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 		if p.flag&initTxnContextProvider != 0 {
 			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
 			if !p.ctx.GetSessionVars().InTxn() {
-				err := sessiontxn.GetTxnManager(p.ctx).SetContextProvider(staleread.NewStalenessTxnContextProvider(
-					p.InfoSchema,
-					p.LastSnapshotTS,
-				))
-
-				if err != nil {
+				txnManager := sessiontxn.GetTxnManager(p.ctx)
+				newTxnRequest := &sessiontxn.EnterNewTxnRequest{
+					Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
+					Provider: staleread.NewStalenessTxnContextProvider(p.ctx, p.LastSnapshotTS, p.InfoSchema),
+				}
+				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
+					return err
+				}
+				if err := txnManager.OnStmtStart(context.TODO()); err != nil {
 					return err
 				}
 			}
@@ -1691,35 +1684,9 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	if p.InfoSchema != nil {
 		return p.InfoSchema
 	}
-	// `Execute` under some conditions need to see the latest information schema.
-	if p.PreprocessExecuteISUpdate != nil {
-		if newInfoSchema := p.ExecuteInfoSchemaUpdate(p.Node, p.ctx); newInfoSchema != nil {
-			p.InfoSchema = newInfoSchema
-			return p.InfoSchema
-		}
-	}
-	p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+
+	p.InfoSchema = sessiontxn.GetTxnManager(p.ctx).GetTxnInfoSchema()
 	return p.InfoSchema
-}
-
-func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
-	if p.err != nil || p.flag&initTxnContextProvider == 0 {
-		return
-	}
-
-	txnManager := sessiontxn.GetTxnManager(p.ctx)
-	currentProvider := txnManager.GetContextProvider()
-
-	if currentProvider != nil {
-		if _, ok := currentProvider.(*sessiontxn.SimpleTxnContextProvider); !ok {
-			return
-		}
-	}
-
-	// if current provider is nil or `SimpleTxnContextProvider`, it means we should use p.ensureInfoSchema()
-	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
-		InfoSchema: p.ensureInfoSchema(),
-	})
 }
 
 func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {

@@ -66,6 +66,8 @@ type Collator interface {
 	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string) []byte
+	// KeyWithoutTrimRightSpace returns the collate key for str. The difference with Key is str will not be trimed.
+	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
 }
@@ -98,7 +100,7 @@ func NewCollationEnabled() bool {
 func CompatibleCollate(collate1, collate2 string) bool {
 	if (collate1 == "utf8mb4_general_ci" || collate1 == "utf8_general_ci") && (collate2 == "utf8mb4_general_ci" || collate2 == "utf8_general_ci") {
 		return true
-	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
+	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin" || collate1 == "latin1_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
 		return true
 	} else if (collate1 == "utf8mb4_unicode_ci" || collate1 == "utf8_unicode_ci") && (collate2 == "utf8mb4_unicode_ci" || collate2 == "utf8_unicode_ci") {
 		return true
