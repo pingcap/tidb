@@ -59,6 +59,11 @@ func (c *tikvClient) Close() error {
 	return derr.ToTiDBErr(err)
 }
 
+func (c *tikvClient) CloseAddr(addr string) error {
+	err := c.c.CloseAddr(addr)
+	return derr.ToTiDBErr(err)
+}
+
 // SendRequest sends Request.
 func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	res, err := c.c.SendRequest(ctx, addr, req, timeout)

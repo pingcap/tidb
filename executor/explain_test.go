@@ -20,11 +20,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -297,6 +297,10 @@ func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []stri
 }
 
 func TestCheckActRowsWithUnistore(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = true
+	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	// testSuite1 use default mockstore which is unistore
@@ -306,6 +310,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
 	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
 	tk.MustExec("analyze table t_unistore_act_rows")
+	tk.MustExec("set @@tidb_merge_join_concurrency= 5;")
 
 	type testStruct struct {
 		sql      string
@@ -349,7 +354,18 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
 			expected: []string{"4", "4", "4", "4", "4"},
 		},
+		{
+			sql:      "select a, row_number() over (partition by b) from t_unistore_act_rows;",
+			expected: []string{"4", "4", "4", "4", "4", "4", "4"},
+		},
+		{
+			sql:      "select /*+ merge_join(t1, t2) */ * from t_unistore_act_rows t1 join t_unistore_act_rows t2 on t1.b = t2.b;",
+			expected: []string{"10", "10", "4", "4", "4", "4", "4", "4", "4", "4", "4", "4"},
+		},
 	}
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	for _, test := range tests {
 		checkActRows(t, tk, test.sql, test.expected)
@@ -386,11 +402,11 @@ func TestExplainStatementsSummary(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustQuery("desc select * from information_schema.statements_summary").Check(testkit.Rows(
 		`MemTableScan_4 10000.00 root table:STATEMENTS_SUMMARY `))
-	tk.MustQuery("desc select * from information_schema.statements_summary where digest is null").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest is null").Check(testkit.RowsWithSep("|",
 		`Selection_5|8000.00|root| isnull(Column#5)`, `└─MemTableScan_6|10000.00|root|table:STATEMENTS_SUMMARY|`))
-	tk.MustQuery("desc select * from information_schema.statements_summary where digest = 'abcdefg'").Check(testutil.RowsWithSep(" ",
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest = 'abcdefg'").Check(testkit.RowsWithSep(" ",
 		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["abcdefg"]`))
-	tk.MustQuery("desc select * from information_schema.statements_summary where digest in ('a','b','c')").Check(testutil.RowsWithSep(" ",
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest in ('a','b','c')").Check(testkit.RowsWithSep(" ",
 		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["a","b","c"]`))
 }
 
@@ -416,4 +432,22 @@ func TestFix29401(t *testing.T) {
   KEY f (f)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
 	tk.MustExec(" explain select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;")
+}
+
+func TestIssue35296(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int , c int, d int, e int,index ia(a), index ib(b), index ic(c), index idd(d), index ie(e));")
+
+	rows := tk.MustQuery("explain analyze select * from t where a = 10 or b = 30 or c = 10 or d = 1 or e = 90;").Rows()
+
+	require.Contains(t, rows[0][0], "IndexMerge")
+	require.NotRegexp(t, "^time:0s", rows[1][5])
+	require.NotRegexp(t, "^time:0s", rows[2][5])
+	require.NotRegexp(t, "^time:0s", rows[3][5])
+	require.NotRegexp(t, "^time:0s", rows[4][5])
+	require.NotRegexp(t, "^time:0s", rows[5][5])
 }

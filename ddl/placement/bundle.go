@@ -25,7 +25,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -415,11 +414,16 @@ func (b *Bundle) GetLeaderDC(dcLabelKey string) (string, bool) {
 	return "", false
 }
 
+// PolicyGetter is the interface to get the policy
+type PolicyGetter interface {
+	GetPolicy(policyID int64) (*model.PolicyInfo, error)
+}
+
 // NewTableBundle creates a bundle for table key range.
 // If table is a partitioned table, it also contains the rules that inherited from table for every partition.
 // The bundle does not contain the rules specified independently by each partition
-func NewTableBundle(t *meta.Meta, tbInfo *model.TableInfo) (*Bundle, error) {
-	bundle, err := newBundleFromPolicy(t, tbInfo.PlacementPolicyRef)
+func NewTableBundle(getter PolicyGetter, tbInfo *model.TableInfo) (*Bundle, error) {
+	bundle, err := newBundleFromPolicy(getter, tbInfo.PlacementPolicyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -441,8 +445,8 @@ func NewTableBundle(t *meta.Meta, tbInfo *model.TableInfo) (*Bundle, error) {
 // NewPartitionBundle creates a bundle for partition key range.
 // It only contains the rules specified independently by the partition.
 // That is to say the inherited rules from table is not included.
-func NewPartitionBundle(t *meta.Meta, def model.PartitionDefinition) (*Bundle, error) {
-	bundle, err := newBundleFromPolicy(t, def.PlacementPolicyRef)
+func NewPartitionBundle(getter PolicyGetter, def model.PartitionDefinition) (*Bundle, error) {
+	bundle, err := newBundleFromPolicy(getter, def.PlacementPolicyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -455,11 +459,11 @@ func NewPartitionBundle(t *meta.Meta, def model.PartitionDefinition) (*Bundle, e
 }
 
 // NewPartitionListBundles creates a bundle list for a partition list
-func NewPartitionListBundles(t *meta.Meta, defs []model.PartitionDefinition) ([]*Bundle, error) {
+func NewPartitionListBundles(getter PolicyGetter, defs []model.PartitionDefinition) ([]*Bundle, error) {
 	bundles := make([]*Bundle, 0, len(defs))
 	// If the partition has the placement rules on their own, build the partition-level bundles additionally.
 	for _, def := range defs {
-		bundle, err := NewPartitionBundle(t, def)
+		bundle, err := NewPartitionBundle(getter, def)
 		if err != nil {
 			return nil, err
 		}
@@ -472,9 +476,9 @@ func NewPartitionListBundles(t *meta.Meta, defs []model.PartitionDefinition) ([]
 }
 
 // NewFullTableBundles returns a bundle list with both table bundle and partition bundles
-func NewFullTableBundles(t *meta.Meta, tbInfo *model.TableInfo) ([]*Bundle, error) {
+func NewFullTableBundles(getter PolicyGetter, tbInfo *model.TableInfo) ([]*Bundle, error) {
 	var bundles []*Bundle
-	tableBundle, err := NewTableBundle(t, tbInfo)
+	tableBundle, err := NewTableBundle(getter, tbInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +488,7 @@ func NewFullTableBundles(t *meta.Meta, tbInfo *model.TableInfo) ([]*Bundle, erro
 	}
 
 	if tbInfo.Partition != nil {
-		partitionBundles, err := NewPartitionListBundles(t, tbInfo.Partition.Definitions)
+		partitionBundles, err := NewPartitionListBundles(getter, tbInfo.Partition.Definitions)
 		if err != nil {
 			return nil, err
 		}
@@ -494,9 +498,9 @@ func NewFullTableBundles(t *meta.Meta, tbInfo *model.TableInfo) ([]*Bundle, erro
 	return bundles, nil
 }
 
-func newBundleFromPolicy(t *meta.Meta, ref *model.PolicyRefInfo) (*Bundle, error) {
+func newBundleFromPolicy(getter PolicyGetter, ref *model.PolicyRefInfo) (*Bundle, error) {
 	if ref != nil {
-		policy, err := t.GetPolicy(ref.ID)
+		policy, err := getter.GetPolicy(ref.ID)
 		if err != nil {
 			return nil, err
 		}

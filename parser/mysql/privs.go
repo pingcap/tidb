@@ -77,6 +77,7 @@ var Priv2SetStr = map[PrivilegeType]string{
 	CreateRolePriv:     "Create Role",
 	DropRolePriv:       "Drop Role",
 	ShutdownPriv:       "Shutdown Role",
+	TriggerPriv:        "Trigger",
 }
 
 // SetStr2Priv is the map for privilege set string to privilege type.
@@ -99,6 +100,7 @@ var SetStr2Priv = map[string]PrivilegeType{
 	"Index":                   IndexPriv,
 	"Create View":             CreateViewPriv,
 	"Show View":               ShowViewPriv,
+	"Trigger":                 TriggerPriv,
 }
 
 // Priv2UserCol is the privilege to mysql.user table column name.
@@ -309,10 +311,10 @@ func (privs Privileges) Has(p PrivilegeType) bool {
 var AllGlobalPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, CreateTablespacePriv, TriggerPriv, CreateViewPriv, ShowViewPriv, CreateRolePriv, DropRolePriv, CreateTMPTablePriv, LockTablesPriv, CreateRoutinePriv, AlterRoutinePriv, EventPriv, ShutdownPriv, ReloadPriv, FilePriv, ConfigPriv, ReplicationClientPriv, ReplicationSlavePriv}
 
 // AllDBPrivs is all the privileges in database scope.
-var AllDBPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ReferencesPriv, LockTablesPriv, CreateTMPTablePriv, EventPriv, CreateRoutinePriv, AlterRoutinePriv, AlterPriv, ExecutePriv, IndexPriv, CreateViewPriv, ShowViewPriv}
+var AllDBPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ReferencesPriv, LockTablesPriv, CreateTMPTablePriv, EventPriv, CreateRoutinePriv, AlterRoutinePriv, AlterPriv, ExecutePriv, IndexPriv, CreateViewPriv, ShowViewPriv, TriggerPriv}
 
 // AllTablePrivs is all the privileges in table scope.
-var AllTablePrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, IndexPriv, ReferencesPriv, AlterPriv, CreateViewPriv, ShowViewPriv}
+var AllTablePrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, IndexPriv, ReferencesPriv, AlterPriv, CreateViewPriv, ShowViewPriv, TriggerPriv}
 
 // AllColumnPrivs is all the privileges in column scope.
 var AllColumnPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, ReferencesPriv}

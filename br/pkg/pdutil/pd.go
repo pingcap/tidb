@@ -24,9 +24,9 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
-	pdapi "github.com/tikv/pd/server/api"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -38,6 +38,7 @@ const (
 	schedulerPrefix      = "pd/api/v1/schedulers"
 	maxMsgSize           = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	scheduleConfigPrefix = "pd/api/v1/config/schedule"
+	configPrefix         = "pd/api/v1/config"
 	pauseTimeout         = 5 * time.Minute
 
 	// pd request retry time when connection fail
@@ -350,12 +351,12 @@ func (p *PdController) getRegionCountWith(
 }
 
 // GetStoreInfo returns the info of store with the specified id.
-func (p *PdController) GetStoreInfo(ctx context.Context, storeID uint64) (*pdapi.StoreInfo, error) {
+func (p *PdController) GetStoreInfo(ctx context.Context, storeID uint64) (*pdtypes.StoreInfo, error) {
 	return p.getStoreInfoWith(ctx, pdRequest, storeID)
 }
 
 func (p *PdController) getStoreInfoWith(
-	ctx context.Context, get pdHTTPRequest, storeID uint64) (*pdapi.StoreInfo, error) {
+	ctx context.Context, get pdHTTPRequest, storeID uint64) (*pdtypes.StoreInfo, error) {
 	var err error
 	for _, addr := range p.addrs {
 		query := fmt.Sprintf(
@@ -366,7 +367,7 @@ func (p *PdController) getStoreInfoWith(
 			err = e
 			continue
 		}
-		store := pdapi.StoreInfo{}
+		store := pdtypes.StoreInfo{}
 		err = json.Unmarshal(v, &store)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -378,7 +379,7 @@ func (p *PdController) getStoreInfoWith(
 
 func (p *PdController) doPauseSchedulers(ctx context.Context, schedulers []string, post pdHTTPRequest) ([]string, error) {
 	// pause this scheduler with 300 seconds
-	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(pauseTimeout)})
+	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(pauseTimeout.Seconds())})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -541,12 +542,20 @@ func (p *PdController) UpdatePDScheduleConfig(ctx context.Context) error {
 func (p *PdController) doUpdatePDScheduleConfig(
 	ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest, prefixs ...string,
 ) error {
-	prefix := scheduleConfigPrefix
+	prefix := configPrefix
 	if len(prefixs) != 0 {
 		prefix = prefixs[0]
 	}
+	newCfg := make(map[string]interface{})
+	for k, v := range cfg {
+		// if we want use ttl, we need use config prefix first.
+		// which means cfg should transfer from "max-merge-region-keys" to "schedule.max-merge-region-keys".
+		sc := fmt.Sprintf("schedule.%s", k)
+		newCfg[sc] = v
+	}
+
 	for _, addr := range p.addrs {
-		reqData, err := json.Marshal(cfg)
+		reqData, err := json.Marshal(newCfg)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -562,7 +571,7 @@ func (p *PdController) doUpdatePDScheduleConfig(
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest) error {
 	// pause this scheduler with 300 seconds
-	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", scheduleConfigPrefix, pauseTimeout.Seconds())
+	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", configPrefix, pauseTimeout.Seconds())
 	return p.doUpdatePDScheduleConfig(ctx, cfg, post, prefix)
 }
 
@@ -584,7 +593,7 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 	prefix := make([]string, 0, 1)
 	if pd.isPauseConfigEnabled() {
 		// set config's ttl to zero, make temporary config invalid immediately.
-		prefix = append(prefix, fmt.Sprintf("%s?ttlSecond=%d", scheduleConfigPrefix, 0))
+		prefix = append(prefix, fmt.Sprintf("%s?ttlSecond=%d", configPrefix, 0))
 	}
 	// reset config with previous value.
 	if err := pd.doUpdatePDScheduleConfig(ctx, mergeCfg, pdRequest, prefix...); err != nil {

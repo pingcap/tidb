@@ -193,6 +193,29 @@ func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	return sv.GetGlobalFromHook(s)
 }
 
+// GetSessionStatesSystemVar gets the session variable value for session states.
+// It's only used for encoding session states when migrating a session.
+// The returned boolean indicates whether to keep this value in the session states.
+func GetSessionStatesSystemVar(s *SessionVars, name string) (string, bool, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	// Call GetStateValue first if it exists. Otherwise, call GetSession.
+	if sv.GetStateValue != nil {
+		return sv.GetStateValue(s)
+	}
+	if sv.GetSession != nil {
+		val, err := sv.GetSessionFromHook(s)
+		return val, err == nil, err
+	}
+	// Only get the cached value. No need to check the global or default value.
+	if val, ok := s.systems[sv.Name]; ok {
+		return val, true, nil
+	}
+	return "", false, nil
+}
+
 // GetGlobalSystemVar gets a global system variable.
 func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	sv := GetSysVar(name)
@@ -229,6 +252,10 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	return vars.SetStmtVar(name, sVal)
 }
 
+// Deprecated: Read the value from the mysql.tidb table.
+// This supports the use case that a TiDB server *older* than 5.0 is a member of the cluster.
+// i.e. system variables such as tidb_gc_concurrency, tidb_gc_enable, tidb_gc_life_time
+// do not exist.
 func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
 	val, err := vars.GlobalVarsAccessor.GetTiDBTableValue(name)
 	if err != nil { // handle empty result or other errors
@@ -237,6 +264,10 @@ func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, erro
 	return trueFalseToOnOff(val), nil
 }
 
+// Deprecated: Set the value from the mysql.tidb table.
+// This supports the use case that a TiDB server *older* than 5.0 is a member of the cluster.
+// i.e. system variables such as tidb_gc_concurrency, tidb_gc_enable, tidb_gc_life_time
+// do not exist.
 func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
 	value = OnOffToTrueFalse(value)
 	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
@@ -482,9 +513,6 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	if err != nil {
 		return err
 	}
-	if sValue > 0 {
-		return fmt.Errorf("%s's value should be less than 0", TiDBReadStaleness)
-	}
 	s.ReadStaleness = time.Duration(sValue) * time.Second
 	return nil
 }
@@ -505,4 +533,5 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.MD5:        {},
 	ast.Reverse:    {},
 	ast.VitessHash: {},
+	ast.TiDBShard:  {},
 }

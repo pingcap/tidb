@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func TestMergePartialResult4Varpop(t *testing.T) {
@@ -48,7 +48,7 @@ func TestMemVarpop(t *testing.T) {
 		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4VarPopFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4VarPopDistinctFloat64Size+set.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4VarPopDistinctFloat64Size+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
 	}
 	for n, test := range tests {
 		test := test

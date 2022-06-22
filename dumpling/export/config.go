@@ -17,14 +17,15 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/promutil"
+	filter "github.com/pingcap/tidb/util/table-filter"
 )
 
 const (
@@ -45,6 +46,7 @@ const (
 	flagConsistency              = "consistency"
 	flagSnapshot                 = "snapshot"
 	flagNoViews                  = "no-views"
+	flagNoSequences              = "no-sequences"
 	flagSortByPk                 = "order-by-primary-key"
 	flagStatusAddr               = "status-addr"
 	flagRows                     = "rows"
@@ -80,9 +82,11 @@ const (
 type Config struct {
 	storage.BackendOptions
 
+	specifiedTables          bool
 	AllowCleartextPasswords  bool
 	SortByPk                 bool
 	NoViews                  bool
+	NoSequences              bool
 	NoHeader                 bool
 	NoSchemas                bool
 	NoData                   bool
@@ -120,22 +124,25 @@ type Config struct {
 	CsvDelimiter  string
 	Databases     []string
 
-	TableFilter        filter.Filter `json:"-"`
-	Where              string
-	FileType           string
-	ServerInfo         version.ServerInfo
-	Logger             *zap.Logger        `json:"-"`
-	OutputFileTemplate *template.Template `json:"-"`
-	Rows               uint64
-	ReadTimeout        time.Duration
-	TiDBMemQuotaQuery  uint64
-	FileSize           uint64
-	StatementSize      uint64
-	SessionParams      map[string]interface{}
-	Labels             prometheus.Labels `json:"-"`
-	Tables             DatabaseTables
-
+	TableFilter         filter.Filter `json:"-"`
+	Where               string
+	FileType            string
+	ServerInfo          version.ServerInfo
+	Logger              *zap.Logger        `json:"-"`
+	OutputFileTemplate  *template.Template `json:"-"`
+	Rows                uint64
+	ReadTimeout         time.Duration
+	TiDBMemQuotaQuery   uint64
+	FileSize            uint64
+	StatementSize       uint64
+	SessionParams       map[string]interface{}
+	Tables              DatabaseTables
 	CollationCompatible string
+
+	Labels       prometheus.Labels       `json:"-"`
+	PromFactory  promutil.Factory        `json:"-"`
+	PromRegistry promutil.Registry       `json:"-"`
+	ExtStorage   storage.ExternalStorage `json:"-"`
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -163,8 +170,9 @@ func DefaultConfig() *Config {
 		SortByPk:            true,
 		Tables:              nil,
 		Snapshot:            "",
-		Consistency:         consistencyTypeAuto,
+		Consistency:         ConsistencyTypeAuto,
 		NoViews:             true,
+		NoSequences:         true,
 		Rows:                UnspecifiedSize,
 		Where:               "",
 		FileType:            "",
@@ -179,6 +187,9 @@ func DefaultConfig() *Config {
 		OutputFileTemplate:  DefaultOutputFileTemplate,
 		PosAfterConnect:     false,
 		CollationCompatible: LooseCollationCompatible,
+		specifiedTables:     false,
+		PromFactory:         promutil.NewDefaultFactory(),
+		PromRegistry:        promutil.NewDefaultRegistry(),
 	}
 }
 
@@ -227,9 +238,10 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagLoglevel, "info", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
 	flags.StringP(flagLogfile, "L", "", "Log file `path`, leave empty to write to console")
 	flags.String(flagLogfmt, "text", "Log `format`: {text|json}")
-	flags.String(flagConsistency, consistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
+	flags.String(flagConsistency, ConsistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
 	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
+	flags.Bool(flagNoSequences, true, "Do not dump sequences")
 	flags.Bool(flagSortByPk, true, "Sort dump results by primary key through order by sql")
 	flags.String(flagStatusAddr, ":8281", "dumpling API server and pprof addr")
 	flags.Uint64P(flagRows, "r", UnspecifiedSize, "If specified, dumpling will split table into chunks and concurrently dump them to different files to improve efficiency. For TiDB v3.0+, specify this will make dumpling split table with each file one TiDB region(no matter how many rows is).\n"+
@@ -324,6 +336,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.NoViews, err = flags.GetBool(flagNoViews)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.NoSequences, err = flags.GetBool(flagNoSequences)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -448,6 +464,12 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	conf.specifiedTables = len(tablesList) > 0
+	conf.Tables, err = GetConfTables(tablesList)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	conf.TableFilter, err = ParseTableFilter(tablesList, filters)
 	if err != nil {
 		return errors.Errorf("failed to parse filter: %s", err)
@@ -528,6 +550,25 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	return filter.NewTablesFilter(tableNames...), nil
 }
 
+func GetConfTables(tablesList []string) (DatabaseTables, error) {
+	dbTables := DatabaseTables{}
+	var (
+		tablename    string
+		avgRowLength uint64
+	)
+	avgRowLength = 0
+	for _, tablename = range tablesList {
+		parts := strings.SplitN(tablename, ".", 2)
+		if len(parts) < 2 {
+			return nil, errors.Errorf("--tables-list only accepts qualified table names, but `%s` lacks a dot", tablename)
+		}
+		dbName := parts[0]
+		tbName := parts[1]
+		dbTables[dbName] = append(dbTables[dbName], &TableInfo{tbName, avgRowLength, TableTypeBase})
+	}
+	return dbTables, nil
+}
+
 // ParseCompressType parses compressType string to storage.CompressType
 func ParseCompressType(compressType string) (storage.CompressType, error) {
 	switch compressType {
@@ -541,6 +582,9 @@ func ParseCompressType(compressType string) (storage.CompressType, error) {
 }
 
 func (conf *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
+	if conf.ExtStorage != nil {
+		return conf.ExtStorage, nil
+	}
 	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -595,23 +639,27 @@ func registerTLSConfig(conf *Config) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			conf.Security.SSLCertBytes, err = ioutil.ReadFile(conf.Security.CertPath)
-			if err != nil {
-				return errors.Trace(err)
+			if len(conf.Security.CertPath) > 0 {
+				conf.Security.SSLCertBytes, err = ioutil.ReadFile(conf.Security.CertPath)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
-			conf.Security.SSLKEYBytes, err = ioutil.ReadFile(conf.Security.KeyPath)
-			if err != nil {
-				return errors.Trace(err)
+			if len(conf.Security.KeyPath) > 0 {
+				conf.Security.SSLKEYBytes, err = ioutil.ReadFile(conf.Security.KeyPath)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
-		tlsConfig, err = utils.ToTLSConfigWithVerifyByRawbytes(conf.Security.SSLCABytes,
+		tlsConfig, err = util.ToTLSConfigWithVerifyByRawbytes(conf.Security.SSLCABytes,
 			conf.Security.SSLCertBytes, conf.Security.SSLKEYBytes, []string{})
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// NOTE for local test(use a self-signed or invalid certificate), we don't need to check CA file.
 		// see more here https://github.com/go-sql-driver/mysql#tls
-		if conf.Host == "127.0.0.1" {
+		if conf.Host == "127.0.0.1" || len(conf.Security.SSLCertBytes) == 0 || len(conf.Security.SSLKEYBytes) == 0 {
 			tlsConfig.InsecureSkipVerify = true
 		}
 		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)

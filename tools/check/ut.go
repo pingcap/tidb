@@ -24,13 +24,14 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	// Set the correct when it runs inside docker.
+	// Set the correct value when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
 	"golang.org/x/tools/cover"
 )
@@ -48,6 +49,9 @@ ut list
 // list test cases of a single package
 ut list $package
 
+// list test cases that match a pattern
+ut list $package 'r:$regex'
+
 // run all tests
 ut run
 
@@ -57,6 +61,9 @@ ut run $package
 // run test cases of a single package
 ut run $package $test
 
+// run test cases that match a pattern
+ut run $package 'r:$regex'
+
 // build all test package
 ut build
 
@@ -64,7 +71,10 @@ ut build
 ut build xxx
 
 // write the junitfile
-ut run --junitfile xxx`
+ut run --junitfile xxx
+
+// test with race flag
+ut run --race`
 
 	fmt.Println(msg)
 	return true
@@ -75,7 +85,10 @@ const modulePath = "github.com/pingcap/tidb"
 type task struct {
 	pkg  string
 	test string
-	old  bool
+}
+
+func (t *task) String() string {
+	return t.pkg + " " + t.test
 }
 
 var P int
@@ -97,7 +110,7 @@ func cmdList(args ...string) bool {
 	}
 
 	// list test case of a single package
-	if len(args) == 1 {
+	if len(args) == 1 || len(args) == 2 {
 		pkg := args[0]
 		pkgs = filter(pkgs, func(s string) bool { return s == pkg })
 		if len(pkgs) != 1 {
@@ -125,6 +138,15 @@ func cmdList(args ...string) bool {
 			fmt.Println("list test cases for package error", err)
 			return false
 		}
+
+		if len(args) == 2 {
+			res, err = filterTestCases(res, args[1])
+			if err != nil {
+				fmt.Println("filter test cases error", err)
+				return false
+			}
+		}
+
 		for _, x := range res {
 			fmt.Println(x.test)
 		}
@@ -245,16 +267,44 @@ func cmdRun(args ...string) bool {
 			fmt.Println("list test cases error", err)
 			return false
 		}
-		// filter the test case to run
+		tasks, err = filterTestCases(tasks, args[1])
+		if err != nil {
+			fmt.Println("filter test cases error", err)
+			return false
+		}
+	}
+
+	if except != "" {
+		list, err := parseCaseListFromFile(except)
+		if err != nil {
+			fmt.Println("parse --except file error", err)
+			return false
+		}
 		tmp := tasks[:0]
 		for _, task := range tasks {
-			if strings.Contains(task.test, args[1]) {
+			if _, ok := list[task.String()]; !ok {
 				tmp = append(tmp, task)
 			}
 		}
 		tasks = tmp
 	}
-	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
+
+	if only != "" {
+		list, err := parseCaseListFromFile(only)
+		if err != nil {
+			fmt.Println("parse --only file error", err)
+			return false
+		}
+		tmp := tasks[:0]
+		for _, task := range tasks {
+			if _, ok := list[task.String()]; ok {
+				tmp = append(tmp, task)
+			}
+		}
+		tasks = tmp
+	}
+
+	fmt.Printf("building task finish, maxproc=%d, count=%d, takes=%v\n", P, len(tasks), time.Since(start))
 
 	taskCh := make(chan task, 100)
 	works := make([]numa, P)
@@ -298,6 +348,25 @@ func cmdRun(args ...string) bool {
 	return true
 }
 
+func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
+	f, err := os.Open(fileName)
+	if err != nil {
+		return nil, withTrace(err)
+	}
+	defer f.Close()
+
+	ret := make(map[string]struct{})
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := s.Bytes()
+		ret[string(line)] = struct{}{}
+	}
+	if err := s.Err(); err != nil {
+		return nil, withTrace(err)
+	}
+	return ret, nil
+}
+
 // handleFlags strip the '--flag xxx' from the command line os.Args
 // Example of the os.Args changes
 // Before: ut run sessoin TestXXX --coverprofile xxx --junitfile yyy
@@ -330,13 +399,34 @@ func handleFlags(flag string) string {
 	return res
 }
 
+func handleRaceFlag() (found bool) {
+	tmp := os.Args[:0]
+	for i := 0; i < len(os.Args); i++ {
+		if os.Args[i] == "--race" {
+			found = true
+			continue
+		}
+		tmp = append(tmp, os.Args[i])
+	}
+	os.Args = tmp
+	return
+}
+
 var junitfile string
 var coverprofile string
 var coverFileTempDir string
+var race bool
+
+var except string
+var only string
 
 func main() {
 	junitfile = handleFlags("--junitfile")
 	coverprofile = handleFlags("--coverprofile")
+	except = handleFlags("--except")
+	only = handleFlags("--only")
+	race = handleRaceFlag()
+
 	if coverprofile != "" {
 		var err error
 		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
@@ -356,14 +446,13 @@ func main() {
 		fmt.Println("os.Getwd() error", err)
 	}
 
+	var isSucceed bool
 	if len(os.Args) == 1 {
 		// run all tests
-		cmdRun()
-		return
+		isSucceed = cmdRun()
 	}
 
 	if len(os.Args) >= 2 {
-		var isSucceed bool
 		switch os.Args[1] {
 		case "list":
 			isSucceed = cmdList(os.Args[2:]...)
@@ -374,9 +463,9 @@ func main() {
 		default:
 			isSucceed = usage()
 		}
-		if !isSucceed {
-			os.Exit(1)
-		}
+	}
+	if !isSucceed {
+		os.Exit(1)
 	}
 }
 
@@ -536,18 +625,33 @@ func listTestCases(pkg string, tasks []task) ([]task, error) {
 		return nil, withTrace(err)
 	}
 	for _, c := range newCases {
-		tasks = append(tasks, task{pkg, c, false})
+		tasks = append(tasks, task{pkg, c})
 	}
 
-	oldCases, err := listOldTestCases(pkg)
-	if err != nil {
-		fmt.Println("list old test case error", pkg, err)
-		return nil, withTrace(err)
-	}
-	for _, c := range oldCases {
-		tasks = append(tasks, task{pkg, c, true})
-	}
 	return tasks, nil
+}
+
+func filterTestCases(tasks []task, arg1 string) ([]task, error) {
+	if strings.HasPrefix(arg1, "r:") {
+		r, err := regexp.Compile(arg1[2:])
+		if err != nil {
+			return nil, err
+		}
+		tmp := tasks[:0]
+		for _, task := range tasks {
+			if r.MatchString(task.test) {
+				tmp = append(tmp, task)
+			}
+		}
+		return tmp, nil
+	}
+	tmp := tasks[:0]
+	for _, task := range tasks {
+		if strings.Contains(task.test, arg1) {
+			tmp = append(tmp, task)
+		}
+	}
+	return tmp, nil
 }
 
 func listPackages() ([]string, error) {
@@ -579,10 +683,10 @@ type numa struct {
 func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	defer wg.Done()
 	for t := range ch {
-		res := n.runTestCase(t.pkg, t.test, t.old)
+		res := n.runTestCase(t.pkg, t.test)
 		if res.Failure != nil {
-			fmt.Println("[FAIL] ", t.pkg, t.test, t.old)
-			fmt.Fprintf(os.Stderr, "%s", res.Failure.Contents)
+			fmt.Println("[FAIL] ", t.pkg, t.test)
+			fmt.Fprintf(os.Stderr, "err=%s\n%s", res.err.Error(), res.Failure.Contents)
 			n.Fail = true
 		}
 		n.results = append(n.results, res)
@@ -591,29 +695,57 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 
 type testResult struct {
 	JUnitTestCase
-	d time.Duration
+	d   time.Duration
+	err error
 }
 
-func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
+func (n *numa) runTestCase(pkg string, fn string) testResult {
 	res := testResult{
 		JUnitTestCase: JUnitTestCase{
 			Classname: path.Join(modulePath, pkg),
 			Name:      fn,
 		},
 	}
-	cmd := n.testCommand(pkg, fn, old)
-	cmd.Dir = path.Join(workDir, pkg)
-	// Combine the test case output, so the run result for failed cases can be displayed.
+
 	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	start := time.Now()
-	if err := cmd.Run(); err != nil {
+	var err error
+	var start time.Time
+	for i := 0; i < 3; i++ {
+		cmd := n.testCommand(pkg, fn)
+		cmd.Dir = path.Join(workDir, pkg)
+		// Combine the test case output, so the run result for failed cases can be displayed.
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+
+		start = time.Now()
+		err = cmd.Run()
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				// Retry 3 times to get rid of the weird error:
+				switch err.Error() {
+				case "signal: segmentation fault (core dumped)":
+					buf.Reset()
+					continue
+				case "signal: trace/breakpoint trap (core dumped)":
+					buf.Reset()
+					continue
+				}
+				if strings.Contains(buf.String(), "panic during panic") {
+					buf.Reset()
+					continue
+				}
+			}
+		}
+		break
+	}
+	if err != nil {
 		res.Failure = &JUnitFailure{
 			Message:  "Failed",
 			Contents: buf.String(),
 		}
+		res.err = err
 	}
+
 	res.d = time.Since(start)
 	res.Time = formatDurationAsSeconds(res.d)
 	return res
@@ -664,7 +796,7 @@ func failureCases(input []JUnitTestCase) int {
 	return sum
 }
 
-func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
+func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 	args := make([]string, 0, 10)
 	exe := "./" + testFileName(pkg)
 	if coverprofile != "" {
@@ -673,14 +805,14 @@ func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
 		args = append(args, "-test.coverprofile", tmpFile)
 	}
 	args = append(args, "-test.cpu", "1")
-	args = append(args, []string{"-test.timeout", "2m"}...)
-	if old {
-		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
+	if !race {
+		args = append(args, []string{"-test.timeout", "2m"}...)
 	} else {
-		// session.test -test.run TestClusteredPrefixColum
-		args = append(args, "-test.run", fn)
+		// it takes a longer when race is enabled. so it is set more timeout value.
+		args = append(args, []string{"-test.timeout", "30m"}...)
 	}
+	// session.test -test.run TestClusteredPrefixColum
+	args = append(args, "-test.run", fn)
 
 	return exec.Command(exe, args...)
 }
@@ -697,11 +829,12 @@ func skipDIR(pkg string) bool {
 
 func buildTestBinary(pkg string) error {
 	// go test -c
-	var cmd *exec.Cmd
+	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
-	} else {
-		cmd = exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+		cmd.Args = append(cmd.Args, "-cover")
+	}
+	if race {
+		cmd.Args = append(cmd.Args, "-race")
 	}
 	cmd.Dir = path.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
@@ -722,10 +855,12 @@ func buildTestBinaryMulti(pkgs []string) error {
 	}
 
 	var cmd *exec.Cmd
+	cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
-	} else {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
+		cmd.Args = append(cmd.Args, "-cover")
+	}
+	if race {
+		cmd.Args = append(cmd.Args, "-race")
 	}
 	cmd.Args = append(cmd.Args, packages...)
 	cmd.Dir = workDir
@@ -769,30 +904,6 @@ func listNewTestCases(pkg string) ([]string, error) {
 	return filter(res, func(s string) bool {
 		return strings.HasPrefix(s, "Test") && s != "TestT" && s != "TestBenchDaily"
 	}), nil
-}
-
-func listOldTestCases(pkg string) (res []string, err error) {
-	exe := "./" + testFileName(pkg)
-
-	// Maybe the restructure is finish on this package.
-	cmd := exec.Command(exe, "-h")
-	cmd.Dir = path.Join(workDir, pkg)
-	buf, err := cmd.CombinedOutput()
-	if err != nil {
-		err = withTrace(err)
-		return
-	}
-	if !bytes.Contains(buf, []byte("check.list")) {
-		// there is no old test case in pkg
-		return
-	}
-
-	// session.test -test.run TestT -check.list Test
-	cmd = exec.Command(exe, "-test.run", "^TestT$", "-check.list", "Test")
-	cmd.Dir = path.Join(workDir, pkg)
-	res, err = cmdToLines(cmd)
-	res = filter(res, func(s string) bool { return strings.Contains(s, "Test") })
-	return res, withTrace(err)
 }
 
 func cmdToLines(cmd *exec.Cmd) ([]string, error) {

@@ -118,6 +118,20 @@ func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*co
 	return stats
 }
 
+// GetSQLCPUTimeBySQL uses for testing.
+func (c *TopSQLCollector) GetSQLCPUTimeBySQL(sql string) uint32 {
+	sqlDigest := GenSQLDigest(sql)
+	cpuTime := uint32(0)
+	c.Lock()
+	for _, stmt := range c.sqlStatsMap {
+		if bytes.Equal(stmt.SQLDigest, sqlDigest.Bytes()) {
+			cpuTime += stmt.CPUTimeMs
+		}
+	}
+	c.Unlock()
+	return cpuTime
+}
+
 // GetSQL uses for testing.
 func (c *TopSQLCollector) GetSQL(sqlDigest []byte) string {
 	c.Lock()
@@ -173,6 +187,16 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 			time.Sleep(time.Millisecond * 10)
 		}
 	}
+}
+
+// Reset cleans all collected data.
+func (c *TopSQLCollector) Reset() {
+	c.Lock()
+	defer c.Unlock()
+	c.sqlMap = make(map[string]string)
+	c.planMap = make(map[string]string)
+	c.sqlStatsMap = make(map[string]*collector.SQLCPUTimeRecord)
+	c.collectCnt.Store(0)
 }
 
 // CollectCnt uses for testing.

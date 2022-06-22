@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
@@ -49,6 +49,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	// test the meta storage of placemnt policy.
 	policy := &model.PolicyInfo{
+		ID:   1,
 		Name: model.NewCIStr("aa"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion:      "my primary",
@@ -453,8 +454,8 @@ func TestDDL(t *testing.T) {
 		},
 		{
 			"kv.CommonHandle",
-			testkit.MustNewCommonHandle(t, "abc", 1222, "string"),
-			testkit.MustNewCommonHandle(t, "dddd", 1222, "string"),
+			testutil.MustNewCommonHandle(t, "abc", 1222, "string"),
+			testutil.MustNewCommonHandle(t, "dddd", 1222, "string"),
 		},
 	}
 
@@ -713,4 +714,54 @@ func match(ids, candidate []int64) bool {
 	}
 
 	return true
+}
+
+func TestDBKey(b *testing.T) {
+	var dbID int64 = 10
+	dbKey := meta.DBkey(dbID)
+	require.True(b, meta.IsDBkey(dbKey))
+
+	parseID, err := meta.ParseDBKey(dbKey)
+	require.NoError(b, err)
+	require.Equal(b, dbID, parseID)
+}
+
+func TestTableKey(b *testing.T) {
+	var tableID int64 = 10
+	tableKey := meta.TableKey(tableID)
+	require.True(b, meta.IsTableKey(tableKey))
+
+	parseID, err := meta.ParseTableKey(tableKey)
+	require.NoError(b, err)
+	require.Equal(b, tableID, parseID)
+}
+
+func TestAutoTableIDKey(b *testing.T) {
+	var tableID int64 = 10
+	tableKey := meta.AutoTableIDKey(tableID)
+	require.True(b, meta.IsAutoTableIDKey(tableKey))
+
+	id, err := meta.ParseAutoTableIDKey(tableKey)
+	require.NoError(b, err)
+	require.Equal(b, tableID, id)
+}
+
+func TestAutoRandomTableIDKey(b *testing.T) {
+	var tableID int64 = 10
+	key := meta.AutoRandomTableIDKey(tableID)
+	require.True(b, meta.IsAutoRandomTableIDKey(key))
+
+	id, err := meta.ParseAutoRandomTableIDKey(key)
+	require.NoError(b, err)
+	require.Equal(b, tableID, id)
+}
+
+func TestSequenceKey(b *testing.T) {
+	var tableID int64 = 10
+	key := meta.SequenceKey(tableID)
+	require.True(b, meta.IsSequenceKey(key))
+
+	id, err := meta.ParseSequenceKey(key)
+	require.NoError(b, err)
+	require.Equal(b, tableID, id)
 }

@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	outputFileTemplateSchema = "schema"
-	outputFileTemplateTable  = "table"
-	outputFileTemplateView   = "view"
-	outputFileTemplateData   = "data"
-	outputFileTemplatePolicy = "placement-policy"
+	outputFileTemplateSchema   = "schema"
+	outputFileTemplateTable    = "table"
+	outputFileTemplateView     = "view"
+	outputFileTemplateSequence = "sequence"
+	outputFileTemplateData     = "data"
+	outputFileTemplatePolicy   = "placement-policy"
 
 	defaultOutputFileTemplateBase = `
 		{{- define "objectName" -}}

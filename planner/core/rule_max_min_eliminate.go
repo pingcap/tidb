@@ -173,7 +173,7 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *l
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
-		if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
+		if !mysql.HasNotNullFlag(f.Args[0].GetType().GetFlag()) {
 			sel = LogicalSelection{}.Init(ctx, agg.blockOffset)
 			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
@@ -223,7 +223,7 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan, opt *logicalOptimizeOp
 		// Limit+Sort operators are sorted by value, but ENUM/SET field types are sorted by name.
 		cols := agg.GetUsedCols()
 		for _, col := range cols {
-			if col.RetType.Tp == mysql.TypeEnum || col.RetType.Tp == mysql.TypeSet {
+			if col.RetType.GetType() == mysql.TypeEnum || col.RetType.GetType() == mysql.TypeSet {
 				return agg
 			}
 		}

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/cascades"
 	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -41,11 +40,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 )
 
@@ -60,25 +60,6 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt)
 	}
 	return ast.IsReadOnly(node)
-}
-
-// GetExecuteForUpdateReadIS is used to check whether the statement is `execute` and target statement has a forUpdateRead flag.
-// If so, we will return the latest information schema.
-func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema {
-	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-		vars := sctx.GetSessionVars()
-		execID := execStmt.ExecID
-		if execStmt.Name != "" {
-			execID = vars.PreparedStmtNameToID[execStmt.Name]
-		}
-		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
-				is := domain.GetDomain(sctx).InfoSchema()
-				return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
-			}
-		}
-	}
-	return nil
 }
 
 func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
@@ -98,6 +79,16 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
+
+	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
+		allowed, err := allowInReadOnlyMode(sctx, node)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !allowed {
+			return nil, nil, errors.Trace(core.ErrSQLInReadOnlyMode)
+		}
+	}
 
 	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
 	// engine in not read only stmt.
@@ -122,6 +113,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
+	txnManger := sessiontxn.GetTxnManager(sctx)
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp plannercore.Plan
 		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {
@@ -131,13 +123,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			fp = plannercore.TryFastPlan(sctx, node)
 		}
 		if fp != nil {
-			if !useMaxTS(sctx, fp) {
-				sctx.PrepareTSFuture(ctx)
-			}
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	sctx.PrepareTSFuture(ctx)
+	if err := txnManger.AdviseWarmup(); err != nil {
+		return nil, nil, err
+	}
 
 	useBinding := sessVars.UsePlanBaselines
 	stmtNode, ok := node.(ast.StmtNode)
@@ -166,7 +157,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		originHints := hint.CollectHint(stmtNode)
 		// bindRecord must be not nil when coming here, try to find the best binding.
 		for _, binding := range bindRecord.Bindings {
-			if binding.Status != bindinfo.Using {
+			if !binding.IsBindingEnabled() {
 				continue
 			}
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
@@ -311,9 +302,15 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
 		}
 	})
+	failpoint.Inject("mockHighLoadForOptimize", func() {
+		sqlPrefixes := []string{"select"}
+		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
+	})
+
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 
@@ -349,16 +346,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	if err := plannercore.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
 		return nil, nil, 0, err
-	}
-
-	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
-		allowed, err := allowInReadOnlyMode(sctx, node)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if !allowed {
-			return nil, nil, 0, errors.Trace(core.ErrSQLInReadOnlyMode)
-		}
 	}
 
 	// Handle the execute statement.
@@ -450,7 +437,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(hash, normalizedSQL, "")
 	if bindRecord != nil {
-		if bindRecord.HasUsingBinding() {
+		if bindRecord.HasEnabledBinding() {
 			return bindRecord, metrics.ScopeSession, nil
 		}
 		return nil, "", nil
@@ -494,29 +481,6 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
 }
 
-// useMaxTS returns true when meets following conditions:
-//  1. ctx is auto commit tagged.
-//  2. plan is point get by pk.
-//  3. not a cache table.
-func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
-	if !plannercore.IsAutoCommitTxn(ctx) {
-		return false
-	}
-	v, ok := p.(*plannercore.PointGetPlan)
-	if !ok {
-		return false
-	}
-	noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
-	if !noSecondRead {
-		return false
-	}
-
-	if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
-		return false
-	}
-	return true
-}
-
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
 // this is a short path ONLY does things filling prepare related params
 // for point select like plan which does not need extra things
@@ -547,7 +511,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -573,6 +537,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
+		case "straight_join":
+			hintOffs[hint.HintName.L] = i
+			straightJoinHintCnt++
 		case "set_var":
 			setVarHint := hint.HintData.(ast.HintSetVar)
 
@@ -596,6 +563,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			setVarsOffs = append(setVarsOffs, i)
 		}
 	}
+	stmtHints.OriginalTableHints = hints
 	stmtHints.SetVars = setVars
 
 	// Handle MEMORY_QUOTA
@@ -647,6 +615,14 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		}
 		stmtHints.NoIndexMergeHint = true
 	}
+	// Handle straight_join
+	if straightJoinHintCnt != 0 {
+		if straightJoinHintCnt > 1 {
+			warn := errors.New("STRAIGHT_JOIN() is defined more than once, only the last definition takes effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.StraightJoinOrder = true
+	}
 	// Handle READ_CONSISTENT_REPLICA
 	if readReplicaHintCnt != 0 {
 		if readReplicaHintCnt > 1 {
@@ -675,7 +651,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		stmtHints.ForceNthPlan = forceNthPlan.HintData.(int64)
 		if stmtHints.ForceNthPlan < 1 {
 			stmtHints.ForceNthPlan = -1
-			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored.")
+			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored")
 			warns = append(warns, warn)
 		}
 	} else {

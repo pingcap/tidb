@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb-tools/pkg/filter"
-	tf "github.com/pingcap/tidb-tools/pkg/table-filter"
+	"github.com/pingcap/tidb/util/filter"
+	tf "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/tidb/br/pkg/version"

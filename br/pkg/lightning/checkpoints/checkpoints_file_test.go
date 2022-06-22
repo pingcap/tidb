@@ -28,12 +28,13 @@ func newTestConfig() *config.Config {
 
 func newFileCheckpointsDB(t *testing.T) (*checkpoints.FileCheckpointsDB, func()) {
 	dir := t.TempDir()
-	cpdb := checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
 	ctx := context.Background()
+	cpdb, err := checkpoints.NewFileCheckpointsDB(ctx, filepath.Join(dir, "cp.pb"))
+	require.NoError(t, err)
 
 	// 2. initialize with checkpoint data.
 	cfg := newTestConfig()
-	err := cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
+	err = cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",
 			Tables: map[string]*checkpoints.TidbTableInfo{
@@ -118,7 +119,7 @@ func newFileCheckpointsDB(t *testing.T) (*checkpoints.FileCheckpointsDB, func())
 	}
 	ccm.MergeInto(cpd)
 
-	cpdb.Update(map[string]*checkpoints.TableCheckpointDiff{"`db1`.`t2`": cpd})
+	cpdb.Update(ctx, map[string]*checkpoints.TableCheckpointDiff{"`db1`.`t2`": cpd})
 	return cpdb, func() {
 		err := cpdb.Close()
 		require.NoError(t, err)
@@ -134,7 +135,7 @@ func setInvalidStatus(cpdb *checkpoints.FileCheckpointsDB) {
 	scm.SetInvalid()
 	scm.MergeInto(cpd)
 
-	cpdb.Update(map[string]*checkpoints.TableCheckpointDiff{
+	cpdb.Update(context.Background(), map[string]*checkpoints.TableCheckpointDiff{
 		"`db1`.`t2`": cpd,
 		"`db2`.`t3`": cpd,
 	})

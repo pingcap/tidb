@@ -19,15 +19,20 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/assert"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
-	goleak.VerifyTestMain(m)
+	testsetup.SetupForCommonTest()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }
 
 func TestConvertError(t *testing.T) {

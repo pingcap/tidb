@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -158,7 +159,7 @@ func TestPrepared(t *testing.T) {
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
 		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), stmtID,
-			tk.Session().GetInfoSchema().(infoschema.InfoSchema), 0, []types.Datum{types.NewDatum(1)})
+			tk.Session().GetInfoSchema().(infoschema.InfoSchema), 0, kv.GlobalReplicaScope, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
 		require.Equal(t, query, stmt.OriginText())
 
@@ -327,8 +328,9 @@ func TestPreparedLimitOffset(t *testing.T) {
 
 		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
 		require.NoError(t, err)
-		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+		rs, err := tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
+		rs.Close()
 	}
 }
 
@@ -713,11 +715,11 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
 
 	require.Equal(t, 0, tk.Session().PreparedPlanCache().Size())
-	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt1 from 'select id from prepare_test'`)
 	tk.MustExec("execute stmt1")
-	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt2 from 'select c1 from prepare_test'`)
 	tk.MustExec("execute stmt2")
-	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt3 from 'select id, c1 from prepare_test'`)
 	tk.MustExec("execute stmt3")
 	tk.MustExec(`prepare stmt4 from 'select * from prepare_test'`)
 	tk.MustExec("execute stmt4")
@@ -729,6 +731,20 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("deallocate prepare stmt3")
 	tk.MustExec("deallocate prepare stmt4")
 	require.Equal(t, 0, tk.Session().PreparedPlanCache().Size())
+
+	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt1`)
+	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt2`)
+	require.Equal(t, 1, tk.Session().PreparedPlanCache().Size()) // use the same cached plan since they have the same statement
+
+	tk.MustExec(`drop database if exists plan_cache`)
+	tk.MustExec(`create database plan_cache`)
+	tk.MustExec(`use plan_cache`)
+	tk.MustExec(`create table prepare_test (id int PRIMARY KEY, c1 int)`)
+	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt3`)
+	require.Equal(t, 2, tk.Session().PreparedPlanCache().Size()) // stmt3 has different DB
 }
 
 func TestPreparedIssue8153(t *testing.T) {
@@ -872,6 +888,16 @@ func (msm *mockSessionManager1) ServerID() uint64 {
 }
 
 func (msm *mockSessionManager1) UpdateTLSConfig(_ *tls.Config) {}
+
+func (msm *mockSessionManager1) StoreInternalSession(se interface{}) {
+}
+
+func (msm *mockSessionManager1) DeleteInternalSession(se interface{}) {
+}
+
+func (msm *mockSessionManager1) GetInternalSessionStartTSList() []uint64 {
+	return nil
+}
 
 func TestPreparedIssue17419(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)

@@ -308,12 +308,12 @@
       },
       {
         "Plan": [
-          "Sort_7 12500.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_19 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  ├─IndexReader_30(Build) 10000.00 root  index:IndexFullScan_29",
-          "  │ └─IndexFullScan_29 10000.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
-          "  └─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
-          "    └─TableFullScan_25 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Sort_8 12500.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "└─HashJoin_20 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─IndexReader_31(Build) 10000.00 root  index:IndexFullScan_30",
+          "  │ └─IndexFullScan_30 10000.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
+          "  └─TableReader_27(Probe) 10000.00 root  data:TableFullScan_26",
+          "    └─TableFullScan_26 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -417,12 +417,12 @@
       },
       {
         "Plan": [
-          "Selection_8 6400.00 root  lt(Column#6, 20)",
-          "└─Sort_9 8000.00 root  Column#5, Column#6, Column#7",
-          "  └─HashAgg_15 8000.00 root  group by:test.t1.d, funcs:min(Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:sum(Column#13)->Column#7",
-          "    └─TableReader_16 8000.00 root  data:HashAgg_11",
-          "      └─HashAgg_11 8000.00 cop[tikv]  group by:test.t1.d, funcs:min(test.t1.a)->Column#11, funcs:max(test.t1.b)->Column#12, funcs:sum(test.t1.c)->Column#13",
-          "        └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Sort_9 6400.00 root  Column#5, Column#6, Column#7",
+          "└─Selection_11 6400.00 root  lt(Column#6, 20)",
+          "  └─HashAgg_16 8000.00 root  group by:test.t1.d, funcs:min(Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:sum(Column#13)->Column#7",
+          "    └─TableReader_17 8000.00 root  data:HashAgg_12",
+          "      └─HashAgg_12 8000.00 cop[tikv]  group by:test.t1.d, funcs:min(test.t1.a)->Column#11, funcs:max(test.t1.b)->Column#12, funcs:sum(test.t1.c)->Column#13",
+          "        └─TableFullScan_15 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {

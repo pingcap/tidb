@@ -33,7 +33,9 @@ func newLongType() types.FieldType {
 
 func newStringType() types.FieldType {
 	ft := types.NewFieldType(mysql.TypeVarchar)
-	ft.Charset, ft.Collate = types.DefaultCharsetForType(mysql.TypeVarchar)
+	charset, collate := types.DefaultCharsetForType(mysql.TypeVarchar)
+	ft.SetCharset(charset)
+	ft.SetCollate(collate)
 	return *ft
 }
 
@@ -249,14 +251,14 @@ func MockSignedTable() *model.TableInfo {
 		FieldType: newDateType(),
 		ID:        12,
 	}
-	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
+	pkColumn.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
-	col0.Flag = mysql.NotNullFlag
-	col1.Flag = mysql.NotNullFlag
-	col2.Flag = mysql.NotNullFlag
-	col4.Flag = mysql.NotNullFlag
-	col5.Flag = mysql.NotNullFlag
-	col6.Flag = mysql.NoDefaultValueFlag
+	col0.SetFlag(mysql.NotNullFlag)
+	col1.SetFlag(mysql.NotNullFlag)
+	col2.SetFlag(mysql.NotNullFlag)
+	col4.SetFlag(mysql.NotNullFlag)
+	col5.SetFlag(mysql.NotNullFlag)
+	col6.SetFlag(mysql.NoDefaultValueFlag)
 	table := &model.TableInfo{
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6, col7},
 		Indices:    indices,
@@ -322,10 +324,10 @@ func MockUnsignedTable() *model.TableInfo {
 		FieldType: newLongType(),
 		ID:        3,
 	}
-	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag
+	pkColumn.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag)
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
-	col0.Flag = mysql.NotNullFlag
-	col1.Flag = mysql.UnsignedFlag
+	col0.SetFlag(mysql.NotNullFlag)
+	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
 		Indices:    indices,
@@ -353,8 +355,8 @@ func MockNoPKTable() *model.TableInfo {
 		ID:        3,
 	}
 	// Column 'a', 'b' is not null.
-	col0.Flag = mysql.NotNullFlag
-	col1.Flag = mysql.UnsignedFlag
+	col0.SetFlag(mysql.NotNullFlag)
+	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{
 		Columns:    []*model.ColumnInfo{col0, col1},
 		Name:       model.NewCIStr("t3"),

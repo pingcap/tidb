@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -28,16 +29,16 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/server/core"
-	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/atomic"
 )
 
@@ -51,7 +52,7 @@ type testClient struct {
 	mu           sync.RWMutex
 	stores       map[uint64]*metapb.Store
 	regions      map[uint64]*restore.RegionInfo
-	regionsInfo  *core.RegionsInfo // For now it's only used in ScanRegions
+	regionsInfo  *pdtypes.RegionTree // For now it's only used in ScanRegions
 	nextRegionID uint64
 	splitCount   atomic.Int32
 	hook         clientHook
@@ -63,9 +64,9 @@ func newTestClient(
 	nextRegionID uint64,
 	hook clientHook,
 ) *testClient {
-	regionsInfo := core.NewRegionsInfo()
+	regionsInfo := &pdtypes.RegionTree{}
 	for _, regionInfo := range regions {
-		regionsInfo.SetRegion(core.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
+		regionsInfo.SetRegion(pdtypes.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
 	}
 	return &testClient{
 		stores:       stores,
@@ -150,12 +151,12 @@ func (c *testClient) SplitRegion(
 		},
 	}
 	c.regions[c.nextRegionID] = newRegion
-	c.regionsInfo.SetRegion(core.NewRegionInfo(newRegion.Region, newRegion.Leader))
+	c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(newRegion.Region, newRegion.Leader))
 	c.nextRegionID++
 	target.Region.StartKey = splitKey
 	target.Region.RegionEpoch.ConfVer++
 	c.regions[target.Region.Id] = target
-	c.regionsInfo.SetRegion(core.NewRegionInfo(target.Region, target.Leader))
+	c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(target.Region, target.Leader))
 	return newRegion, nil
 }
 
@@ -211,7 +212,7 @@ func (c *testClient) BatchSplitRegionsWithOrigin(
 			},
 		}
 		c.regions[c.nextRegionID] = newRegion
-		c.regionsInfo.SetRegion(core.NewRegionInfo(newRegion.Region, newRegion.Leader))
+		c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(newRegion.Region, newRegion.Leader))
 		c.nextRegionID++
 		startKey = key
 		newRegions = append(newRegions, newRegion)
@@ -219,7 +220,7 @@ func (c *testClient) BatchSplitRegionsWithOrigin(
 	if !bytes.Equal(target.Region.StartKey, startKey) {
 		target.Region.StartKey = startKey
 		c.regions[target.Region.Id] = target
-		c.regionsInfo.SetRegion(core.NewRegionInfo(target.Region, target.Leader))
+		c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(target.Region, target.Leader))
 	}
 
 	if len(newRegions) == 0 {
@@ -260,8 +261,8 @@ func (c *testClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	regions := make([]*restore.RegionInfo, 0, len(infos))
 	for _, info := range infos {
 		regions = append(regions, &restore.RegionInfo{
-			Region: info.GetMeta(),
-			Leader: info.GetLeader(),
+			Region: info.Meta,
+			Leader: info.Leader,
 		})
 	}
 
@@ -272,11 +273,11 @@ func (c *testClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	return regions, err
 }
 
-func (c *testClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r placement.Rule, err error) {
+func (c *testClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
 	return
 }
 
-func (c *testClient) SetPlacementRule(ctx context.Context, rule placement.Rule) error {
+func (c *testClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
 	return nil
 }
 
@@ -303,7 +304,8 @@ func cloneRegion(region *restore.RegionInfo) *restore.RegionInfo {
 	return &restore.RegionInfo{Region: r, Leader: l}
 }
 
-// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+// For keys ["", "aay", "bba", "bbh", "cca", ""], the key ranges of
+// regions are [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, ).
 func initTestClient(keys [][]byte, hook clientHook) *testClient {
 	peers := make([]*metapb.Peer, 1)
 	peers[0] = &metapb.Peer{
@@ -417,6 +419,7 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	local := &local{
 		splitCli: client,
 		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
 	}
 
 	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
@@ -575,6 +578,45 @@ func TestBatchSplitByRangesNoValidKeys(t *testing.T) {
 	doTestBatchSplitRegionByRanges(context.Background(), t, &splitRegionNoValidKeyHook{returnErrTimes: math.MaxInt32}, "no valid key", defaultHook{})
 }
 
+func TestSplitAndScatterRegionInBatches(t *testing.T) {
+	splitHook := defaultHook{}
+	deferFunc := splitHook.setup(t)
+	defer deferFunc()
+
+	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
+	client := initTestClient(keys, nil)
+	local := &local{
+		splitCli: client,
+		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var ranges []Range
+	for i := 0; i < 20; i++ {
+		ranges = append(ranges, Range{
+			start: []byte(fmt.Sprintf("a%02d", i)),
+			end:   []byte(fmt.Sprintf("a%02d", i+1)),
+		})
+	}
+
+	err := local.SplitAndScatterRegionInBatches(ctx, ranges, nil, true, 1000, 4)
+	require.NoError(t, err)
+
+	rangeStart := codec.EncodeBytes([]byte{}, []byte("a"))
+	rangeEnd := codec.EncodeBytes([]byte{}, []byte("b"))
+	regions, err := restore.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	require.NoError(t, err)
+	result := [][]byte{[]byte("a"), []byte("a00"), []byte("a01"), []byte("a02"), []byte("a03"), []byte("a04"),
+		[]byte("a05"), []byte("a06"), []byte("a07"), []byte("a08"), []byte("a09"), []byte("a10"), []byte("a11"),
+		[]byte("a12"), []byte("a13"), []byte("a14"), []byte("a15"), []byte("a16"), []byte("a17"), []byte("a18"),
+		[]byte("a19"), []byte("a20"), []byte("b"),
+	}
+	checkRegionRanges(t, regions, result)
+}
+
 type reportAfterSplitHook struct {
 	noopHook
 	ch chan<- struct{}
@@ -633,6 +675,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	local := &local{
 		splitCli: client,
 		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
 	}
 	ctx := context.Background()
 
@@ -723,11 +766,54 @@ func TestNeedSplit(t *testing.T) {
 
 	for hdl, idx := range checkMap {
 		checkKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(hdl))
-		res := needSplit(checkKey, regions)
+		res := needSplit(checkKey, regions, log.L())
 		if idx < 0 {
 			require.Nil(t, res)
 		} else {
 			require.Equal(t, regions[idx], res)
 		}
 	}
+}
+
+func TestStoreWriteLimiter(t *testing.T) {
+	// Test create store write limiter with limit math.MaxInt.
+	limiter := newStoreWriteLimiter(math.MaxInt)
+	err := limiter.WaitN(context.Background(), 1, 1024)
+	require.NoError(t, err)
+
+	// Test WaitN exceeds the burst.
+	limiter = newStoreWriteLimiter(100)
+	start := time.Now()
+	// 120 is the initial burst, 150 is the number of new tokens.
+	err = limiter.WaitN(context.Background(), 1, 120+120)
+	require.NoError(t, err)
+	require.Greater(t, time.Since(start), time.Second)
+
+	// Test WaitN with different store id.
+	limiter = newStoreWriteLimiter(100)
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel()
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(storeID uint64) {
+			defer wg.Done()
+			start = time.Now()
+			var gotTokens int
+			for {
+				n := rand.Intn(50)
+				if limiter.WaitN(ctx, storeID, n) != nil {
+					break
+				}
+				gotTokens += n
+			}
+			elapsed := time.Since(start)
+			maxTokens := 120 + int(float64(elapsed)/float64(time.Second)*100)
+			// In theory, gotTokens should be less than or equal to maxTokens.
+			// But we allow a little of error to avoid the test being flaky.
+			require.LessOrEqual(t, gotTokens, maxTokens+1)
+
+		}(uint64(i))
+	}
+	wg.Wait()
 }

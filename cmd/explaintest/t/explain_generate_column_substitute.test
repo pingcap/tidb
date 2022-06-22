@@ -293,3 +293,12 @@ select (select t2.c_str from t2 where t2.c_int + 1 = 4 order by t2.c_str) x from
 select (select t2.c_str from t2 where t2.c_int = 3 order by t2.c_str) x from t1;
 
 drop table t1,t2;
+
+-- for issue 33237
+drop table if exists t1, t2;
+create table t1 (c_int int, c_decimal decimal(12, 6), primary key (c_int) nonclustered,key((c_int + 1))) ;
+create table t2 like t1;
+explain format = 'brief' select /*+ agg_to_cop() */ * from t1 where c_decimal in (select c_decimal from t2 where t2.c_int + 1 = 8 + 1);
+drop table t1;
+drop table t2;
+

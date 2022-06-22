@@ -54,7 +54,7 @@ const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv |
 const (
 	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
 	sqlLoadGlobalPrivTable  = "SELECT HIGH_PRIORITY Host,User,Priv FROM mysql.global_priv"
-	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv FROM mysql.db ORDER BY host, db, user"
+	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv,Trigger_priv FROM mysql.db ORDER BY host, db, user"
 	sqlLoadTablePrivTable   = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv FROM mysql.tables_priv"
 	sqlLoadColumnsPrivTable = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv FROM mysql.columns_priv"
 	sqlLoadDefaultRoles     = "SELECT HIGH_PRIORITY HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM mysql.default_roles"
@@ -653,7 +653,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			} else {
 				value.AuthPlugin = mysql.AuthNativePassword
 			}
-		case f.Column.Tp == mysql.TypeEnum:
+		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
 			}
@@ -734,7 +734,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) 
 		case f.ColumnAsName.L == "db":
 			value.DB = row.GetString(i)
 			value.dbPatChars, value.dbPatTypes = stringutil.CompilePatternBytes(strings.ToUpper(value.DB), '\\')
-		case f.Column.Tp == mysql.TypeEnum:
+		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
 			}

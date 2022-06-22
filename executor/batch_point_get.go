@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/consistency"
-	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
@@ -117,6 +117,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	} else {
 		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)
 	}
+	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
 	if e.cacheTable != nil {
 		snapshot = cacheTableSnapshot{snapshot, e.cacheTable}
 	}
@@ -129,7 +132,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	replicaReadType := e.ctx.GetSessionVars().GetReplicaRead()
-	if replicaReadType.IsFollowerRead() {
+	if replicaReadType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
@@ -150,8 +153,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			},
 		})
 	}
-	setResourceGroupTaggerForTxn(stmtCtx, snapshot)
-	setRPCInterceptorOfExecCounterForTxn(sessVars, snapshot)
+	setOptionForTopSQL(stmtCtx, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -375,7 +377,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			return e.handles[i].Compare(e.handles[j]) < 0
 
 		}
-		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag) {
+		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().GetFlag()) {
 			uintComparator := func(i, h kv.Handle) int {
 				if !i.IsInt() || !h.IsInt() {
 					panic(fmt.Sprintf("both handles need be IntHandle, but got %T and %T ", i, h))
@@ -587,7 +589,7 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 
 	switch pi.Type {
 	case model.PartitionTypeHash:
-		partIdx := math.Abs(intVal % int64(pi.Num))
+		partIdx := mathutil.Abs(intVal % int64(pi.Num))
 		return pi.Definitions[partIdx].ID, nil
 	case model.PartitionTypeRange:
 		// we've check the type assertions in func TryFastPlan
@@ -595,7 +597,7 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 		if !ok {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		unsigned := mysql.HasUnsignedFlag(col.GetType().Flag)
+		unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
 		ranges := partitionExpr.ForRangePruning
 		length := len(ranges.LessThan)
 		partIdx := sort.Search(length, func(i int) bool {

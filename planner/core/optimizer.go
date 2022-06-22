@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -268,6 +269,10 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if checkStableResultMode(sctx) {
 		flag |= flagStabilizeResults
 	}
+	if sctx.GetSessionVars().StmtCtx.StraightJoinOrder {
+		// When we use the straight Join Order hint, we should disable the join reorder optimization.
+		flag &= ^flagJoinReOrder
+	}
 	flag |= flagCollectPredicateColumnsPoint
 	flag |= flagSyncWaitStatsLoadPoint
 	logic, err := logicalOptimize(ctx, flag, logic)
@@ -297,10 +302,29 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 }
 
 // refineCETrace will adjust the content of CETrace.
-// Currently, it will (1) deduplicate trace records and (2) fill in the table name.
+// Currently, it will (1) deduplicate trace records, (2) sort the trace records (to make it easier in the tests) and (3) fill in the table name.
 func refineCETrace(sctx sessionctx.Context) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
+	slices.SortFunc(stmtCtx.OptimizerCETrace, func(i, j *tracing.CETraceRecord) bool {
+		if i == nil && j != nil {
+			return true
+		}
+		if i == nil || j == nil {
+			return false
+		}
+
+		if i.TableID != j.TableID {
+			return i.TableID < j.TableID
+		}
+		if i.Type != j.Type {
+			return i.Type < j.Type
+		}
+		if i.Expr != j.Expr {
+			return i.Expr < j.Expr
+		}
+		return i.RowCount < j.RowCount
+	})
 	traceRecords := stmtCtx.OptimizerCETrace
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	for _, rec := range traceRecords {
@@ -394,6 +418,8 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 		supportClone := err == nil // limitation 2
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
+		} else {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some apply operators can not be executed in parallel"))
 		}
 
 		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
@@ -405,6 +431,11 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 		plan.SetChild(i, enableParallelApply(sctx, child))
 	}
 	return plan
+}
+
+// LogicalOptimizeTest is just exported for test.
+func LogicalOptimizeTest(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+	return logicalOptimize(ctx, flag, logic)
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
@@ -474,7 +505,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		return nil, 0, err
 	}
 	if *planCounter > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range."))
+		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range"))
 	}
 	if t.invalid() {
 		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")

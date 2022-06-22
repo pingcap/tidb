@@ -61,15 +61,16 @@ func TestJoinInDisk(t *testing.T) {
 	defer origin()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
-		conf.OOMAction = config.OOMActionLog
 	})
 
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	tk.MustExec("use test")
 
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -2331,14 +2332,11 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 }
 
 func TestIssue18070(t *testing.T) {
-	restoreFunc := config.RestoreFunc()
-	defer restoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, index(a))")
@@ -2638,13 +2636,13 @@ func TestIssue20270(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)"))
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)"))
 	err := tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	require.Equal(t, executor.ErrQueryInterrupted, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk"))
@@ -2770,14 +2768,8 @@ func TestIssue30211(t *testing.T) {
 	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
 	tk.MustExec("set @@tidb_mem_quota_query=8000;")
 	tk.MustExec("set tidb_index_join_batch_size = 1;")
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = config.OOMActionLog
-		})
-	}()
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
 	require.True(t, strings.Contains(err, "Out Of Memory Quota"))
 	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
@@ -2833,4 +2825,47 @@ func TestIssue31129(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"))
 	require.NoError(t, failpoint.Disable(fpName1))
 	require.NoError(t, failpoint.Disable(fpName2))
+}
+
+func TestOuterJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.MustExec("create table t1(a int, b int, c int)")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("create table t3(a int, b int, c int)")
+	tk.MustExec("create table t4(a int, b int, c int)")
+	tk.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
+	tk.MustExec("INSERT INTO t2 VALUES (3,3,0), (4,2,0), (5,3,0);")
+	tk.MustExec("INSERT INTO t3 VALUES (1,2,0), (2,2,0);")
+	tk.MustExec("INSERT INTO t4 VALUES (3,2,0), (4,2,0);")
+	tk.MustQuery("SELECT t2.a,t2.b,t3.a,t3.b,t4.a,t4.b from (t3, t4) left join (t1, t2) on t3.a=1 AND t3.b=t2.b AND t2.b=t4.b order by 1, 2, 3, 4, 5;").Check(
+		testkit.Rows(
+			"<nil> <nil> 2 2 3 2",
+			"<nil> <nil> 2 2 4 2",
+			"4 2 1 2 3 2",
+			"4 2 1 2 3 2",
+			"4 2 1 2 3 2",
+			"4 2 1 2 4 2",
+			"4 2 1 2 4 2",
+			"4 2 1 2 4 2",
+		),
+	)
+
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1 (a1 int, a2 int);")
+	tk.MustExec("create table t2 (b1 int not null, b2 int);")
+	tk.MustExec("create table t3 (c1 int, c2 int);")
+	tk.MustExec("insert into t1 values (1,2), (2,2), (3,2);")
+	tk.MustExec("insert into t2 values (1,3), (2,3);")
+	tk.MustExec("insert into t3 values (2,4),        (3,4);")
+	tk.MustQuery("select * from t1 left join t2  on  b1 = a1 left join t3  on  c1 = a1  and  b1 is null order by 1, 2, 3, 4, 5, 6").Check(
+		testkit.Rows(
+			"1 2 1 3 <nil> <nil>",
+			"2 2 2 3 <nil> <nil>",
+			"3 2 <nil> <nil> 3 4",
+		),
+	)
 }

@@ -18,20 +18,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
-func checkTableCacheStatus(t *testing.T, se session.Session, dbName, tableName string, status model.TableCacheStatusType) {
-	tb := testkit.TestGetTableByName(t, se, dbName, tableName)
-	dom := domain.GetDomain(se)
+func checkTableCacheStatus(t *testing.T, tk *testkit.TestKit, dbName, tableName string, status model.TableCacheStatusType) {
+	tb := external.GetTableByName(t, tk, dbName, tableName)
+	dom := domain.GetDomain(tk.Session())
 	err := dom.Reload()
 	require.NoError(t, err)
 	require.Equal(t, status, tb.Meta().TableCacheStatusType)
@@ -89,9 +91,9 @@ func TestAlterTableNoCache(t *testing.T) {
 	/* Test of cache table */
 	tk.MustExec("create table nocache_t1 ( n int auto_increment primary key)")
 	tk.MustExec("alter table nocache_t1 cache")
-	checkTableCacheStatus(t, tk.Session(), "test", "nocache_t1", model.TableCacheStatusEnable)
+	checkTableCacheStatus(t, tk, "test", "nocache_t1", model.TableCacheStatusEnable)
 	tk.MustExec("alter table nocache_t1 nocache")
-	checkTableCacheStatus(t, tk.Session(), "test", "nocache_t1", model.TableCacheStatusDisable)
+	checkTableCacheStatus(t, tk, "test", "nocache_t1", model.TableCacheStatusDisable)
 	tk.MustExec("drop table if exists t1")
 	// Test if a table is not exists
 	tk.MustExec("drop table if exists nocache_t")
@@ -124,6 +126,10 @@ func TestIndexOnCacheTable(t *testing.T) {
 	tk.MustExec("create table cache_index_1 (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));")
 	tk.MustExec("alter table cache_index_1 cache")
 	tk.MustGetErrCode("alter table cache_index_1 drop index i1, drop index i2;", errno.ErrOptOnCacheTable)
+
+	// cleanup
+	tk.MustExec("alter table cache_index_1 nocache")
+	tk.MustExec("alter table cache_index nocache")
 }
 
 func TestAlterTableCache(t *testing.T) {
@@ -153,7 +159,8 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustGetErrCode("alter table t1 ca", errno.ErrParse)
 	tk.MustGetErrCode("alter table t2 cache", errno.ErrNoSuchTable)
 	tk.MustExec("alter table t1 cache")
-	checkTableCacheStatus(t, tk.Session(), "test", "t1", model.TableCacheStatusEnable)
+	checkTableCacheStatus(t, tk, "test", "t1", model.TableCacheStatusEnable)
+	tk.MustExec("alter table t1 nocache")
 	tk.MustExec("drop table if exists t1")
 	/*Test can't skip schema checker*/
 	tk.MustExec("drop table if exists t1,t2")
@@ -162,10 +169,10 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1;")
 	tk2.MustExec("alter table t1 cache;")
-	_, err = tk.Exec("commit")
-	require.True(t, terror.ErrorEqual(domain.ErrInfoSchemaChanged, err))
+	tk.MustGetDBError("commit", domain.ErrInfoSchemaChanged)
 	/* Test can skip schema checker */
 	tk.MustExec("begin")
+	tk.MustExec("alter table t1 nocache")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (a int)")
 	tk.MustExec("insert into t1 set a=2;")
@@ -180,6 +187,7 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustExec("alter table t cache")
 	tk.MustExec("alter table t cache")
 	// Test a temporary table
+	tk.MustExec("alter table t nocache")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create temporary table t (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("drop table if exists tmp1")
@@ -189,7 +197,7 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustExec("create global temporary table tmp1 " +
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
-	tk.MustGetErrMsg("alter table tmp1 cache", ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache").Error())
+	tk.MustGetErrMsg("alter table tmp1 cache", dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache").Error())
 }
 
 func TestCacheTableSizeLimit(t *testing.T) {
@@ -245,4 +253,31 @@ func TestCacheTableSizeLimit(t *testing.T) {
 
 	// Forbit the insert once the table size limit is detected.
 	tk.MustGetErrCode("insert into cache_t2 select * from tmp;", errno.ErrOptOnCacheTable)
+}
+
+func TestIssue32692(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table cache_t2 (c1 int);")
+	tk.MustExec("alter table cache_t2 cache;")
+	tk.MustExec("alter table cache_t2 nocache;")
+	// Check no warning message here.
+	tk.MustExec("alter table cache_t2 cache;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestIssue34069(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	sem.Enable()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t_34069 (t int);")
+	// No error when SEM is enabled.
+	tk.MustExec("alter table t_34069 cache")
 }

@@ -141,7 +141,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
-	if (!prop.IsEmpty() && p.RowCount > 1) || planCounter.Empty() {
+	if (!prop.IsSortItemEmpty() && p.RowCount > 1) || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
 	dual := PhysicalTableDual{
@@ -153,7 +153,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 }
 
 func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
-	if !prop.IsEmpty() || planCounter.Empty() {
+	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
 	pShow := PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.ctx)
@@ -163,7 +163,7 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter 
 }
 
 func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
-	if !prop.IsEmpty() || planCounter.Empty() {
+	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
 	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.ctx)
@@ -197,7 +197,7 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 			return errors.Errorf("PlanCounterTp planCounter is not handled")
 		}
 		if childTask != nil && childTask.invalid() {
-			return errors.Errorf("The current plan is invalid, please skip this plan.")
+			return errors.Errorf("The current plan is invalid, please skip this plan")
 		}
 		*childTasks = append(*childTasks, childTask)
 	}
@@ -211,7 +211,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
 	for _, pp := range physicalPlans {
-
 		// Find best child tasks firstly.
 		childTasks = childTasks[:0]
 		// The curCntPlan records the number of possible plans for pp
@@ -265,7 +264,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
-		if prop.IsEmpty() {
+		if _, isMpp := curTask.(*mppTask); !isMpp && prop.IsSortItemEmpty() {
 			// Currently, we do not regard shuffled plan as a new plan.
 			curTask = optimizeByShuffle(curTask, p.basePlan.ctx)
 		}
@@ -279,11 +278,53 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
-		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+		if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask); err != nil {
+			return nil, 0, err
+		} else if curIsBetter {
 			bestTask = curTask
 		}
 	}
 	return bestTask, cntPlan, nil
+}
+
+// compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
+func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
+	if curTask.invalid() {
+		return false, nil
+	}
+	if bestTask.invalid() {
+		return true, nil
+	}
+	if ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
+		curCost, err := getTaskPlanCost(curTask)
+		if err != nil {
+			return false, err
+		}
+		bestCost, err := getTaskPlanCost(bestTask)
+		if err != nil {
+			return false, err
+		}
+		return curCost < bestCost, nil
+	}
+	return curTask.cost() < bestTask.cost(), nil
+}
+
+func getTaskPlanCost(t task) (float64, error) {
+	if t.invalid() {
+		return math.MaxFloat64, nil
+	}
+	var taskType property.TaskType
+	switch t.(type) {
+	case *rootTask:
+		taskType = property.RootTaskType
+	case *copTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
+		taskType = property.CopSingleReadTaskType
+	case *mppTask:
+		taskType = property.MppTaskType
+	default:
+		return 0, errors.New("unknown task type")
+	}
+	return t.plan().GetPlanCost(taskType, 0)
 }
 
 type physicalOptimizeOp struct {
@@ -362,7 +403,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	if err != nil {
 		return nil, 0, err
 	}
-	if !hintWorksWithProp && !newProp.IsEmpty() {
+	if !hintWorksWithProp && !newProp.IsSortItemEmpty() {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
 		// we enforce this property and try to generate the PhysicalPlan again to
 		// make sure the hint can work.
@@ -373,6 +414,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		// Then, we use the empty property to get physicalPlans and
 		// try to get the task with an enforced sort.
 		newProp.SortItems = []property.SortItem{}
+		newProp.SortItemsForPartition = []property.SortItem{}
 		newProp.ExpectedCnt = math.MaxFloat64
 		newProp.MPPPartitionCols = nil
 		newProp.MPPPartitionTp = property.AnyType
@@ -416,7 +458,9 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
-	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+	if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask); err != nil {
+		return nil, 0, err
+	} else if curIsBetter {
 		bestTask = curTask
 	}
 
@@ -426,7 +470,41 @@ END:
 }
 
 func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
-	if !prop.IsEmpty() || planCounter.Empty() {
+	if prop.MPPPartitionTp != property.AnyType {
+		return invalidTask, 0, nil
+	}
+
+	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for p.findBestTask.
+	// Before function return, reset it for enforcing task prop.
+	oldProp := prop.CloneEssentialFields()
+	if prop.CanAddEnforcer {
+		// First, get the bestTask without enforced prop
+		prop.CanAddEnforcer = false
+		cnt := int64(0)
+		t, cnt, err = p.findBestTask(prop, planCounter, opt)
+		if err != nil {
+			return nil, 0, err
+		}
+		prop.CanAddEnforcer = true
+		if t != invalidTask {
+			cntPlan = cnt
+			return
+		}
+		// Next, get the bestTask with enforced prop
+		prop.SortItems = []property.SortItem{}
+	}
+	defer func() {
+		if err != nil {
+			return
+		}
+		if prop.CanAddEnforcer {
+			*prop = *oldProp
+			t = enforceProperty(prop, t, p.basePlan.ctx)
+			prop.CanAddEnforcer = true
+		}
+	}()
+
+	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
 	memTable := PhysicalMemTable{
@@ -496,12 +574,12 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
-	accessResult, comparable := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
-	if !comparable {
+	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
+	if !comparable1 {
 		return 0
 	}
-	scanResult, comparable := compareIndexBack(lhs, rhs)
-	if !comparable {
+	scanResult, comparable2 := compareIndexBack(lhs, rhs)
+	if !comparable2 {
 		return 0
 	}
 	matchResult := compareBool(lhs.isMatchProp, rhs.isMatchProp)
@@ -542,7 +620,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 	// ```
 	// In the first two `SELECT` statements, `idx_a_b_c` matches the sort order. In the last two `SELECT` statements, `idx_d_c_b_a`
 	// matches the sort order. Hence, we use `path.ConstCols` to deal with the above situations.
-	if !prop.IsEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
+	if !prop.IsSortItemEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
 		isMatchProp = true
 		i := 0
 		for _, sortItem := range prop.SortItems {
@@ -605,23 +683,9 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
-			if path.StoreType == kv.TiFlash {
-				if path.IsTiFlashGlobalRead && prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
-					currentCandidate = ds.getTableCandidate(path, prop)
-				}
-				if !path.IsTiFlashGlobalRead && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
-					currentCandidate = ds.getTableCandidate(path, prop)
-				}
-			} else {
-				if !path.IsTiFlashGlobalRead && !prop.IsFlashProp() {
-					currentCandidate = ds.getTableCandidate(path, prop)
-				}
-			}
-			if currentCandidate == nil {
-				continue
-			}
+			currentCandidate = ds.getTableCandidate(path, prop)
 		} else {
-			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || path.IsSingleScan {
+			if len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan {
 				// We will use index to generate physical plan if any of the following conditions is satisfied:
 				// 1. This path's access cond is not nil.
 				// 2. We have a non-empty prop to match.
@@ -664,7 +728,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			var unsignedIntHandle bool
 			if c.path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
 				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
-					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
+					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 				}
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
@@ -725,6 +789,10 @@ func (ds *DataSource) getPruningInfo(candidates []*candidatePath, prop *property
 
 func (ds *DataSource) isPointGetConvertableSchema() bool {
 	for _, col := range ds.Columns {
+		if col.Name.L == model.ExtraHandleName.L {
+			continue
+		}
+
 		// Only handle tables that all columns are public.
 		if col.State != model.StatePublic {
 			return false
@@ -750,7 +818,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		return
 	}
 	var cnt int64
-	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
+	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldProp := prop.CloneEssentialFields()
 	if prop.CanAddEnforcer {
@@ -822,7 +890,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, idxMergeTask, prop, opt)
-			if idxMergeTask.cost() < t.cost() || planCounter.Empty() {
+
+			curIsBetter, err := compareTaskCost(ds.ctx, idxMergeTask, t)
+			if err != nil {
+				return nil, 0, err
+			}
+			if curIsBetter || planCounter.Empty() {
 				t = idxMergeTask
 			}
 			if planCounter.Empty() {
@@ -910,7 +983,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 					cntPlan += 1
 					planCounter.Dec(1)
 				}
-				if pointGetTask.cost() < t.cost() || planCounter.Empty() {
+				curIsBetter, cerr := compareTaskCost(ds.ctx, pointGetTask, t)
+				if cerr != nil {
+					return nil, 0, cerr
+				}
+				if curIsBetter || planCounter.Empty() {
 					t = pointGetTask
 					if planCounter.Empty() {
 						return
@@ -940,7 +1017,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, tblTask, prop, opt)
-			if tblTask.cost() < t.cost() || planCounter.Empty() {
+			curIsBetter, err := compareTaskCost(ds.ctx, tblTask, t)
+			if err != nil {
+				return nil, 0, err
+			}
+			if curIsBetter || planCounter.Empty() {
 				t = tblTask
 			}
 			if planCounter.Empty() {
@@ -961,7 +1042,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			planCounter.Dec(1)
 		}
 		appendCandidate(ds, idxTask, prop, opt)
-		if idxTask.cost() < t.cost() || planCounter.Empty() {
+		curIsBetter, err := compareTaskCost(ds.ctx, idxTask, t)
+		if err != nil {
+			return nil, 0, err
+		}
+		if curIsBetter || planCounter.Empty() {
 			t = idxTask
 		}
 		if planCounter.Empty() {
@@ -994,7 +1079,7 @@ func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bo
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task, err error) {
-	if prop.TaskTp != property.RootTaskType || !prop.IsEmpty() {
+	if prop.TaskTp != property.RootTaskType || !prop.IsSortItemEmpty() {
 		return invalidTask, nil
 	}
 	path := candidate.path
@@ -1005,7 +1090,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		tblColHists:       ds.TblColHists,
 	}
 	cop.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -1044,15 +1129,14 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	indexPlan PhysicalPlan,
 	partialCost float64) {
-	idx := path.Index
 	is, partialCost, rowCount := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
-	rowSize := is.indexScanRowSize(idx, ds, false)
+	rowSize := is.stats.HistColl.GetAvgRowSize(is.ctx, is.schema.Columns, true, false)
 	// TODO: Consider using isCoveringIndex() to avoid another TableRead
 	indexConds := path.IndexFilters
 	sessVars := ds.ctx.GetSessionVars()
 	if indexConds != nil {
 		var selectivity float64
-		partialCost += rowCount * sessVars.CopCPUFactor
+		partialCost += rowCount * sessVars.GetCopCPUFactor()
 		if path.CountAfterAccess > 0 {
 			selectivity = path.CountAfterIndex / path.CountAfterAccess
 		}
@@ -1104,7 +1188,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		}
 		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount), ds.blockOffset)
 		tablePlan.SetChildren(ts)
-		partialCost += rowCount * sessVars.CopCPUFactor
+		partialCost += rowCount * sessVars.GetCopCPUFactor()
 		partialCost += selectivity * rowCount * rowSize * sessVars.GetNetworkFactor(ds.tableInfo)
 		return tablePlan, partialCost
 	}
@@ -1161,6 +1245,8 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
 		HandleCols:      ds.handleCols,
+		tblCols:         ds.TblCols,
+		tblColHists:     ds.TblColHists,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	err := setIndexMergeTableScanHandleCols(ds, ts)
@@ -1174,7 +1260,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 			}
 		}
 	}
-	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
+	rowSize := ts.getScanRowSize()
 	partialCost += totalRowCount * rowSize * sessVars.GetScanFactor(ds.tableInfo)
 	ts.stats = ds.tableStats.ScaleByExpectCnt(totalRowCount)
 	if ds.statisticTable.Pseudo {
@@ -1186,7 +1272,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		pushedFilters = pushedFilters1
 		remainingFilters = append(remainingFilters, remainingFilters1...)
 		if len(pushedFilters) != 0 {
-			partialCost += totalRowCount * sessVars.CopCPUFactor
+			partialCost += totalRowCount * sessVars.GetCopCPUFactor()
 			selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, pushedFilters, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
@@ -1223,7 +1309,7 @@ func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client,
 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
 	for i, indexCol := range indexCols {
-		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
+		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen()
 		if indexCol != nil && col.EqualByExprAndID(nil, indexCol) && isFullLen {
 			return true
 		}
@@ -1233,7 +1319,7 @@ func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, id
 
 func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
 	for _, col := range columns {
-		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 			continue
 		}
 		if col.ID == model.ExtraHandleID {
@@ -1246,7 +1332,7 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		}
 		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
 			col.GetType().EvalType() == types.ETString &&
-			!mysql.HasBinaryFlag(col.GetType().Flag)
+			!mysql.HasBinaryFlag(col.GetType().GetFlag())
 		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
 			return false
 		}
@@ -1292,7 +1378,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		// If it's parent requires double read task, return max cost.
 		return invalidTask, nil
 	}
-	if !prop.IsEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
 	path := candidate.path
@@ -1304,7 +1390,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
 	cop.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -1317,6 +1403,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
+			tblCols:         ds.TblCols,
+			tblColHists:     ds.TblColHists,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
 		ts.SetCost(cost)
@@ -1355,7 +1443,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	if cop.needExtraProj {
 		cop.originSchema = ds.schema
 	}
-	// prop.IsEmpty() would always return true when coming to here,
+	// prop.IsSortItemEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
 	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
 	is.addPushedDownSelection(cop, ds, path, finalStats)
@@ -1368,22 +1456,20 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	return task, nil
 }
 
-func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) float64 {
+func (is *PhysicalIndexScan) getScanRowSize() float64 {
+	idx := is.Index
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
 	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
 	if len(idx.Columns) == len(is.schema.Columns) {
 		scanCols = append(scanCols, is.schema.Columns...)
-		handleCol := ds.getPKIsHandleCol()
+		handleCol := is.pkIsHandleCol
 		if handleCol != nil {
 			scanCols = append(scanCols, handleCol)
 		}
 	} else {
 		scanCols = is.schema.Columns
 	}
-	if isForScan {
-		return ds.TblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
-	}
-	return ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true, false)
+	return is.tblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
 }
 
 // initSchema is used to set the schema of PhysicalIndexScan. Before calling this,
@@ -1419,7 +1505,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	setHandle := len(indexCols) > len(is.Index.Columns)
 	if !setHandle {
 		for i, col := range is.Columns {
-			if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+			if (mysql.HasPriKeyFlag(col.GetFlag()) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
 				indexCols = append(indexCols, is.dataSourceSchema.Columns[i])
 				setHandle = true
 				break
@@ -1466,7 +1552,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 
 	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
-		copTask.cst += copTask.count() * sessVars.CopCPUFactor
+		copTask.cst += copTask.count() * sessVars.GetCopCPUFactor()
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
 			selectivity = path.CountAfterIndex / path.CountAfterAccess
@@ -1479,7 +1565,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 	if len(tableConds) > 0 {
 		copTask.finishIndexPlan()
-		copTask.cst += copTask.count() * sessVars.CopCPUFactor
+		copTask.cst += copTask.count() * sessVars.GetCopCPUFactor()
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
 		if len(copTask.rootTaskConds) != 0 {
 			selectivity, _, err := copTask.tblColHists.Selectivity(is.ctx, tableConds, nil)
@@ -1752,6 +1838,8 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 		physicalTableID: ds.physicalTableID,
 		Ranges:          s.Ranges,
 		AccessCondition: s.AccessConds,
+		tblCols:         ds.TblCols,
+		tblColHists:     ds.TblColHists,
 	}.Init(s.ctx, s.blockOffset)
 	ts.stats = stats
 	ts.SetSchema(schema.Clone())
@@ -1781,6 +1869,8 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
+		tblColHists:      ds.TblColHists,
+		pkIsHandleCol:    ds.getPKIsHandleCol(),
 	}.Init(ds.ctx, ds.blockOffset)
 	is.stats = stats
 	is.initSchema(s.FullIdxCols, s.IsDoubleRead)
@@ -1793,7 +1883,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
-	if !prop.IsEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
 	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
@@ -1802,17 +1892,17 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	if prop.TaskTp == property.MppTaskType {
 		if ts.KeepOrder {
-			return &mppTask{}, nil
+			return invalidTask, nil
 		}
 		if prop.MPPPartitionTp != property.AnyType || ts.isPartition {
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
-			return &mppTask{}, nil
+			return invalidTask, nil
 		}
 		for _, col := range ts.schema.Columns {
 			if col.VirtualExpr != nil {
 				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
-				return &mppTask{}, nil
+				return invalidTask, nil
 			}
 		}
 		mppTask := &mppTask{
@@ -1821,7 +1911,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			partTp: property.AnyType,
 		}
 		ts.PartitionInfo = PartitionInfo{
-			PruningConds:   ds.allConds,
+			PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 			PartitionNames: ds.partitionNames,
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.names,
@@ -1837,7 +1927,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		cst:               cost,
 	}
 	copTask.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -1870,7 +1960,7 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
-	if !prop.IsEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
 	if candidate.isMatchProp {
@@ -1891,7 +1981,7 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 }
 
 func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task) {
-	if !prop.IsEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
 	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
@@ -1933,13 +2023,14 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	var cost float64
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
-		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.Flag)
+		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
 		pointGetPlan.PartitionInfo = partitionInfo
-		cost = pointGetPlan.GetCost(ds.TblCols)
+		pointGetPlan.accessCols = ds.TblCols
+		cost = pointGetPlan.GetCost()
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
-			cost += pointGetPlan.stats.RowCount * sessVars.CPUFactor
+			cost += pointGetPlan.stats.RowCount * sessVars.GetCPUFactor()
 			sel := PhysicalSelection{
 				Conditions: candidate.path.TableFilters,
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
@@ -1953,14 +2044,15 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
 		if candidate.path.IsSingleScan {
-			cost = pointGetPlan.GetCost(candidate.path.IdxCols)
+			pointGetPlan.accessCols = candidate.path.IdxCols
 		} else {
-			cost = pointGetPlan.GetCost(ds.TblCols)
+			pointGetPlan.accessCols = ds.TblCols
 		}
+		cost = pointGetPlan.GetCost()
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
-			cost += pointGetPlan.stats.RowCount * sessVars.CPUFactor
+			cost += pointGetPlan.stats.RowCount * sessVars.GetCPUFactor()
 			sel := PhysicalSelection{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
@@ -1970,13 +2062,13 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 
 	rTsk.cst = cost
-	pointGetPlan.SetCost(cost)
+	rTsk.p.SetCost(cost)
 	return rTsk
 }
 
 func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	candidate *candidatePath, hashPartColName *ast.ColumnName, opt *physicalOptimizeOp) (task task) {
-	if !prop.IsEmpty() && !candidate.isMatchProp {
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
 	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
@@ -1989,7 +2081,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		ctx:              ds.ctx,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo(),
-		KeepOrder:        !prop.IsEmpty(),
+		KeepOrder:        !prop.IsSortItemEmpty(),
 		Columns:          ds.Columns,
 		SinglePart:       ds.isPartition,
 		PartTblID:        ds.physicalTableID,
@@ -2004,11 +2096,12 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
-		cost = batchPointGetPlan.GetCost(ds.TblCols)
+		batchPointGetPlan.accessCols = ds.TblCols
+		cost = batchPointGetPlan.GetCost()
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
-			cost += batchPointGetPlan.stats.RowCount * sessVars.CPUFactor
+			cost += batchPointGetPlan.stats.RowCount * sessVars.GetCPUFactor()
 			sel := PhysicalSelection{
 				Conditions: candidate.path.TableFilters,
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
@@ -2023,19 +2116,20 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
-		if !prop.IsEmpty() {
+		if !prop.IsSortItemEmpty() {
 			batchPointGetPlan.KeepOrder = true
 			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
 		if candidate.path.IsSingleScan {
-			cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
+			batchPointGetPlan.accessCols = candidate.path.IdxCols
 		} else {
-			cost = batchPointGetPlan.GetCost(ds.TblCols)
+			batchPointGetPlan.accessCols = ds.TblCols
 		}
+		cost = batchPointGetPlan.GetCost()
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
-			cost += batchPointGetPlan.stats.RowCount * sessVars.CPUFactor
+			cost += batchPointGetPlan.stats.RowCount * sessVars.GetCPUFactor()
 			sel := PhysicalSelection{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
@@ -2045,7 +2139,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	}
 
 	rTsk.cst = cost
-	batchPointGetPlan.SetCost(cost)
+	rTsk.p.SetCost(cost)
 	return rTsk
 }
 
@@ -2061,7 +2155,7 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 	// Add filter condition to table plan now.
 	sessVars := ts.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
-		mpp.cst += mpp.count() * sessVars.CopCPUFactor
+		mpp.cst += mpp.count() * sessVars.GetCopCPUFactor()
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
 		sel.SetChildren(ts)
 		sel.cost = mpp.cst
@@ -2079,7 +2173,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 	// Add filter condition to table plan now.
 	sessVars := ts.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
-		copTask.cst += copTask.count() * sessVars.CopCPUFactor
+		copTask.cst += copTask.count() * sessVars.GetCopCPUFactor()
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
 		if len(copTask.rootTaskConds) != 0 {
 			selectivity, _, err := copTask.tblColHists.Selectivity(ts.ctx, ts.filterCondition, nil)
@@ -2095,6 +2189,15 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 	}
 }
 
+func (ts *PhysicalTableScan) getScanRowSize() float64 {
+	if ts.StoreType == kv.TiKV {
+		return ts.tblColHists.GetTableAvgRowSize(ts.ctx, ts.tblCols, ts.StoreType, true)
+	}
+	// If `ts.handleCol` is nil, then the schema of tableScan doesn't have handle column.
+	// This logic can be ensured in column pruning.
+	return ts.tblColHists.GetTableAvgRowSize(ts.ctx, ts.Schema().Columns, ts.StoreType, ts.HandleCols != nil)
+}
+
 func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64, float64) {
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -2106,7 +2209,9 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		Ranges:          path.Ranges,
 		AccessCondition: path.AccessConds,
 		StoreType:       path.StoreType,
-		IsGlobalRead:    path.IsTiFlashGlobalRead,
+		HandleCols:      ds.handleCols,
+		tblCols:         ds.TblCols,
+		tblColHists:     ds.TblColHists,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))
 	copy(ts.filterCondition, path.TableFilters)
@@ -2146,31 +2251,15 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	var rowSize float64
-	if ts.StoreType == kv.TiKV {
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
-	} else {
-		// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
-		// This logic can be ensured in column pruning.
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.handleCols != nil)
-	}
+	rowSize := ts.getScanRowSize()
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.GetScanFactor(ds.tableInfo)
-	if ts.IsGlobalRead {
-		cost += rowCount * sessVars.GetNetworkFactor(ds.tableInfo) * rowSize
-	}
 	if isMatchProp {
 		ts.Desc = prop.SortItems[0].Desc
 		if prop.SortItems[0].Desc && prop.ExpectedCnt >= smallScanThreshold {
 			cost = rowCount * rowSize * sessVars.GetDescScanFactor(ds.tableInfo)
 		}
 		ts.KeepOrder = true
-	}
-	switch ts.StoreType {
-	case kv.TiKV:
-		cost += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ds.tableInfo)
-	case kv.TiFlash:
-		cost += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ds.tableInfo)
 	}
 	return ts, cost, rowCount
 }
@@ -2190,6 +2279,8 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
+		tblColHists:      ds.TblColHists,
+		pkIsHandleCol:    ds.getPKIsHandleCol(),
 	}.Init(ds.ctx, ds.blockOffset)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
@@ -2197,7 +2288,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
-	if (isMatchProp || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
+	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
 		count, ok, corr := ds.crossEstimateIndexRowCount(path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 		if ok {
 			rowCount = count
@@ -2208,7 +2299,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		}
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	rowSize := is.indexScanRowSize(idx, ds, true)
+	rowSize := is.getScanRowSize()
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.GetScanFactor(ds.tableInfo)
 	if isMatchProp {
@@ -2218,13 +2309,12 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		}
 		is.KeepOrder = true
 	}
-	cost += float64(len(is.Ranges)) * sessVars.GetSeekFactor(ds.tableInfo)
 	is.cost = cost
 	return is, cost, rowCount
 }
 
 func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
-	if !prop.IsEmpty() && !prop.CanAddEnforcer {
+	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
 	// The physical plan has been build when derive stats.
@@ -2242,7 +2332,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 }
 
 func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
-	if !prop.IsEmpty() {
+	if !prop.IsSortItemEmpty() {
 		return nil, 1, nil
 	}
 
@@ -2257,4 +2347,13 @@ func appendCandidate(lp LogicalPlan, task task, prop *property.PhysicalProperty,
 		return
 	}
 	opt.appendCandidate(lp, task.plan(), prop)
+}
+
+// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
+// 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
+func pushDownNot(ctx sessionctx.Context, conds []expression.Expression) []expression.Expression {
+	for i, cond := range conds {
+		conds[i] = expression.PushDownNot(ctx, cond)
+	}
+	return conds
 }

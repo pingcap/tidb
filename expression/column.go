@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -223,6 +224,8 @@ type Column struct {
 	InOperand bool
 
 	collationInfo
+
+	CorrelatedColUniqueID int64
 }
 
 // Equal implements Expression interface.
@@ -269,7 +272,7 @@ func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result
 func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	src := input.Column(col.Index)
-	if col.GetType().Tp == mysql.TypeFloat {
+	if col.GetType().GetType() == mysql.TypeFloat {
 		result.ResizeFloat64(n, false)
 		f32s := src.Float32s()
 		f64s := result.Float64s()
@@ -399,7 +402,7 @@ func (col *Column) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, boo
 	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
-	if col.GetType().Tp == mysql.TypeFloat {
+	if col.GetType().GetType() == mysql.TypeFloat {
 		return float64(row.GetFloat32(col.Index)), false, nil
 	}
 	return row.GetFloat64(col.Index), false, nil
@@ -443,7 +446,7 @@ func (col *Column) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Du
 	if row.IsNull(col.Index) {
 		return types.Duration{}, true, nil
 	}
-	duration := row.GetDuration(col.Index, col.RetType.Decimal)
+	duration := row.GetDuration(col.Index, col.RetType.GetDecimal())
 	return duration, false, nil
 }
 
@@ -485,6 +488,11 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	col.hashcode = append(col.hashcode, columnFlag)
 	col.hashcode = codec.EncodeInt(col.hashcode, col.UniqueID)
 	return col.hashcode
+}
+
+// CleanHashCode will clean the hashcode you may be cached before. It's used especially in schema-cloned & reallocated-uniqueID's cases.
+func (col *Column) CleanHashCode() {
+	col.hashcode = make([]byte, 0, 9)
 }
 
 // ResolveIndices implements Expression interface.
@@ -552,11 +560,11 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 	return nil
 }
 
-// indexCol2Col finds the corresponding column of the IndexColumn in a column slice.
-func indexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
+// IndexCol2Col finds the corresponding column of the IndexColumn in a column slice.
+func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
 	for i, info := range colInfos {
 		if info.Name.L == col.Name.L {
-			if col.Length > 0 && info.FieldType.Flen > col.Length {
+			if col.Length > 0 && info.FieldType.GetFlen() > col.Length {
 				c := *cols[i]
 				c.IsPrefix = true
 				return &c
@@ -576,12 +584,12 @@ func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *m
 	retCols := make([]*Column, 0, len(index.Columns))
 	lengths := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := indexCol2Col(colInfos, cols, c)
+		col := IndexCol2Col(colInfos, cols, c)
 		if col == nil {
 			return retCols, lengths
 		}
 		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.Flen {
+		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
 			lengths = append(lengths, types.UnspecifiedLength)
 		} else {
 			lengths = append(lengths, c.Length)
@@ -598,14 +606,14 @@ func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.I
 	retCols := make([]*Column, 0, len(index.Columns))
 	lens := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := indexCol2Col(colInfos, cols, c)
+		col := IndexCol2Col(colInfos, cols, c)
 		if col == nil {
 			retCols = append(retCols, col)
 			lens = append(lens, types.UnspecifiedLength)
 			continue
 		}
 		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.Flen {
+		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
 			lens = append(lens, types.UnspecifiedLength)
 		} else {
 			lens = append(lens, c.Length)
@@ -639,7 +647,7 @@ func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
 
 // SupportReverseEval checks whether the builtinFunc support reverse evaluation.
 func (col *Column) SupportReverseEval() bool {
-	switch col.RetType.Tp {
+	switch col.RetType.GetType() {
 	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		return true
@@ -662,11 +670,14 @@ func (col *Column) Coercibility() Coercibility {
 
 // Repertoire returns the repertoire value which is used to check collations.
 func (col *Column) Repertoire() Repertoire {
+	if col.repertoire != 0 {
+		return col.repertoire
+	}
 	switch col.RetType.EvalType() {
 	case types.ETJson:
 		return UNICODE
 	case types.ETString:
-		if col.RetType.Charset == charset.CharsetASCII {
+		if col.RetType.GetCharset() == charset.CharsetASCII {
 			return ASCII
 		}
 		return UNICODE
@@ -683,4 +694,32 @@ func SortColumns(cols []*Column) []*Column {
 		return sorted[i].UniqueID < sorted[j].UniqueID
 	})
 	return sorted
+}
+
+// InColumnArray check whether the col is in the cols array
+func (col *Column) InColumnArray(cols []*Column) bool {
+	for _, c := range cols {
+		if col.Equal(nil, c) {
+			return true
+		}
+	}
+	return false
+}
+
+// GcColumnExprIsTidbShard check whether the expression is tidb_shard()
+func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
+	if virtualExpr == nil {
+		return false
+	}
+
+	f, ok := virtualExpr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+
+	if f.FuncName.L != ast.TiDBShard {
+		return false
+	}
+
+	return true
 }

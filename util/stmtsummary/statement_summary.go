@@ -374,6 +374,7 @@ type BindableStmt struct {
 	PlanHint  string
 	Charset   string
 	Collation string
+	Users     map[string]struct{} // which users have processed this stmt
 }
 
 // GetMoreThanCntBindableStmt gets users' select/update/delete SQLs that occurred more than the specified count.
@@ -401,6 +402,7 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 							PlanHint:  ssElement.planHint,
 							Charset:   ssElement.charset,
 							Collation: ssElement.collation,
+							Users:     ssElement.authUsers,
 						}
 						// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
 						// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.

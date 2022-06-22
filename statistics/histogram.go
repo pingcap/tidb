@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -81,6 +82,9 @@ type Histogram struct {
 	Correlation float64
 }
 
+// EmptyHistogramSize is the size of empty histogram, about 112 = 8*6 for int64 & float64, 24*2 for arrays, 8*2 for references.
+const EmptyHistogramSize = int64(unsafe.Sizeof(Histogram{}))
+
 // Bucket store the bucket count and repeat.
 type Bucket struct {
 	Count  int64
@@ -88,11 +92,17 @@ type Bucket struct {
 	NDV    int64
 }
 
+// EmptyBucketSize is the size of empty bucket, 3*8=24 now.
+const EmptyBucketSize = int64(unsafe.Sizeof(Bucket{}))
+
 type scalar struct {
 	lower        float64
 	upper        float64
 	commonPfxLen int // commonPfxLen is the common prefix length of the lower bound and upper bound when the value type is KindString or KindBytes.
 }
+
+// EmptyScalarSize is the size of empty scalar.
+const EmptyScalarSize = int64(unsafe.Sizeof(scalar{}))
 
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
@@ -101,7 +111,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
 		// This would cause panic. So we apply a little trick here to avoid decoding it by explicitly changing the collation to 'CollationBin'.
 		tp = tp.Clone()
-		tp.Collate = charset.CollationBin
+		tp.SetCollate(charset.CollationBin)
 	}
 	return &Histogram{
 		ID:                id,
@@ -128,14 +138,11 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 }
 
 // MemoryUsage returns the total memory usage of this Histogram.
-// everytime changed the Histogram of the table, it will cost O(n)
-// complexity so calculate the memoryUsage might cost little time.
-// We ignore the size of other metadata in Histogram.
 func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
-	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+	sum = EmptyHistogramSize + hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets))*EmptyBucketSize + int64(cap(hg.scalars))*EmptyScalarSize
 	return
 }
 
@@ -157,7 +164,7 @@ func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	if histCount > 0 {
 		notNullRatio = 1.0 - float64(c.NullCount)/histCount
 	}
-	switch c.Histogram.Tp.Tp {
+	switch c.Histogram.Tp.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return 8 * notNullRatio
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
@@ -237,7 +244,7 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64, n
 	hg.Buckets[l-1].Repeat = repeat
 }
 
-// DecodeTo decodes the histogram bucket values into `Tp`.
+// DecodeTo decodes the histogram bucket values into `tp`.
 func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
 	oldIter := chunk.NewIterator4Chunk(hg.Bounds)
 	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, oldIter.Len())
@@ -252,7 +259,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 	return nil
 }
 
-// ConvertTo converts the histogram bucket values into `Tp`.
+// ConvertTo converts the histogram bucket values into `tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	hist.Correlation = hg.Correlation
@@ -430,28 +437,17 @@ func (hg *Histogram) ToString(idxCols int) string {
 // equalRowCount estimates the row count where the column equals to value.
 // matched: return true if this returned row count is from Bucket.Repeat or bucket NDV, which is more accurate than if not.
 func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
-	index, match := hg.Bounds.LowerBound(0, &value)
-	// Since we store the lower and upper bound together, if the index is an odd number, then it points to a upper bound.
-	if index%2 == 1 {
-		if match {
-			return float64(hg.Buckets[index/2].Repeat), true
-		}
-		if hasBucketNDV && hg.Buckets[index/2].NDV > 1 {
-			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1), true
-		}
-		return hg.notNullCount() / float64(hg.NDV), false
+	_, bucketIdx, inBucket, match := hg.locateBucket(value)
+	if !inBucket {
+		return 0, false
 	}
 	if match {
-		cmp := chunk.GetCompareFunc(hg.Tp)
-		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
-			return float64(hg.Buckets[index/2].Repeat), true
-		}
-		if hasBucketNDV && hg.Buckets[index/2].NDV > 1 {
-			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1), true
-		}
-		return hg.notNullCount() / float64(hg.NDV), false
+		return float64(hg.Buckets[bucketIdx].Repeat), true
 	}
-	return 0, false
+	if hasBucketNDV && hg.Buckets[bucketIdx].NDV > 1 {
+		return float64(hg.bucketCount(bucketIdx)-hg.Buckets[bucketIdx].Repeat) / float64(hg.Buckets[bucketIdx].NDV-1), true
+	}
+	return hg.notNullCount() / float64(hg.NDV), false
 }
 
 // greaterRowCount estimates the row count where the column greater than value.
@@ -462,30 +458,69 @@ func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 	return math.Max(0, gtCount)
 }
 
+// locateBucket locates where a value falls in the range of the Histogram.
+// Return value:
+// 	exceed: if the value is larger than the upper bound of the last Bucket of the Histogram
+// 	bucketIdx: assuming exceed if false, which Bucket does this value fall in (note: the range before a Bucket is also
+//		considered belong to this Bucket)
+// 	inBucket: assuming exceed if false, whether this value falls in this Bucket, instead of falls between
+//		this Bucket and the previous Bucket.
+// 	matchLastValue: assuming inBucket is true, if this value is the last value in this Bucket, which has a counter (Bucket.Repeat)
+// Examples:
+// 	val0 |<-[bkt0]->| |<-[bkt1]->val1(last value)| val2 |<--val3--[bkt2]->| |<-[bkt3]->| val4
+// 	locateBucket(val0): false, 0, false, false
+// 	locateBucket(val1): false, 1, true, true
+// 	locateBucket(val2): false, 2, false, false
+// 	locateBucket(val3): false, 2, true, false
+// 	locateBucket(val4): true, 3, false, false
+func (hg *Histogram) locateBucket(value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
+	// Empty histogram
+	if hg == nil || hg.Bounds.NumRows() == 0 {
+		return true, 0, false, false
+	}
+	index, match := hg.Bounds.LowerBound(0, &value)
+	// The value is larger than the max value in the histogram (exceed is true)
+	if index >= hg.Bounds.NumRows() {
+		return true, hg.Len() - 1, false, false
+	}
+	bucketIdx = index / 2
+	// The value is before this bucket
+	if index%2 == 0 && !match {
+		return false, bucketIdx, false, false
+	}
+	// The value matches the last value in this bucket
+	// case 1: The LowerBound()'s return value tells us the value matches an upper bound of a bucket
+	// case 2: We compare and find that the value is equal to the upper bound of this bucket. This might happen when
+	//           the bucket's lower bound is equal to its upper bound.
+	if (index%2 == 1 && match) || chunk.Compare(hg.Bounds.GetRow(bucketIdx*2+1), 0, &value) == 0 {
+		return false, bucketIdx, true, true
+	}
+	// The value is in the bucket and isn't the last value in this bucket
+	return false, bucketIdx, true, false
+}
+
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
 func (hg *Histogram) LessRowCountWithBktIdx(value types.Datum) (float64, int) {
 	// All the values are null.
 	if hg.Bounds.NumRows() == 0 {
 		return 0, 0
 	}
-	index, match := hg.Bounds.LowerBound(0, &value)
-	if index == hg.Bounds.NumRows() {
+	exceed, bucketIdx, inBucket, match := hg.locateBucket(value)
+	if exceed {
 		return hg.notNullCount(), hg.Len() - 1
 	}
-	// Since we store the lower and upper bound together, so dividing the index by 2 will get the bucket index.
-	bucketIdx := index / 2
-	curCount, curRepeat := float64(hg.Buckets[bucketIdx].Count), float64(hg.Buckets[bucketIdx].Repeat)
 	preCount := float64(0)
 	if bucketIdx > 0 {
 		preCount = float64(hg.Buckets[bucketIdx-1].Count)
 	}
-	if index%2 == 1 {
-		if match {
-			return curCount - curRepeat, bucketIdx
-		}
-		return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
+	if !inBucket {
+		return preCount, bucketIdx
 	}
-	return preCount, bucketIdx
+	curCount, curRepeat := float64(hg.Buckets[bucketIdx].Count), float64(hg.Buckets[bucketIdx].Repeat)
+	if match {
+		return curCount - curRepeat, bucketIdx
+	}
+	return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
 }
 
 func (hg *Histogram) lessRowCount(value types.Datum) float64 {
@@ -759,7 +794,7 @@ func (hg *Histogram) popFirstBucket() {
 
 // IsIndexHist checks whether current histogram is one for index.
 func (hg *Histogram) IsIndexHist() bool {
-	return hg.Tp.Tp == mysql.TypeBlob
+	return hg.Tp.GetType() == mysql.TypeBlob
 }
 
 // MergeHistograms merges two histograms.
@@ -879,7 +914,7 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 	// If this is an unsigned column, we need to make sure values are not negative.
 	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
 	// Maybe it's better to do this transformation in the ranger like the normal negative value.
-	if mysql.HasUnsignedFlag(hg.Tp.Flag) {
+	if mysql.HasUnsignedFlag(hg.Tp.GetFlag()) {
 		if l < 0 {
 			l = 0
 		}
@@ -1021,6 +1056,9 @@ type Column struct {
 	Flag           int64
 	LastAnalyzePos types.Datum
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
+
+	// ColLoadedStatus indicates the status of column statistics
+	ColLoadedStatus
 }
 
 func (c *Column) String() string {
@@ -1052,17 +1090,28 @@ func (c *Column) GetIncreaseFactor(realtimeRowCount int64) float64 {
 	return float64(realtimeRowCount) / columnCount
 }
 
-// MemoryUsage returns the total memory usage of Histogram and CMSketch in Column.
+// MemoryUsage returns the total memory usage of Histogram, CMSketch, FMSketch in Column.
 // We ignore the size of other metadata in Column
-func (c *Column) MemoryUsage() (sum int64) {
-	sum = c.Histogram.MemoryUsage()
+func (c *Column) MemoryUsage() CacheItemMemoryUsage {
+	var sum int64
+	columnMemUsage := &ColumnMemUsage{
+		ColumnID: c.Info.ID,
+	}
+	histogramMemUsage := c.Histogram.MemoryUsage()
+	columnMemUsage.HistogramMemUsage = histogramMemUsage
+	sum = histogramMemUsage
 	if c.CMSketch != nil {
-		sum += c.CMSketch.MemoryUsage()
+		cmSketchMemUsage := c.CMSketch.MemoryUsage()
+		columnMemUsage.CMSketchMemUsage = cmSketchMemUsage
+		sum += cmSketchMemUsage
 	}
 	if c.FMSketch != nil {
-		sum += c.FMSketch.MemoryUsage()
+		fmSketchMemUsage := c.FMSketch.MemoryUsage()
+		columnMemUsage.FMSketchMemUsage = fmSketchMemUsage
+		sum += fmSketchMemUsage
 	}
-	return
+	columnMemUsage.TotalMemUsage = sum
+	return columnMemUsage
 }
 
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
@@ -1080,20 +1129,26 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
 			return true
 		}
-		if c.Histogram.NDV > 0 && c.notNullCount() == 0 && stmtctx != nil {
+		if c.IsLoadNeeded() && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 			}
-			HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+			// In some tests, the c.Info is not set, so we add this check here.
+			if c.Info != nil {
+				HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+			}
 		}
 	}
-	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
+	// In some cases, some statistics in column would be evicted
+	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
+	// In this case, we will think this column as valid due to we can still use the rest of the statistics to do optimize.
+	return c.TotalRowCount() == 0 || (!c.IsEssentialStatsLoaded() && c.Histogram.NDV > 0)
 }
 
 // IsHistNeeded checks if this column needs histogram to be loaded
 func (c *Column) IsHistNeeded(collPseudo bool) bool {
-	return (!collPseudo || !c.NotAccurate()) && c.Histogram.NDV > 0 && c.notNullCount() == 0
+	return (!collPseudo || !c.NotAccurate()) && c.IsLoadNeeded()
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
@@ -1210,18 +1265,21 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		cnt := c.BetweenRowCount(sctx, lowVal, highVal, lowEncoded, highEncoded)
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
-		// where null is the lower bound.
-		if rg.LowExclude && !lowVal.IsNull() {
+		//   where null is the lower bound.
+		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
+		//   expressions like b < 3, we need to exclude the special values.
+		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
 			lowCnt, err := c.equalRowCount(sctx, lowVal, lowEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
+			cnt = mathutil.Clamp(cnt, 0, c.notNullCount())
 		}
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
 		}
-		if !rg.HighExclude {
+		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
 			highCnt, err := c.equalRowCount(sctx, highVal, highEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -1229,11 +1287,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 			cnt += highCnt
 		}
 
-		if cnt > c.TotalRowCount() {
-			cnt = c.TotalRowCount()
-		} else if cnt < 0 {
-			cnt = 0
-		}
+		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		cnt *= c.GetIncreaseFactor(realtimeRowCount)
@@ -1249,12 +1303,22 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		rowCount += cnt
 	}
-	if rowCount > float64(realtimeRowCount) {
-		rowCount = float64(realtimeRowCount)
-	} else if rowCount < 0 {
-		rowCount = 0
-	}
+	rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
 	return rowCount, nil
+}
+
+// ItemID implements TableCacheItem
+func (c *Column) ItemID() int64 {
+	return c.Info.ID
+}
+
+// DropEvicted implements TableCacheItem
+// DropEvicted drops evicted structures
+func (c *Column) DropEvicted() {
+	if c.StatsVer < Version2 && c.IsStatsInitialized() {
+		c.CMSketch = nil
+		c.evictedStatus = onlyCmsEvicted
+	}
 }
 
 // Index represents an index histogram.
@@ -1268,6 +1332,27 @@ type Index struct {
 	Info           *model.IndexInfo
 	Flag           int64
 	LastAnalyzePos types.Datum
+}
+
+// ItemID implements TableCacheItem
+func (idx *Index) ItemID() int64 {
+	return idx.Info.ID
+}
+
+// DropEvicted implements TableCacheItem
+// DropEvicted drops evicted structures
+func (idx *Index) DropEvicted() {
+	idx.CMSketch = nil
+}
+
+// IsEvicted returns whether index statistics got evicted
+func (idx *Index) IsEvicted() bool {
+	switch idx.StatsVer {
+	case Version1:
+		return idx.CMSketch == nil
+	default:
+		return false
+	}
 }
 
 func (idx *Index) String() string {
@@ -1289,12 +1374,21 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
 // We ignore the size of other metadata in Index.
-func (idx *Index) MemoryUsage() (sum int64) {
-	sum = idx.Histogram.MemoryUsage()
-	if idx.CMSketch != nil {
-		sum += idx.CMSketch.MemoryUsage()
+func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
+	var sum int64
+	indexMemUsage := &IndexMemUsage{
+		IndexID: idx.Info.ID,
 	}
-	return
+	histMemUsage := idx.Histogram.MemoryUsage()
+	indexMemUsage.HistogramMemUsage = histMemUsage
+	sum = histMemUsage
+	if idx.CMSketch != nil {
+		cmSketchMemUsage := idx.CMSketch.MemoryUsage()
+		indexMemUsage.CMSketchMemUsage = cmSketchMemUsage
+		sum += cmSketchMemUsage
+	}
+	indexMemUsage.TotalMemUsage = sum
+	return indexMemUsage
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
@@ -1403,7 +1497,30 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				return 0, err
 			}
 			if expBackoffSuccess {
-				totalCount += expBackoffSel * idx.TotalRowCount()
+				expBackoffCnt := expBackoffSel * idx.TotalRowCount()
+
+				upperLimit := expBackoffCnt
+				// Use the multi-column stats to calculate the max possible row count of [l, r)
+				if idx.Len() > 0 {
+					_, lowerBkt, _, _ := idx.locateBucket(l)
+					_, upperBkt, _, _ := idx.locateBucket(r)
+					// Use Count of the Bucket before l as the lower bound.
+					preCount := float64(0)
+					if lowerBkt > 0 {
+						preCount = float64(idx.Buckets[lowerBkt-1].Count)
+					}
+					// Use Count of the Bucket where r exists as the upper bound.
+					upperCnt := float64(idx.Buckets[upperBkt].Count)
+					upperLimit = upperCnt - preCount
+					upperLimit += float64(idx.TopN.BetweenCount(lb, rb))
+				}
+
+				// If the result of exponential backoff strategy is larger than the result from multi-column stats,
+				// 	use the upper limit from multi-column histogram instead.
+				if expBackoffCnt > upperLimit {
+					expBackoffCnt = upperLimit
+				}
+				totalCount += expBackoffCnt
 			}
 		}
 		if !expBackoffSuccess {
@@ -1422,9 +1539,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
 		}
 	}
-	if totalCount > float64(realtimeRowCount) {
-		totalCount = float64(realtimeRowCount)
-	}
+	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
@@ -1651,6 +1766,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 				zap.Error(err))
 			continue
 		}
+		newCol.ColLoadedStatus = oldCol.ColLoadedStatus
 		newColl.Columns[node.ID] = newCol
 	}
 	for id, idx := range coll.Indices {
@@ -2015,9 +2131,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			d.SetBytes(meta.Encoded)
 		} else {
 			var err error
-			if types.IsTypeTime(hists[0].Tp.Tp) {
+			if types.IsTypeTime(hists[0].Tp.GetType()) {
 				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
-				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.Tp, sc.TimeZone)
+				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
 			} else {
 				_, d, err = codec.DecodeOne(meta.Encoded)
 			}
@@ -2157,4 +2273,51 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
 	}
 	return globalHist, nil
+}
+
+const (
+	allLoaded = iota
+	onlyCmsEvicted
+	//onlyHistRemained
+	allEvicted
+)
+
+// ColLoadedStatus indicates the status of column statistics
+type ColLoadedStatus struct {
+	statsInitialized bool
+	evictedStatus    int
+}
+
+// NewColFullLoadStatus returns the status that the column fully loaded
+func NewColFullLoadStatus() ColLoadedStatus {
+	return ColLoadedStatus{
+		statsInitialized: true,
+		evictedStatus:    allLoaded,
+	}
+}
+
+// IsStatsInitialized indicates whether the column's statistics was loaded from storage before.
+// Note that `IsStatsInitialized` only can be set in initializing
+func (s ColLoadedStatus) IsStatsInitialized() bool {
+	return s.statsInitialized
+}
+
+// IsLoadNeeded indicates whether it needs load statistics during LoadNeededHistograms or sync stats
+// If the column was loaded and any statistics of it is evicting, it also needs re-load statistics.
+func (s ColLoadedStatus) IsLoadNeeded() bool {
+	if s.statsInitialized {
+		return s.evictedStatus > allLoaded
+	}
+	return true
+}
+
+// IsEssentialStatsLoaded indicates whether the essential statistics is loaded.
+// If the column was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
+func (s ColLoadedStatus) IsEssentialStatsLoaded() bool {
+	return s.statsInitialized && (s.evictedStatus < allEvicted)
+}
+
+// IsCMSEvicted indicates whether the cms got evicted now.
+func (s ColLoadedStatus) IsCMSEvicted() bool {
+	return s.statsInitialized && s.evictedStatus >= onlyCmsEvicted
 }

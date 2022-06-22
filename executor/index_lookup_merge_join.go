@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"runtime/trace"
 	"sort"
 	"sync"
@@ -73,6 +72,7 @@ type IndexLookUpMergeJoin struct {
 	lastColHelper *plannercore.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage
+	prepared   bool
 }
 
 type outerMergeCtx struct {
@@ -162,7 +162,6 @@ func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
 	}
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.startWorkers(ctx)
 	return nil
 }
 
@@ -249,6 +248,10 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 
 // Next implements the Executor interface
 func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error {
+	if !e.prepared {
+		e.startWorkers(ctx)
+		e.prepared = true
+	}
 	if e.isOuterJoin {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
@@ -394,10 +397,7 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 				task.doneErr = errors.Errorf("%v", r)
 				close(task.results)
 			}
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			cancelFunc()
 		}
 	}()
@@ -672,7 +672,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			if terror.ErrorEqual(err, types.ErrOverflow) || terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				return nil, nil
 			}
-			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
+			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.GetType() == mysql.TypeSet || innerColType.GetType() == mysql.TypeEnum) {
 				return nil, nil
 			}
 			return nil, err
@@ -731,5 +731,6 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	// cancelFunc control the outer worker and outer worker close the task channel.
 	e.workerWg.Wait()
 	e.memTracker = nil
+	e.prepared = false
 	return e.baseExecutor.Close()
 }

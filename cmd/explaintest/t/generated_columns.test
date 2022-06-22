@@ -2,7 +2,6 @@
 -- Most of the cases are ported from other tests to make sure generated columns behaves the same.
 
 -- Stored generated columns as indices
-set @@tidb_partition_prune_mode='dynamic';
 
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
@@ -74,6 +73,8 @@ EXPLAIN format = 'brief' SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 
 -- Stored generated columns as partition columns
 
+set @old_prune_mode = @@tidb_partition_prune_mode;
+set @@tidb_partition_prune_mode='static';
 DROP TABLE IF EXISTS sgc3;
 CREATE TABLE sgc3 (
 j JSON,
@@ -90,6 +91,26 @@ PARTITION max VALUES LESS THAN MAXVALUE);
 
 EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a <= 1;
 EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a < 7;
+
+set @@tidb_partition_prune_mode='dynamic';
+DROP TABLE sgc3;
+CREATE TABLE sgc3 (
+j JSON,
+a INT AS (JSON_EXTRACT(j, "$.a")) STORED
+)
+PARTITION BY RANGE (a) (
+PARTITION p0 VALUES LESS THAN (1),
+PARTITION p1 VALUES LESS THAN (2),
+PARTITION p2 VALUES LESS THAN (3),
+PARTITION p3 VALUES LESS THAN (4),
+PARTITION p4 VALUES LESS THAN (5),
+PARTITION p5 VALUES LESS THAN (6),
+PARTITION max VALUES LESS THAN MAXVALUE);
+
+EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a <= 1;
+EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a < 7;
+
+set @@tidb_partition_prune_mode = @old_prune_mode;
 
 -- Virtual generated columns as indices
 

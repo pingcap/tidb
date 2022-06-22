@@ -16,6 +16,7 @@ package sessiontxn
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
@@ -33,6 +34,14 @@ var AssertTxnInfoSchemaKey stringutil.StringerStr = "assertTxnInfoSchemaKey"
 // AssertTxnInfoSchemaAfterRetryKey is used to set the expected infoschema that should be check in failPoint after retry
 // Only for test
 var AssertTxnInfoSchemaAfterRetryKey stringutil.StringerStr = "assertTxnInfoSchemaAfterRetryKey"
+
+// HookBeforeFirstRunExecutorKey is the hook key for the executor first run
+// Only for test
+var HookBeforeFirstRunExecutorKey stringutil.StringerStr = "testHookKeyBeforeFirstRunExecutor"
+
+// HookAfterOnStmtRetryWithLockErrorKey is the hook key for after OnStmtRetry with lock error
+// Only for test
+var HookAfterOnStmtRetryWithLockErrorKey stringutil.StringerStr = "testHookKeyAfterOnStmtRetryWithLockError"
 
 // RecordAssert is used only for test
 func RecordAssert(sctx sessionctx.Context, name string, value interface{}) {
@@ -71,4 +80,29 @@ func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is interface{}) {
 
 	assertVersion(is)
 	assertVersion(sctx.Value(AssertTxnInfoSchemaKey))
+}
+
+// AssertTxnManagerReadTS is used only for test
+func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
+	actual, err := GetTxnManager(sctx).GetStmtReadTS()
+	if err != nil {
+		panic(err)
+	}
+
+	if actual != expected {
+		panic(fmt.Sprintf("Txn read ts not match, expect:%d, got:%d", expected, actual))
+	}
+}
+
+// ExecTestHook is used only for test. It consumes hookKey in session wait do what it gets from it.
+func ExecTestHook(sctx sessionctx.Context, hookKey fmt.Stringer) {
+	c := sctx.Value(hookKey)
+	if ch, ok := c.(chan func()); ok {
+		select {
+		case fn := <-ch:
+			fn()
+		case <-time.After(time.Second * 10):
+			panic("timeout waiting for chan")
+		}
+	}
 }

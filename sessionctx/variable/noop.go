@@ -296,7 +296,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: SlowQueryLog, Value: "0"},
 	{Scope: ScopeSession, Name: "debug_sync", Value: ""},
 	{Scope: ScopeGlobal, Name: InnodbStatsAutoRecalc, Value: "1"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "lc_messages", Value: "en_US"},
+	{Scope: ScopeGlobal | ScopeSession, Name: "lc_messages", Value: "en_US", ReadOnly: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "bulk_insert_buffer_size", Value: "8388608", IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: BinlogDirectNonTransactionalUpdates, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "innodb_change_buffering", Value: "all"},
@@ -494,6 +494,8 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "information_schema_stats_expiry", Value: "86400"},
 	{Scope: ScopeGlobal, Name: ThreadPoolSize, Value: "16", Type: TypeUnsigned, MinValue: 1, MaxValue: 64},
 	{Scope: ScopeNone, Name: "lower_case_file_system", Value: "1"},
+	{Scope: ScopeNone, Name: LowerCaseTableNames, Value: "2"},
+
 	// for compatibility purpose, we should leave them alone.
 	// TODO: Follow the Terminology Updates of MySQL after their changes arrived.
 	// https://mysqlhighavailability.com/mysql-terminology-updates/

@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-tools/pkg/dbutil"
+	"github.com/pingcap/tidb/util/dbutil"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -88,7 +88,14 @@ func (b *noopBackoffer) Reset() {
 	b.attempt = 1
 }
 
-func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[string]interface{}) *lockTablesBackoffer {
+func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[string]interface{}, conf *Config) *lockTablesBackoffer {
+	if conf.specifiedTables {
+		return &lockTablesBackoffer{
+			tctx:      tctx,
+			attempt:   1,
+			blockList: blockList,
+		}
+	}
 	return &lockTablesBackoffer{
 		tctx:      tctx,
 		attempt:   lockTablesRetryTime,

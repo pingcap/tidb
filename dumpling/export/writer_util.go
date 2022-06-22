@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path"
 	"strings"
 	"sync"
 	"time"
@@ -30,10 +29,11 @@ var pool = sync.Pool{New: func() interface{} {
 }}
 
 type writerPipe struct {
-	input  chan *bytes.Buffer
-	closed chan struct{}
-	errCh  chan error
-	labels prometheus.Labels
+	input   chan *bytes.Buffer
+	closed  chan struct{}
+	errCh   chan error
+	metrics *metrics
+	labels  prometheus.Labels
 
 	finishedFileSize     uint64
 	currentFileSize      uint64
@@ -45,13 +45,20 @@ type writerPipe struct {
 	w storage.ExternalFileWriter
 }
 
-func newWriterPipe(w storage.ExternalFileWriter, fileSizeLimit, statementSizeLimit uint64, labels prometheus.Labels) *writerPipe {
+func newWriterPipe(
+	w storage.ExternalFileWriter,
+	fileSizeLimit,
+	statementSizeLimit uint64,
+	metrics *metrics,
+	labels prometheus.Labels,
+) *writerPipe {
 	return &writerPipe{
-		input:  make(chan *bytes.Buffer, 8),
-		closed: make(chan struct{}),
-		errCh:  make(chan error, 1),
-		w:      w,
-		labels: labels,
+		input:   make(chan *bytes.Buffer, 8),
+		closed:  make(chan struct{}),
+		errCh:   make(chan error, 1),
+		w:       w,
+		metrics: metrics,
+		labels:  labels,
 
 		currentFileSize:      0,
 		currentStatementSize: 0,
@@ -73,11 +80,11 @@ func (b *writerPipe) Run(tctx *tcontext.Context) {
 			if errOccurs {
 				continue
 			}
-			ObserveHistogram(receiveWriteChunkTimeHistogram, b.labels, time.Since(receiveChunkTime).Seconds())
+			ObserveHistogram(b.metrics.receiveWriteChunkTimeHistogram, time.Since(receiveChunkTime).Seconds())
 			receiveChunkTime = time.Now()
 			err := writeBytes(tctx, b.w, s.Bytes())
-			ObserveHistogram(writeTimeHistogram, b.labels, time.Since(receiveChunkTime).Seconds())
-			AddGauge(finishedSizeGauge, b.labels, float64(s.Len()))
+			ObserveHistogram(b.metrics.writeTimeHistogram, time.Since(receiveChunkTime).Seconds())
+			AddGauge(b.metrics.finishedSizeGauge, float64(s.Len()))
 			b.finishedFileSize += uint64(s.Len())
 			s.Reset()
 			pool.Put(s)
@@ -135,7 +142,14 @@ func WriteMeta(tctx *tcontext.Context, meta MetaIR, w storage.ExternalFileWriter
 }
 
 // WriteInsert writes TableDataIR to a storage.ExternalFileWriter in sql type
-func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) (n uint64, err error) {
+func WriteInsert(
+	pCtx *tcontext.Context,
+	cfg *Config,
+	meta TableMeta,
+	tblIR TableDataIR,
+	w storage.ExternalFileWriter,
+	metrics *metrics,
+) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return 0, fileRowIter.Error()
@@ -146,7 +160,7 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 		bf.Grow(lengthLimit - bfCap)
 	}
 
-	wp := newWriterPipe(w, cfg.FileSize, cfg.StatementSize, cfg.Labels)
+	wp := newWriterPipe(w, cfg.FileSize, cfg.StatementSize, metrics, cfg.Labels)
 
 	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
 	ctx, cancel := tcontext.Background().WithLogger(pCtx.L()).WithCancel()
@@ -184,8 +198,8 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 				zap.Uint64("finished rows", lastCounter),
 				zap.Uint64("finished size", wp.finishedFileSize),
 				log.ShortError(err))
-			SubGauge(finishedRowsGauge, cfg.Labels, float64(lastCounter))
-			SubGauge(finishedSizeGauge, cfg.Labels, float64(wp.finishedFileSize))
+			SubGauge(metrics.finishedRowsGauge, float64(lastCounter))
+			SubGauge(metrics.finishedSizeGauge, float64(wp.finishedFileSize))
 		} else {
 			pCtx.L().Debug("finish dumping table(chunk)",
 				zap.String("database", meta.DatabaseName()),
@@ -248,7 +262,7 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 					if bfCap := bf.Cap(); bfCap < lengthLimit {
 						bf.Grow(lengthLimit - bfCap)
 					}
-					AddGauge(finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
+					AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 					lastCounter = counter
 				}
 			}
@@ -266,7 +280,7 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 	}
 	close(wp.input)
 	<-wp.closed
-	AddGauge(finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
+	AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 	lastCounter = counter
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
@@ -275,7 +289,14 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 }
 
 // WriteInsertInCsv writes TableDataIR to a storage.ExternalFileWriter in csv type
-func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) (n uint64, err error) {
+func WriteInsertInCsv(
+	pCtx *tcontext.Context,
+	cfg *Config,
+	meta TableMeta,
+	tblIR TableDataIR,
+	w storage.ExternalFileWriter,
+	metrics *metrics,
+) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return 0, fileRowIter.Error()
@@ -286,7 +307,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 		bf.Grow(lengthLimit - bfCap)
 	}
 
-	wp := newWriterPipe(w, cfg.FileSize, UnspecifiedSize, cfg.Labels)
+	wp := newWriterPipe(w, cfg.FileSize, UnspecifiedSize, metrics, cfg.Labels)
 	opt := &csvOption{
 		nullValue: cfg.CsvNullValue,
 		separator: []byte(cfg.CsvSeparator),
@@ -322,8 +343,8 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 				zap.Uint64("finished rows", lastCounter),
 				zap.Uint64("finished size", wp.finishedFileSize),
 				log.ShortError(err))
-			SubGauge(finishedRowsGauge, cfg.Labels, float64(lastCounter))
-			SubGauge(finishedSizeGauge, cfg.Labels, float64(wp.finishedFileSize))
+			SubGauge(metrics.finishedRowsGauge, float64(lastCounter))
+			SubGauge(metrics.finishedSizeGauge, float64(wp.finishedFileSize))
 		} else {
 			pCtx.L().Debug("finish dumping table(chunk)",
 				zap.String("database", meta.DatabaseName()),
@@ -344,6 +365,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 				bf.Write(opt.separator)
 			}
 		}
+		bf.WriteByte('\r')
 		bf.WriteByte('\n')
 	}
 	wp.currentFileSize += uint64(bf.Len())
@@ -359,6 +381,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 		counter++
 		wp.currentFileSize += uint64(bf.Len()-lastBfSize) + 1 // 1 is for "\n"
 
+		bf.WriteByte('\r')
 		bf.WriteByte('\n')
 		if bf.Len() >= lengthLimit {
 			select {
@@ -371,7 +394,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 				if bfCap := bf.Cap(); bfCap < lengthLimit {
 					bf.Grow(lengthLimit - bfCap)
 				}
-				AddGauge(finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
+				AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 				lastCounter = counter
 			}
 		}
@@ -387,7 +410,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 	}
 	close(wp.input)
 	<-wp.closed
-	AddGauge(finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
+	AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
 	lastCounter = counter
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
@@ -430,7 +453,7 @@ func writeBytes(tctx *tcontext.Context, writer storage.ExternalFileWriter, p []b
 
 func buildFileWriter(tctx *tcontext.Context, s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.ExternalFileWriter, func(ctx context.Context), error) {
 	fileName += compressFileSuffix(compressType)
-	fullPath := path.Join(s.URI(), fileName)
+	fullPath := s.URI() + "/" + fileName
 	writer, err := storage.WithCompression(s, compressType).Create(tctx, fileName)
 	if err != nil {
 		tctx.L().Warn("fail to open file",
@@ -455,7 +478,7 @@ func buildFileWriter(tctx *tcontext.Context, s storage.ExternalStorage, fileName
 func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.ExternalFileWriter, func(context.Context)) {
 	fileName += compressFileSuffix(compressType)
 	var writer storage.ExternalFileWriter
-	fullPath := path.Join(s.URI(), fileName)
+	fullPath := s.URI() + "/" + fileName
 	fileWriter := &InterceptFileWriter{}
 	initRoutine := func() error {
 		// use separated context pCtx here to make sure context used in ExternalFile won't be canceled before close,
@@ -619,12 +642,19 @@ func (f FileFormat) Extension() string {
 }
 
 // WriteInsert writes TableDataIR to a storage.ExternalFileWriter in sql/csv type
-func (f FileFormat) WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) (uint64, error) {
+func (f FileFormat) WriteInsert(
+	pCtx *tcontext.Context,
+	cfg *Config,
+	meta TableMeta,
+	tblIR TableDataIR,
+	w storage.ExternalFileWriter,
+	metrics *metrics,
+) (uint64, error) {
 	switch f {
 	case FileFormatSQLText:
-		return WriteInsert(pCtx, cfg, meta, tblIR, w)
+		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics)
 	case FileFormatCSV:
-		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w)
+		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics)
 	default:
 		return 0, errors.Errorf("unknown file format")
 	}

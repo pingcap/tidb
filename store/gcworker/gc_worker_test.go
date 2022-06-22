@@ -97,16 +97,18 @@ type mockGCWorkerSuite struct {
 }
 
 func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite, clean func()) {
-	s = new(mockGCWorkerSuite)
+	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore)
+}
 
+func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType) (s *mockGCWorkerSuite, clean func()) {
+	s = new(mockGCWorkerSuite)
 	hijackClient := func(client tikv.Client) tikv.Client {
 		s.client = &mockGCWorkerClient{Client: client}
 		client = s.client
 		return client
 	}
-
 	opts := []mockstore.MockTiKVStoreOption{
-		mockstore.WithStoreType(mockstore.MockTiKV),
+		mockstore.WithStoreType(storeType),
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
@@ -943,7 +945,14 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 }
 
 func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
+	// TODO: Update the test code.
+	// This test rely on the obsolete mock tikv, but mock tikv does not implement paging.
+	// So use this failpoint to force non-paging protocol.
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/DisablePaging", `return`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/DisablePaging"))
+	}()
+	s, clean := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV)
 	defer clean()
 
 	var (
@@ -1655,6 +1664,16 @@ func TestGCPlacementRules(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"))
 	}()
 
+	gcPlacementRuleCache := make(map[int64]interface{})
+	deletePlacementRuleCounter := 0
+	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/store/gcworker/gcDeletePlacementRuleCounter", "return", func() error {
+		deletePlacementRuleCounter++
+		return nil
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/gcDeletePlacementRuleCounter"))
+	}()
+
 	bundleID := "TiDB_DDL_10"
 	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{
 		PrimaryRegion: "r1",
@@ -1672,14 +1691,22 @@ func TestGCPlacementRules(t *testing.T) {
 
 	// do gc
 	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
-	err = s.gcWorker.doGCPlacementRules(dr)
+	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
 	require.NoError(t, err)
+	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
+	require.Equal(t, 1, deletePlacementRuleCounter)
 
 	// check bundle deleted after gc
 	got, err = infosync.GetRuleBundle(context.Background(), bundleID)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.True(t, got.IsEmpty())
+
+	// gc the same table id repeatedly
+	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
+	require.NoError(t, err)
+	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
+	require.Equal(t, 1, deletePlacementRuleCounter)
 }
 
 func TestGCLabelRules(t *testing.T) {

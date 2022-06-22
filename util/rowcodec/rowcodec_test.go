@@ -254,14 +254,14 @@ func TestDecodeDecimalFspNotMatch(t *testing.T) {
 	dec := withFrac(4)(withLen(6)(types.NewDecimalDatum(types.NewDecFromStringForTest("11.9900"))))
 	dts := []types.Datum{dec}
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
-	ft.Decimal = 4
+	ft.SetDecimal(4)
 	fts := []*types.FieldType{ft}
 	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 	require.NoError(t, err)
 
 	// decode to chunk.
 	ft = types.NewFieldType(mysql.TypeNewDecimal)
-	ft.Decimal = 3
+	ft.SetDecimal(3)
 	cols := make([]rowcodec.ColInfo, 0)
 	cols = append(cols, rowcodec.ColInfo{
 		ID: 1,
@@ -297,6 +297,24 @@ func TestTypesNewRowCodec(t *testing.T) {
 		return d
 	}
 
+	blobTp := types.NewFieldType(mysql.TypeBlob)
+	blobTp.SetCollate(mysql.DefaultCollationName)
+	blobTp.SetFlen(types.UnspecifiedLength)
+
+	strTp := types.NewFieldType(mysql.TypeString)
+	strTp.SetCollate(mysql.DefaultCollationName)
+
+	enumTp := types.NewFieldType(mysql.TypeEnum)
+	enumTp.SetCollate(mysql.DefaultCollationName)
+	enumTp.SetFlen(collate.DefaultLen)
+
+	setTp := types.NewFieldType(mysql.TypeSet)
+	setTp.SetCollate(mysql.DefaultCollationName)
+	setTp.SetFlen(collate.DefaultLen)
+
+	varStrTp := types.NewFieldType(mysql.TypeVarString)
+	varStrTp.SetCollate(mysql.DefaultCollationName)
+
 	smallTestDataList := []testData{
 		{
 			1,
@@ -324,7 +342,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		},
 		{
 			24,
-			types.NewFieldTypeWithCollation(mysql.TypeBlob, mysql.DefaultCollationName, types.UnspecifiedLength),
+			blobTp,
 			types.NewStringDatum("abc"),
 			types.NewStringDatum("abc"),
 			nil,
@@ -332,7 +350,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		},
 		{
 			25,
-			&types.FieldType{Tp: mysql.TypeString, Collate: mysql.DefaultCollationName},
+			strTp,
 			types.NewStringDatum("ab"),
 			types.NewBytesDatum([]byte("ab")),
 			nil,
@@ -372,7 +390,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		},
 		{
 			9,
-			withEnumElems("y", "n")(types.NewFieldTypeWithCollation(mysql.TypeEnum, mysql.DefaultCollationName, collate.DefaultLen)),
+			withEnumElems("y", "n")(enumTp),
 			types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 			types.NewUintDatum(2),
 			nil,
@@ -420,7 +438,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		},
 		{
 			117,
-			withEnumElems("n1", "n2")(types.NewFieldTypeWithCollation(mysql.TypeSet, mysql.DefaultCollationName, collate.DefaultLen)),
+			withEnumElems("n1", "n2")(setTp),
 			getSetDatum("n1", 1),
 			types.NewUintDatum(1),
 			nil,
@@ -436,7 +454,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		},
 		{
 			119,
-			&types.FieldType{Tp: mysql.TypeVarString, Collate: mysql.DefaultCollationName},
+			varStrTp,
 			types.NewStringDatum(""),
 			types.NewBytesDatum([]byte("")),
 			nil,
@@ -850,24 +868,24 @@ func Test65535Bug(t *testing.T) {
 
 var (
 	withUnsigned = func(ft *types.FieldType) *types.FieldType {
-		ft.Flag = ft.Flag | mysql.UnsignedFlag
+		ft.AddFlag(mysql.UnsignedFlag)
 		return ft
 	}
 	withEnumElems = func(elem ...string) func(ft *types.FieldType) *types.FieldType {
 		return func(ft *types.FieldType) *types.FieldType {
-			ft.Elems = elem
+			ft.SetElems(elem)
 			return ft
 		}
 	}
 	withFsp = func(fsp int) func(ft *types.FieldType) *types.FieldType {
 		return func(ft *types.FieldType) *types.FieldType {
-			ft.Decimal = fsp
+			ft.SetDecimal(fsp)
 			return ft
 		}
 	}
 	withFlen = func(flen int) func(ft *types.FieldType) *types.FieldType {
 		return func(ft *types.FieldType) *types.FieldType {
-			ft.Flen = flen
+			ft.SetFlen(flen)
 			return ft
 		}
 	}

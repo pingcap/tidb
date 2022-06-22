@@ -19,12 +19,10 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/ast"
 )
 
 type joinReorderGreedySolver struct {
 	*baseSingleGroupJoinOrderSolver
-	eqEdges []*expression.ScalarFunction
 }
 
 // solve reorders the join nodes in the group based on a greedy algorithm.
@@ -42,27 +40,44 @@ type joinReorderGreedySolver struct {
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
-	for _, node := range joinNodePlans {
-		_, err := node.recursiveDeriveStats(nil)
+	var err error
+	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans, tracer)
+	if err != nil {
+		return nil, err
+	}
+	var leadingJoinNodes []*jrNode
+	if s.leadingJoinGroup != nil {
+		// We have a leading hint to let some tables join first. The result is stored in the s.leadingJoinGroup.
+		// We generate jrNode separately for it.
+		leadingJoinNodes, err = s.generateJoinOrderNode([]LogicalPlan{s.leadingJoinGroup}, tracer)
 		if err != nil {
 			return nil, err
 		}
-		cost := s.baseNodeCumCost(node)
-		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			p:       node,
-			cumCost: cost,
-		})
-		tracer.appendLogicalJoinCost(node, cost)
 	}
+	// Sort plans by cost
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
 
+	// joinNodeNum indicates the number of join nodes except leading join nodes in the current join group
+	joinNodeNum := len(s.curJoinGroup)
+	if leadingJoinNodes != nil {
+		// The leadingJoinNodes should be the first element in the s.curJoinGroup.
+		// So it can be joined first.
+		leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)
+		s.curJoinGroup = leadingJoinNodes
+	}
 	var cartesianGroup []LogicalPlan
 	for len(s.curJoinGroup) > 0 {
 		newNode, err := s.constructConnectedJoinTree(tracer)
 		if err != nil {
 			return nil, err
+		}
+		if joinNodeNum > 0 && len(s.curJoinGroup) == joinNodeNum {
+			// Getting here means that there is no join condition between the table used in the leading hint and other tables
+			// For example: select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3
+			// We can not let table t3 join first.
+			s.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check if the leading hint table has join conditions with other tables"))
 		}
 		cartesianGroup = append(cartesianGroup, newNode.p)
 	}
@@ -110,27 +125,10 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
-	var usedEdges []*expression.ScalarFunction
-	remainOtherConds := make([]expression.Expression, len(s.otherConds))
-	copy(remainOtherConds, s.otherConds)
-	for _, edge := range s.eqEdges {
-		lCol := edge.GetArgs()[0].(*expression.Column)
-		rCol := edge.GetArgs()[1].(*expression.Column)
-		if leftNode.Schema().Contains(lCol) && rightNode.Schema().Contains(rCol) {
-			usedEdges = append(usedEdges, edge)
-		} else if rightNode.Schema().Contains(lCol) && leftNode.Schema().Contains(rCol) {
-			newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
-			usedEdges = append(usedEdges, newSf)
-		}
-	}
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan LogicalPlan) (LogicalPlan, []expression.Expression) {
+	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
 	if len(usedEdges) == 0 {
 		return nil, nil
 	}
-	var otherConds []expression.Expression
-	mergedSchema := expression.MergeSchema(leftNode.Schema(), rightNode.Schema())
-	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
-		return expression.ExprFromSchema(expr, mergedSchema)
-	})
-	return s.newJoinWithEdges(leftNode, rightNode, usedEdges, otherConds), remainOtherConds
+	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType)
 }

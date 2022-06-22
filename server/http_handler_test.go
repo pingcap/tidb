@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
@@ -699,7 +701,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	bin := base64.StdEncoding.EncodeToString(bs)
 
 	unitTest := func(col *column) {
-		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
+		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.GetType(), col.tp.GetFlag(), col.tp.GetFlen(), bin)
 		resp, err := ts.fetchStatus(path)
 		require.NoErrorf(t, err, "url: %v", ts.statusURL(path))
 		decoder := json.NewDecoder(resp.Body)
@@ -847,8 +849,12 @@ func TestGetSchema(t *testing.T) {
 	}
 	sort.Strings(names)
 	require.Equal(t, expects, names)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-	resp, err = ts.fetchStatus("/schema?table_id=5")
+	tk := testkit.NewTestKit(t, store)
+	userTbl := external.GetTableByName(t, tk, "mysql", "user")
+	resp, err = ts.fetchStatus(fmt.Sprintf("/schema?table_id=%d", userTbl.Meta().ID))
 	require.NoError(t, err)
 	var ti *model.TableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -894,7 +900,7 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/db-table/5")
+	resp, err = ts.fetchStatus(fmt.Sprintf("/db-table/%d", userTbl.Meta().ID))
 	require.NoError(t, err)
 	var dbtbl *dbTableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -965,9 +971,8 @@ func TestAllHistory(t *testing.T) {
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
 	txnMeta := meta.NewMeta(txn)
-	_, err = txnMeta.GetAllHistoryDDLJobs()
+	data, err := ddl.GetAllHistoryDDLJobs(txnMeta)
 	require.NoError(t, err)
-	data, _ := txnMeta.GetAllHistoryDDLJobs()
 	err = decoder.Decode(&jobs)
 
 	require.NoError(t, err)

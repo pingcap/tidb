@@ -95,6 +95,7 @@ const (
 	ActionAlterTableStatsOptions        ActionType = 58
 	ActionAlterNoCacheTable             ActionType = 59
 	ActionCreateTables                  ActionType = 60
+	ActionMultiSchemaChange             ActionType = 61
 )
 
 var actionMap = map[ActionType]string{
@@ -157,6 +158,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterCacheTable:               "alter table cache",
 	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
+	ActionMultiSchemaChange:             "alter table multi-schema change",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -222,13 +224,28 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *TimeZone                        `json:"time_zone"`
+	Location      *TimeZoneLocation                `json:"location"`
 }
 
-// TimeZone represents a single time zone.
-type TimeZone struct {
-	Name   string
-	Offset int // seconds east of UTC
+// TimeZoneLocation represents a single time zone.
+type TimeZoneLocation struct {
+	Name     string `json:"name"`
+	Offset   int    `json:"offset"` // seconds east of UTC
+	location *time.Location
+}
+
+func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	if tz.location != nil {
+		return tz.location, nil
+	}
+
+	var err error
+	if tz.Offset == 0 {
+		tz.location, err = time.LoadLocation(tz.Name)
+	} else {
+		tz.location = time.FixedZone(tz.Name, tz.Offset)
+	}
+	return tz.location, err
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.
@@ -241,6 +258,38 @@ func NewDDLReorgMeta() *DDLReorgMeta {
 // MultiSchemaInfo keeps some information for multi schema change.
 type MultiSchemaInfo struct {
 	Warnings []*errors.Error
+
+	SubJobs    []*SubJob `json:"sub_jobs"`
+	Revertible bool      `json:"revertible"`
+
+	AddColumns    []CIStr `json:"-"`
+	DropColumns   []CIStr `json:"-"`
+	ModifyColumns []CIStr `json:"-"`
+	AddIndexes    []CIStr `json:"-"`
+	DropIndexes   []CIStr `json:"-"`
+	AlterIndexes  []CIStr `json:"-"`
+
+	RelativeColumns []CIStr `json:"-"`
+}
+
+func NewMultiSchemaInfo() *MultiSchemaInfo {
+	return &MultiSchemaInfo{
+		SubJobs:    nil,
+		Revertible: true,
+	}
+}
+
+type SubJob struct {
+	Type        ActionType      `json:"type"`
+	Args        []interface{}   `json:"-"`
+	RawArgs     json.RawMessage `json:"raw_args"`
+	SchemaState SchemaState     `json:"schema_state"`
+	SnapshotVer uint64          `json:"snapshot_ver"`
+	Revertible  bool            `json:"revertible"`
+	State       JobState        `json:"state"`
+	RowCount    int64           `json:"row_count"`
+	Warning     *terror.Error   `json:"warning"`
+	CtxVars     []interface{}   `json:"-"`
 }
 
 // Job is for a DDL operation.
@@ -250,6 +299,7 @@ type Job struct {
 	SchemaID   int64         `json:"schema_id"`
 	TableID    int64         `json:"table_id"`
 	SchemaName string        `json:"schema_name"`
+	TableName  string        `json:"table_name"`
 	State      JobState      `json:"state"`
 	Error      *terror.Error `json:"err"`
 	// ErrorCount will be increased, every time we meet an error when running job.
@@ -282,7 +332,6 @@ type Job struct {
 	Version int64 `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
-	// This field is depreciated.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 
 	// MultiSchemaInfo keeps some warning now for multi schema change.
@@ -290,6 +339,9 @@ type Job struct {
 
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
+
+	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
+	SeqNum uint64 `json:"seq_num"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -485,6 +537,59 @@ func (job *Job) IsRunning() bool {
 	return job.State == JobStateRunning
 }
 
+func (job *Job) IsQueueing() bool {
+	return job.State == JobStateQueueing
+}
+
+func (job *Job) NotStarted() bool {
+	return job.State == JobStateNone || job.State == JobStateQueueing
+}
+
+// MayNeedReorg indicates that this job may need to reorganize the data.
+func (job *Job) MayNeedReorg() bool {
+	switch job.Type {
+	case ActionAddIndex, ActionAddPrimaryKey:
+		return true
+	case ActionModifyColumn:
+		if len(job.CtxVars) > 0 {
+			needReorg, ok := job.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// IsRollbackable checks whether the job can be rollback.
+func (job *Job) IsRollbackable() bool {
+	switch job.Type {
+	case ActionDropIndex, ActionDropPrimaryKey, ActionDropIndexes:
+		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
+		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
+		// know the type of index here, we consider all indices except primary index as non-rollbackable.
+		// TODO: distinguish normal index and expression index so that we can rollback `DropIndex` for normal index in WriteOnly state.
+		// TODO: make DropPrimaryKey rollbackable in WriteOnly, it need to deal with some tests.
+		if job.SchemaState == StateDeleteOnly ||
+			job.SchemaState == StateDeleteReorganization ||
+			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionAddTablePartition:
+		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
+	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
+		ActionDropForeignKey, ActionDropTablePartition:
+		return job.SchemaState == StatePublic
+	case ActionDropColumns, ActionRebaseAutoID, ActionShardRowID,
+		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
+		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
+		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
+		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
+		return job.SchemaState == StateNone
+	}
+	return true
+}
+
 // JobState is for job state.
 type JobState byte
 
@@ -504,6 +609,8 @@ const (
 	JobStateSynced JobState = 6
 	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
 	JobStateCancelling JobState = 7
+	// JobStateQueueing means the job has not yet been started.
+	JobStateQueueing JobState = 8
 )
 
 // String implements fmt.Stringer interface.
@@ -523,6 +630,8 @@ func (s JobState) String() string {
 		return "cancelling"
 	case JobStateSynced:
 		return "synced"
+	case JobStateQueueing:
+		return "queueing"
 	default:
 		return "none"
 	}

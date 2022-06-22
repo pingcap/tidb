@@ -70,9 +70,18 @@ func TestRowCodec(t *testing.T) {
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeNewDecimal)}
-	c4 := &column{id: 4, tp: &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}}
-	c5 := &column{id: 5, tp: &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}}
-	c6 := &column{id: 6, tp: &types.FieldType{Tp: mysql.TypeBit, Flen: 8}}
+	c4tp := &types.FieldType{}
+	c4tp.SetType(mysql.TypeEnum)
+	c4tp.SetElems([]string{"a"})
+	c4 := &column{id: 4, tp: c4tp}
+	c5tp := &types.FieldType{}
+	c5tp.SetType(mysql.TypeSet)
+	c5tp.SetElems([]string{"a"})
+	c5 := &column{id: 5, tp: c5tp}
+	c6tp := &types.FieldType{}
+	c6tp.SetType(mysql.TypeBit)
+	c6tp.SetFlen(8)
+	c6 := &column{id: 6, tp: c6tp}
 	cols := []*column{c1, c2, c3, c4, c5, c6}
 
 	row := make([]types.Datum, 6)
@@ -180,10 +189,10 @@ func TestDecodeColumnValue(t *testing.T) {
 	_, bs, err = codec.CutOne(bs) // ignore colID
 	require.NoError(t, err)
 	tp = types.NewFieldType(mysql.TypeSet)
-	tp.Elems = elems
+	tp.SetElems(elems)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.Collate))
+	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.GetCollate()))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -195,7 +204,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	_, bs, err = codec.CutOne(bs) // ignore colID
 	require.NoError(t, err)
 	tp = types.NewFieldType(mysql.TypeBit)
-	tp.Flen = 24
+	tp.SetFlen(24)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
 	cmp, err = d1.Compare(sc, &d, collate.GetBinaryCollator())
@@ -212,7 +221,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp = types.NewFieldType(mysql.TypeEnum)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.Collate))
+	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.GetCollate()))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }
@@ -229,7 +238,7 @@ func TestUnflattenDatums(t *testing.T) {
 
 	input = []types.Datum{types.NewCollationStringDatum("aaa", "utf8mb4_unicode_ci")}
 	tps = []*types.FieldType{types.NewFieldType(mysql.TypeBlob)}
-	tps[0].Collate = "utf8mb4_unicode_ci"
+	tps[0].SetCollate("utf8mb4_unicode_ci")
 	output, err = UnflattenDatums(input, tps, sc.TimeZone)
 	require.NoError(t, err)
 	cmp, err = input[0].Compare(sc, &output[0], collate.GetBinaryCollator())

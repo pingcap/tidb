@@ -523,7 +523,7 @@ a
 b
 select @@tidb_allow_function_for_expression_index;
 @@tidb_allow_function_for_expression_index
-lower, md5, reverse, upper, vitess_hash
+lower, md5, reverse, tidb_shard, upper, vitess_hash
 CREATE TABLE `PK_S_MULTI_30_tmp` (
 `COL1` double NOT NULL,
 `COL2` double NOT NULL,
@@ -617,3 +617,20 @@ select (select t2.c_str from t2 where t2.c_int = 3 order by t2.c_str) x from t1;
 x
 unruffled chaplygin
 drop table t1,t2;
+drop table if exists t1, t2;
+create table t1 (c_int int, c_decimal decimal(12, 6), primary key (c_int) nonclustered,key((c_int + 1))) ;
+create table t2 like t1;
+explain format = 'brief' select /*+ agg_to_cop() */ * from t1 where c_decimal in (select c_decimal from t2 where t2.c_int + 1 = 8 + 1);
+id	estRows	task	access object	operator info
+HashJoin	9.99	root		inner join, equal:[eq(test.t2.c_decimal, test.t1.c_decimal)]
+├─HashAgg(Build)	7.99	root		group by:test.t2.c_decimal, funcs:firstrow(test.t2.c_decimal)->test.t2.c_decimal
+│ └─IndexLookUp	7.99	root		
+│   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:expression_index(`c_int` + 1)	range:[9,9], keep order:false, stats:pseudo
+│   └─HashAgg(Probe)	7.99	cop[tikv]		group by:test.t2.c_decimal, 
+│     └─Selection	9.99	cop[tikv]		not(isnull(test.t2.c_decimal))
+│       └─TableRowIDScan	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(test.t1.c_decimal))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table t1;
+drop table t2;

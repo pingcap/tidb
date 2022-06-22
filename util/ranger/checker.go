@@ -54,7 +54,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[1]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
-				if scalar.GetArgs()[1].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[1].GetType().Collate, collation) {
+				if scalar.GetArgs()[1].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[1].GetType().GetCollate(), collation) {
 					return false
 				}
 				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
@@ -63,7 +63,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		if _, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[0]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
-				if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
+				if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().GetCollate(), collation) {
 					return false
 				}
 				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
@@ -93,7 +93,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		if !c.checkColumn(scalar.GetArgs()[0]) {
 			return false
 		}
-		if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
+		if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().GetCollate(), collation) {
 			return false
 		}
 		for _, v := range scalar.GetArgs()[1:] {
@@ -122,7 +122,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 		// In short, when the column type is non-binary collation string, we cannot use `like` expressions to generate the range.
 		return false
 	}
-	if !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
+	if !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().GetCollate(), collation) {
 		return false
 	}
 	if !c.checkColumn(scalar.GetArgs()[0]) {
@@ -158,7 +158,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 		if patternStr[i] == '%' {
 			// We currently do not support using `enum like 'xxx%'` to build range
 			// see https://github.com/pingcap/tidb/issues/27130 for more details
-			if scalar.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
+			if scalar.GetArgs()[0].GetType().GetType() == mysql.TypeEnum {
 				return false
 			}
 			if i != len(patternStr)-1 {
@@ -169,7 +169,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 		if patternStr[i] == '_' {
 			// We currently do not support using `enum like 'xxx_'` to build range
 			// see https://github.com/pingcap/tidb/issues/27130 for more details
-			if scalar.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
+			if scalar.GetArgs()[0].GetType().GetType() == mysql.TypeEnum {
 				return false
 			}
 			c.shouldReserve = true

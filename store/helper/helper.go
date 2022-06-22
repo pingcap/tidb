@@ -227,7 +227,7 @@ func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) ([]HotTabl
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	var regionResp StoreHotRegionInfos
-	if err := h.requestPD("GET", rw, nil, &regionResp); err != nil {
+	if err := h.requestPD("FetchHotRegion", "GET", rw, nil, &regionResp); err != nil {
 		return nil, err
 	}
 	metricCnt := 0
@@ -547,6 +547,32 @@ type RegionsInfo struct {
 	Regions []RegionInfo `json:"regions"`
 }
 
+// NewRegionsInfo returns RegionsInfo
+func NewRegionsInfo() *RegionsInfo {
+	return &RegionsInfo{
+		Regions: make([]RegionInfo, 0),
+	}
+}
+
+// Merge merged 2 regionsInfo into one
+func (r *RegionsInfo) Merge(other *RegionsInfo) *RegionsInfo {
+	newRegionsInfo := &RegionsInfo{
+		Regions: make([]RegionInfo, 0, r.Count+other.Count),
+	}
+	m := make(map[int64]RegionInfo, r.Count+other.Count)
+	for _, region := range r.Regions {
+		m[region.ID] = region
+	}
+	for _, region := range other.Regions {
+		m[region.ID] = region
+	}
+	for _, region := range m {
+		newRegionsInfo.Regions = append(newRegionsInfo.Regions, region)
+	}
+	newRegionsInfo.Count = int64(len(newRegionsInfo.Regions))
+	return newRegionsInfo
+}
+
 // ReplicationStatus represents the replication mode status of the region.
 type ReplicationStatus struct {
 	State   string `json:"state"`
@@ -768,26 +794,41 @@ func bytesKeyToHex(key []byte) string {
 // GetRegionsInfo gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
-	err := h.requestPD("GET", pdapi.Regions, nil, &regionsInfo)
+	err := h.requestPD("GetRegions", "GET", pdapi.Regions, nil, &regionsInfo)
 	return &regionsInfo, err
 }
 
 // GetStoreRegionsInfo gets the region in given store.
 func (h *Helper) GetStoreRegionsInfo(storeID uint64) (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
-	err := h.requestPD("GET", pdapi.StoreRegions+"/"+strconv.FormatUint(storeID, 10), nil, &regionsInfo)
+	err := h.requestPD("GetStoreRegions", "GET", pdapi.StoreRegions+"/"+strconv.FormatUint(storeID, 10), nil, &regionsInfo)
 	return &regionsInfo, err
 }
 
 // GetRegionInfoByID gets the region information of the region ID by using PD's api.
 func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 	var regionInfo RegionInfo
-	err := h.requestPD("GET", pdapi.RegionByID+"/"+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	err := h.requestPD("GetRegionByID", "GET", pdapi.RegionByID+"/"+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	return &regionInfo, err
+}
+
+// GetRegionsInfoByRange scans region by key range
+func (h *Helper) GetRegionsInfoByRange(sk, ek []byte) (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GetRegionByRange", "GET", fmt.Sprintf("%v?key=%s&end_key=%s", pdapi.ScanRegions,
+		url.QueryEscape(string(sk)), url.QueryEscape(string(ek))), nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
+// GetRegionByKey gets regioninfo by key
+func (h *Helper) GetRegionByKey(k []byte) (*RegionInfo, error) {
+	var regionInfo RegionInfo
+	err := h.requestPD("GetRegionByKey", "GET", fmt.Sprintf("%v/%v", pdapi.RegionKey, url.QueryEscape(string(k))), nil, &regionInfo)
 	return &regionInfo, err
 }
 
 // request PD API, decode the response body into res
-func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) error {
+func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res interface{}) error {
 	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return errors.WithStack(errors.New("not implemented"))
@@ -817,9 +858,11 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	start := time.Now()
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
+		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
 		return errors.Trace(err)
 	}
-	metrics.PDApiExecutionHistogram.WithLabelValues("common").Observe(time.Since(start).Seconds())
+	metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
+	metrics.PDAPIRequestCounter.WithLabelValues(apiName, resp.Status).Inc()
 
 	defer func() {
 		err = resp.Body.Close()
@@ -887,7 +930,7 @@ type StoreDetailStat struct {
 // GetStoresStat gets the TiKV store information by accessing PD's api.
 func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	var storesStat StoresStat
-	err := h.requestPD("GET", pdapi.Stores, nil, &storesStat)
+	err := h.requestPD("GetStoresStat", "GET", pdapi.Stores, nil, &storesStat)
 	return &storesStat, err
 }
 
@@ -1139,30 +1182,42 @@ func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 
 // ComputeTiFlashStatus is helper function for CollectTiFlashStatus.
 func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) error {
-	ns, _, _ := reader.ReadLine()
-	n, err := strconv.ParseInt(string(ns), 10, 64)
+	ns, err := reader.ReadString('\n')
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i := int64(0); i < n; i++ {
-		rs, _, _ := reader.ReadLine()
-		srs := strings.Trim(string(rs), "\r\n\t")
-		splits := strings.Split(srs, " ")
-		for _, s := range splits {
-			// For (`table`, `store`), has region `r`
-			if s == "" {
-				continue
-			}
-			r, err := strconv.ParseInt(s, 10, 32)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if c, ok := (*regionReplica)[r]; ok {
-				(*regionReplica)[r] = c + 1
-			} else {
-				(*regionReplica)[r] = 1
-			}
+	// The count
+	ns = strings.Trim(ns, "\r\n\t")
+	n, err := strconv.ParseInt(ns, 10, 64)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The regions
+	regions, err := reader.ReadString('\n')
+	if err != nil {
+		return errors.Trace(err)
+	}
+	regions = strings.Trim(regions, "\r\n\t")
+	splits := strings.Split(regions, " ")
+	realN := int64(0)
+	for _, s := range splits {
+		// For (`table`, `store`), has region `r`
+		if s == "" {
+			continue
 		}
+		realN += 1
+		r, err := strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if c, ok := (*regionReplica)[r]; ok {
+			(*regionReplica)[r] = c + 1
+		} else {
+			(*regionReplica)[r] = 1
+		}
+	}
+	if n != realN {
+		logutil.BgLogger().Warn("ComputeTiFlashStatus count check failed", zap.Int64("claim", n), zap.Int64("real", realN))
 	}
 	return nil
 }

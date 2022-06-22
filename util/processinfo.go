@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -88,6 +88,11 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	}
 }
 
+func (pi *ProcessInfo) String() string {
+	rows := pi.ToRowForShow(false)
+	return fmt.Sprintf("{id:%v, user:%v, host:%v, db:%v, command:%v, time:%v, state:%v, info:%v}", rows...)
+}
+
 func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
 	if pi.CurTxnStartTS > 0 {
 		physicalTime := oracle.GetTimeFromTS(pi.CurTxnStartTS)
@@ -169,6 +174,12 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
+	// Put the internal session pointer to the map in the SessionManager
+	StoreInternalSession(se interface{})
+	// Delete the internal session pointer from the map in the SessionManager
+	DeleteInternalSession(se interface{})
+	// Get all startTS of every transactions running in the current internal sessions
+	GetInternalSessionStartTSList() []uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
@@ -189,6 +200,16 @@ type GlobalConnID struct {
 	LocalConnID    uint64
 	Is64bits       bool
 	ServerIDGetter func() uint64
+}
+
+// NewGlobalConnID creates GlobalConnID with serverID
+func NewGlobalConnID(serverID uint64, is64Bits bool) GlobalConnID {
+	return GlobalConnID{ServerID: serverID, Is64bits: is64Bits, LocalConnID: reservedLocalConns}
+}
+
+// NewGlobalConnIDWithGetter creates GlobalConnID with serverIDGetter
+func NewGlobalConnIDWithGetter(serverIDGetter func() uint64, is64Bits bool) GlobalConnID {
+	return GlobalConnID{ServerIDGetter: serverIDGetter, Is64bits: is64Bits, LocalConnID: reservedLocalConns}
 }
 
 const (
@@ -250,4 +271,16 @@ func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) 
 		LocalConnID: (id >> 1) & 0x7fff_ffff,
 		ServerID:    0,
 	}, false, nil
+}
+
+const (
+	reservedLocalConns  = 200
+	reservedConnAnalyze = 1
+)
+
+// GetAutoAnalyzeProcID returns processID for auto analyze
+// TODO support IDs for concurrent auto-analyze
+func GetAutoAnalyzeProcID(serverIDGetter func() uint64) uint64 {
+	globalConnID := NewGlobalConnIDWithGetter(serverIDGetter, true)
+	return globalConnID.makeID(reservedConnAnalyze)
 }

@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -103,6 +104,7 @@ var (
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
 	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
 	errNotSupportedAuthMode    = dbterror.ClassServer.NewStd(errno.ErrNotSupportedAuthMode)
+	errNetPacketTooLarge       = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -132,6 +134,9 @@ type Server struct {
 	statusServer   *http.Server
 	grpcServer     *grpc.Server
 	inShutdownMode bool
+
+	sessionMapMutex  sync.Mutex
+	internalSessions map[interface{}]struct{}
 }
 
 // ConnectionCount gets current connection count.
@@ -163,10 +168,7 @@ func (s *Server) SetDomain(dom *domain.Domain) {
 
 // InitGlobalConnID initialize global connection id.
 func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
-	s.globalConnID = util.GlobalConnID{
-		ServerIDGetter: serverIDGetter,
-		Is64bits:       true,
-	}
+	s.globalConnID = util.NewGlobalConnIDWithGetter(serverIDGetter, true)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -193,7 +195,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
-		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
+		globalConnID:      util.NewGlobalConnID(0, true),
+		internalSessions:  make(map[interface{}]struct{}, 100),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -202,6 +205,14 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	tlsConfig, autoReload, err := util.LoadTLSCertificates(
 		s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
 		s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
+
+	// LoadTLSCertificates will auto generate certificates if autoTLS is enabled.
+	// It only returns an error if certificates are specified and invalid.
+	// In which case, we should halt server startup as a misconfiguration could
+	// lead to a connection downgrade.
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// Automatically reload auto-generated certificates.
 	// The certificates are re-created every 30 days and are valid for 90 days.
@@ -220,18 +231,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		}()
 	}
 
-	if err != nil {
-		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
-	}
 	if tlsConfig != nil {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
 		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
 			zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
-	} else if cfg.Security.RequireSecureTransport {
-		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
-
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
@@ -347,7 +352,6 @@ func setTxnScope() {
 // Export config-related metrics
 func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
-	metrics.ConfigStatus.WithLabelValues("mem-quota-query").Set(float64(s.cfg.MemQuotaQuery))
 	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
 }
 
@@ -498,8 +502,8 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
-			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
+			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 				if authPlugin.OnConnectionEvent != nil {
@@ -527,6 +531,7 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
+		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 	s.rwlock.Lock()
@@ -619,13 +624,23 @@ func (s *Server) checkConnectionCount() error {
 
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
+	rs := make(map[uint64]*util.ProcessInfo)
+	for connID, pi := range s.getUserProcessList() {
+		rs[connID] = pi
+	}
+	if s.dom != nil {
+		for connID, pi := range s.dom.SysProcTracker().GetSysProcessList() {
+			rs[connID] = pi
+		}
+	}
+	return rs
+}
+
+func (s *Server) getUserProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
+	rs := make(map[uint64]*util.ProcessInfo)
 	for _, client := range s.clients {
-		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
-			continue
-		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
@@ -668,7 +683,8 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[connectionID]
-	if !ok {
+	if !ok && s.dom != nil {
+		s.dom.SysProcTracker().KillSysProcess(connectionID)
 		return
 	}
 
@@ -698,6 +714,11 @@ func killConn(conn *clientConn) {
 	if cancelFunc != nil {
 		cancelFunc()
 	}
+	if conn.bufReadConn != nil {
+		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+		}
+	}
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
@@ -712,6 +733,13 @@ func (s *Server) KillAllConnections() {
 			terror.Log(err)
 		}
 		killConn(conn)
+	}
+
+	if s.dom != nil {
+		sysProcTracker := s.dom.SysProcTracker()
+		for connID := range sysProcTracker.GetSysProcessList() {
+			sysProcTracker.KillSysProcess(connID)
+		}
 	}
 }
 
@@ -782,6 +810,47 @@ func (s *Server) kickIdleConnection() {
 // ServerID implements SessionManager interface.
 func (s *Server) ServerID() uint64 {
 	return s.dom.ServerID()
+}
+
+// StoreInternalSession implements SessionManager interface.
+// @param addr	The address of a session.session struct variable
+func (s *Server) StoreInternalSession(se interface{}) {
+	s.sessionMapMutex.Lock()
+	s.internalSessions[se] = struct{}{}
+	s.sessionMapMutex.Unlock()
+}
+
+// DeleteInternalSession implements SessionManager interface.
+// @param addr	The address of a session.session struct variable
+func (s *Server) DeleteInternalSession(se interface{}) {
+	s.sessionMapMutex.Lock()
+	delete(s.internalSessions, se)
+	s.sessionMapMutex.Unlock()
+}
+
+// GetInternalSessionStartTSList implements SessionManager interface.
+func (s *Server) GetInternalSessionStartTSList() []uint64 {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	tsList := make([]uint64, 0, len(s.internalSessions))
+	analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
+	for se := range s.internalSessions {
+		if ts, processInfoID := session.GetStartTSFromSession(se); ts != 0 {
+			if processInfoID == analyzeProcID {
+				continue
+			}
+			tsList = append(tsList, ts)
+		}
+	}
+	return tsList
+}
+
+// InternalSessionExists is used for test
+func (s *Server) InternalSessionExists(se interface{}) bool {
+	s.sessionMapMutex.Lock()
+	_, ok := s.internalSessions[se]
+	s.sessionMapMutex.Unlock()
+	return ok
 }
 
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,

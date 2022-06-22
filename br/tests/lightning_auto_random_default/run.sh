@@ -19,7 +19,7 @@ set -eu
 # FIXME: auto-random is only stable on master currently.
 check_cluster_version 4 0 0 AUTO_RANDOM || exit 0
 
-for backend in tidb importer local; do
+for backend in tidb local; do
     if [ "$backend" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi
@@ -40,10 +40,10 @@ for backend in tidb importer local; do
       check_contains 'inc: 6'
       NEXT_AUTO_RAND_VAL=7
     else
-      check_contains 'inc: 25'
-      check_contains 'inc: 26'
-      check_contains 'inc: 27'
-      NEXT_AUTO_RAND_VAL=28
+      check_contains 'inc: 6'
+      check_contains 'inc: 7'
+      check_contains 'inc: 8'
+      NEXT_AUTO_RAND_VAL=9
     fi
 
     # tidb backend randomly generate the auto-random bit for each statement, so with 2 statements,

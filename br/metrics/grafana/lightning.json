@@ -100,14 +100,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tikv_import_write_chunk_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m])",
+              "expr": "rate(tikv_import_write_chunk_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "write from lightning",
               "refId": "B"
             },
             {
-              "expr": "sum(rate(tikv_import_upload_chunk_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m]))",
+              "expr": "sum(rate(tikv_import_upload_chunk_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m]))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "upload to tikv",
@@ -182,7 +182,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "1/rate(lightning_chunks{tidb_cluster=\"$tidb_cluster\", state=\"finished\"}[1m]) ",
+              "expr": "1/rate(lightning_chunks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"finished\"}[1m]) ",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "",
@@ -294,7 +294,7 @@
           "tableColumn": "",
           "targets": [
             {
-              "expr": "lightning_chunks{tidb_cluster=\"$tidb_cluster\", state=\"finished\"} / ignoring(state) lightning_chunks{tidb_cluster=\"$tidb_cluster\", state=\"estimated\"}",
+              "expr": "lightning_chunks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"finished\"} / ignoring(state) lightning_chunks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"estimated\"}",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 2,
@@ -370,7 +370,7 @@
           "tableColumn": "",
           "targets": [
             {
-              "expr": "lightning_tables{tidb_cluster=\"$tidb_cluster\", state=\"completed\"} / ignoring(state) lightning_tables{tidb_cluster=\"$tidb_cluster\", state=\"pending\"}",
+              "expr": "lightning_tables{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"completed\"} / ignoring(state) lightning_tables{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"pending\"}",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 1,
@@ -454,7 +454,7 @@
           ],
           "targets": [
             {
-              "expr": "lightning_tables{tidb_cluster=\"$tidb_cluster\", result=\"failure\"}",
+              "expr": "lightning_tables{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", result=\"failure\"}",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 2,
@@ -510,14 +510,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "process_resident_memory_bytes{tidb_cluster=\"$tidb_cluster\", job=\"tikv-importer\"}",
+              "expr": "process_resident_memory_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tikv-importer\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "importer RSS",
               "refId": "A"
             },
             {
-              "expr": "go_memstats_heap_inuse_bytes{tidb_cluster=\"$tidb_cluster\", job=\"lightning\"}",
+              "expr": "go_memstats_heap_inuse_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"lightning\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "lightning heap",
@@ -592,7 +592,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "go_goroutines{tidb_cluster=\"$tidb_cluster\", job=\"lightning\"}",
+              "expr": "go_goroutines{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"lightning\"}",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 2,
@@ -671,14 +671,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\", job=\"lightning\"}[30s])*100",
+              "expr": "rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"lightning\"}[30s])*100",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Lightning",
               "refId": "A"
             },
             {
-              "expr": "rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\", job=\"tikv-importer\"}[30s])*100",
+              "expr": "rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tikv-importer\"}[30s])*100",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Importer",
@@ -766,7 +766,7 @@
           "steppedLine": true,
           "targets": [
             {
-              "expr": "lightning_idle_workers{tidb_cluster=\"$tidb_cluster\"}",
+              "expr": "lightning_idle_workers{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{name}}",
@@ -842,21 +842,21 @@
           "steppedLine": true,
           "targets": [
             {
-              "expr": "lightning_kv_encoder{tidb_cluster=\"$tidb_cluster\", type=\"open\"} - ignoring(type) lightning_kv_encoder{tidb_cluster=\"$tidb_cluster\", type=\"closed\"}",
+              "expr": "lightning_kv_encoder{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"open\"} - ignoring(type) lightning_kv_encoder{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"closed\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "KV Encoder",
               "refId": "A"
             },
             {
-              "expr": "lightning_importer_engine{tidb_cluster=\"$tidb_cluster\", type=\"open\"} - ignoring(type) lightning_importer_engine{tidb_cluster=\"$tidb_cluster\", type=\"closed\"}",
+              "expr": "lightning_importer_engine{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"open\"} - ignoring(type) lightning_importer_engine{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"closed\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Importer Engines (via Lightning)",
               "refId": "B"
             },
             {
-              "expr": "tikv_import_rpc_duration_count{tidb_cluster=\"$tidb_cluster\", request=\"open_engine\",result=\"ok\"} - ignoring(request) tikv_import_rpc_duration_count{tidb_cluster=\"$tidb_cluster\", request=\"close_engine\",result=\"ok\"}",
+              "expr": "tikv_import_rpc_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", request=\"open_engine\",result=\"ok\"} - ignoring(request) tikv_import_rpc_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", request=\"close_engine\",result=\"ok\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Importer Engines (via Importer)",
@@ -958,7 +958,7 @@
           ],
           "targets": [
             {
-              "expr": "min(tikv_config_rocksdb{tidb_cluster=\"$tidb_cluster\", name=\"hard_pending_compaction_bytes_limit\"}) by (instance)",
+              "expr": "min(tikv_config_rocksdb{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", name=\"hard_pending_compaction_bytes_limit\"}) by (instance)",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 2,
@@ -1014,14 +1014,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(lightning_chunk_parser_read_block_seconds_sum{tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(lightning_chunk_parser_read_block_seconds_count{tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(lightning_chunk_parser_read_block_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(lightning_chunk_parser_read_block_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "read block",
               "refId": "A"
             },
             {
-              "expr": "rate(lightning_apply_worker_seconds_sum{tidb_cluster=\"$tidb_cluster\", name = \"io\"}[30s]) /rate(lightning_apply_worker_seconds_count{tidb_cluster=\"$tidb_cluster\", name = \"io\"}[30s]) ",
+              "expr": "rate(lightning_apply_worker_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", name = \"io\"}[30s]) /rate(lightning_apply_worker_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", name = \"io\"}[30s]) ",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "apply worker",
@@ -1096,14 +1096,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(lightning_row_encode_seconds_sum{tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(lightning_row_encode_seconds_count{tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(lightning_row_encode_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(lightning_row_encode_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "row encode",
               "refId": "A"
             },
             {
-              "expr": "rate(lightning_block_deliver_seconds_sum{tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(lightning_block_deliver_seconds_count{tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(lightning_block_deliver_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(lightning_block_deliver_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "block deliver",
@@ -1190,14 +1190,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(lightning_block_deliver_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(lightning_block_deliver_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{kind}} deliver rate",
               "refId": "B"
             },
             {
-              "expr": "sum(rate(lightning_block_deliver_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[30s]))",
+              "expr": "sum(rate(lightning_block_deliver_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "total deliver rate",
@@ -1272,21 +1272,21 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "lightning_row_read_bytes_sum{tidb_cluster=\"$tidb_cluster\"}",
+              "expr": "lightning_row_read_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "parser read size",
               "refId": "A"
             },
             {
-              "expr": "lightning_block_deliver_bytes_sum{tidb_cluster=\"$tidb_cluster\"}",
+              "expr": "lightning_block_deliver_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{kind}} deliver size",
               "refId": "B"
             },
             {
-              "expr": "pd_cluster_status{tidb_cluster=\"$tidb_cluster\", type=\"storage_size\"} / ignoring(type) pd_config_status{tidb_cluster=\"$tidb_cluster\", type=\"max_replicas\"}",
+              "expr": "pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"storage_size\"} / ignoring(type) pd_config_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"max_replicas\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "storage_size / replicas",
@@ -1373,14 +1373,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tikv_import_range_delivery_duration_sum{tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_range_delivery_duration_count{tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(tikv_import_range_delivery_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_range_delivery_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "range deliver",
               "refId": "A"
             },
             {
-              "expr": "rate(tikv_import_sst_delivery_duration_sum{tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_sst_delivery_duration_count{tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(tikv_import_sst_delivery_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_sst_delivery_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "SST file deliver",
@@ -1461,14 +1461,14 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tikv_import_split_sst_duration_sum{tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_split_sst_duration_count{tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(tikv_import_split_sst_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_split_sst_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Split SST",
               "refId": "C"
             },
             {
-              "expr": "rate(tikv_import_sst_upload_duration_sum{tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_sst_upload_duration_count{tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(tikv_import_sst_upload_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_sst_upload_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -1476,7 +1476,7 @@
               "refId": "D"
             },
             {
-              "expr": "rate(tikv_import_sst_ingest_duration_sum{tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_sst_ingest_duration_count{tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(tikv_import_sst_ingest_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_sst_ingest_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 2,
@@ -1484,7 +1484,7 @@
               "refId": "E"
             },
             {
-              "expr": "rate(tikv_import_sst_chunk_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(tikv_import_sst_chunk_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "SST size",
@@ -1543,6 +1543,26 @@
     "list": [
       {
         "allValue": null,
+        "current": { },
+        "datasource": "${DS_TEST-CLUSTER}",
+        "hide": 2,
+        "includeAll": false,
+        "label": "K8s-cluster",
+        "multi": false,
+        "name": "k8s_cluster",
+        "options": [ ],
+        "query": "label_values(lightning_chunks, k8s_cluster)",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "tagValuesQuery": "",
+        "tags": [ ],
+        "tagsQuery": "",
+        "type": "query",
+        "useTags": false
+      },
+      {
+        "allValue": null,
         "current": {
         },
         "datasource": "${DS_TEST-CLUSTER}",
@@ -1554,7 +1574,7 @@
         "options": [
 
         ],
-        "query": "label_values(lightning_chunks, tidb_cluster)",
+        "query": "label_values(lightning_chunks{k8s_cluster=\"$k8s_cluster\"}, tidb_cluster)",
         "refresh": 2,
         "regex": "",
         "sort": 1,

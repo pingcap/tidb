@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -46,7 +45,7 @@ var exit = os.Exit
 func run() error {
 	var (
 		compact, flagFetchMode                      *bool
-		mode, flagImportEngine, flagCleanupEngine   *string
+		mode                                        *string
 		cpRemove, cpErrIgnore, cpErrDestroy, cpDump *string
 		localStoringTables                          *bool
 
@@ -64,9 +63,6 @@ func run() error {
 		compact = fs.Bool("compact", false, "do manual compaction on the target cluster")
 		mode = fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
 		flagFetchMode = fs.Bool("fetch-mode", false, "obtain the current mode of every tikv in the cluster")
-
-		flagImportEngine = fs.String("import-engine", "", "manually import a closed engine (value can be '`db`.`table`:123' or a UUID")
-		flagCleanupEngine = fs.String("cleanup-engine", "", "manually delete a closed engine")
 
 		cpRemove = fs.String("checkpoint-remove", "", "remove the checkpoint associated with the given table (value can be 'all' or '`db`.`table`')")
 		cpErrIgnore = fs.String("checkpoint-error-ignore", "", "ignore errors encoutered previously on the given table (value can be 'all' or '`db`.`table`'); may corrupt this table if used incorrectly")
@@ -102,14 +98,8 @@ func run() error {
 	if *flagFetchMode {
 		return errors.Trace(fetchMode(ctx, cfg, tls))
 	}
-	if len(*flagImportEngine) != 0 {
-		return errors.Trace(importEngine(ctx, cfg, tls, *flagImportEngine))
-	}
 	if len(*mode) != 0 {
 		return errors.Trace(lightning.SwitchMode(ctx, cfg, tls, *mode))
-	}
-	if len(*flagCleanupEngine) != 0 {
-		return errors.Trace(lightning.CleanupEngine(ctx, cfg, tls, *flagCleanupEngine))
 	}
 
 	if len(*cpRemove) != 0 {
@@ -199,26 +189,6 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 		}
 	}
 
-	if cfg.TikvImporter.Backend == "importer" {
-		importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer importer.Close()
-
-		for _, table := range targetTables {
-			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
-				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
-				closedEngine, err := importer.UnsafeCloseEngine(ctx, nil, table.TableName, engineID)
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "* Encountered error while closing engine:", err)
-					lastErr = err
-				} else if err := closedEngine.Cleanup(ctx); err != nil {
-					lastErr = err
-				}
-			}
-		}
-	}
 	// For importer backend, engine was stored in importer's memory, we can retrieve it from alive importer process.
 	// But in local backend, if we want to use common API `UnsafeCloseEngine` and `Cleanup`,
 	// we need either lightning process alive or engine map persistent.
@@ -330,22 +300,4 @@ func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error)
 	}
 
 	return nil
-}
-
-func importEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
-	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	ce, err := lightning.UnsafeCloseEngine(ctx, importer, engine)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	regionSplitSize := int64(cfg.TikvImporter.RegionSplitSize)
-	if regionSplitSize == 0 {
-		regionSplitSize = int64(config.SplitRegionSize)
-	}
-	return errors.Trace(ce.Import(ctx, regionSplitSize))
 }

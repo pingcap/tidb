@@ -72,7 +72,7 @@ func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
 	return &slowQueryStats{slowQueryBucket}, nil
 }
 
-// getSlowQueryBucket genenrates the delta SlowQueryBucket to report
+// getSlowQueryBucket generates the delta SlowQueryBucket to report
 func getSlowQueryBucket(ctx sessionctx.Context) (*SlowQueryBucket, error) {
 	// update currentSQBInfo first, then gen delta
 	if err := updateCurrentSQB(ctx); err != nil {

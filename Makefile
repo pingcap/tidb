@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
 
 default: server buildsucc
 
@@ -25,10 +25,7 @@ buildsucc:
 
 all: dev server benchkv
 
-parser:
-	@echo "remove this command later, when our CI script doesn't call it"
-
-dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev
+dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
@@ -47,7 +44,7 @@ check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
 unconvert:tools/bin/unconvert
-	@echo "unconvert check(skip check the genenrated or copied code in lightning)"
+	@echo "unconvert check(skip check the generated or copied code in lightning)"
 	@GO111MODULE=on tools/bin/unconvert $(UNCONVERT_PACKAGES)
 
 gogenerate:
@@ -96,6 +93,9 @@ test_part_parser: parser_yacc test_part_parser_dev
 
 test_part_parser_dev: parser_fmt parser_unit_test
 
+parser:
+	@cd parser && make parser
+
 parser_yacc:
 	@cd parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
 
@@ -125,26 +125,31 @@ ut: tools/bin/ut tools/bin/xprog failpoint-enable
 gotest: failpoint-enable
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export TZ='Asia/Shanghai'; \
-	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" || { $(FAILPOINT_DISABLE); exit 1; }
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" --except unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
+
+gotest_unstable_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
+	@echo "Running gotest_in_verify_ci"
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export TZ='Asia/Shanghai'; \
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" --only unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
 race: failpoint-enable
-	@export log_level=debug; \
-	$(GOTEST) -timeout 25m -race $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export TZ='Asia/Shanghai'; \
+	tools/bin/ut --race --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test" --except unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
-
-leak: failpoint-enable
-	@export log_level=debug; \
-	$(GOTEST) -tags leak $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
-	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
 
 server:
 ifeq ($(TARGET), "")
@@ -237,7 +242,11 @@ tools/bin/errdoc-gen: tools/check/go.mod
 	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
-	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.41.1
+	cd tools/check; \
+	$(GO) build -o ../bin/golangci-lint github.com/golangci/golangci-lint/cmd/golangci-lint
+	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
+	# But the following script from their website doesn't work with Go1.18:
+	# curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.44.2
 
 tools/bin/vfsgendev: tools/check/go.mod
 	cd tools/check; \
@@ -259,7 +268,7 @@ ifeq ("$(pkg)", "")
 else
 	@echo "Running unit test for github.com/pingcap/tidb/$(pkg)"
 	@export log_level=fatal; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
@@ -318,11 +327,19 @@ build_for_br_integration_test:
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
+build_for_lightning_test:
+	@make failpoint-enable
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(LIGHTNING_BIN).test \
+		github.com/pingcap/tidb/br/cmd/tidb-lightning
+	@make failpoint-disable
+
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
 	@export TZ='Asia/Shanghai';
-	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
+	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 br_unit_test_in_verify_ci: export ARGS=$$($(BR_PACKAGES))
 br_unit_test_in_verify_ci: tools/bin/gotestsum
@@ -330,7 +347,7 @@ br_unit_test_in_verify_ci: tools/bin/gotestsum
 	@export TZ='Asia/Shanghai';
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/br-junit-report.xml" -- $(RACE_FLAG) -ldflags '$(LDFLAGS)' \
-	-tags leak $(ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/br_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
+	$(ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/br_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
 br_integration_test: br_bins build_br build_for_br_integration_test
@@ -387,27 +404,18 @@ build_dumpling:
 
 dumpling_unit_test: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
 dumpling_unit_test: failpoint-enable
-	$(DUMPLING_GOTEST) $(RACE_FLAG) -coverprofile=coverage.txt -covermode=atomic -tags leak $(DUMPLING_ARGS) || ( make failpoint-disable && exit 1 )
+	$(DUMPLING_GOTEST) $(RACE_FLAG) -coverprofile=coverage.txt -covermode=atomic $(DUMPLING_ARGS) || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 dumpling_unit_test_in_verify_ci: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
 dumpling_unit_test_in_verify_ci: failpoint-enable tools/bin/gotestsum
 	@mkdir -p $(TEST_COVERAGE_DIR)
-	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/dumpling-junit-report.xml" -- -tags leak $(DUMPLING_ARGS) \
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/dumpling-junit-report.xml" -- $(DUMPLING_ARGS) \
 	$(RACE_FLAG) -coverprofile="$(TEST_COVERAGE_DIR)/dumpling_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
 dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
 	@make failpoint-disable
 	./dumpling/tests/run.sh $(CASE)
-
-dumpling_tools:
-	@echo "install dumpling tools..."
-	@cd dumpling/tools && make
-
-dumpling_tidy:
-	@echo "go mod tidy"
-	GO111MODULE=on go mod tidy
-	git diff --exit-code go.mod go.sum dumpling/tools/go.mod dumpling/tools/go.sum
 
 dumpling_bins:
 	@which bin/tidb-server
@@ -417,3 +425,41 @@ dumpling_bins:
 
 tools/bin/gotestsum: tools/check/go.mod
 	cd tools/check && $(GO) build -o ../bin/gotestsum gotest.tools/gotestsum
+
+generate_grafana_scripts:
+	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
+
+bazel_ci_prepare:
+	bazel --output_user_root=/home/jenkins/.tidb/tmp run --config=ci  //:gazelle
+
+bazel_prepare:
+	bazel run  //:gazelle
+
+bazel_test: failpoint-enable bazel_ci_prepare
+	bazel --output_user_root=/home/jenkins/.tidb/tmp test --config=ci  \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+
+
+bazel_coverage_test: failpoint-enable bazel_ci_prepare
+	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+
+bazel_build: bazel_ci_prepare
+	mkdir -p bin
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //tidb-server/... //br/cmd/... //cmd/...
+	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
+	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
+	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
+
+bazel_fail_build:  failpoint-enable bazel_ci_prepare
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //...
+
+bazel_clean:
+	bazel --output_user_root=/home/jenkins/.tidb/tmp clean
+
+bazel_junit:
+	bazel_collect
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	mv ./junit.xml `$(TEST_COVERAGE_DIR)/junit.xml`
