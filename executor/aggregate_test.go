@@ -1396,10 +1396,8 @@ func TestAvgDecimal(t *testing.T) {
 	tk.MustExec("drop table td;")
 }
 
-func TestRandomPanicAggConsume(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_max_chunk_size=32")
 	tk.MustExec("set @@tidb_init_chunk_size=1")
