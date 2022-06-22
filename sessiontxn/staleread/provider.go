@@ -16,6 +16,7 @@ package staleread
 
 import (
 	"context"
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
@@ -88,6 +89,10 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
 	return nil
+}
+
+func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
+	return nil, nil
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error

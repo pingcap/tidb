@@ -16,6 +16,7 @@ package sessiontxn
 
 import (
 	"context"
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
@@ -129,6 +130,8 @@ type TxnContextProvider interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
+	// ActivateTxn activates the transaction.
+	ActivateTxn() (kv.Transaction, error)
 }
 
 // TxnManager is an interface providing txn context management in session
@@ -158,6 +161,8 @@ type TxnManager interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
+	// ActivateTxn activates the transaction.
+	ActivateTxn() error
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:

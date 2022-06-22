@@ -2460,6 +2460,12 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		defer func(begin time.Time) {
 			s.sessionVars.DurationWaitTS = time.Since(begin)
 		}(time.Now())
+
+		err := sessiontxn.GetTxnManager(s).ActivateTxn()
+		if err != nil {
+			return nil, err
+		}
+
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.

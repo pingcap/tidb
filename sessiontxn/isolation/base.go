@@ -103,7 +103,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTSFuture() != nil
 	if activeNow {
-		_, err = p.activateTxn()
+		_, err = p.ActivateTxn()
 	}
 
 	return err
@@ -117,7 +117,7 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
-	if _, err := p.activateTxn(); err != nil {
+	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
@@ -128,7 +128,7 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 }
 
 func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
-	if _, err := p.activateTxn(); err != nil {
+	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
@@ -159,14 +159,14 @@ func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtE
 }
 
 func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
-	txn, err := p.activateTxn()
+	txn, err := p.ActivateTxn()
 	if err != nil {
 		return 0, err
 	}
 	return txn.StartTS(), nil
 }
 
-func (p *baseTxnContextProvider) activateTxn() (kv.Transaction, error) {
+func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
@@ -175,10 +175,21 @@ func (p *baseTxnContextProvider) activateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
-	txn, err := p.sctx.Txn(true)
+	txn, err := p.sctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}
+
+	//// Transaction is lazy initialized.
+	//// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
+	//// If Txn() is called later, wait for the future to get a valid txn.
+	//if err = txn.changePendingToValid(s.currentCtx); err != nil {
+	//	logutil.BgLogger().Error("active transaction fail",
+	//		zap.Error(err))
+	//	s.txn.cleanup()
+	//	s.sessionVars.TxnCtx.StartTS = 0
+	//	return &s.txn, err
+	//}
 
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()

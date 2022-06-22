@@ -134,6 +134,15 @@ func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePo
 	return m.ctxProvider.OnStmtErrorForNextAction(point, err)
 }
 
+// ActivateTxn decides to activate txn according to the parameter `active`
+func (m *txnManager) ActivateTxn() error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	_, err := m.ctxProvider.ActivateTxn()
+	return err
+}
+
 // OnStmtRetry is the hook that should be called when a statement retry
 func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	if m.ctxProvider == nil {
