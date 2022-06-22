@@ -159,27 +159,28 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 
 	// first ts should request from tso
 	compareTS := getOracleTS(t, se)
-	readOnlyStmtID, _, _, err := tk.Session().PrepareStmt("select * from t")
+	stmt, _, _, err := tk.Session().PrepareStmt("select * from t")
 	require.NoError(t, err)
-	rs, err := tk.Session().ExecutePreparedStmt(ctx, readOnlyStmtID, []types.Datum{})
+	rs, err := tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	require.NoError(t, err)
 	ts, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
+	prevTS := ts
 
 	// second ts should reuse first ts
 	compareTS = getOracleTS(t, se)
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, readOnlyStmtID, []types.Datum{})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	require.Greater(t, compareTS, ts)
+	require.Equal(t, prevTS, ts)
 
 	tk2.MustExec("update t set v = v + 10 where id = 1")
 	compareTS = getOracleTS(t, se)
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, readOnlyStmtID, []types.Datum{})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
 	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(ctx, tk.Session(), rs)
 	require.Error(t, err)
@@ -188,7 +189,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	require.Greater(t, compareTS, ts)
 	// retry
 	tk.Session().GetSessionVars().RetryInfo.Retrying = true
-	rs, err = tk.Session().ExecutePreparedStmt(ctx, readOnlyStmtID, []types.Datum{})
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
 	ts, err = provider.GetStmtForUpdateTS()
