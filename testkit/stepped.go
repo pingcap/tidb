@@ -19,8 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/taskstop"
+	"github.com/pingcap/tidb/util/breakpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -160,11 +161,17 @@ func (tk *SteppedTestKit) steppedCommand(cmd steppedTestKitCommand) *SteppedTest
 	go func() {
 		var success bool
 		var result any
+		var breakPointPaths []string
 		defer func() {
-			taskstop.DisableSessionStopPoint(tk.tk.Session())
 			if !success {
 				result = commandInternalError
 			}
+
+			tk.tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, nil)
+			for _, path := range breakPointPaths {
+				require.NoError(tk.t, failpoint.Disable(path))
+			}
+
 			require.NoError(tk.t, tk.ch2.sendMsg(msgTpCmdDone, result))
 		}()
 
@@ -178,7 +185,13 @@ func (tk *SteppedTestKit) steppedCommand(cmd steppedTestKitCommand) *SteppedTest
 			},
 		}
 
-		taskstop.EnableSessionStopPoint(tk.tk.Session(), ctx.notifyBreakPointAndWait, tk.breakPoints...)
+		tk.tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, ctx.notifyBreakPointAndWait)
+		for _, breakPoint := range tk.breakPoints {
+			path := "github.com/pingcap/tidb/util/breakpoint/" + breakPoint
+			require.NoError(tk.t, failpoint.Enable(path, "return"))
+			breakPointPaths = append(breakPointPaths, path)
+		}
+
 		result = cmd(ctx)
 		success = true
 	}()

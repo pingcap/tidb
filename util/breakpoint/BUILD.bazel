@@ -12,3 +12,15 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
     ],
 )
+
+go_library(
+    name = "breakpoint",
+    srcs = ["stop.go"],
+    importpath = "github.com/pingcap/tidb/util/breakpoint",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//sessionctx",
+        "//util/stringutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)

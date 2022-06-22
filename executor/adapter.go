@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/breakpoint"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
@@ -58,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/taskstop"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -416,7 +416,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
 
-	taskstop.InjectSessionStopPoint(a.Ctx, sessiontxn.StopPointBeforeExecutorFirstRun)
+	breakpoint.Inject(a.Ctx, sessiontxn.StopPointBeforeExecutorFirstRun)
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, err
@@ -793,7 +793,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if err != nil {
 		return nil, err
 	}
-	taskstop.InjectSessionStopPoint(a.Ctx, sessiontxn.StopPointOnStmtRetryAfterLockError)
+	breakpoint.Inject(a.Ctx, sessiontxn.StopPointOnStmtRetryAfterLockError)
 
 	e, err := a.buildExecutor()
 	if err != nil {

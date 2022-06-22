@@ -37,11 +37,11 @@ var AssertTxnInfoSchemaAfterRetryKey stringutil.StringerStr = "assertTxnInfoSche
 
 // StopPointBeforeExecutorFirstRun is the key for the stop point where session stops before executor's first run
 // Only for test
-var StopPointBeforeExecutorFirstRun = "before executor first run"
+var StopPointBeforeExecutorFirstRun = "beforeExecutorFirstRun"
 
 // StopPointOnStmtRetryAfterLockError s the key for the stop point where session stops after OnStmtRetry when lock error happens
 // Only for test
-var StopPointOnStmtRetryAfterLockError = "lock error, OnStmtRetry called"
+var StopPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
 
 // RecordAssert is used only for test
 func RecordAssert(sctx sessionctx.Context, name string, value interface{}) {
