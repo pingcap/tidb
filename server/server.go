@@ -47,7 +47,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -520,7 +519,11 @@ func (s *Server) onConn(conn *clientConn) {
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 		case errConCount:
-			_ = conn.writeError(ctx, err)
+			if err := conn.writeError(ctx, err); err != nil {
+				logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+					Warn("error in writing errConCount", zap.Error(err),
+						zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+			}
 		default:
 			metrics.HandShakeErrorCounter.Inc()
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
