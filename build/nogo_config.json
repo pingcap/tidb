@@ -80,6 +80,12 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "durationcheck": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "errorsas": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
